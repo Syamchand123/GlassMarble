@@ -1,1 +1,1 @@
-![GlassMarble](./assets/logo.png)
+![GlassMarble](./assets/GM_logo.png)
