@@ -1,0 +1,389 @@
+package stage3
+
+import (
+	"log"
+	"path/filepath"
+	"strings"
+	"sync"
+
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage2"
+)
+
+// IndexedNode is used to stream nodes into the map lock-free
+type IndexedNode struct {
+	Key  string
+	Node *stage2.GASTNode
+}
+
+// Aggregate executes Stage 3, processing a Stage2Payload and emitting the Stage3Output topology.
+// It supports both cold full-repository runs and fast incremental Git delta runs.
+func Aggregate(payload *stage2.Stage2Payload, existingState *Stage3Output) (*Stage3Output, error) {
+	output := existingState
+	if output == nil {
+		output = &Stage3Output{
+			RootNode:              NewDirectoryNode(".", ""),
+			GlobalDefinitionIndex: make(map[string][]*stage2.GASTNode),
+			GlobalCallQueue:       nil,
+			LocalTables:           make(map[string]*stage2.FileSymbolTable),
+			WorkspaceCtx:          NewWorkspaceContext(),
+		}
+	}
+
+	if output.FileToSymbols == nil {
+		output.FileToSymbols = make(map[string][]string)
+	}
+	if output.FileToCalls == nil {
+		output.FileToCalls = make(map[string][]LinkedCallSite)
+	}
+
+	if payload == nil {
+		return output, nil
+	}
+
+	output.CommitHash = payload.CommitHash
+
+	if output.WorkspaceCtx == nil {
+		output.WorkspaceCtx = NewWorkspaceContext()
+	}
+	output.WorkspaceCtx.ScanWorkspace(".")
+
+	// Step 3.1 (Pruning): Remove deleted files and prune empty directories incrementally
+	var pruneWg sync.WaitGroup
+	var pruneMu sync.Mutex
+
+	for _, deletedPath := range payload.DeletedPaths {
+		pruneWg.Add(1)
+		go func(dp string) {
+			defer pruneWg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("stage3: prune goroutine panicked: %v", r)
+				}
+			}()
+			relPath := NormalizeRelativePath(dp)
+			PruneFileNode(output.RootNode, relPath)
+			
+			pruneMu.Lock()
+			// O(1) Global Definition Pruning
+			if symbols, ok := output.FileToSymbols[relPath]; ok {
+				for _, sym := range symbols {
+					var updatedNodes []*stage2.GASTNode
+					for _, node := range output.GlobalDefinitionIndex[sym] {
+						if node.Properties["file_path"] != relPath {
+							updatedNodes = append(updatedNodes, node)
+						}
+					}
+					if len(updatedNodes) == 0 {
+						delete(output.GlobalDefinitionIndex, sym)
+					} else {
+						output.GlobalDefinitionIndex[sym] = updatedNodes
+					}
+				}
+			}
+			delete(output.FileToSymbols, relPath)
+			delete(output.FileToCalls, relPath)
+			delete(output.LocalTables, relPath)
+			pruneMu.Unlock()
+		}(deletedPath)
+	}
+	pruneWg.Wait()
+	pruneEmptyDirectories(output.RootNode)
+
+	// Step 3.2 & 3.3 (Grafting & Visibility): Graft updated files incrementally
+	var graftWg sync.WaitGroup
+	type graftResult struct {
+		relPath   string
+		symTable  *stage2.FileSymbolTable
+		localSyms []string
+		nodes     []IndexedNode
+	}
+	resultCh := make(chan graftResult, len(payload.UpsertedTrees))
+
+	for relPath, gastRoot := range payload.UpsertedTrees {
+		graftWg.Add(1)
+		go func(rp string, root *stage2.GASTNode) {
+			defer graftWg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("stage3: graft goroutine panicked: %v", r)
+				}
+			}()
+			normRelPath := NormalizeRelativePath(rp)
+			symTable := payload.LocalSymbolTables[rp]
+
+			var imports []string
+			var lang string
+			if symTable != nil {
+				imports = symTable.Imports
+				lang = string(symTable.Language)
+			}
+			GraftFileNode(output.RootNode, normRelPath, root, imports, lang)
+			
+			// Stamp Visibility (Step 3.3) directly on nodes
+			ComputeVisibilityEnclave(root, normRelPath, output.WorkspaceCtx)
+			
+			// Extract new symbols for O(1) Indexing
+			var localSyms []string
+			var nodes []IndexedNode
+			collectExportedGASTNodes(root, normRelPath, &nodes, &localSyms)
+			
+			resultCh <- graftResult{
+				relPath:   normRelPath,
+				symTable:  symTable,
+				localSyms: localSyms,
+				nodes:     nodes,
+			}
+		}(relPath, gastRoot)
+	}
+	
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("stage3: result collector panicked: %v", r)
+			}
+		}()
+		graftWg.Wait()
+		close(resultCh)
+	}()
+
+	// Lock-free Map-Reduce Aggregation
+	for res := range resultCh {
+		if res.symTable != nil {
+			output.LocalTables[res.relPath] = res.symTable
+			output.FileToCalls[res.relPath] = extractCallsFromFile(res.relPath, res.symTable)
+		}
+		output.FileToSymbols[res.relPath] = res.localSyms
+		for _, idxNode := range res.nodes {
+			output.GlobalDefinitionIndex[idxNode.Key] = append(output.GlobalDefinitionIndex[idxNode.Key], idxNode.Node)
+		}
+	}
+
+	// Step 3.4: Rebuild GlobalCallQueue instantly from cached FileToCalls
+	output.GlobalCallQueue = make([]LinkedCallSite, 0)
+	for _, calls := range output.FileToCalls {
+		output.GlobalCallQueue = append(output.GlobalCallQueue, calls...)
+	}
+
+	// Step 3.5: Cyclic Dependency & Architecture Validation
+	DetectArchitecturalCycles(output.GlobalCallQueue)
+
+	// Step 3.6: External Dependency Indexing
+	IndexExternalDependencies(output)
+
+	// Step 3.7: Generics Canonicalization
+	IndexGenerics(output)
+
+	// Step 3.8: Entrypoint & Root Execution Node Registry
+	IndexEntrypoints(output)
+
+	// Step 3.9: Behavioral Primitive Escalation (Zone Tainting)
+	EscalatePrimitives(output.RootNode)
+
+	return output, nil
+}
+
+// extractCallsFromFile parses LocalCalls into LinkedCallSites.
+func extractCallsFromFile(rp string, st *stage2.FileSymbolTable) []LinkedCallSite {
+	folderPath := NormalizeRelativePath(filepath.Dir(rp))
+	var localQueue []LinkedCallSite
+	for _, call := range st.LocalCalls {
+		callerID := call.CallerNodeID
+		if !strings.Contains(callerID, "::") {
+			if callerID == NormalizeRelativePath(rp) {
+				callerID = "file:" + NormalizeRelativePath(rp)
+			} else {
+				callerID = NormalizeRelativePath(rp) + "::" + callerID
+			}
+		}
+		localQueue = append(localQueue, LinkedCallSite{
+			SourceFileNodeID: callerID,
+			SourceFilePath:   NormalizeRelativePath(rp),
+			SourceFolderPath: folderPath,
+			ReceiverName:     call.ReceiverName,
+			MethodName:       call.MethodName,
+			LineNumber:       call.LineNumber,
+			HasPrimitive:     call.HasPrimitive,
+			Primitives:       call.Primitives,
+			LocalImports:     st.Imports,
+		})
+	}
+	return localQueue
+}
+
+// SynthesizeGlobalDefinitionIndex traverses the DirectoryNode hierarchy concurrently and collects all exported symbols lock-free.
+func SynthesizeGlobalDefinitionIndex(root *DirectoryNode) map[string][]*stage2.GASTNode {
+	index := make(map[string][]*stage2.GASTNode)
+	var wg sync.WaitGroup
+	resultCh := make(chan []IndexedNode, 1000)
+
+	traverseAndIndex(root, resultCh, &wg)
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("stage3: global index collector panicked: %v", r)
+			}
+		}()
+		wg.Wait()
+		close(resultCh)
+	}()
+
+	for nodes := range resultCh {
+		for _, idxNode := range nodes {
+			index[idxNode.Key] = append(index[idxNode.Key], idxNode.Node)
+		}
+	}
+	return index
+}
+
+func traverseAndIndex(dir *DirectoryNode, resultCh chan<- []IndexedNode, wg *sync.WaitGroup) {
+	if dir == nil {
+		return
+	}
+
+	dir.mu.RLock()
+	files := make([]*FileBoundaryNode, 0, len(dir.Files))
+	for _, file := range dir.Files {
+		files = append(files, file)
+	}
+	subFolders := make([]*DirectoryNode, 0, len(dir.SubFolders))
+	for _, sub := range dir.SubFolders {
+		subFolders = append(subFolders, sub)
+	}
+	dir.mu.RUnlock()
+
+	for _, file := range files {
+		if file == nil || file.GASTRoot == nil {
+			continue
+		}
+		wg.Add(1)
+		go func(f *FileBoundaryNode) {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("stage3: index goroutine panicked: %v", r)
+				}
+			}()
+			var nodes []IndexedNode
+			collectExportedGASTNodes(f.GASTRoot, f.RelativePath, &nodes, nil)
+			resultCh <- nodes
+		}(file)
+	}
+
+	for _, subDir := range subFolders {
+		traverseAndIndex(subDir, resultCh, wg)
+	}
+}
+
+func collectExportedGASTNodes(node *stage2.GASTNode, fileRelPath string, out *[]IndexedNode, localSyms *[]string) {
+	if node == nil {
+		return
+	}
+
+	if node.Type == stage2.GASTTypeDeclaration || node.Type == stage2.GASTFunction || node.Type == stage2.GASTVariable {
+		// Always ensure file_path is set so stage4 resolvers can build UniversalIDs
+		if node.Properties == nil {
+			node.Properties = make(map[string]string)
+		}
+		if node.Properties["file_path"] == "" {
+			node.Properties["file_path"] = fileRelPath
+		}
+
+		if fqn, exists := node.Properties["fully_qualified_name"]; exists && fqn != "" {
+			if out != nil {
+				*out = append(*out, IndexedNode{Key: fqn, Node: node})
+			}
+			if localSyms != nil {
+				*localSyms = append(*localSyms, fqn)
+			}
+		}
+		// Index by plain Name for same-package resolution
+		if node.Name != "" {
+			if out != nil {
+				*out = append(*out, IndexedNode{Key: node.Name, Node: node})
+			}
+			if localSyms != nil {
+				*localSyms = append(*localSyms, node.Name)
+			}
+		}
+		// Fallback: path-based FQN
+		dir := strings.ReplaceAll(filepath.Dir(fileRelPath), "/", ".")
+		if dir != "." && dir != "" {
+			pathSym := dir + "." + node.Name
+			if out != nil {
+				*out = append(*out, IndexedNode{Key: pathSym, Node: node})
+			}
+			if localSyms != nil {
+				*localSyms = append(*localSyms, pathSym)
+			}
+		}
+	}
+
+	for _, child := range node.Children {
+		collectExportedGASTNodes(child, fileRelPath, out, localSyms)
+	}
+}
+
+// SynthesizeGlobalCallQueue aggregates unresolved local calls concurrently into a unified project-wide queue lock-free.
+func SynthesizeGlobalCallQueue(localTables map[string]*stage2.FileSymbolTable) []LinkedCallSite {
+	var queue []LinkedCallSite
+	var wg sync.WaitGroup
+	resultCh := make(chan []LinkedCallSite, len(localTables))
+
+	for relPath, symTable := range localTables {
+		if symTable == nil {
+			continue
+		}
+
+		wg.Add(1)
+		go func(rp string, st *stage2.FileSymbolTable) {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("stage3: call queue goroutine panicked: %v", r)
+				}
+			}()
+			folderPath := NormalizeRelativePath(filepath.Dir(rp))
+			var localQueue []LinkedCallSite
+
+			for _, call := range st.LocalCalls {
+				callerID := call.CallerNodeID
+				if !strings.Contains(callerID, "::") {
+					if callerID == NormalizeRelativePath(rp) {
+						callerID = "file:" + NormalizeRelativePath(rp)
+					} else {
+						callerID = NormalizeRelativePath(rp) + "::" + callerID
+					}
+				}
+				localQueue = append(localQueue, LinkedCallSite{
+					SourceFileNodeID: callerID,
+					SourceFilePath:   NormalizeRelativePath(rp),
+					SourceFolderPath: folderPath,
+					ReceiverName:     call.ReceiverName,
+					MethodName:       call.MethodName,
+					LineNumber:       call.LineNumber,
+					HasPrimitive:     call.HasPrimitive,
+					Primitives:       call.Primitives,
+					LocalImports:     st.Imports,
+				})
+			}
+
+			resultCh <- localQueue
+		}(relPath, symTable)
+	}
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("stage3: call queue collector panicked: %v", r)
+			}
+		}()
+		wg.Wait()
+		close(resultCh)
+	}()
+
+	for q := range resultCh {
+		queue = append(queue, q...)
+	}
+	return queue
+}

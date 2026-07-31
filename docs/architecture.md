@@ -1,0 +1,383 @@
+# GlassMarble: Master Architecture & Implementation Manual
+
+Welcome to the master technical documentation for **GlassMarble**, a self-evolving Architecture Knowledge Graph (AKG) compiler and visualization platform. This manual details the design, codebase layout, algorithms, E2E flows, validation models, and architectural boundaries of the system.
+
+---
+
+## 1. Executive Summary & Product Vision
+
+Modern software systems suffer from **documentation drift**: architecture diagrams, deployment topologies, and dependency maps are created during design phases and quickly become obsolete as codebase implementations evolve. 
+
+**GlassMarble** resolves this drift by treating the codebase as the single source of truth. It compiles source files across multiple languages (Go, Python, JS, C, C++, C#, Java, Ruby, PHP, Swift, HTML, CSS, JSON) into a queried semantic graph known as the **Code Property Graph (CPG)**, commits it to a unified W3C RDF-star graph database (the **Architecture Knowledge Graph**, or **AKG**), and projects it into 21 high-fidelity visual notations (14 UML diagrams + 7 C4 model topologies) using Mermaid.js.
+
+```
+┌─────────────────────────────────┐
+│       Multi-Language Code       │
+└────────────────┬────────────────┘
+                 │ (Stage 1-2: Tree-sitter Ingestion & GAST normalization)
+                 ▼
+┌─────────────────────────────────┐
+│     Code Property Graph (CPG)    │
+└────────────────┬────────────────┘
+                 │ (Stage 3-4: Topology & Semantic Binding)
+                 ▼
+┌─────────────────────────────────┐
+│  Architecture Knowledge Graph   │ (Committed as W3C RDF-star / Turtle)
+└────────────────┬────────────────┘
+                 │ (SPARQL-like Virtual Subgraph Extraction)
+                 ▼
+┌─────────────────────────────────┐
+│      Visualization Engine       │ (Collapses namespaces & detects loops)
+└────────────────┬────────────────┘
+                 │ (Renders standard UML Class, Sequence, Timing, C4)
+                 ▼
+┌─────────────────────────────────┐
+│       Mermaid.js Markup         │ (Outputs to .glassmarble/marbles/[name].md)
+└─────────────────────────────────┘
+```
+
+---
+
+## 2. Core Concepts & Architectural Blueprint
+
+### A. The Code Property Graph (CPG)
+A unified representation that combines:
+1.  **Abstract Syntax Tree (AST)**: Syntactical elements, interfaces, types, parameters, fields, and expressions.
+2.  **Control Flow Graph (CFG)**: Chronological execution sequences, conditional branches, loops, and exits.
+3.  **Data Flow Graph (DFG)**: Variable declarations, parameters, assignments, and structural values propagation.
+4.  **Call Graph**: Static call linkages, polymorphic interface bindings, and concurrency threads.
+
+### B. The Architecture Knowledge Graph (AKG)
+The CPG is stored inside the database directory (`.glassmarble/`) as a semantic graph mapping nodes and relationships. To represent precise physical locations (e.g. that a call happened at line 42), the graph uses **W3C RDF-star (RDF\*)** notation. Standard RDF only maps binary triples (`subject predicate object`). RDF-star allows **nested statement assertions** (metadata of metadata):
+
+```turtle
+# Direct call edge
+<< <http://glassmarble.org/node/auth/login.go::Authenticator::Authenticate> gm:calls <http://glassmarble.org/node/db/database.go::DBStore::GetUser> >> gm:lineNumber 18 .
+```
+
+### C. GAST (Generic Abstract Syntax Tree)
+To decouple the compiler from language syntaxes, all Tree-sitter Concrete Syntax Tree (CST) nodes are coerced into a **Generic AST (GAST)**. A `GASTNode` represents declarations, calls, scopes, and fields uniformly across all 13 languages.
+
+---
+
+## 3. Detailed File-by-File Codebase Directory
+
+Every sub-directory and code file in `G:\GlassMarble\internal` plays an isolated, modular role in the pipeline:
+
+### 📂 `internal/akg/` (The Database & Transaction Layer)
+Manages serialization, transactions, thread locks, and recovery of the W3C Turtle graph.
+
+*   [`mvcc.go`](file:///G:/GlassMarble/internal/akg/mvcc.go):
+    *   Implements Multi-Version Concurrency Control (MVCC) isolation.
+    *   Defines `CodePropertyGraph` (holds nodes, edges, file indexes, macro rules, and validation errors) and `MVCCGraphContainer` (handles atomic snapshot swaps and thread-safe read locks).
+*   [`wal.go`](file:///G:/GlassMarble/internal/akg/wal.go):
+    *   Implements Write-Ahead Logging (WAL) for durability.
+    *   Logs transaction status (`STARTED`, `COMMITTED`, `ABORTED`) to `.glassmarble/akg_transactions.wal` in append mode, executing `Sync()` to flush writes before DB mutations.
+*   [`reasoner.go`](file:///G:/GlassMarble/internal/akg/reasoner.go):
+    *   Topological Macro-Inference rules engine.
+    *   Traverses functional call graphs (up to depth 5) using DFS to infer high-level architectural rules (Web-to-Storage traffic, Security Gates, Async background tasks) and tags them as node properties.
+*   [`ontology.ttl`](file:///G:/GlassMarble/internal/akg/ontology.ttl):
+    *   Contains the semantic schema definitions, RDF prefixes, class structures, and predicate properties axioms for the Architecture Knowledge Graph.
+*   [`transaction_manager.go`](file:///G:/GlassMarble/internal/akg/transaction_manager.go):
+    *   Coordinates transaction commits, file write locks (`db.lock`), WAL logs, and fallback self-healing Turtle reconstructions.
+*   [`turtle_serializer.go`](file:///G:/GlassMarble/internal/akg/turtle_serializer.go):
+    *   Serializes memory snapshot graphs into standard W3C RDF-star Turtle strings.
+*   [`transaction_manager_test.go`](file:///G:/GlassMarble/internal/akg/transaction_manager_test.go):
+    *   Unit tests checking transaction locks, recovery states, and self-healing Turtle reconstruction.
+
+### 📂 `internal/code_analysis_engine/` (The Ingestion & Normalization Layer)
+Translates codebase repositories into semantic CPG structures.
+
+*   [`integration_test.go`](file:///G:/GlassMarble/internal/code_analysis_engine/integration_test.go):
+    *   Orchestrates integration tests running Stage 1 through 4 end-to-end to verify language parsing and semantic link bindings.
+
+*   `stage1/` (Lexical & Structural AST Ingestion)
+    *   [`engine.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage1/engine.go): Initializes and controls multi-threaded execution pools for file ingestion.
+    *   [`worker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage1/worker.go): Runs background parser workers that fetch files from queues and traverse CSTs.
+    *   [`git.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage1/git.go): Resolves local directories change lists and filters out unchanged files from Stage 1 ingestion scans.
+    *   [`languages.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage1/languages.go): Registers grammar identifiers, extensions lists, declarations, imports, and call tokens for the 13 supported languages.
+    *   [`lookup.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage1/lookup.go): Resolves directory symbols namespaces.
+    *   [`parser.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage1/parser.go): Interfaces with tree-sitter bindings, processes nodes, and extracts raw lexical tokens.
+    *   [`walker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage1/walker.go): Traverses tree-sitter AST nodes recursively to normalize parent-child indexing.
+    *   [`type.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage1/type.go): Defines structures for `IngestionResult` and `RawToken`.
+    *   [`stage1_test.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage1/stage1_test.go): Unit tests verifying parser walker outputs.
+
+*   `stage2/` (GAST Translation & Language Coercion)
+    *   [`normalizer.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/normalizer.go): Normalizes raw tokens to GAST, maps calls, receiver types, and parses imports/exports.
+    *   [`translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/translator.go): Dispatches the correct language-specific translation module.
+    *   [`primitives.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/primitives.go): Scans code syntax regex patterns to flag nodes with primitive I/O behaviors (`DATABASE`, `NETWORK_IO`, `DISK_IO`).
+    *   [`type.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/type.go): Declares GASTNode types.
+    *   **Translators**:
+        *   [`go_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/go_translator.go): GAST coercer for Go language, parses structs and receiver types.
+        *   [`python_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/python_translator.go): Python GAST coercer.
+        *   [`javascript_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/javascript_translator.go) & [`typescript_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/typescript_translator.go): JS/TS coercers.
+        *   [`c_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/c_translator.go), [`cpp_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/cpp_translator.go), [`csharp_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/csharp_translator.go), [`css_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/css_translator.go), [`html_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/html_translator.go), [`java_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/java_translator.go), [`json_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/json_translator.go), [`php_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/php_translator.go), [`ruby_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/ruby_translator.go), [`generic_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/generic_translator.go): GAST coercers for C, C++, C#, CSS, HTML, Java, JSON, PHP, and Ruby.
+    *   [`stage2_test.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/stage2_test.go): Coercion and primitive propagation tests.
+
+*   `stage3/` (Topology Mapping & Indexing)
+    *   [`aggregator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage3/aggregator.go): Structures individual files into boundary packages, clusters relative directories, and sets up definitions mapping index.
+    *   [`decoupler.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage3/decoupler.go): Cleans up file system path separators, strips Windows drive prefixes, and extracts directory chains.
+    *   [`mutator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage3/mutator.go): Grafts file nodes onto the folder directory tree structure and prunes dead files recursively.
+    *   [`visibility.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage3/visibility.go): Traverses folder namespaces to compute and tag public/private export bindings and FQN keys.
+    *   [`type.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage3/type.go): Workspace directory layouts, CallQueue and DefinitionIndex maps.
+    *   [`stage3_test.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage3/stage3_test.go): Namespace clustering and directory tree tests.
+
+*   `stage4/` (Semantic Graph Linker)
+    *   [`linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/linker.go): Coordinates all Stage 4 linker phases.
+    *   [`builder.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/builder.go): Reconstructs CPG nodes, formats FQNs, and stamps location metadata.
+    *   [`call_linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/call_linker.go): Links calls to target method nodes using case-insensitive receiver matching and selector-path deconstruction.
+    *   [`type_linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/type_linker.go): Maps field composition mappings and data types propagation.
+    *   [`interface_linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/interface_linker.go): Links structural interface duck-typing implementations (like Go structs matching interfaces).
+    *   [`cfg_linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/cfg_linker.go): Registers internal function branching (if, for, loops, switch) as CFG sub-nodes and connects execution paths.
+    *   [`concurrency_linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/concurrency_linker.go): Scans for asynchronous execution forks and flags concurrency thread boundaries (`EdgeSpawnsConcurrent`).
+    *   [`dfg_linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/dfg_linker.go): Builds variable assignment flow paths and extracts data flow networks.
+    *   [`primitive_reasoner.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/primitive_reasoner.go): Propagates resource traits (e.g. `DATABASE`, `NETWORK_IO`) from low-level calls to caller functions.
+    *   [`type.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/type.go): CPG nodes, edges, relationships, and linking schemas.
+    *   [`stage4_test.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/stage4_test.go): Duck-typing, variables, and CPG binding tests.
+
+### 📂 `internal/git/` (Incremental Analysis)
+*   [`git.go`](file:///G:/GlassMarble/internal/git/git.go): Calls external Git CLI commands to fetch logs, extract delta modifications files list, and track head commits.
+*   [`git_test.go`](file:///G:/GlassMarble/internal/git/git_test.go): Unit tests for the Git CLI helper wrappers.
+
+### 📂 `internal/visualization_engine/` (The Diagram Renderer)
+Generates standard visual diagram markup by executing queries against the `.ttl` graph.
+
+*   [`visualizer.go`](file:///G:/GlassMarble/internal/visualization_engine/visualizer.go): Coordinates the visualizer stages (subgraph extraction, layout aggregation, and Mermaid formatting).
+*   [`types.go`](file:///G:/GlassMarble/internal/visualization_engine/types.go): Simple pointer mapping visualizer constants redirecting to leaf `types` package to avoid cycle import loops.
+*   [`visualizer_test.go`](file:///G:/GlassMarble/internal/visualization_engine/visualizer_test.go): Validates Mermaid markup diagrams outputs against schema.
+*   `stage1/` (SPARQL-like Subgraph Filtering)
+    *   [`extractor.go`](file:///G:/GlassMarble/internal/visualization_engine/stage1/extractor.go): Extracts virtual subgraphs from Turtle matching UML and C4 scopes.
+*   `stage2/` (Visual Folder Aggregation & Cycle Tracking)
+    *   [`aggregator.go`](file:///G:/GlassMarble/internal/visualization_engine/stage2/aggregator.go): Collapses edges, nests subgraphs into directories, and runs Tarjan's SCC cycle tracking.
+*   `stage3/` (Mermaid Formatting)
+    *   [`formatter.go`](file:///G:/GlassMarble/internal/visualization_engine/stage3/formatter.go): Emits formatted syntax files matching Mermaid's visual specs, fixing syntax errors.
+*   `types/` (Visualizer Schemas & Registries)
+    *   [`types.go`](file:///G:/GlassMarble/internal/visualization_engine/types/types.go): Declares all UML and C4 diagram registries and virtual layout structures.
+
+---
+
+## 4. Algorithmic Detail & Technical Highlights
+
+### A. Nested Selector Call Resolution (Method Call Linker)
+In modern codebases, method calls are rarely simple identifiers (e.g., `GetUser(id)`). They are often chained or invoked via fields, such as `a.Store.GetUser(id)` or `self.email_client.send_notification(...)`. 
+
+1.  **AST Split**: The Tree-sitter parser extracts these expressions as a single call token, but the normalizer collects the method name prefixed with field selectors (e.g., `MethodName = "Store.GetUser"`, `ReceiverName = "a"`).
+2.  **Resolution Logic**: Inside [`call_linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/call_linker.go#L62), the method name is deconstructed:
+    *   The leaf segment is extracted as the true method target (`"GetUser"`).
+    *   The intermediate selector segments are prepended onto the receiver string (`"a.Store"`).
+3.  **Heuristic Type Matcher**:
+    *   The receiver is normalized (case-insensitively). Suffixes like `_client`, `_service`, and `_store` are stripped.
+    *   The target type is matched (e.g., `"a.Store"` matches `DBStore` because `"dbstore"` contains the segment `"store"`). This bridges the gap between dynamic variable names and static type names.
+
+### B. Cycle Detection using Tarjan's SCC Algorithm
+To highlight critical architectural code issues, the visual aggregator running on collapsed edges executes **Tarjan's Strongly Connected Components (SCC)** algorithm:
+1.  Nodes are traversed using depth-first search (DFS).
+2.  For each node, a low-link value tracking parent paths is maintained on the DFS call stack.
+3.  If a node's low-link value equals its DFS index, an SCC boundary is closed. If this boundary contains more than 1 node, it indicates a circular dependency.
+4.  The visualizer sets `IsCycle = true` on the edge, styling the connection with custom cycles annotations (`[CYCLE]`).
+
+### C. Visual Formatter Sanitization & Quote Isolation
+Mermaid.js diagrams fail if node names contain characters like colons `:`, dashes `-`, or periods `.`, or if labels contain parentheses `()`.
+1.  **ID Sanitization**: All node identifiers are processed via `sanitizeName` which replaces all colons, periods, slashes, and dashes with underscores (`_`).
+2.  **Double Quote Wrapping**: Labels and subgraph titles (e.g., `subgraph src ["src"]` or `src_auth_go_Login["Login (Executable)"]`) are wrapped in double quotes to allow parentheses and spaces without causing parser errors.
+
+---
+
+## 5. End-to-End Execution Flow
+
+When an end-user runs a command like `glassmarble visualize class --dir ./project --save "class_diagram"`, the system processes the request as follows:
+
+```
+                    ┌──────────────────────┐
+                    │ visualize command    │
+                    └──────────┬───────────┘
+                               │
+                               ▼
+                    ┌──────────────────────┐
+                    │ Ingestion Inits      │
+                    └──────────┬───────────┘
+                               │ (Acquires db.lock; checks JSON cache)
+                               ▼
+             ┌─────────────────┴─────────────────┐
+             ▼                                   ▼
+   ┌───────────────────┐               ┌───────────────────┐
+   │ JSON Cache Valid  │               │ JSON Cache Corrupt│
+   └─────────┬─────────┘               └─────────┬─────────┘
+             │ (Fast load)                       │ (Self-Healing Fallback)
+             │                                   │ parses akg_state.ttl
+             │                                   │ rewrites JSON cache
+             ▼                                   ▼
+   ┌───────────────────────────────────────────────┐
+   │ Graph Database Loaded in Memory               │
+   └───────────────────────┬───────────────────────┘
+                           │
+                           ▼
+   ┌───────────────────────────────────────────────┐
+   │ extractClassSubgraph (Filters TypeDecl/calls)  │
+   └───────────────────────┬───────────────────────┘
+                           │
+                           ▼
+   ┌───────────────────────────────────────────────┐
+   │ BuildLayoutTree (Collapses edges, runs SCC)   │
+   └───────────────────────┬───────────────────────┘
+                           │
+                           ▼
+   ┌───────────────────────────────────────────────┐
+   │ renderClassDiagram (Translates path to class) │
+   └───────────────────────┬───────────────────────┘
+                           │
+                           ▼
+   ┌───────────────────────────────────────────────┐
+   │ Save Markdown to marbles/class_diagram.md     │
+   └───────────────────────────────────────────────┘
+```
+
+---
+
+## 6. How We Tested GlassMarble
+
+### A. Unit & Integration Test Suites
+Every phase has direct unit tests inside the workspace:
+*   **Database Concurrency & Locking**: Verified in `internal/akg/transaction_manager_test.go`. Asserts concurrent lock acquisition failures.
+*   **Self-Healing Fallback Loader**: Verified in `transaction_manager_test.go` by intentionally writing corrupted JSON contents and asserting that the Turtle loader successfully reconstructs the CPG.
+*   **Parser & Translators**: Verified in `internal/code_analysis_engine/stage2/stage2_test.go` and `stage4/stage4_test.go`.
+
+### B. End-to-End Real Codebase Integration Test
+We validated the system using a real polyglot codebase containing 11 files across Go, Python, and JavaScript:
+1.  **Codebase Ingestion**: Executed `go run scratch/run_ingestion.go`. It parsed all 12 source files, normalized the ASTs, and generated the CPG graph.
+2.  **Transaction Commit**: The graph was committed to `.glassmarble/akg_state.ttl` and `.glassmarble/akg_state.json`.
+3.  **Visualization Generation**: We ran:
+    `.\glassmarble.exe visualize class --dir .\scratch\real_e2e_db --unused --save "real_class_marble"`
+    It generated the class diagram markdown block correctly mapping call hierarchies to class relationships.
+
+---
+
+## 7. Architectural Limitations & Issues
+
+While GlassMarble is robust, the current architecture has a few limitations:
+
+### A. Heuristic Type Resolution vs Full Compilers
+*   **The Issue**: The engine relies on name heuristics and signature matching to connect variable method calls (like `email_client.send_notification()`) to class definitions (`EmailService`). It does not run a full compiler symbol type inference.
+*   **The Limit**: If two different classes declare methods with identical names (e.g. `Client.Save()` and `Database.Save()`), and a call site is `var.Save()`, the engine might add call edges to **both** targets if it cannot distinguish their variable types.
+
+### B. Single-Process Locking Constraints
+*   **The Issue**: The transaction manager locks writes via `.glassmarble/db.lock`.
+*   **The Limit**: This only works for concurrent processes running on the **same physical filesystem**. In distributed multi-agent systems, file locks do not scale, requiring a distributed consensus lock or central API graph server.
+
+### C. Multi-File Type Propagation Gaps
+*   **The Issue**: Type declarations embedded across nested interfaces (like Go embeds) are parsed as fields, but their child methods are not automatically propagated up as inherits mappings unless explicitly annotated in GAST.
+*   **The Limit**: This can result in class diagrams occasionally listing embedded structs as standard composition relationships rather than true inheritance structures.
+
+---
+
+## 8. Deep-Dive: G:\GlassMarble\internal\akg Database Internals
+
+The `G:\GlassMarble\internal\akg` package is the core database storage and transaction engine of GlassMarble. It provides strict concurrency control, serialization of Code Property Graph (CPG) structures into standard W3C RDF-star, and self-healing recovery mechanisms.
+
+### A. Storage Architecture & Directory Structures
+When GlassMarble ingests a codebase, it creates a `.glassmarble/` database directory at the root of the project. This folder contains three key files:
+
+1.  **`akg_state.ttl`**: The primary source of truth. It contains the entire architecture graph serialized in W3C RDF-star Turtle syntax.
+2.  **`akg_state.json`**: An optimized lookup cache. It contains pre-indexed JSON representations of nodes and edges, allowing fast visualization query loads without parsing the heavy Turtle syntax on every execution.
+3.  **`db.lock`**: A temporary file token used as an exclusive lock.
+
+### B. Concurrency Control & Write-Lock Mechanics
+To prevent database corruption during parallel runs (for example, if a developer starts ingestion while a background process is writing updates), the system uses an atomic, file-based locking strategy inside [`transaction_manager.go`](file:///G:/GlassMarble/internal/akg/transaction_manager.go):
+
+*   **Exclusive Lock Acquisition**: The manager calls:
+    ```go
+    os.OpenFile(lockFilePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0666)
+    ```
+    On Windows/Linux, the `os.O_EXCL` flag guarantees that the file creation is atomic. If the lock file already exists, the operating system blocks the call and returns an error. GlassMarble immediately aborts the write operation, indicating that another transaction is in progress.
+*   **Write-Ahead & Atomic File Swapping**: Rather than editing `akg_state.ttl` or `akg_state.json` directly (which would leave them in a corrupted state if the program crashed midway), the transaction manager writes content to temporary files (e.g., `akg_state.ttl.tmp`). Once the write succeeds, it performs an atomic swap:
+    ```go
+    os.Rename(tempPath, finalPath)
+    ```
+    This ensures that the database transition is fully transactional (all-or-nothing).
+*   **Lock Release**: In a `defer` block, the transaction manager deletes `db.lock` to release access.
+
+### C. Self-Healing Fallback Recovery System
+If `akg_state.json` is missing, corrupted, or deleted, the transaction manager initiates a **Self-Healing Recovery** process:
+
+1.  **Turtle Parser Activation**: It opens the primary Turtle file `akg_state.ttl` and reads it line-by-line using a regex scanner.
+2.  **Triple Reconstruction**: It parses standard RDF triples (`subject predicate object`) and maps them back to node elements (like `gm:TypeDecl`, `gm:Executable`) and edge properties (like `gm:calls`, `gm:inheritsFrom`).
+3.  **RDF-Star Nested Extraction**: It detects nested assertions to reconstruct line numbers and call metadata:
+    ```
+    << <subject> <predicate> <object> >> <metaPredicate> <metaValue>
+    ```
+4.  **Re-indexing & Cache Recovery**: Once the graph structure is fully built in memory, it serializes and saves it as a fresh `akg_state.json`, restoring fast-query capability automatically.
+
+### D. RDF-Star Turtle Serialization (`turtle_serializer.go`)
+The [`turtle_serializer.go`](file:///G:/GlassMarble/internal/akg/turtle_serializer.go) file converts the internal CPG Go structs into clean Turtle text:
+
+*   **Namespace Mappings**: Automatically binds URIs like `<http://glassmarble.org/node/...>` to keep graphs clean and structured.
+*   **Type Coercion**: Maps GAST nodes and predicates to standard ontology types (e.g. `stage4.EdgeCalls` is mapped to `gm:calls`).
+*   **String Escaping**: Sanitizes code segments, string literals, and comments using backslash escaping rules to ensure valid Turtle syntax.
+
+---
+
+## 9. GlassMarble System Architecture Diagram
+
+The diagram below provides a complete visual representation of the GlassMarble system architecture, illustrating the flow of data from source code files, through the multi-stage analysis pipeline, into the transaction-managed RDF-star graph storage, and finally through the visualization engine to emit Mermaid diagrams.
+
+```mermaid
+graph TB
+    subgraph CodeAnalysisEngine ["Code Analysis Engine (CPG Compiler)"]
+        direction TB
+        S1["Stage 1: Lexical Ingestion<br/>(parser.go, walker.go, worker.go)"]
+        S2["Stage 2: GAST Normalization<br/>(normalizer.go, translators, primitives.go)"]
+        S3["Stage 3: Topology Aggregation<br/>(aggregator.go, decoupler.go, mutator.go, visibility.go)"]
+        S4["Stage 4: Semantic CPG Linker<br/>(linker.go, call_linker.go, type_linker.go, interface_linker.go, cfg_linker.go, concurrency_linker.go, dfg_linker.go, primitive_reasoner.go)"]
+        
+        S1 -->|"Raw Lexical Tokens"| S2
+        S2 -->|"GAST Nodes & Primitives"| S3
+        S3 -->|"Directory Trees & Namespaces"| S4
+    end
+
+    subgraph AKG ["Architecture Knowledge Graph (AKG Database)"]
+        direction TB
+        TM["Transaction Manager<br/>(transaction_manager.go, db.lock)"]
+        WAL["Write-Ahead Log (WAL)<br/>(wal.go, akg_transactions.wal)"]
+        MVCC["MVCC Snapshot Promotion<br/>(mvcc.go, CodePropertyGraph)"]
+        Reasoner["Topological Inference Reasoner<br/>(reasoner.go)"]
+        TS["Turtle Serializer<br/>(turtle_serializer.go)"]
+        
+        TTL["Primary Storage: akg_state.ttl<br/>(W3C RDF-star Turtle)"]
+        JSON["Lookup Cache: akg_state.json<br/>(Fast Index Cache)"]
+        
+        TM -->|"1. Append Transaction"| WAL
+        TM -->|"2. Shadow Clone & Mutation"| MVCC
+        MVCC -->|"3. Run Rules Inference"| Reasoner
+        MVCC -->|"4. Serialize Graph"| TS
+        TS -->|"5. Atomic Write Swap"| TTL
+        MVCC -->|"5. Atomic Write Cache"| JSON
+        TTL -->|"Self-Healing Fallback Recovery"| TM
+    end
+
+    subgraph VizEngine ["Visualization Engine (Diagram Projector)"]
+        direction TB
+        VC["Visualizer Coordinator<br/>(visualizer.go)"]
+        VE1["Stage 1: Subgraph Extractor<br/>(extractor.go)"]
+        VE2["Stage 2: Visual Aggregator<br/>(aggregator.go, Tarjan's SCC)"]
+        VE3["Stage 3: Mermaid Formatter<br/>(formatter.go)"]
+        
+        VC -->|"Select Diagram Type"| VE1
+        VE1 -->|"Virtual Subgraph"| VE2
+        VE2 -->|"Topological Layout Tree"| VE3
+    end
+
+    %% External Connections
+    Repo[("Source Git Repository")] -->|"git.go (File Deltas)"| S1
+    S4 -->|"Committed CPG Payload"| TM
+    
+    JSON -->|"Fast DB Snapshot Lookup"| VE1
+    TTL -->|"Cold DB Query Load"| VE1
+    
+    VE3 -->|"Export MD Visuals"| Marbles["Mermaid Marbles Markdown<br/>(.glassmarble/marbles/[name].md)"]
+    
+    style CodeAnalysisEngine fill:#e3f2fd,stroke:#1565c0,stroke-width:2px;
+    style AKG fill:#efebe9,stroke:#4e342e,stroke-width:2px;
+    style VizEngine fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
+```
+
+

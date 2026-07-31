@@ -1,0 +1,46 @@
+name: GlassMarble CI Pipeline
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-and-test:
+    name: Build & Test Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Install Dependencies
+        run: go mod download
+
+      - name: Check Formatting & Lint
+        run: |
+          go vet ./...
+
+      - name: Run Test Suite with Coverage
+        run: |
+          CGO_ENABLED=0 go test -v -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Verify Code Coverage Gate (80% minimum)
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "Total Test Coverage: ${COVERAGE}%"
+          if (( $(echo "$COVERAGE < 80.0" | bc -l) )); then
+            echo "ERROR: Code coverage (${COVERAGE}%) is below mandatory 80% threshold!"
+            exit 1
+          fi
+
+      - name: Run Benchmarks
+        run: |
+          CGO_ENABLED=0 go test -bench=. ./internal/code_analysis_engine/...

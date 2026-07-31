@@ -1,0 +1,55 @@
+package stage2
+
+import (
+	"strings"
+
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage1"
+)
+
+type RubyTranslator struct{}
+
+func (t *RubyTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) *GASTNode {
+	node := baseNode(tok, fileRelPath)
+	extractGenericTypesAndDecorators(node, tok.Content)
+	switch tok.Kind {
+	case stage1.TokenImport:
+		if strings.HasPrefix(tok.Content, "require ") || strings.HasPrefix(tok.Content, "require(") || strings.HasPrefix(tok.Content, "require_relative ") || strings.HasPrefix(tok.Content, "require_relative(") || strings.HasPrefix(tok.Content, "require'") || strings.HasPrefix(tok.Content, "require\"") || strings.HasPrefix(tok.Content, "require_relative'") || strings.HasPrefix(tok.Content, "require_relative\"") {
+			node.Type = GASTImport
+			node.Kind = "require"
+			if strings.Contains(tok.Content, "require_relative") {
+				node.Kind = "require_relative"
+			}
+			node.Name = cleanImportPath(tok.Content)
+		} else {
+			node.Type = GASTCallExpression
+			node.Kind = "call"
+		}
+	case stage1.TokenDeclaration:
+		if strings.Contains(tok.Type, "class") {
+			node.Type = GASTTypeDeclaration
+			node.Kind = "class"
+		} else if strings.Contains(tok.Type, "module") {
+			// Ruby module = namespace/mixin scope
+			node.Type = GASTNamespace
+			node.Kind = "module"
+			node.Name = tok.Name
+		} else if strings.Contains(tok.Type, "field") || strings.Contains(tok.Type, "property") || strings.Contains(tok.Type, "attribute") {
+			node.Type = GASTField
+			node.Kind = "field"
+		} else if strings.Contains(tok.Type, "parameter") || strings.Contains(tok.Type, "argument") {
+			node.Type = GASTParameter
+			node.Kind = "parameter"
+		} else {
+			node.Type = GASTFunction
+			node.Kind = "method"
+		}
+		node.Visibility = "public"
+		if node.Type != GASTNamespace {
+			setDeclarationFQN(node, fileRelPath, tok.Name)
+		}
+	case stage1.TokenCall:
+		node.Type = GASTCallExpression
+		node.Kind = "call"
+	}
+	return node
+}

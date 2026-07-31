@@ -1,0 +1,447 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix gm: <http://glassmarble.org/schema#> .
+
+# =============================================================================
+# GlassMarble AKG Ontology Specification
+# Inspired by the ShiftLeft Code Property Graph (CPG) Schema
+# =============================================================================
+
+gm:Ontology a owl:Ontology ;
+    rdfs:label "GlassMarble Architecture Knowledge Graph (AKG) Ontology" ;
+    rdfs:comment "Base semantic blueprint for representing software structure, control flows, data flows, and call graphs." ;
+    owl:versionInfo "1.0.0" .
+
+# =============================================================================
+# 1. Structural Classes (Vertices)
+# =============================================================================
+
+gm:MetaData a rdfs:Class ;
+    rdfs:label "MetaData" ;
+    rdfs:comment "System-level configuration mapping commit metadata, compilation versions, and active languages." .
+
+gm:File a rdfs:Class ;
+    rdfs:label "File" ;
+    rdfs:comment "A source code file within the repository filesystem." .
+
+gm:Namespace a rdfs:Class ;
+    rdfs:label "Namespace" ;
+    rdfs:comment "A package scope or directory namespace (e.g., src/auth, internal/db)." .
+
+gm:TypeDecl a rdfs:Class ;
+    rdfs:label "TypeDeclaration" ;
+    rdfs:comment "A declared user type definition (e.g., Struct, Class, Interface)." .
+
+gm:Member a rdfs:Class ;
+    rdfs:label "Member" ;
+    rdfs:comment "A field or variable member declared inside a Struct or Class." .
+
+gm:Executable a rdfs:Class ;
+    rdfs:label "Executable" ;
+    rdfs:comment "A callable execution block (e.g., Function, Method)." .
+
+gm:Parameter a rdfs:Class ;
+    rdfs:label "Parameter" ;
+    rdfs:comment "An input parameter declared on a Function or Method." .
+
+gm:Variable a rdfs:Class ;
+    rdfs:label "Variable" ;
+    rdfs:comment "A local variable or identifier bound to an execution block." .
+
+gm:ControlStructure a rdfs:Class ;
+    rdfs:label "ControlStructure" ;
+    rdfs:comment "A conditional logical block (e.g., IF_BRANCH, LOOP_BRANCH, SWITCH_BRANCH)." .
+
+gm:Block a rdfs:Class ;
+    rdfs:label "Block" ;
+    rdfs:comment "A compound syntactic scope block enclosing code elements." .
+
+gm:Annotation a rdfs:Class ;
+    rdfs:label "Annotation" ;
+    rdfs:comment "A decorator or framework annotation modifying structures or methods (e.g., @RestController)." .
+
+# =============================================================================
+# 2. Relationship Properties (Edges)
+# =============================================================================
+
+# -- AST & Composition Relationships
+gm:belongsToNamespace a rdf:Property ;
+    rdfs:domain gm:File ;
+    rdfs:range gm:Namespace ;
+    rdfs:label "belongsToNamespace" .
+
+gm:belongsToFile a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range gm:File ;
+    rdfs:label "belongsToFile" .
+
+gm:hasMember a rdf:Property ;
+    rdfs:domain gm:TypeDecl ;
+    rdfs:range gm:Member ;
+    rdfs:label "hasMember" .
+
+gm:hasParameter a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range gm:Parameter ;
+    rdfs:label "hasParameter" .
+
+gm:composes a rdf:Property ;
+    rdfs:domain gm:TypeDecl ;
+    rdfs:range gm:TypeDecl ;
+    rdfs:label "composes" ;
+    rdfs:comment "Defines a composite field dependency where Struct A contains Struct B." .
+
+gm:inheritsFrom a rdf:Property ;
+    rdfs:domain gm:TypeDecl ;
+    rdfs:range gm:TypeDecl ;
+    rdfs:label "inheritsFrom" ;
+    rdfs:comment "Represents inheritance (Class extends Class) or duck-typing realization (Struct implements Interface)." .
+
+# -- Call Graph Relationships
+gm:calls a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range gm:Executable ;
+    rdfs:label "calls" ;
+    rdfs:comment "Represents static or dynamic method execution calls." .
+
+gm:spawnsConcurrent a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range gm:Executable ;
+    rdfs:label "spawnsConcurrent" ;
+    rdfs:comment "Tracks execution threads spawning concurrent tasks (e.g. go routines, tasks)." .
+
+gm:dispatchesEvent a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range gm:Executable ;
+    rdfs:label "dispatchesEvent" ;
+    rdfs:comment "Represents event dispatch call patterns." .
+
+gm:hasReceiver a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "hasReceiver" ;
+    rdfs:comment "Binds method execution to the target class type or local variable reference." .
+
+# -- Control Flow Graph (CFG) Relationships
+gm:controlFlowTo a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "controlFlowTo" ;
+    rdfs:comment "Connects nodes in order of logical execution flow (CFG branches)." .
+
+# -- Data Flow Graph (DFG) Relationships
+gm:dataFlowTo a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "dataFlowTo" ;
+    rdfs:comment "Represents value/variable reaching definitions propagation." .
+
+# -- Phase 2 Enterprise Edges
+gm:contextualCall a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range gm:Executable ;
+    rdfs:label "contextualCall" .
+
+gm:pointsTo a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "pointsTo" .
+
+gm:heapAlias a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "heapAlias" .
+
+gm:branchConstraint a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "branchConstraint" .
+
+gm:ffiCall a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range gm:Executable ;
+    rdfs:label "ffiCall" .
+
+gm:publishesEvent a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "publishesEvent" .
+
+gm:subscribesEvent a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "subscribesEvent" .
+
+gm:diInjects a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "diInjects" .
+
+gm:escapesToHeap a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "escapesToHeap" .
+
+# =============================================================================
+# 3. Attribute Properties (Literals)
+# =============================================================================
+
+gm:name a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range xsd:string ;
+    rdfs:label "name" .
+
+gm:signature a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range xsd:string ;
+    rdfs:label "signature" .
+
+gm:code a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range xsd:string ;
+    rdfs:label "code" .
+
+gm:hash a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range xsd:string ;
+    rdfs:label "hash" .
+
+gm:language a rdf:Property ;
+    rdfs:domain gm:MetaData ;
+    rdfs:range xsd:string ;
+    rdfs:label "language" .
+
+gm:commitHash a rdf:Property ;
+    rdfs:domain gm:MetaData ;
+    rdfs:range xsd:string ;
+    rdfs:label "commitHash" .
+
+gm:lineStart a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range xsd:integer ;
+    rdfs:label "lineStart" .
+
+gm:lineEnd a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range xsd:integer ;
+    rdfs:label "lineEnd" .
+
+gm:primitiveType a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range xsd:string ;
+    rdfs:label "primitiveType" ;
+    rdfs:comment "Tag representing execution primitives: DATABASE, DISK_IO, NETWORK_IO, CONCURRENCY, SECURITY_BOUND." .
+
+gm:lineNumber a rdf:Property ;
+    rdfs:domain rdf:Statement ;
+    rdfs:range xsd:integer ;
+    rdfs:label "lineNumber" ;
+    rdfs:comment "RDF-star metadata specifying the exact source code line of the edge relation." .
+
+# =============================================================================
+# 4. Summary-Level Classes (Standard Detail Mode)
+# =============================================================================
+
+gm:CFGSummary a rdfs:Class ;
+    rdfs:label "CFGSummary" ;
+    rdfs:comment "Aggregate control flow summary node for a function or method (standard level of detail)." .
+
+gm:DFGSummary a rdfs:Class ;
+    rdfs:label "DFGSummary" ;
+    rdfs:comment "Aggregate data flow summary node for a function or method (standard level of detail)." .
+
+gm:EventTopic a rdfs:Class ;
+    rdfs:label "EventTopic" ;
+    rdfs:comment "Virtual node representing a message queue topic or event channel." .
+
+gm:VirtualDatabase a rdfs:Class ;
+    rdfs:label "VirtualDatabase" ;
+    rdfs:comment "Virtual node representing a logical database or data store." .
+
+gm:VirtualEndpoint a rdfs:Class ;
+    rdfs:label "VirtualEndpoint" ;
+    rdfs:comment "Virtual node representing a logical API endpoint or service boundary." .
+
+# =============================================================================
+# 5. Additional Attribute Properties
+# =============================================================================
+
+gm:isEntrypoint a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range xsd:boolean ;
+    rdfs:label "isEntrypoint" ;
+    rdfs:comment "Flag indicating this node is a root execution entrypoint (main, HTTP handler, etc.)." .
+
+gm:primitiveZone a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range xsd:string ;
+    rdfs:label "primitiveZone" ;
+    rdfs:comment "Architectural zone classification (e.g., DATABASE_ZONE, API_ZONE)." .
+
+# =============================================================================
+# 6. Missing Relationship Properties (Edge Predicates)
+# =============================================================================
+
+gm:extends a rdf:Property ;
+    rdfs:domain gm:TypeDecl ;
+    rdfs:range gm:TypeDecl ;
+    rdfs:label "extends" ;
+    rdfs:comment "Represents type extension (Class extends Class)." .
+
+gm:throws a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range gm:TypeDecl ;
+    rdfs:label "throws" ;
+    rdfs:comment "Represents exception or error propagation." .
+
+gm:exposesEndpoint a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "exposesEndpoint" ;
+    rdfs:comment "Marks a function or method as exposing an HTTP/RPC endpoint." .
+
+gm:securitySink a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "securitySink" ;
+    rdfs:comment "Identifies a security-sensitive operation (e.g., SQL query execution, file write)." .
+
+gm:consumesResource a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "consumesResource" ;
+    rdfs:comment "Indicates consumption of a system resource (file handle, connection pool)." .
+
+gm:mutatesGlobal a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "mutatesGlobal" ;
+    rdfs:comment "Indicates mutation of global or package-level state." .
+
+gm:aliasesType a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "aliasesType" ;
+    rdfs:comment "Represents a type alias relationship." .
+
+gm:aliasesPointer a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "aliasesPointer" ;
+    rdfs:comment "Represents a pointer alias or reference assignment." .
+
+gm:vulnerableTaint a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "vulnerableTaint" ;
+    rdfs:comment "Tracks propagation of tainted or untrusted data." .
+
+gm:instantiatesGeneric a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range gm:TypeDecl ;
+    rdfs:label "instantiatesGeneric" ;
+    rdfs:comment "Represents generic type instantiation." .
+
+gm:sendsMessage a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "sendsMessage" ;
+    rdfs:comment "Represents sending a message to a queue, channel, or actor." .
+
+gm:receivesMessage a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "receivesMessage" ;
+    rdfs:comment "Represents receiving a message from a queue, channel, or actor." .
+
+gm:cyclicDependency a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "cyclicDependency" ;
+    rdfs:comment "Marks an edge that creates an architectural cycle." .
+
+gm:networkCall a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "networkCall" ;
+    rdfs:comment "Represents an outbound network RPC, HTTP, or socket call." .
+
+gm:queriesDatabase a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "queriesDatabase" ;
+    rdfs:comment "Represents a database query execution." .
+
+gm:callsCloudAPI a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "callsCloudAPI" ;
+    rdfs:comment "Represents a call to a cloud provider API." .
+
+gm:catchesException a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range gm:TypeDecl ;
+    rdfs:label "catchesException" ;
+    rdfs:comment "Represents exception/error catch handling." .
+
+gm:defersExecution a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range gm:Executable ;
+    rdfs:label "defersExecution" ;
+    rdfs:comment "Represents deferred execution (e.g., Go defer statement)." .
+
+gm:belongsTo a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "belongsTo" ;
+    rdfs:comment "Formal membership relationship: a node belongs to a containing package, module, or file." .
+
+gm:references a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "references" ;
+    rdfs:comment "Represents a generic reference from one code element to another (import, type reference, etc.)." .
+
+gm:status a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range xsd:string ;
+    rdfs:label "status" ;
+    rdfs:comment "Tombstone status for deleted nodes in delta append mode (value: DELETED)." .
+
+gm:dependsOn a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "dependsOn" ;
+    rdfs:comment "Represents a general dependency relationship between components." .
+
+gm:contains a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range rdfs:Resource ;
+    rdfs:label "contains" ;
+    rdfs:comment "Represents a containment relationship (e.g., file contains type)." .
+
+gm:mixes a rdf:Property ;
+    rdfs:domain gm:TypeDecl ;
+    rdfs:range gm:TypeDecl ;
+    rdfs:label "mixes" ;
+    rdfs:comment "Represents a mixin or trait composition." .
+
+gm:hasField a rdf:Property ;
+    rdfs:domain gm:TypeDecl ;
+    rdfs:range gm:Member ;
+    rdfs:label "hasField" ;
+    rdfs:comment "Indicates that a type declaration has a member field." .
+
+gm:hasParam a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range gm:Parameter ;
+    rdfs:label "hasParam" ;
+    rdfs:comment "Binds an executable to its formal parameters." .
+
+gm:returns a rdf:Property ;
+    rdfs:domain gm:Executable ;
+    rdfs:range gm:TypeDecl ;
+    rdfs:label "returns" ;
+    rdfs:comment "Represents the return type of an executable." .
