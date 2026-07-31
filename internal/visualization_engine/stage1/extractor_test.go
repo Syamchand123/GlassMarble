@@ -226,7 +226,7 @@ func TestExtractSubgraphUMLState(t *testing.T) {
 }
 
 func TestGetExtractionConfig(t *testing.T) {
-	cfg := getExtractionConfig(types.UMLClass, types.QueryOptions{})
+	cfg := GetExtractionConfig(types.UMLClass, types.QueryOptions{})
 	if cfg.Name != "UMLClass" {
 		t.Errorf("expected name UMLClass, got %s", cfg.Name)
 	}
@@ -236,7 +236,7 @@ func TestGetExtractionConfig(t *testing.T) {
 }
 
 func TestGetExtractionConfigDefault(t *testing.T) {
-	cfg := getExtractionConfig(types.DiagramType("UNKNOWN"), types.QueryOptions{})
+	cfg := GetExtractionConfig(types.DiagramType("UNKNOWN"), types.QueryOptions{})
 	if cfg.Name != "Default" {
 		t.Errorf("expected name Default, got %s", cfg.Name)
 	}

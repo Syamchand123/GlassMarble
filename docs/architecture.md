@@ -380,4 +380,120 @@ graph TB
     style VizEngine fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
 ```
 
+---
+
+## 10. AI Engine (`internal/ai_engine/` + `cmd/ai.go`)
+
+The AI engine is a Bring-Your-Own-Key (BYOK) agentic interface on top of the
+existing pipeline. It is a **read-only client** of `internal/akg`,
+`internal/code_analysis_engine`, and `internal/visualization_engine`: it
+queries the AKG snapshot and calls `EngineCoordinator.ProjectDiagram` /
+`ComputeGraphSummary` through their public APIs, never modifying them. See
+[`docs/ai.md`](ai.md) for the user guide.
+
+### 10.1 Architecture
+
+```
+cmd/ai.go                      # gmb ai + chat/configure/models/doctor/sessions
+internal/ai_engine/
+├── engine.go                  # facade: New (adapter wiring), Ask, AskAgent, Doctor
+├── aiconfig/                  # BYOK config: flags > env > project yaml > global yaml > defaults
+├── provider/                  # Provider interface + registry
+│   ├── openai_compat.go       #   OpenAI-compatible chat completions + SSE streaming
+│   ├── anthropic.go           #   native Claude + SSE events
+│   ├── gemini.go              #   native Gemini + SSE
+│   ├── sse.go                 #   SSE scanner (bufio, CRLF-safe, keep-alives)
+│   └── pricing.go             #   model list prices, PricingFor, EstimateCost
+├── agent/                     # agentic tool-calling loop
+│   ├── loop.go                #   turn loop, streaming events, token/cost guardrails
+│   ├── system_prompt.go       #   AI-Architect persona + repository context header
+│   └── dispatcher.go          #   validates args, executes tools, caps result sizes
+├── tools/                     # unified Tool type + JSON-Schema converters
+│   ├── system_tools.go        #   system_status, system_diagram_types, save_artifact
+│   ├── akg_tools.go           #   18 AKG query tools (cycles, PageRank, impact...)
+│   ├── code_tools.go          #   code_read_file, code_list_dir, code_diff, ...
+│   └── diagram_tools.go       #   diagram_generate (all 31 types), diagram_summary
+├── akgbridge/                 # lazy cached AKG snapshot (mtime-validated)
+└── session/                   # persistent chat sessions (.glassmarble/ai/sessions/)
+```
+
+### 10.2 Provider layer
+
+One interface, three adapters:
+
+*   `openai_compat` — OpenAI, DeepSeek, Mistral, GLM, NVIDIA NIM, OpenRouter,
+    Groq, Ollama, and arbitrary `custom` endpoints speaking the
+    chat-completions wire format.
+*   `anthropic` — native Claude message format.
+*   `gemini` — native Gemini generateContent format.
+
+Tool schemas are defined once in a unified JSON-Schema form and converted per
+adapter. The registry (`provider/registry.go`) holds name → adapter mapping,
+default base URLs, known models, and the key environment variable. Keys are
+never logged and error messages redact them.
+
+### 10.3 Streaming
+
+`Request.OnStream` enables token streaming:
+
+*   **OpenAI-compatible**: `"stream": true` payload; SSE `data:` chunks;
+    tool-call fragments are reassembled by index; usage is taken from the
+    final chunk. Non-SSE bodies fall back to a one-shot JSON parse.
+*   **Anthropic**: SSE events — `message_start` carries input tokens,
+    `content_block_delta` carries `text_delta` / `input_json_delta`,
+    `message_delta` carries output tokens.
+*   **Gemini**: `:streamGenerateContent?alt=sse`; every chunk is a full
+    response; usage is present only on the final chunk.
+
+The agent forwards deltas via `OnStream` and emits `Event{Type: "stream"}`
+events; the CLI buffers deltas per turn, clears the buffer on tool rounds (the
+model's tool-round preamble is discarded), and flushes once on the `answer`
+event. `Config.Stream` gates whether deltas reach the CLI at all (`--no-stream`
+forces buffered mode). The `--save <file>` flag routes the final answer to an
+artifact file (`.glassmarble/marbles/` for diagram markup, `.glassmarble/ai/`
+for prose) and prints a path receipt instead of echoing the answer — the
+CLI-side counterpart of the `save_artifact` tool and `diagram_generate
+save=true`.
+
+### 10.4 Agent loop and guardrails
+
+The loop (max `max_turns` tool rounds, default 15) builds the message list
+from the system prompt + repository context header + history + user query,
+sends it with the tool schemas, dispatches requested tool calls against the
+live AKG snapshot, and repeats until the model answers without tools.
+
+Token and cost guardrails (`MaxTotalTokens`, `MaxCostUSD`):
+
+*   A **pre-flight** check estimates the next request's prompt tokens
+    (~4 chars/token) and stops before sending if a cap would be exceeded.
+*   A **post-hoc** check runs after every completion on the authoritative
+    provider-reported usage. Because the completion is already spent, a second
+    tool completion can execute before the overrun is visible, but its tool
+    round does not run and no third request is sent.
+*   Cost is enforced only for priced models (`provider.PricingFor`); unknown
+    models skip the cap. Vendor-prefixed IDs resolve via the last path
+    segment. Stop reasons surface as `turn_limit` / `token_budget` /
+    `cost_budget` on `Result.StoppedReason` and as CLI `Note:` lines.
+
+### 10.5 Sessions
+
+`gmb ai chat` persists multi-turn transcripts as 0600 JSON files under
+`.glassmarble/ai/sessions/<id>.json` (`NewID` = timestamp + random suffix),
+resumes the latest session on the next run, and trims long histories
+(`max_session_messages`) on user-turn boundaries — tool rounds are never
+split and the trailing answer is never dropped. Session IDs are validated
+against a strict pattern to keep file access traversal-safe.
+
+### 10.6 Testing
+
+The AI engine is covered by fake-server E2E tests (`httptest` doubles
+replaying scripted JSON/SSE bodies), golden wire-format assertions (request
+bodies are recorded and inspected: `stream: true` payloads, tool schemas,
+session history continuity), agent-loop scripted tool-call sequences, guardrail
+tests (token/cost budgets, unpriced-model skip, pre-flight stop), pricing
+table tests, SSE scanner tests, session round-trip/trim/delete tests, and CLI
+tests for streaming output, `--no-stream`, `gmb ai sessions`/`--delete`, and
+chat-session persistence across invocations.
+
+
 

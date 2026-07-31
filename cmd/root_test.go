@@ -11,8 +11,8 @@ func TestRootCommand(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("rootCmd is nil")
 	}
-	if cmd.Use != "glassmarble" {
-		t.Errorf("Use = %q, want 'glassmarble'", cmd.Use)
+	if cmd.Use != "gmb" {
+		t.Errorf("Use = %q, want 'gmb'", cmd.Use)
 	}
 	if !strings.Contains(cmd.Short, "Architecture Knowledge Graph") {
 		t.Errorf("Short doesn't mention Architecture Knowledge Graph: %q", cmd.Short)

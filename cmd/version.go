@@ -5,7 +5,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-//version command
+// version command
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print the version number of GlassMarble",
