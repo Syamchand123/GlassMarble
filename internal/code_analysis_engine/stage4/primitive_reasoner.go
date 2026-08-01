@@ -34,9 +34,12 @@ func ReasonWholeProgramPrimitives(cpg *Stage4Output) {
 							if sourceNode.PrimitiveScores == nil {
 								sourceNode.PrimitiveScores = make(map[string]float64)
 							}
-							
+
 							// Initial seeding from strings if they don't have scores yet
 							if targetNode.Primitive != "" && len(targetNode.PrimitiveScores) == 0 {
+								if targetNode.PrimitiveScores == nil {
+									targetNode.PrimitiveScores = make(map[string]float64)
+								}
 								parts := strings.Split(targetNode.Primitive, ",")
 								for _, p := range parts {
 									if p != "" {
@@ -46,8 +49,8 @@ func ReasonWholeProgramPrimitives(cpg *Stage4Output) {
 							}
 
 							// Decay factor (e.g. 20% loss per jump)
-							decayFactor := 0.80 
-							
+							decayFactor := 0.80
+
 							for prim, targetScore := range targetNode.PrimitiveScores {
 								attenuatedScore := targetScore * decayFactor
 								if attenuatedScore > 0.1 { // Cutoff threshold to prevent infinite spread
@@ -58,13 +61,13 @@ func ReasonWholeProgramPrimitives(cpg *Stage4Output) {
 									}
 								}
 							}
-							
+
 							// Rebuild string representation for easy viewing
 							var newPrimStrs []string
 							for k := range sourceNode.PrimitiveScores {
 								newPrimStrs = append(newPrimStrs, k)
 							}
-							
+
 							// Sort for deterministic hashing
 							for i := 0; i < len(newPrimStrs); i++ {
 								for j := i + 1; j < len(newPrimStrs); j++ {
@@ -73,7 +76,7 @@ func ReasonWholeProgramPrimitives(cpg *Stage4Output) {
 									}
 								}
 							}
-							
+
 							newPrimStr := strings.Join(newPrimStrs, ",")
 							if sourceNode.Primitive != newPrimStr {
 								sourceNode.Primitive = newPrimStr

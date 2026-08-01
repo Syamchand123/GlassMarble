@@ -43,7 +43,7 @@ type GoImportResolver struct{}
 
 func (r *GoImportResolver) Resolve(importPath, fromFile, rootDir string, wc *WorkspaceContext) []string {
 	clean := strings.Trim(importPath, "\"';`<>")
-	
+
 	// Leverage Workspace Context for exact local mapping (Enterprise Monorepo)
 	if wc != nil && wc.ModulePrefix != "" {
 		if strings.HasPrefix(clean, wc.ModulePrefix) {

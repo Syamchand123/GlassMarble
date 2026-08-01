@@ -75,7 +75,7 @@ func baseNode(tok stage1.RawToken, fileRelPath string) *GASTNode {
 			"content":     tok.Content,
 		},
 	}
-	
+
 	lowerType := strings.ToLower(tok.Type)
 	switch lowerType {
 	case "if_statement", "if", "for_statement", "for",
@@ -100,7 +100,7 @@ func baseNode(tok stage1.RawToken, fileRelPath string) *GASTNode {
 		}
 		node.Properties["condition"] = strings.TrimSpace(cond)
 	}
-	
+
 	return node
 }
 

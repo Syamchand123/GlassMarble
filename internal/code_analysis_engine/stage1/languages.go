@@ -68,9 +68,19 @@ func Registry() []LanguageSpec {
 			NewLanguage: asLang(tree_sitter_go.Language),
 			Declarations: []string{
 				"function_declaration", "method_declaration",
-				"type_declaration", "type_spec", "function_type",
+				"type_spec", "function_type",
 			},
-			Imports: []string{"import_declaration", "import_spec", "import_path_spec"},
+			// type_declaration is a container node (`type Foo struct{...}` wraps a
+			// type_spec, `type ( ... )` wraps several) that carries no name of its
+			// own — classifying it produced an empty-ID GASTTypeDeclaration node
+			// alongside the real type_spec node. Only the leaf type_spec is a
+			// declaration. Same story for import_declaration below (AUDIT Issue 1).
+			// import_declaration is the parenthesized block container (e.g.
+			// `import ( "fmt" "time" )`); only the leaf import_spec /
+			// import_path_spec nodes carry a single import path. Classifying
+			// the container too produced one garbage import string holding
+			// the whole block (AUDIT Issue 1 — fabricated ext: nodes).
+			Imports: []string{"import_spec", "import_path_spec"},
 			Calls:   []string{"call_expression"},
 		},
 		{

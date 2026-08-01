@@ -34,6 +34,10 @@ func (t *CppTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) *GA
 		} else if strings.Contains(tok.Type, "parameter") || strings.Contains(tok.Type, "argument") {
 			node.Type = GASTParameter
 			node.Kind = "parameter"
+		} else if isControlFlowType(tok.Type) {
+			node.Type = GASTControlFlow
+			node.Kind = tok.Type
+			node.Visibility = "internal"
 		} else {
 			node.Type = GASTFunction
 			node.Kind = "function"
@@ -42,14 +46,16 @@ func (t *CppTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) *GA
 			}
 		}
 
-		if strings.Contains(tok.Content, "private:") {
-			node.Visibility = "private"
-		} else if strings.Contains(tok.Content, "protected:") {
-			node.Visibility = "protected"
-		} else {
-			node.Visibility = "public"
+		if node.Type != GASTControlFlow {
+			if strings.Contains(tok.Content, "private:") {
+				node.Visibility = "private"
+			} else if strings.Contains(tok.Content, "protected:") {
+				node.Visibility = "protected"
+			} else {
+				node.Visibility = "public"
+			}
 		}
-		if tok.Type != "namespace_definition" {
+		if node.Type != GASTControlFlow && tok.Type != "namespace_definition" {
 			setDeclarationFQN(node, fileRelPath, tok.Name)
 		}
 	case stage1.TokenCall:

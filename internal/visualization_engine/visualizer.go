@@ -19,30 +19,58 @@ type cacheEntry struct {
 	lastAccess time.Time
 	element    *list.Element
 	ttl        time.Duration
+	bytes      int64
 }
 
 type SubgraphCache struct {
-	mu      sync.RWMutex
-	entries map[string]*cacheEntry
-	lruList *list.List
-	maxSize int
+	mu           sync.RWMutex
+	entries      map[string]*cacheEntry
+	lruList      *list.List
+	maxBytes     int64
+	currentBytes int64
 }
+
+// SubgraphCache budget: the parsed AKG database is cached in full, so the
+// cache is bounded in BYTES (64 MiB default) rather than by entry count
+// (AUDIT Issue 4 Phase 4A-3). LRU eviction runs against the byte budget.
+const subgraphCacheMaxBytes = 64 << 20
 
 var (
 	subgraphCache = &SubgraphCache{
-		entries: make(map[string]*cacheEntry),
-		lruList: list.New(),
-		maxSize: 128,
+		entries:  make(map[string]*cacheEntry),
+		lruList:  list.New(),
+		maxBytes: subgraphCacheMaxBytes,
 	}
 )
 
 // resetCacheForTest clears the global cache. Used only in tests.
 func resetCacheForTest() {
 	subgraphCache = &SubgraphCache{
-		entries: make(map[string]*cacheEntry),
-		lruList: list.New(),
-		maxSize: 128,
+		entries:  make(map[string]*cacheEntry),
+		lruList:  list.New(),
+		maxBytes: subgraphCacheMaxBytes,
 	}
+}
+
+// estimatedBytes approximates the in-memory footprint of a parsed graph:
+// per-node/per-edge structural overhead plus the string contents. It is a
+// lower bound used for LRU budgeting, not a runtime allocation measure.
+func estimatedBytes(graph *types.NativeGraph) int64 {
+	var n int64 = 0
+	for id, node := range graph.Nodes {
+		n += 128 + int64(len(id))
+		if node == nil {
+			continue
+		}
+		n += int64(len(node.Kind)+len(node.Name)+len(node.PrimitiveType)+len(node.FileURI)+len(node.Code)+len(node.PrimitiveZone)) + 64
+		for k, v := range node.Properties {
+			n += int64(len(k)+len(v)) + 64
+		}
+	}
+	for _, e := range graph.Edges {
+		n += 64 + int64(len(e.SourceID)+len(e.Predicate)+len(e.TargetID))
+	}
+	return n
 }
 
 type EngineCoordinator struct {
@@ -59,8 +87,26 @@ func reportProgress(cb func(stage, detail string), stage, detail string) {
 		cb(stage, detail)
 	}
 }
+
 // ProjectDiagram runs the full 7-stage pipeline (parse, scope, extract, metrics, cluster, layout, render).
 func (ec *EngineCoordinator) ProjectDiagram(t types.DiagramType, opts types.QueryOptions) (string, error) {
+	opts.DiagramType = t
+
+	reportProgress(opts.OnProgress, "StageParse", "Parsing AKG database...")
+	full, err := ec.parseGraph(opts)
+	if err != nil {
+		return "", fmt.Errorf("parse failed: %w", err)
+	}
+
+	return ProjectDiagramFromGraph(full, t, opts)
+}
+
+// ProjectDiagramFromGraph runs the 6-stage downstream pipeline (scope,
+// extract, metrics, cluster, layout, render) over an already-loaded graph.
+// Consumers that hold the AKG in memory (the AI bridge snapshot) use this
+// instead of re-parsing the TTL, so the diagram engine consumes the same
+// in-memory form via the AKG API (AUDIT Issue 4 Phase 4A-1).
+func ProjectDiagramFromGraph(full *types.NativeGraph, t types.DiagramType, opts types.QueryOptions) (string, error) {
 	opts.DiagramType = t
 
 	enableMetrics := true
@@ -72,11 +118,9 @@ func (ec *EngineCoordinator) ProjectDiagram(t types.DiagramType, opts types.Quer
 		enableSCC = opts.PipelineCfg.EnableSCC
 	}
 
-	reportProgress(opts.OnProgress, "StageParse", "Parsing AKG database...")
-	full, err := ec.parseGraph(opts)
-	if err != nil {
-		return "", fmt.Errorf("parse failed: %w", err)
-	}
+	// Never mutate a shared cached graph: scoping must operate on a private
+	// copy (AUDIT Issue 2 Phase 2B-9).
+	full = full.Clone()
 
 	if opts.Scope != types.ScopeGlobal {
 		reportProgress(opts.OnProgress, "StageScope", fmt.Sprintf("scoping to %v", opts.Scope))
@@ -87,12 +131,18 @@ func (ec *EngineCoordinator) ProjectDiagram(t types.DiagramType, opts types.Quer
 
 	cfg := stage1.GetExtractionConfig(t, opts)
 	reportProgress(opts.OnProgress, "StageExtract", fmt.Sprintf("config=%s", cfg.Name))
-	subgraph := stage1.ExtractFromSubgraph(full, cfg, opts)
+	subgraph, err := stage1.ExtractFromSubgraph(full, cfg, opts)
+	if err != nil {
+		return "", fmt.Errorf("extract failed: %w", err)
+	}
+	if len(subgraph.Nodes) == 0 {
+		return "", fmt.Errorf("diagram %s produced an empty subgraph (no nodes match the configured node kinds)", string(t))
+	}
 
 	reportProgress(opts.OnProgress, "StageMetrics", fmt.Sprintf("(SCC=%v, %d nodes)", enableSCC, len(subgraph.Nodes)))
 	var metrics *stage2.DiagramMetrics
 	if enableMetrics {
-		metrics = stage2.ComputeAllMetrics(subgraph)
+		metrics = stage2.ComputeAllMetricsWithOptions(subgraph, enableSCC)
 	}
 
 	reportProgress(opts.OnProgress, "StageCluster", "")
@@ -125,12 +175,25 @@ func (ec *EngineCoordinator) ComputeGraphSummary(t types.DiagramType, opts types
 		return nil, fmt.Errorf("parse failed: %w", err)
 	}
 
+	return ComputeGraphSummaryFromGraph(full, t, opts)
+}
+
+// ComputeGraphSummaryFromGraph computes the summary over an already-loaded
+// graph (the AI-bridge in-memory form, AUDIT Issue 4 Phase 4A-1).
+func ComputeGraphSummaryFromGraph(full *types.NativeGraph, t types.DiagramType, opts types.QueryOptions) (*types.GraphSummary, error) {
+	opts.DiagramType = t
+
+	full = full.Clone()
+
 	if opts.Scope != types.ScopeGlobal {
 		stage1.ApplyScope(full, opts)
 	}
 
 	cfg := stage1.GetExtractionConfig(t, opts)
-	subgraph := stage1.ExtractFromSubgraph(full, cfg, opts)
+	subgraph, err := stage1.ExtractFromSubgraph(full, cfg, opts)
+	if err != nil {
+		return nil, fmt.Errorf("extract failed: %w", err)
+	}
 
 	return stage2.ComputeGraphSummary(subgraph), nil
 }
@@ -145,14 +208,12 @@ func (sc *SubgraphCache) Get(key string, mtime time.Time) *types.NativeGraph {
 	}
 
 	if !entry.mtime.Equal(mtime) {
-		delete(sc.entries, key)
-		sc.lruList.Remove(entry.element)
+		sc.dropLocked(key, entry)
 		return nil
 	}
 
 	if time.Since(entry.lastAccess) > entry.ttl {
-		delete(sc.entries, key)
-		sc.lruList.Remove(entry.element)
+		sc.dropLocked(key, entry)
 		return nil
 	}
 
@@ -161,22 +222,29 @@ func (sc *SubgraphCache) Get(key string, mtime time.Time) *types.NativeGraph {
 	return entry.graph
 }
 
+// dropLocked removes an entry, releasing its byte budget. Callers must hold sc.mu.
+func (sc *SubgraphCache) dropLocked(key string, entry *cacheEntry) {
+	delete(sc.entries, key)
+	sc.lruList.Remove(entry.element)
+	sc.currentBytes -= entry.bytes
+	if sc.currentBytes < 0 {
+		sc.currentBytes = 0
+	}
+}
+
 func (sc *SubgraphCache) Set(key string, mtime time.Time, graph *types.NativeGraph) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 
 	if existing, found := sc.entries[key]; found {
-		sc.lruList.Remove(existing.element)
-		delete(sc.entries, key)
+		sc.dropLocked(key, existing)
 	}
 
-	if sc.lruList.Len() >= sc.maxSize {
+	entryBytes := estimatedBytes(graph) + 512
+	for sc.lruList.Len() > 0 && sc.currentBytes+entryBytes > sc.maxBytes {
 		oldest := sc.lruList.Back()
-		if oldest != nil {
-			oldestKey := oldest.Value.(string)
-			delete(sc.entries, oldestKey)
-			sc.lruList.Remove(oldest)
-		}
+		oldestKey := oldest.Value.(string)
+		sc.dropLocked(oldestKey, sc.entries[oldestKey])
 	}
 
 	elem := sc.lruList.PushFront(key)
@@ -186,7 +254,9 @@ func (sc *SubgraphCache) Set(key string, mtime time.Time, graph *types.NativeGra
 		lastAccess: time.Now(),
 		element:    elem,
 		ttl:        10 * time.Minute,
+		bytes:      entryBytes,
 	}
+	sc.currentBytes += entryBytes
 }
 
 func (sc *SubgraphCache) Evict(count int) {
@@ -201,9 +271,15 @@ func (sc *SubgraphCache) Evict(count int) {
 			break
 		}
 		key := oldest.Value.(string)
-		delete(sc.entries, key)
-		sc.lruList.Remove(oldest)
+		sc.dropLocked(key, sc.entries[key])
 	}
+}
+
+// Size reports the number of cached entries and their total estimated bytes.
+func (sc *SubgraphCache) Size() (int, int64) {
+	sc.mu.RLock()
+	defer sc.mu.RUnlock()
+	return sc.lruList.Len(), sc.currentBytes
 }
 
 func (ec *EngineCoordinator) parseGraph(opts types.QueryOptions) (*types.NativeGraph, error) {
@@ -212,12 +288,22 @@ func (ec *EngineCoordinator) parseGraph(opts types.QueryOptions) (*types.NativeG
 		return nil, fmt.Errorf("cannot stat TTL file: %w", err)
 	}
 
-	cacheKey := fmt.Sprintf("parse:%s:%d:%d", ec.ttlPath, info.Size(), info.ModTime().UnixNano())
+	// Scope participates in the cache key: a file-scoped parse (which loads
+	// only the file's triples) must never collide with the global parse
+	// (AUDIT Issue 4 Phase 4A-3).
+	cacheKey := fmt.Sprintf("parse:%s:%d:%d:%d", ec.ttlPath, info.Size(), info.ModTime().UnixNano(), opts.Scope)
 	if cached := subgraphCache.Get(cacheKey, info.ModTime()); cached != nil {
 		return cached, nil
 	}
 
-	native, err := stage1.ParseTTLFileToNative(ec.ttlPath)
+	var native *types.NativeGraph
+	if opts.Scope == types.ScopeFile && opts.ScopePath != "" {
+		// Lazy file-scoped read: only the file's triples are materialized
+		// (AUDIT Issue 4 Phase 4A-2).
+		native, err = stage1.ParseTTLFileToNativeScoped(ec.ttlPath, opts.ScopePath)
+	} else {
+		native, err = stage1.ParseTTLFileToNative(ec.ttlPath)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse Turtle file: %w", err)
 	}

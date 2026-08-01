@@ -1,9 +1,9 @@
 package stage4
 
 import (
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage3"
 	"path/filepath"
 	"strings"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage3"
 )
 
 // LinkCallGraph processes Stage 3's GlobalCallQueue to draw CALLS edges across the CPG.
@@ -12,7 +12,7 @@ func LinkCallGraph(stage3Out *stage3.Stage3Output, cpg *Stage4Output) {
 		return
 	}
 
-	om := stage3.BuildOwnershipMap(stage3Out.GlobalDefinitionIndex, stage3Out.WorkspaceCtx)
+	om := ownershipMap(cpg, stage3Out)
 
 	for _, callSite := range stage3Out.GlobalCallQueue {
 		if len(cpg.ModifiedFiles) > 0 && !cpg.ModifiedFiles[stage3.NormalizeRelativePath(callSite.SourceFilePath)] {
@@ -83,11 +83,13 @@ func resolveCallSite(callSite stage3.LinkedCallSite, om *stage3.OwnershipMap, cp
 	targetFQN, conf := resolveCallTarget(receiver, method, callSite.SourceFilePath, callSite.LocalImports, om, cpg, stage3Out)
 	if targetFQN != "" && callerID != targetFQN {
 		cpg.AddEdgeWithConfidence(callerID, targetFQN, EdgeCalls, callSite.LineNumber, conf)
-		
-		// 1-CFA: Context-Sensitive Resolution for High-Risk utility functions
-		if isHighRiskUtility(method, targetFQN) {
+
+		// 1-CFA: Context-Sensitive Resolution for High-Risk utility functions.
+		// The VIRTUAL_CONTEXT nodes are synthetic noise; kept only behind full
+		// mode (AUDIT Issue 1.4 / Phase 1B-5).
+		if isFullMode(cpg) && isHighRiskUtility(method, targetFQN) {
 			contextNodeID := targetFQN + "@ctx(" + callerID + ")"
-			
+
 			// Create a virtual contextual node if it doesn't exist
 			if _, exists := cpg.GetNode(contextNodeID); !exists {
 				cpg.GraphNodes[contextNodeID] = &ResolvedNode{
@@ -102,10 +104,9 @@ func resolveCallSite(callSite stage3.LinkedCallSite, om *stage3.OwnershipMap, cp
 				// The virtual node is a specialization of the real node
 				cpg.AddEdge(contextNodeID, targetFQN, EdgeInstantiates, 0)
 			}
-			
+
 			cpg.AddEdge(callerID, contextNodeID, EdgeContextCall, callSite.LineNumber)
 		}
-		
 		// 3. Mark Cycle Violation if detected in Stage 3
 		isCycle := false
 		for _, p := range callSite.Primitives {
@@ -114,7 +115,7 @@ func resolveCallSite(callSite stage3.LinkedCallSite, om *stage3.OwnershipMap, cp
 				break
 			}
 		}
-		
+
 		if isCycle {
 			// Find the exact edge we just added (or that already existed) and mark it
 			edgesOut := cpg.OutboundEdges[callerID]
@@ -254,12 +255,27 @@ func resolveCallTarget(receiver, method, filePath string, localImports []string,
 		}
 	}
 
-	// Attempt 4: Match by method name & receiver across cpg.GraphNodes (heuristic fallback)
-	for targetID, node := range cpg.GraphNodes {
-		if node.Name == method && (node.Kind == "FUNCTION" || node.Kind == "METHOD") {
-			recType := node.Properties["receiver_type"]
-			if receiverMatchesTarget(receiver, targetID, recType) {
-				return targetID, 0.3
+	// Attempt 4: Signature-aware resolution via the global symbol index.
+	// Unlike the old first-match scan over every graph node, this is an O(1)
+	// map lookup filtered by an exact receiver-type match, so it never returns
+	// a plausible-looking but wrong target (AUDIT Issue 1.6 / Phase 1B-7).
+	if stage3Out != nil && stage3Out.GlobalDefinitionIndex != nil {
+		if nodes, exists := stage3Out.GlobalDefinitionIndex[method]; exists {
+			for _, node := range nodes {
+				if node == nil {
+					continue
+				}
+				if receiver != "" && !receiverTypeMatches(receiver, node.ReceiverType, node.Properties["receiver_type"]) {
+					continue
+				}
+				resolvedName := node.Name
+				if resolvedName == "" {
+					resolvedName = method
+				}
+				targetID := BuildUniversalID(node.Properties["file_path"], node.ReceiverType, resolvedName)
+				if _, ok := cpg.GetNode(targetID); ok {
+					return targetID, 0.5
+				}
 			}
 		}
 	}
@@ -267,6 +283,9 @@ func resolveCallTarget(receiver, method, filePath string, localImports []string,
 	// Attempt 5: Fallback to Step 3.6 External Dependencies
 	if stage3Out != nil && stage3Out.ExternalDependencies != nil {
 		for _, imp := range localImports {
+			if stage3.IsStdlibImport(imp, filePath) {
+				continue
+			}
 			if extNode, ok := stage3Out.ExternalDependencies[imp]; ok {
 				// Inject the external node into CPG if not present
 				extID := "ext:" + imp
@@ -299,6 +318,34 @@ func resolveCallTarget(receiver, method, filePath string, localImports []string,
 	}
 
 	return "", 0.0
+}
+
+// receiverTypeMatches reports whether a call-site receiver name corresponds to
+// a target's declared receiver type. It compares the last dot-segment of the
+// receiver (e.g. "a.Store", "store", "Store") against the target's receiver
+// type exactly — no substring fuzz, so it can never match "r" because
+// "store" happens to contain it.
+func receiverTypeMatches(receiver, receiverType, receiverTypeProp string) bool {
+	if receiver == "" || receiverType == "" {
+		return false
+	}
+	rec := strings.ToLower(receiver)
+	if idx := strings.LastIndex(rec, "."); idx != -1 {
+		rec = rec[idx+1:]
+	}
+	rec = strings.ReplaceAll(rec, "_", "")
+
+	typ := strings.ToLower(receiverType)
+	typ = strings.ReplaceAll(typ, "_", "")
+	if rec == typ {
+		return true
+	}
+
+	// Fall back to the property-form receiver type if set and different
+	// (e.g. Go translator stores both receiver_type and node.ReceiverType).
+	typProp := strings.ToLower(receiverTypeProp)
+	typProp = strings.ReplaceAll(typProp, "_", "")
+	return typProp != "" && rec == typProp
 }
 
 func receiverMatchesTarget(receiver, targetID, receiverType string) bool {

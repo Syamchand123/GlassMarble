@@ -60,4 +60,3 @@ func RenderDOTDiagram(tree *types.LayoutTree, t types.DiagramType) string {
 	sb.WriteString("}\n")
 	return sb.String()
 }
-

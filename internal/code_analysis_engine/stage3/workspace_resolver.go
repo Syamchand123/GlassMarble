@@ -14,7 +14,7 @@ type WorkspaceContext struct {
 	mu               sync.RWMutex
 	Aliases          map[string]string // e.g., "@mono-auth/auth-lib" -> "packages/auth-lib/src"
 	ModulePrefix     string            // e.g., "github.com/org/repo"
-	ModuleBoundaries []string            // List of folder paths that mark roots of inner modules
+	ModuleBoundaries []string          // List of folder paths that mark roots of inner modules
 }
 
 // NewWorkspaceContext creates a new workspace context.
@@ -125,7 +125,7 @@ func (wc *WorkspaceContext) ScanWorkspace(rootDir string) {
 			}
 		}
 	}
-	
+
 	// 5. Scan for Lerna/Pnpm (lerna.json, pnpm-workspace.yaml)
 	// Simplified detection by looking for inner package.json files
 	_ = filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
@@ -158,7 +158,7 @@ func (wc *WorkspaceContext) GetModuleBoundary(fileRelPath string) string {
 
 	normPath := NormalizeRelativePath(fileRelPath)
 	bestBoundary := ""
-	
+
 	for _, boundary := range wc.ModuleBoundaries {
 		// If file is inside this boundary
 		if strings.HasPrefix(normPath, boundary+"/") || normPath == boundary {

@@ -2,11 +2,12 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
 	"github.com/spf13/cobra"
 )
 
@@ -29,118 +30,146 @@ var inspectCmd = &cobra.Command{
 		}
 
 		storageDir := filepath.Join(dir, ".glassmarble")
-		tm, err := akg.NewAKGTransactionManager(storageDir)
-		if err != nil {
-			return fmt.Errorf("failed to open AKG database: %w", err)
-		}
-
-		snapshot := tm.GetActiveSnapshot()
-		if snapshot == nil || snapshot.Nodes.Len() == 0 {
+		if _, err := os.Stat(filepath.Join(storageDir, "akg_state.ttl")); os.IsNotExist(err) {
 			return fmt.Errorf("AKG database is empty -- run 'glassmarble analyze' first")
 		}
 
+		// Lazy Query-based reads: inspect never restores the whole graph from
+		// disk (AUDIT Issue 4 Phase 4A-2). Each mode streams only what it
+		// needs through the single canonical parser.
 		if inspectFile != "" && inspectLine > 0 {
-			nodes, exists := snapshot.LineIndex.Get(inspectFile)
-			if !exists {
-				return fmt.Errorf("no symbols found for file: %s", inspectFile)
+			target, err := findNodeAtLine(storageDir, inspectFile, inspectLine)
+			if err != nil {
+				return err
 			}
-
-			// Binary search for the narrowest matching node (or the last node starting before/on line)
-			idx := sort.Search(len(nodes), func(i int) bool {
-				return nodes[i].FileSpec.LineStart > inspectLine
-			})
-
-			if idx > 0 {
-				node := nodes[idx-1]
-				if node.FileSpec.LineStart <= inspectLine && (node.FileSpec.LineEnd == 0 || node.FileSpec.LineEnd >= inspectLine) {
-					// We found a matching node, print its details
-					args = []string{node.ID}
-				} else {
-					return fmt.Errorf("no symbol covers line %d in %s", inspectLine, inspectFile)
-				}
-			} else {
-				return fmt.Errorf("no symbol covers line %d in %s", inspectLine, inspectFile)
-			}
+			args = []string{target}
 		}
 
 		if inspectList {
-			fmt.Println("=== Entry Points & Callable Symbols ===")
-			count := 0
-			for _, id := range snapshot.Nodes.Keys() {
-				node, _ := snapshot.Nodes.Get(id)
-				if node.Kind == "FUNCTION" || node.Kind == "METHOD" {
-					if inspectKind == "" || strings.EqualFold(node.Kind, inspectKind) {
-						fmt.Printf("  - [%s] %s (%s:L%d)\n", node.Kind, id, node.FileSpec.Path, node.FileSpec.LineStart)
-						count++
-						if count >= 30 {
-							fmt.Println("  ... (showing first 30 entry points)")
-							break
-						}
-					}
-				}
-			}
-			return nil
+			return streamNodeList(storageDir)
 		}
 
 		if inspectSearch != "" {
-			fmt.Printf("=== Search Results for '%s' ===\n", inspectSearch)
-			count := 0
-			lowerSearch := strings.ToLower(inspectSearch)
-			for _, id := range snapshot.Nodes.Keys() {
-				node, _ := snapshot.Nodes.Get(id)
-				if strings.Contains(strings.ToLower(id), lowerSearch) || strings.Contains(strings.ToLower(node.Name), lowerSearch) {
-					fmt.Printf("  ID: %s\n  Kind: %s | File: %s:L%d\n  Primitive: %s\n\n", id, node.Kind, node.FileSpec.Path, node.FileSpec.LineStart, node.Primitive)
-					count++
-					if count >= 20 {
-						fmt.Println("... (truncated to top 20 matches)")
-						break
-					}
-				}
-			}
-			return nil
+			return streamNodeSearch(storageDir)
 		}
 
 		if len(args) > 0 {
-			targetID := args[0]
-			node, exists := snapshot.Nodes.Get(targetID)
-			if !exists {
-				return fmt.Errorf("node ID '%s' not found in AKG", targetID)
-			}
-
-			fmt.Printf("=== Node Details: %s ===\n", node.ID)
-			fmt.Printf("  Name:      %s\n", node.Name)
-			fmt.Printf("  Kind:      %s\n", node.Kind)
-			fmt.Printf("  Primitive: %s\n", node.Primitive)
-			fmt.Printf("  File Path: %s (L%d - L%d)\n", node.FileSpec.Path, node.FileSpec.LineStart, node.FileSpec.LineEnd)
-
-			if len(node.Properties) > 0 {
-				fmt.Println("  Properties:")
-				for k, v := range node.Properties {
-					fmt.Printf("    %s: %s\n", k, v)
-				}
-			}
-
-			outEdges, _ := snapshot.OutboundEdges.Get(targetID)
-			if len(outEdges) > 0 {
-				fmt.Printf("  Outbound Edges (%d):\n", len(outEdges))
-				for _, e := range outEdges {
-					fmt.Printf("    -> %s [%s] (L%d)\n", e.TargetID, e.Type, e.LineNumber)
-				}
-			}
-
-			inEdges, _ := snapshot.InboundEdges.Get(targetID)
-			if len(inEdges) > 0 {
-				fmt.Printf("  Inbound Edges (%d):\n", len(inEdges))
-				for _, e := range inEdges {
-					fmt.Printf("    <- %s [%s] (L%d)\n", e.SourceID, e.Type, e.LineNumber)
-				}
-			}
-
-			return nil
+			return showNodeDetails(storageDir, args[0])
 		}
 
 		return cmd.Help()
 	},
+}
+
+// findNodeAtLine reproduces the LineIndex binary-search result without
+// loading the index: nodes are streamed and filtered to the file, the node
+// with the largest LineStart <= line wins (ties: last seen, matching the
+// sorted-index lookup order).
+func findNodeAtLine(storageDir, filePath string, line int) (string, error) {
+	norm := normalizeInspectPath(filePath)
+	bestID := ""
+	bestStart := -1
+	err := akg.StreamNodes(storageDir, func(n *stage4.ResolvedNode) bool {
+		if normalizeInspectPath(n.FileSpec.Path) != norm {
+			return true
+		}
+		if n.FileSpec.LineStart > line {
+			return true
+		}
+		if n.FileSpec.LineStart >= bestStart {
+			bestStart = n.FileSpec.LineStart
+			bestID = n.ID
+		}
+		return true
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to scan AKG: %w", err)
+	}
+	if bestID == "" {
+		return "", fmt.Errorf("no symbols found for file: %s", filePath)
+	}
+	return bestID, nil
+}
+
+func streamNodeList(storageDir string) error {
+	fmt.Println("=== Entry Points & Callable Symbols ===")
+	count := 0
+	err := akg.StreamNodes(storageDir, func(n *stage4.ResolvedNode) bool {
+		if n.Kind == "FUNCTION" || n.Kind == "METHOD" {
+			if inspectKind == "" || strings.EqualFold(n.Kind, inspectKind) {
+				fmt.Printf("  - [%s] %s (%s:L%d)\n", n.Kind, n.ID, n.FileSpec.Path, n.FileSpec.LineStart)
+				count++
+				if count >= 30 {
+					fmt.Println("  ... (showing first 30 entry points)")
+					return false
+				}
+			}
+		}
+		return true
+	})
+	return err
+}
+
+func streamNodeSearch(storageDir string) error {
+	fmt.Printf("=== Search Results for '%s' ===\n", inspectSearch)
+	count := 0
+	lowerSearch := strings.ToLower(inspectSearch)
+	err := akg.StreamNodes(storageDir, func(n *stage4.ResolvedNode) bool {
+		if strings.Contains(strings.ToLower(n.ID), lowerSearch) || strings.Contains(strings.ToLower(n.Name), lowerSearch) {
+			fmt.Printf("  ID: %s\n  Kind: %s | File: %s:L%d\n  Primitive: %s\n\n", n.ID, n.Kind, n.FileSpec.Path, n.FileSpec.LineStart, n.Primitive)
+			count++
+			if count >= 20 {
+				fmt.Println("... (truncated to top 20 matches)")
+				return false
+			}
+		}
+		return true
+	})
+	return err
+}
+
+func showNodeDetails(storageDir, targetID string) error {
+	node, outEdges, inEdges, err := akg.QueryNode(storageDir, targetID)
+	if err != nil {
+		return fmt.Errorf("failed to open AKG database: %w", err)
+	}
+	if node == nil {
+		return fmt.Errorf("node ID '%s' not found in AKG", targetID)
+	}
+
+	fmt.Printf("=== Node Details: %s ===\n", node.ID)
+	fmt.Printf("  Name:      %s\n", node.Name)
+	fmt.Printf("  Kind:      %s\n", node.Kind)
+	fmt.Printf("  Primitive: %s\n", node.Primitive)
+	fmt.Printf("  File Path: %s (L%d - L%d)\n", node.FileSpec.Path, node.FileSpec.LineStart, node.FileSpec.LineEnd)
+
+	if len(node.Properties) > 0 {
+		fmt.Println("  Properties:")
+		for k, v := range node.Properties {
+			fmt.Printf("    %s: %s\n", k, v)
+		}
+	}
+
+	if len(outEdges) > 0 {
+		fmt.Printf("  Outbound Edges (%d):\n", len(outEdges))
+		for _, e := range outEdges {
+			fmt.Printf("    -> %s [%s] (L%d)\n", e.TargetID, e.Type, e.LineNumber)
+		}
+	}
+
+	if len(inEdges) > 0 {
+		fmt.Printf("  Inbound Edges (%d):\n", len(inEdges))
+		for _, e := range inEdges {
+			fmt.Printf("    <- %s [%s] (L%d)\n", e.SourceID, e.Type, e.LineNumber)
+		}
+	}
+
+	return nil
+}
+
+// normalizeInspectPath mirrors akg.normalizePath, the key space of LineIndex.
+func normalizeInspectPath(path string) string {
+	return filepath.Clean(filepath.ToSlash(path))
 }
 
 func init() {

@@ -138,8 +138,8 @@ func TestRenderC4DynamicDiagram(t *testing.T) {
 		},
 	}
 	output := RenderDiagram(tree, types.C4Dynamic)
-	if !strings.Contains(output, "C4Context") {
-		t.Error("expected output to contain 'C4Context'")
+	if !strings.Contains(output, "sequenceDiagram") {
+		t.Error("expected output to contain 'sequenceDiagram'")
 	}
 	nodeInOutput(t, output, "a")
 }
@@ -158,8 +158,8 @@ func TestRenderC4DeploymentDiagram(t *testing.T) {
 		},
 	}
 	output := RenderDiagram(tree, types.C4Deployment)
-	if !strings.Contains(output, "C4Container") {
-		t.Error("expected output to contain 'C4Container'")
+	if !strings.Contains(output, "C4Deployment") {
+		t.Error("expected output to contain 'C4Deployment'")
 	}
 	nodeInOutput(t, output, "db")
 	nodeInOutput(t, output, "ns1")

@@ -44,11 +44,16 @@ func (t *JavaTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) *G
 			node.Type = GASTFunction
 			node.Kind = "constructor"
 		default:
-			node.Type = GASTFunction
-			node.Kind = "method"
+			if isControlFlowType(tok.Type) {
+				node.Type = GASTControlFlow
+				node.Kind = tok.Type
+			} else {
+				node.Type = GASTFunction
+				node.Kind = "method"
+			}
 		}
 		node.Visibility = resolveJavaVisibility(tok.Content)
-		if tok.Type != "package_declaration" && tok.Type != "field_declaration" && tok.Type != "formal_parameter" {
+		if node.Type != GASTControlFlow && tok.Type != "package_declaration" && tok.Type != "field_declaration" && tok.Type != "formal_parameter" {
 			setDeclarationFQN(node, fileRelPath, tok.Name)
 		}
 	case stage1.TokenCall:

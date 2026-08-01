@@ -83,7 +83,12 @@ func diagramTools() []Tool {
 						EnableSCC:         boolArg(args, "scc", true),
 					}
 				}
-				markup, err := visualization_engine.NewEngineCoordinator(ttlPath).ProjectDiagram(dt, opts)
+				// Single-source in-memory read: when the bridge already holds
+				// the AKG snapshot, render from it instead of re-parsing the
+				// TTL (AUDIT Issue 4 Phase 4A-1). The TTL-parsing engine
+				// coordinator remains the fallback for sessions without a
+				// bridge.
+				markup, err := renderFromSnapshotOrTTL(env, ttlPath, dt, opts)
 				if err != nil {
 					return nil, fmt.Errorf("diagram generation failed: %w", err)
 				}
@@ -133,20 +138,20 @@ func diagramTools() []Tool {
 					Scope:         scope,
 					ScopePath:     scopePath,
 				}
-				s, err := visualization_engine.NewEngineCoordinator(ttlPath).ComputeGraphSummary(dt, opts)
+				summary, err := summarizeFromSnapshotOrTTL(env, ttlPath, dt, opts)
 				if err != nil {
 					return nil, fmt.Errorf("diagram summary failed: %w", err)
 				}
 				return map[string]any{
-					"node_count":       s.NodeCount,
-					"edge_count":       s.EdgeCount,
-					"density":          s.Density,
-					"diameter":         s.Diameter,
-					"avg_path_length":  s.AvgPathLength,
-					"cluster_count":    s.ClusterCount,
-					"largest_scc_size": s.LargestSCCSize,
-					"god_object_count": s.GodObjectCount,
-					"bipartite_score":  s.BipartiteScore,
+					"node_count":       summary.NodeCount,
+					"edge_count":       summary.EdgeCount,
+					"density":          summary.Density,
+					"diameter":         summary.Diameter,
+					"avg_path_length":  summary.AvgPathLength,
+					"cluster_count":    summary.ClusterCount,
+					"largest_scc_size": summary.LargestSCCSize,
+					"god_object_count": summary.GodObjectCount,
+					"bipartite_score":  summary.BipartiteScore,
 				}, nil
 			},
 		},
@@ -196,4 +201,32 @@ func saveDiagramMarkup(rootDir string, dt types.DiagramType, markup string) (str
 		return "", fmt.Errorf("failed to write diagram: %w", err)
 	}
 	return filePath, nil
+}
+
+// renderFromSnapshotOrTTL renders a diagram from the bridge's in-memory AKG
+// snapshot when available (single canonical parser, no second TTL parse —
+// AUDIT Issue 4 Phase 4A-1), falling back to the TTL-parsing engine
+// coordinator otherwise.
+func renderFromSnapshotOrTTL(env *Env, ttlPath string, dt types.DiagramType, opts types.QueryOptions) (string, error) {
+	if env != nil && env.Bridge != nil {
+		if snap, err := env.Bridge.Snapshot(); err == nil {
+			if markup, err := visualization_engine.ProjectDiagramFromGraph(snap.ToNativeGraph(), dt, opts); err == nil {
+				return markup, nil
+			}
+		}
+	}
+	return visualization_engine.NewEngineCoordinator(ttlPath).ProjectDiagram(dt, opts)
+}
+
+// summarizeFromSnapshotOrTTL is the summary counterpart of
+// renderFromSnapshotOrTTL.
+func summarizeFromSnapshotOrTTL(env *Env, ttlPath string, dt types.DiagramType, opts types.QueryOptions) (*types.GraphSummary, error) {
+	if env != nil && env.Bridge != nil {
+		if snap, err := env.Bridge.Snapshot(); err == nil {
+			if summary, err := visualization_engine.ComputeGraphSummaryFromGraph(snap.ToNativeGraph(), dt, opts); err == nil {
+				return summary, nil
+			}
+		}
+	}
+	return visualization_engine.NewEngineCoordinator(ttlPath).ComputeGraphSummary(dt, opts)
 }

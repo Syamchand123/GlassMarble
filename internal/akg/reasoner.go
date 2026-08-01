@@ -24,6 +24,19 @@ const (
 	RuleTierArchitectural = "architectural"
 )
 
+// maxMacroCacheEntries bounds the macro-inference cache (AUDIT Issue 4
+// Phase 4B-7): one entry per distinct node key, capped to prevent unbounded
+// memory growth on large graphs.
+const maxMacroCacheEntries = 10000
+
+// capMacroCache resets the macro-inference cache when it exceeds the bound.
+func capMacroCache(cache *CowMap[string, []string]) *CowMap[string, []string] {
+	if cache != nil && cache.Len() > maxMacroCacheEntries {
+		return NewCowMap[string, []string]()
+	}
+	return cache
+}
+
 // RunTopologicalMacroInference executes Sub-Step D.2: Topological Macro-Inference Parsing.
 // It walks execution paths across functional primitives to infer high-level C4 component rules.
 // An optional LinkerConfig controls which tiers of rules are applied.
@@ -55,6 +68,7 @@ func RunTopologicalMacroInference(graph *CodePropertyGraph, config ...stage4.Lin
 	if graph.macroCache == nil {
 		graph.macroCache = NewCowMap[string, []string]()
 	}
+	graph.macroCache = capMacroCache(graph.macroCache)
 
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 32)
@@ -73,7 +87,7 @@ func RunTopologicalMacroInference(graph *CodePropertyGraph, config ...stage4.Lin
 			return
 		}
 		if node.Kind == "MODULE" || node.Kind == "FILE" || node.Kind == "STRUCT" || node.Kind == "CLASS" || node.Kind == "FUNCTION" {
-			key := nodeMacroKey(node, graph)
+			key := nodeMacroKey(node, graph, macroMode, disabledRules)
 			if cached, ok := graph.macroCache.Get(key); ok {
 				graph.MacroRules = graph.MacroRules.Set(nodeID, cached)
 				if node.Properties == nil {
@@ -96,6 +110,7 @@ func RunTopologicalMacroInference(graph *CodePropertyGraph, config ...stage4.Lin
 			inferMacroRulesForNode(id, n, graph, &mu, macroMode, disabledRules)
 
 			mu.Lock()
+			graph.macroCache = capMacroCache(graph.macroCache)
 			rules, _ := graph.MacroRules.Get(id)
 			graph.macroCache = graph.macroCache.Set(key, rules)
 			mu.Unlock()

@@ -22,24 +22,29 @@ type ArchitecturalSummary struct {
 
 // CodePropertyGraph represents the live in-memory persistent database of the Architectural Knowledge Graph (AKG).
 type CodePropertyGraph struct {
-	mu            sync.RWMutex                                `json:"-"`
-	SchemaVersion int                                         `json:"schema_version"`
-	CommitHash    string                                      `json:"commit_hash"`
-	Version       uint64                                      `json:"version"`
-	Nodes         *CowMap[string, *stage4.ResolvedNode]       `json:"-"`
-	macroCache    *CowMap[string, []string]                   `json:"-"`
-	macroHash     string                                      `json:"-"`
-	OutboundEdges *CowMap[string, []stage4.ResolvedEdge]      `json:"-"`
-	InboundEdges  *CowMap[string, []stage4.ResolvedEdge]      `json:"-"`
-	FileNodeIndex *CowMap[string, map[string]bool]            `json:"-"`
-	LineIndex     *CowMap[string, []*stage4.ResolvedNode]     `json:"-"`
-	MacroRules    *CowMap[string, []string]                   `json:"-"`
-	KindIndex     *CowMap[string, map[string]bool]            `json:"-"`
-	HashIndex     *CowMap[string, []string]                   `json:"-"`
-	Summary       *ArchitecturalSummary                       `json:"summary,omitempty"`
-	Errors        []DanglingReferenceError                    `json:"errors,omitempty"`
-	Entrypoints   []string                                    `json:"entrypoints,omitempty"`
-	FolderZones   *CowMap[string, string]                     `json:"-"`
+	mu            sync.RWMutex                            `json:"-"`
+	SchemaVersion int                                     `json:"schema_version"`
+	CommitHash    string                                  `json:"commit_hash"`
+	Version       uint64                                  `json:"version"`
+	Nodes         *CowMap[string, *stage4.ResolvedNode]   `json:"-"`
+	macroCache    *CowMap[string, []string]               `json:"-"`
+	macroHash     string                                  `json:"-"`
+	OutboundEdges *CowMap[string, []stage4.ResolvedEdge]  `json:"-"`
+	InboundEdges  *CowMap[string, []stage4.ResolvedEdge]  `json:"-"`
+	FileNodeIndex *CowMap[string, map[string]bool]        `json:"-"`
+	LineIndex     *CowMap[string, []*stage4.ResolvedNode] `json:"-"`
+	MacroRules    *CowMap[string, []string]               `json:"-"`
+	KindIndex     *CowMap[string, map[string]bool]        `json:"-"`
+	HashIndex     *CowMap[string, []string]               `json:"-"`
+	Summary       *ArchitecturalSummary                   `json:"summary,omitempty"`
+	Errors        []DanglingReferenceError                `json:"errors,omitempty"`
+	Entrypoints   []string                                `json:"entrypoints,omitempty"`
+	FolderZones   *CowMap[string, string]                 `json:"-"`
+	// Verified and VerificationMsg are set by the post-write verification step
+	// (AUDIT Issue 5 Phase 5A-1): Verified=false means the persisted TTL
+	// contained findings (currently: dangling edges) and should be inspected.
+	Verified        bool
+	VerificationMsg string
 }
 
 // DanglingReferenceError records structural edge breakage during invariant audit.
@@ -701,6 +706,8 @@ func (cpg *CodePropertyGraph) Clone() *CodePropertyGraph {
 		s := *cpg.Summary
 		clone.Summary = &s
 	}
+	clone.Verified = cpg.Verified
+	clone.VerificationMsg = cpg.VerificationMsg
 
 	return clone
 }

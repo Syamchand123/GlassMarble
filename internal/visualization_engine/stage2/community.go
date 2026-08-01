@@ -98,13 +98,18 @@ func communityEdgeWeight(predicate string) float64 {
 	}
 }
 
-// modularityGain calculates the potential modularity gain if a node moves to a new community.
+// modularityGain returns the best neighbor community for a node along with its
+// modularity gain, or the current community with gain 0 when no move improves
+// modularity. Never returns an empty-string community (AUDIT Issue 2 §2.4).
 func modularityGain(currentCommunity string, neighborCommunities map[string]float64, totalWeight float64, nodeDegree float64) (string, float64) {
 	bestCommunity := currentCommunity
 	bestGain := 0.0
 
 	for nc, weightToCommunity := range neighborCommunities {
-		gain := weightToCommunity / totalWeight - (nodeDegree*nodeDegree)/(2*totalWeight*totalWeight)
+		if nc == "" {
+			continue
+		}
+		gain := weightToCommunity/totalWeight - (nodeDegree*nodeDegree)/(2*totalWeight*totalWeight)
 		if gain > bestGain {
 			bestGain = gain
 			bestCommunity = nc

@@ -331,3 +331,23 @@ func TestMacroRule_LowCohesion(t *testing.T) {
 	}
 	assert.True(t, found, "package should have Low Cohesion rule")
 }
+
+func TestMacroCacheCap(t *testing.T) {
+	cache := NewCowMap[string, []string]()
+	for i := 0; i < maxMacroCacheEntries+1; i++ {
+		cache = cache.Set(fmt.Sprintf("key-%d", i), []string{"rule"})
+	}
+	if cache.Len() <= maxMacroCacheEntries {
+		t.Fatalf("precondition: expected >%d entries, got %d", maxMacroCacheEntries, cache.Len())
+	}
+	capped := capMacroCache(cache)
+	if capped.Len() != 0 {
+		t.Errorf("capMacroCache must reset the cache once the bound is exceeded, got %d entries", capped.Len())
+	}
+	// Below the bound the cache is untouched.
+	cache = NewCowMap[string, []string]()
+	cache = cache.Set("k", []string{"rule"})
+	if capMacroCache(cache).Len() != 1 {
+		t.Error("capMacroCache must not touch a cache within the bound")
+	}
+}

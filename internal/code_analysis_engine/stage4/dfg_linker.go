@@ -24,7 +24,7 @@ func LinkDataFlowGraph(stage3Out *stage3.Stage3Output, cpg *Stage4Output) {
 		return
 	}
 
-	om := stage3.BuildOwnershipMap(stage3Out.GlobalDefinitionIndex, stage3Out.WorkspaceCtx)
+	om := ownershipMap(cpg, stage3Out)
 
 	var dfgSummaries map[string]*dfgVarSummary
 	if cpg.Config.LevelOfDetail == LevelStandard {
@@ -68,7 +68,7 @@ func extractDFGFromGAST(node *stage2.GASTNode, relPath, currentFuncID string, cp
 
 	funcID := currentFuncID
 	if node.Type == stage2.GASTFunction {
-		funcID = BuildUniversalID(relPath, node.ReceiverType, node.Name)
+		funcID = universalFuncID(relPath, node.ReceiverType, node.Name)
 		if dfgSummaries != nil && funcID != "" {
 			if _, ok := dfgSummaries[funcID]; !ok {
 				dfgSummaries[funcID] = &dfgVarSummary{}
@@ -123,8 +123,10 @@ func extractDFGFromGAST(node *stage2.GASTNode, relPath, currentFuncID string, cp
 	}
 
 skipDFGNode:
-	// Trace call arguments data flow and Database Taint
-	if funcID != "" && node.Type == stage2.GASTCallExpression {
+	// Trace call arguments data flow and Database Taint. Per-call DATA_FLOW
+	// edges duplicate the CALLS edge from the callgraph linker; they only run
+	// in full mode (AUDIT Issue 1.5 / Phase 1B-5).
+	if isFullMode(cpg) && funcID != "" && node.Type == stage2.GASTCallExpression {
 		content := node.Properties["content"]
 		if content == "" {
 			content = node.Name

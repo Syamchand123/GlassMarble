@@ -26,7 +26,7 @@ func traverseForFFI(dir *stage3.DirectoryNode, cpg *Stage4Output) {
 		if len(cpg.ModifiedFiles) > 0 && !cpg.ModifiedFiles[stage3.NormalizeRelativePath(file.RelativePath)] {
 			continue
 		}
-		
+
 		// If it's a Go file and imports "C"
 		hasCGO := false
 		for _, node := range file.GASTRoot.Children {
@@ -51,7 +51,7 @@ func extractFFIFromGAST(node *stage2.GASTNode, relPath, currentFuncID string, cp
 	}
 	funcID := currentFuncID
 	if node.Type == stage2.GASTFunction {
-		funcID = BuildUniversalID(relPath, node.ReceiverType, node.Name)
+		funcID = universalFuncID(relPath, node.ReceiverType, node.Name)
 	}
 
 	if funcID != "" && node.Type == stage2.GASTCallExpression {

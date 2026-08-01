@@ -84,9 +84,10 @@ func TestAKGStatusTool(t *testing.T) {
 		t.Fatalf("akg_status: %v", err)
 	}
 	d := dataOf(t, v)
-	// The transaction manager restores the graph from the TTL, which stamps
-	// the commit hash and loses the recorded entrypoints (real behavior).
-	if d["commit"] != "restored_from_ttl" {
+	// The transaction manager restores the graph from the TTL, which now
+	// carries the commit hash and the entrypoint registry in metadata
+	// (AUDIT Issue 3 Phase 3B-7/3B-8: both were previously lost on restore).
+	if d["commit"] != "abc1234" {
 		t.Errorf("commit = %v", d["commit"])
 	}
 	if d["nodes"] != float64(4) {
@@ -95,7 +96,7 @@ func TestAKGStatusTool(t *testing.T) {
 	if d["edges"] != float64(3) {
 		t.Errorf("edges = %v", d["edges"])
 	}
-	if d["entrypoints"] != float64(0) {
+	if d["entrypoints"] != float64(1) {
 		t.Errorf("entrypoints = %v", d["entrypoints"])
 	}
 }
@@ -139,10 +140,11 @@ func TestAKGSearchTool(t *testing.T) {
 		t.Fatalf("akg_search kind: %v", err)
 	}
 	d = dataOf(t, v)
-	// Macro inference relabels fixture methods to FUNCTION on restore, and
-	// the bridge repairs the dropped KindIndex so kind search sees them.
-	if d["count"] != float64(3) {
-		t.Errorf("kind search count = %v, want 3", d["count"])
+	// Kinds are restored precisely: main + helper stay FUNCTION, and the
+	// Save METHOD no longer degrades to FUNCTION (the old gm:Executable
+	// fallback mapping was removed).
+	if d["count"] != float64(2) {
+		t.Errorf("kind search count = %v, want 2", d["count"])
 	}
 }
 
@@ -153,16 +155,18 @@ func TestAKGGetNodeTool(t *testing.T) {
 		t.Fatalf("akg_get_node: %v", err)
 	}
 	d := dataOf(t, v)
-	// Macro inference relabels fixture methods to FUNCTION on TTL restore.
-	if d["kind"] != "FUNCTION" || d["name"] != "Save" {
+	// Kinds are restored precisely: Save stays METHOD on TTL restore.
+	if d["kind"] != "METHOD" || d["name"] != "Save" {
 		t.Errorf("node fields: %v", d)
 	}
 	if d["inbound_edges"] != float64(2) || d["outbound_edges"] != float64(1) {
 		t.Errorf("edge counts: %v", d)
 	}
+	// Persisted properties survive restore (macro_rules is derived data and
+	// is intentionally NOT persisted; the fixture's role property must).
 	props, _ := d["properties"].(map[string]any)
-	if len(props) == 0 {
-		t.Errorf("expected inferred properties: %v", d["properties"])
+	if props["role"] != "persistence" {
+		t.Errorf("expected persisted properties, got: %v", d["properties"])
 	}
 
 	if _, err := call(t, env, "akg_get_node", `{"id": "nope"}`); err == nil {
@@ -365,9 +369,9 @@ func TestAKGEntrypointsTool(t *testing.T) {
 		t.Fatalf("akg_entrypoints: %v", err)
 	}
 	d := dataOf(t, v)
-	// TTL restoration does not carry the entrypoint registry.
-	if d["count"] != float64(0) {
-		t.Errorf("entrypoints = %v, want 0", d["count"])
+	// The entrypoint registry is persisted (gm:isEntrypoint) and restored.
+	if d["count"] != float64(1) {
+		t.Errorf("entrypoints = %v, want 1", d["count"])
 	}
 }
 
@@ -529,7 +533,7 @@ func TestSystemStatusTool(t *testing.T) {
 	if counts["nodes"] != float64(4) {
 		t.Errorf("counts: %v", counts)
 	}
-	if akgInfo["commit"] != "restored_from_ttl" {
+	if akgInfo["commit"] != "abc1234" {
 		t.Errorf("commit: %v", akgInfo["commit"])
 	}
 }

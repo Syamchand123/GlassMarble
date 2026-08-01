@@ -110,7 +110,11 @@ type Config struct {
 	MaxFileBytes  int64
 	BufferSize    int
 	IncludeHidden bool
-	Ctx           context.Context
+	// GitTrackedOnly restricts discovery to files tracked by git
+	// (git ls-files). When the directory is not a git repository the walker
+	// falls back to scanning everything (AUDIT Issue 1.8 / Phase 1C-9).
+	GitTrackedOnly bool
+	Ctx            context.Context
 }
 
 const defaultMaxFileBytes = 2 << 20

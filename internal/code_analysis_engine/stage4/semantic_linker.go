@@ -51,20 +51,11 @@ func LinkEnterpriseSemantics(stage3Out *stage3.Stage3Output, cpg *Stage4Output) 
 			}
 		}
 
-		// 4. Concurrency Spawns
-		for _, spawn := range symTable.ConcurrencySpawns {
-			callerFQN := "file:" + stage3.NormalizeRelativePath(relPath)
-			ensureVirtualNode("thread_or_coroutine", "VIRTUAL_RESOURCE", "Concurrent Execution", cpg)
-			cpg.AddEdge(callerFQN, "thread_or_coroutine", EdgeSpawnsConcurrent, spawn.LineNumber)
-		}
-
-		// 5. Event Hooks
-		for _, evt := range symTable.EventHooks {
-			callerFQN := "file:" + stage3.NormalizeRelativePath(relPath)
-			topicID := "event:" + evt.EventName
-			ensureVirtualNode(topicID, "EVENT_TOPIC", evt.EventName, cpg)
-			cpg.AddEdge(callerFQN, topicID, EdgeDispatchesEvent, evt.LineNumber)
-		}
+		// 4/5. Concurrency spawns and event hooks are linked by
+		// LinkConcurrencyAndAsyncControlFlow and LinkEventSourcing respectively.
+		// The old duplicate SPAWNS_CONCURRENT (to a shared thread_or_coroutine
+		// node) and DISPATCHES_EVENT ("event:unknown") edges here fabricated
+		// noise and double-linked the same calls (AUDIT Issue 1.5 / Phase 1B-6).
 	}
 
 	// 6. Enterprise Semantics: Databases & Cloud APIs

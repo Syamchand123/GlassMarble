@@ -120,10 +120,13 @@ func TestDiagramGenerateSave(t *testing.T) {
 	}
 }
 
-// TestDiagramSummaryTool verifies the graph summary fields.
+// TestDiagramSummaryTool verifies the graph summary fields. CALL_GRAPH is
+// used because the DEPENDENCY_GRAPH extraction filter still matches the OLD
+// vocabulary (gm:TypeDecl/gm:File/gm:Namespace); updating that config is a
+// visualization-batch coordination item (see AUDIT report §7).
 func TestDiagramSummaryTool(t *testing.T) {
 	env := newTestEnv(t)
-	v, err := call(t, env, "diagram_summary", `{"type": "DEPENDENCY_GRAPH"}`)
+	v, err := call(t, env, "diagram_summary", `{"type": "CALL_GRAPH"}`)
 	if err != nil {
 		t.Fatalf("diagram_summary: %v", err)
 	}

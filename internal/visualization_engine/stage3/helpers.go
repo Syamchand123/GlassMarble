@@ -30,6 +30,69 @@ func sanitizeName(name string) string {
 	return res
 }
 
+// aliasRegistry assigns unique, sanitized aliases to graph IDs. sanitizeName
+// alone is not injective (AUDIT Issue 2 Phase 2C-11): IDs like
+// "user-service.go::X" and "user_service.go::X" both map to
+// "user_service_go_X", which would collide in Mermaid/PlantUML/DOT.
+// Collisions get numeric suffixes. Registration order is deterministic
+// because renderers walk the layout tree, whose nodes and children are sorted.
+type aliasRegistry struct {
+	used  map[string]string
+	count map[string]int
+	byID  map[string]string
+}
+
+func newAliasRegistry() *aliasRegistry {
+	return &aliasRegistry{used: make(map[string]string), count: make(map[string]int), byID: make(map[string]string)}
+}
+
+func (r *aliasRegistry) alias(id string) string {
+	if a, ok := r.byID[id]; ok {
+		return a
+	}
+	base := sanitizeName(id)
+	if base == "" {
+		base = "node"
+	}
+	n := r.count[base]
+	for {
+		candidate := base
+		if n > 0 {
+			candidate = fmt.Sprintf("%s_%d", base, n)
+		}
+		if _, taken := r.used[candidate]; !taken {
+			r.used[candidate] = id
+			r.byID[id] = candidate
+			r.count[base] = n + 1
+			return candidate
+		}
+		n++
+	}
+}
+
+// boundary registers a boundary (subgraph) alias in a namespace separate from
+// node aliases so a boundary and a node can never collide.
+func (r *aliasRegistry) boundary(name string) string {
+	return r.alias("sb_" + sanitizeName(name))
+}
+
+// registerTreeAliases pre-registers deterministic aliases for every node and
+// boundary in the tree, walking it in the same order the renderers do.
+func registerTreeAliases(tree *types.LayoutTree, reg *aliasRegistry) {
+	if tree == nil {
+		return
+	}
+	if tree.BoundaryName != "Root" && tree.BoundaryName != "" {
+		reg.boundary(tree.BoundaryName)
+	}
+	for _, n := range tree.Nodes {
+		reg.alias(n.ID)
+	}
+	for _, child := range tree.Children {
+		registerTreeAliases(child, reg)
+	}
+}
+
 func getParticipantLabel(id string) string {
 	_, rec, sym := parseFQN(id)
 	if rec != "" {
@@ -81,19 +144,10 @@ func resolveNodeToClass(nodeID string, classes map[string]*types.LayoutNode) []s
 		}
 	}
 
-	cleanFile := cleanPathFromID(nodeID)
-	if cleanFile == "" {
-		return nil
-	}
-
-	var resolved []string
-	for classID := range classes {
-		cleanClassFile := cleanPathFromID(classID)
-		if cleanClassFile == cleanFile {
-			resolved = append(resolved, classID)
-		}
-	}
-	return resolved
+	// The old same-file fallback fanned out one function edge to every class
+	// in the file (AUDIT Issue 2 Phase 2C-12). Class relations must come from
+	// resolved receiver/type matches only; everything else stays unmapped.
+	return nil
 }
 
 func cleanPathFromID(id string) string {
@@ -125,8 +179,14 @@ func sanitizeMermaidLabel(s string) string {
 	s = strings.ReplaceAll(s, ">", "~")
 	s = strings.ReplaceAll(s, "[", "(")
 	s = strings.ReplaceAll(s, "]", ")")
-	if len(s) > 60 {
-		s = s[:57] + "..."
+	// Newlines and carriage returns break every renderer (AUDIT Issue 2
+	// Phase 2C-11); collapse them to spaces.
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	// Truncate on rune boundaries, never mid-rune.
+	runes := []rune(s)
+	if len(runes) > 60 {
+		return string(runes[:57]) + "..."
 	}
 	return s
 }
@@ -172,11 +232,28 @@ func collectNodesByPrimitive(tree *types.LayoutTree, prim string) []*types.Layou
 }
 
 func isDatabase(node *types.LayoutNode) bool {
-	return node.Kind == "gm:Database" || strings.Contains(node.PrimitiveType, "DATABASE")
+	return node.Kind == "gm:Database" || node.Kind == "gm:VirtualDatabase" || strings.Contains(node.PrimitiveType, "DATABASE")
 }
 
 func isExternalSystem(node *types.LayoutNode) bool {
-	return node.Kind == "gm:ExternalSystem" || strings.Contains(node.PrimitiveType, "NETWORK_IO")
+	switch node.Kind {
+	case "gm:ExternalSystem", "gm:ExternalSDK", "gm:ExternalAPI", "gm:ExternalFFI", "gm:External":
+		return true
+	}
+	return strings.Contains(node.PrimitiveType, "NETWORK_IO")
+}
+
+// collectExternalNodes returns all nodes whose kind represents an external
+// system (the classes the serializer can actually emit).
+func collectExternalNodes(tree *types.LayoutTree) []*types.LayoutNode {
+	var result []*types.LayoutNode
+	for _, n := range collectAllNodes(tree) {
+		switch n.Kind {
+		case "gm:ExternalSystem", "gm:ExternalSDK", "gm:ExternalAPI", "gm:ExternalFFI", "gm:External":
+			result = append(result, n)
+		}
+	}
+	return result
 }
 
 func isSystemBoundary(boundary *types.LayoutTree) bool {
@@ -266,9 +343,9 @@ func renderSummaryFooter(tree *types.LayoutTree, sb *strings.Builder) {
 		return
 	}
 	s := tree.Summary
-	sb.WriteString(fmt.Sprintf("    %% Graph Summary: %d nodes, %d edges, density=%.4f, diameter=%d, avg_path=%.2f, clusters=%d, largest_scc=%d, god_objects=%d\n",
+	sb.WriteString(fmt.Sprintf("    %% Graph Summary: %d nodes, %d edges, density=%.4f, diameter=%d, avg_path=%.2f, clusters=%d, largest_scc=%d, god_objects=%d, components=%d\n",
 		s.NodeCount, s.EdgeCount, s.Density, s.Diameter,
-		s.AvgPathLength, s.ClusterCount, s.LargestSCCSize, s.GodObjectCount))
+		s.AvgPathLength, s.ClusterCount, s.LargestSCCSize, s.GodObjectCount, s.ConnectedComponents))
 }
 
 func renderPlantUMLSummaryFooter(tree *types.LayoutTree, sb *strings.Builder) {
@@ -276,9 +353,9 @@ func renderPlantUMLSummaryFooter(tree *types.LayoutTree, sb *strings.Builder) {
 		return
 	}
 	s := tree.Summary
-	sb.WriteString(fmt.Sprintf("' Graph Summary: %d nodes, %d edges, density=%.4f, diameter=%d, avg_path=%.2f, clusters=%d, largest_scc=%d, god_objects=%d\n",
+	sb.WriteString(fmt.Sprintf("' Graph Summary: %d nodes, %d edges, density=%.4f, diameter=%d, avg_path=%.2f, clusters=%d, largest_scc=%d, god_objects=%d, components=%d\n",
 		s.NodeCount, s.EdgeCount, s.Density, s.Diameter,
-		s.AvgPathLength, s.ClusterCount, s.LargestSCCSize, s.GodObjectCount))
+		s.AvgPathLength, s.ClusterCount, s.LargestSCCSize, s.GodObjectCount, s.ConnectedComponents))
 }
 
 func renderDOTSummaryFooter(tree *types.LayoutTree, sb *strings.Builder) {
@@ -286,16 +363,16 @@ func renderDOTSummaryFooter(tree *types.LayoutTree, sb *strings.Builder) {
 		return
 	}
 	s := tree.Summary
-	sb.WriteString(fmt.Sprintf("    // Graph Summary: %d nodes, %d edges, density=%.4f, diameter=%d, avg_path=%.2f, clusters=%d, largest_scc=%d, god_objects=%d\n",
+	sb.WriteString(fmt.Sprintf("    // Graph Summary: %d nodes, %d edges, density=%.4f, diameter=%d, avg_path=%.2f, clusters=%d, largest_scc=%d, god_objects=%d, components=%d\n",
 		s.NodeCount, s.EdgeCount, s.Density, s.Diameter,
-		s.AvgPathLength, s.ClusterCount, s.LargestSCCSize, s.GodObjectCount))
+		s.AvgPathLength, s.ClusterCount, s.LargestSCCSize, s.GodObjectCount, s.ConnectedComponents))
 }
 
-func renderC4Edges(tree *types.LayoutTree, sb *strings.Builder) {
+func renderC4Edges(tree *types.LayoutTree, reg *aliasRegistry, sb *strings.Builder) {
 	drawn := make(map[string]bool)
 	for _, edge := range tree.Edges {
-		src := sanitizeName(edge.SourceID)
-		tgt := sanitizeName(edge.TargetID)
+		src := reg.alias(edge.SourceID)
+		tgt := reg.alias(edge.TargetID)
 		key := src + "->" + tgt
 		if drawn[key] {
 			continue

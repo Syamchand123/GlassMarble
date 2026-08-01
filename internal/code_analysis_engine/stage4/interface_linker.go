@@ -37,7 +37,7 @@ func LinkInterfacesAndRealizations(stage3Out *stage3.Stage3Output, cpg *Stage4Ou
 			// If both are unmodified, their edges already exist in the AKG.
 			isIfaceModified := cpg.ModifiedFiles[stage3.NormalizeRelativePath(iface.FileSpec.Path)]
 			isStructModified := cpg.ModifiedFiles[stage3.NormalizeRelativePath(strct.FileSpec.Path)]
-			
+
 			if !isIfaceModified && !isStructModified {
 				continue
 			}

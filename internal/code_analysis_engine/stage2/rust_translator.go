@@ -47,11 +47,18 @@ func (t *RustTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) *G
 			node.Type = GASTParameter
 			node.Kind = "parameter"
 		default:
-			node.Type = GASTFunction
-			node.Kind = "function"
+			if isControlFlowType(tok.Type) {
+				node.Type = GASTControlFlow
+				node.Kind = tok.Type
+			} else {
+				node.Type = GASTFunction
+				node.Kind = "function"
+			}
 		}
 
-		if strings.HasPrefix(tok.Content, "pub") {
+		if node.Type == GASTControlFlow {
+			node.Visibility = "internal"
+		} else if strings.HasPrefix(tok.Content, "pub") {
 			node.Visibility = "public"
 		} else {
 			node.Visibility = "internal"

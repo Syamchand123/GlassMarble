@@ -78,7 +78,6 @@ func RunIngestionForDelta(cfg Config, diff []FileTask) (*StageOutput, error) {
 	return out, nil
 }
 
-
 // streamTasks fans string paths out to the worker pool directly, streaming them.
 func streamTasks(pathCh <-chan string, errorCh <-chan error, skipWarnCh <-chan string, cfg Config) (*StageOutput, error) {
 	var warnings []string

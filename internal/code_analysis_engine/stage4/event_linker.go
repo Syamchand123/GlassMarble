@@ -39,7 +39,7 @@ func extractEventsFromGAST(node *stage2.GASTNode, relPath, currentFuncID string,
 	}
 	funcID := currentFuncID
 	if node.Type == stage2.GASTFunction {
-		funcID = BuildUniversalID(relPath, node.ReceiverType, node.Name)
+		funcID = universalFuncID(relPath, node.ReceiverType, node.Name)
 	}
 
 	if funcID != "" && node.Type == stage2.GASTCallExpression {
@@ -91,11 +91,11 @@ func extractTopic(node *stage2.GASTNode) string {
 		// We need to carefully find the first comma that is NOT inside nested parenthesis/quotes
 		argStart := idxOpen + 1
 		argEnd := -1
-		
+
 		nesting := 0
 		inQuote := false
 		var quoteChar rune
-		
+
 		for i, char := range content[argStart:] {
 			if inQuote {
 				if char == quoteChar && content[argStart+i-1] != '\\' {
@@ -103,13 +103,13 @@ func extractTopic(node *stage2.GASTNode) string {
 				}
 				continue
 			}
-			
+
 			if char == '"' || char == '\'' || char == '`' {
 				inQuote = true
 				quoteChar = char
 				continue
 			}
-			
+
 			if char == '(' {
 				nesting++
 			} else if char == ')' {
@@ -125,13 +125,13 @@ func extractTopic(node *stage2.GASTNode) string {
 				}
 			}
 		}
-		
+
 		if argEnd != -1 {
 			arg := strings.TrimSpace(content[argStart : argStart+argEnd])
 			// Strip outer quotes if it's a pure string literal
 			if (strings.HasPrefix(arg, "\"") && strings.HasSuffix(arg, "\"")) ||
-			   (strings.HasPrefix(arg, "'") && strings.HasSuffix(arg, "'")) ||
-			   (strings.HasPrefix(arg, "`") && strings.HasSuffix(arg, "`")) {
+				(strings.HasPrefix(arg, "'") && strings.HasSuffix(arg, "'")) ||
+				(strings.HasPrefix(arg, "`") && strings.HasSuffix(arg, "`")) {
 				if len(arg) >= 2 {
 					arg = arg[1 : len(arg)-1]
 				}

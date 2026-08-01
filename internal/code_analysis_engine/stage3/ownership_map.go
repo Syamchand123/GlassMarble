@@ -53,7 +53,7 @@ func BuildOwnershipMap(globalIndex map[string][]*stage2.GASTNode, wc *WorkspaceC
 			if moduleBoundary == "" {
 				moduleBoundary = "root"
 			}
-			
+
 			// 2. Package Level
 			pkg := node.Namespace
 			if pkg == "" {

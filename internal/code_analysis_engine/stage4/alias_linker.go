@@ -9,8 +9,13 @@ import (
 )
 
 // LinkAliasAnalysis performs Andersen's Points-To subset-based Alias tracking.
+// HEAP_ALLOCATION nodes are produced by a raw-text heuristic; they only run in
+// full mode (AUDIT Issue 1.4 / Phase 1B-5).
 func LinkAliasAnalysis(stage3Out *stage3.Stage3Output, cpg *Stage4Output) {
 	if stage3Out == nil || stage3Out.RootNode == nil || cpg == nil {
+		return
+	}
+	if !isFullMode(cpg) {
 		return
 	}
 	traverseForAliases(stage3Out, stage3Out.RootNode, cpg)
@@ -40,7 +45,7 @@ func extractAliasesFromGAST(stage3Out *stage3.Stage3Output, node *stage2.GASTNod
 	}
 	funcID := currentFuncID
 	if node.Type == stage2.GASTFunction {
-		funcID = BuildUniversalID(relPath, node.ReceiverType, node.Name)
+		funcID = universalFuncID(relPath, node.ReceiverType, node.Name)
 	}
 
 	if funcID != "" && node.Type == stage2.GASTVariable {

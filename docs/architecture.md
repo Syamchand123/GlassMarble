@@ -497,3 +497,62 @@ chat-session persistence across invocations.
 
 
 
+
+### 10.7 Memory envelope
+
+GlassMarble's memory behavior is deliberately bounded so that a repository
+scan can never silently exhaust the host. The working set has four parts:
+
+1.  **CLI analysis graph** � the in-memory `CodePropertyGraph` (nodes, edges,
+    indexes) held during `gmb analyze` and by read commands (`status`,
+    `inspect`, `tree`, `visualize`, `ai`).
+2.  **TTL artifact** � `.glassmarble/akg_state.ttl`, the single source of
+    truth on disk (atomic writes + post-write verification).
+3.  **WAL** � `.glassmarble/wal/`, the crash-recovery log.
+4.  **Visualization cache** � the parsed-graph `SubgraphCache` used by
+    diagram rendering.
+
+**Explicit budgets (all enforced in code):**
+
+*   `--max-ttl-mb N` (global flag, default 0 = unlimited): loading or
+    committing an AKG state file larger than N MiB is **refused** with an
+    actionable error. This is the primary guard against pulling an oversized
+    artifact into RAM.
+*   `SubgraphCache` is **byte-bounded** (64 MiB LRU budget, entries also
+    keyed by scope) � diagram commands cannot balloon memory across repeated
+    renders.
+*   The macro-inference `macroCache` is capped at 10,000 entries and reset
+    per transaction.
+*   `--max-nodes N` / `--abort-on-limit` on `gmb analyze` bound the linker
+    output size (warn or hard-stop).
+*   The WAL is truncated after every successful load/recovery and rotated at
+    100 MB (keeping the last two segments), so recovery memory is bounded by
+    the in-flight transaction � replay streams entries instead of loading
+    the whole log.
+*   `gmb housekeeping --prune --older-than N` removes stale saved diagrams
+    (`.glassmarble/marbles/`) and AI sessions (`.glassmarble/ai/sessions/`);
+    it never touches the AKG state file.
+*   **Lazy Query-based reads** (AUDIT Issue 4 Phase 4A-2): `gmb status` and
+    `gmb inspect` never restore the graph — they stream the TTL through the
+    single canonical parser (node blocks one at a time, edge triples counted
+    without materializing the edge set). `gmb visualize --scope file:path`
+    parses only the scoped file's triples. The AI agent renders diagrams from
+    its in-memory AKG snapshot via the same from-graph pipeline instead of
+    re-parsing the TTL. Two restore-only figures are intentionally absent
+    from lazy `gmb status`: the macro-rule count (derived data recomputed on
+    load, never persisted) and the post-write verification stamp (a TTL with
+    zero dangling edges is reported as verified, which is the same test the
+    restore path applies).
+
+**Expected footprint by repository scale** (measured on this repository:
+173 Go files ? 2,308 nodes / 5,479 edges / 3.5 MB TTL):
+
+| Scale | Nodes | TTL size | Approx. peak RSS |
+| --- | --- | --- | --- |
+| Small | < 1,000 | < 0.5 MB | 30�80 MB |
+| Medium (this repo) | ~2,500 | ~3.5 MB | 100�200 MB |
+| Large | 10,000�50,000 | 10�50 MB | 0.5�2 GB |
+| Very large | > 50,000 | > 50 MB | 2 GB+ � set `--max-ttl-mb`, prefer `--link-level=architecture` |
+
+The analysis QA line (`gmb analyze`) and `gmb status` print the TTL/WAL
+sizes alongside node/edge counts so drift toward the envelope stays visible.

@@ -2,16 +2,24 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"sort"
+	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
 	"github.com/spf13/cobra"
 )
 
 var diffCmd = &cobra.Command{
-	Use:   "diff [commit_or_version] [commit_or_version]",
-	Short: "Show architectural diff and structural mutations across commits",
-	Long:  `Compares current AKG graph snapshot against a previous commit to display added, removed, or mutated nodes and edges.`,
+	Use:   "diff",
+	Short: "Show architectural diff across committed transactions",
+	Long: `Replays the write-ahead log and prints the structural mutations of every
+recorded transaction: commit hash, node/edge deltas, and modified files.
+Because the WAL is truncated after each successful atomic TTL write, a clean
+database shows no pending transactions (the latest state is fully persisted
+in akg_state.ttl).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, _ := cmd.Flags().GetString("dir")
 		if dir == "" {
@@ -19,35 +27,61 @@ var diffCmd = &cobra.Command{
 		}
 
 		storageDir := filepath.Join(dir, ".glassmarble")
-		tm, err := akg.NewAKGTransactionManager(storageDir)
+		walDir := filepath.Join(storageDir, "wal")
+
+		ttlPath := filepath.Join(storageDir, "akg_state.ttl")
+		if _, err := os.Stat(ttlPath); err != nil {
+			return fmt.Errorf("no AKG database at %s -- run 'glassmarble analyze' first", ttlPath)
+		}
+
+		commitHash, schemaVersion, version, err := akg.TTLMetadata(storageDir)
 		if err != nil {
-			return fmt.Errorf("failed to open AKG database: %w", err)
+			return fmt.Errorf("failed to read TTL metadata: %w", err)
 		}
 
-		snapshot := tm.GetActiveSnapshot()
-		if snapshot == nil || snapshot.Nodes.Len() == 0 {
-			return fmt.Errorf("AKG database is empty -- run 'glassmarble analyze' first")
+		wal, err := akg.NewWriteAheadLog(walDir)
+		if err != nil {
+			return fmt.Errorf("failed to open WAL: %w", err)
+		}
+		entries, err := wal.ReadAllEntries()
+		if err != nil {
+			return fmt.Errorf("failed to read WAL: %w", err)
 		}
 
-		// Since time-travel requires replaying the WAL, for the CLI UX, we compare against latest if not specified.
-		fmt.Printf("=== Architectural Graph Mutation Diff ===\n")
+		sort.Slice(entries, func(i, j int) bool {
+			return entries[i].TxID < entries[j].TxID
+		})
 
-		// In a fully built backend, this would replay WAL to the two commits.
-		// For now, we simulate the output format expected by the UX spec.
-		if len(args) == 2 {
-			fmt.Printf("Comparing %s to %s\n\n", args[0], args[1])
-		} else {
-			fmt.Printf("Comparing HEAD~1 to HEAD (Current: %s)\n\n", snapshot.CommitHash)
+		fmt.Println("=== Architectural Graph Mutation Diff ===")
+		fmt.Printf("  Current: %s (schema v%d, graph version %d)\n", shortHash(commitHash), schemaVersion, version)
+
+		if len(entries) == 0 {
+			fmt.Println("  No pending transactions: the WAL was truncated after the last atomic write.")
+			fmt.Println("  The current akg_state.ttl is the fully persisted latest state.")
+			return nil
 		}
 
-		// Example UX output (To be wired into the WAL differ)
-		fmt.Println("  + Added:    UserService.CreateUser")
-		fmt.Println("  - Removed:  LegacyAuthHandler")
-		fmt.Println("  ~ Modified: DatabasePool (new NETWORK_IO primitive)")
-		fmt.Println("  + New edge: UserService -> EmailNotifier")
-
+		fmt.Printf("  %d recorded transaction(s):\n\n", len(entries))
+		for _, e := range entries {
+			fmt.Printf("  tx #%d  %s  %s\n", e.TxID, shortHash(e.CommitHash), e.Timestamp.Format(time.RFC3339))
+			fmt.Printf("    status: %s\n", e.Status)
+			if e.Payload != nil {
+				fmt.Printf("    +%d nodes, %d edges\n", len(e.Payload.GraphNodes), countOutboundEdges(e.Payload.OutboundEdges))
+			}
+			if len(e.ModifiedFiles) > 0 {
+				fmt.Printf("    files: %d changed\n", len(e.ModifiedFiles))
+			}
+		}
 		return nil
 	},
+}
+
+func countOutboundEdges(out map[string][]stage4.ResolvedEdge) int {
+	n := 0
+	for _, edges := range out {
+		n += len(edges)
+	}
+	return n
 }
 
 func init() {

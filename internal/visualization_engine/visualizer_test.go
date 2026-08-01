@@ -7,7 +7,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-	
 
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/stage1"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/stage2"
@@ -29,7 +28,7 @@ func TestSubgraphCacheGetSet(t *testing.T) {
 	cache := &SubgraphCache{
 		entries: make(map[string]*cacheEntry),
 		lruList: list.New(),
-		maxSize: 128,
+		maxBytes: subgraphCacheMaxBytes,
 	}
 	g := &types.NativeGraph{
 		Nodes: map[string]*types.NativeNode{
@@ -51,7 +50,7 @@ func TestSubgraphCacheEviction(t *testing.T) {
 	cache := &SubgraphCache{
 		entries: make(map[string]*cacheEntry),
 		lruList: list.New(),
-		maxSize: 2,
+		maxBytes: 1024,
 	}
 	now := time.Now()
 	cache.Set("key1", now, &types.NativeGraph{})
@@ -69,7 +68,7 @@ func TestSubgraphCacheExpiredMtime(t *testing.T) {
 	cache := &SubgraphCache{
 		entries: make(map[string]*cacheEntry),
 		lruList: list.New(),
-		maxSize: 128,
+		maxBytes: subgraphCacheMaxBytes,
 	}
 	oldTime := time.Now().Add(-1 * time.Hour)
 	newTime := time.Now()
@@ -84,7 +83,7 @@ func TestSubgraphCacheLRUOrdering(t *testing.T) {
 	cache := &SubgraphCache{
 		entries: make(map[string]*cacheEntry),
 		lruList: list.New(),
-		maxSize: 3,
+		maxBytes: 1536,
 	}
 	now := time.Now()
 	cache.Set("a", now, &types.NativeGraph{})
@@ -104,7 +103,7 @@ func TestSubgraphCacheEvict(t *testing.T) {
 	cache := &SubgraphCache{
 		entries: make(map[string]*cacheEntry),
 		lruList: list.New(),
-		maxSize: 128,
+		maxBytes: subgraphCacheMaxBytes,
 	}
 	now := time.Now()
 	cache.Set("a", now, &types.NativeGraph{Nodes: map[string]*types.NativeNode{"x": {ID: "x"}}})
@@ -150,7 +149,7 @@ func TestSubgraphCacheTTLExpiryOnGet(t *testing.T) {
 	cache := &SubgraphCache{
 		entries: make(map[string]*cacheEntry),
 		lruList: list.New(),
-		maxSize: 128,
+		maxBytes: subgraphCacheMaxBytes,
 	}
 	now := time.Now()
 	entryTime := now.Add(-30 * time.Minute)
@@ -171,7 +170,7 @@ func TestSubgraphCacheGetNotFound(t *testing.T) {
 	cache := &SubgraphCache{
 		entries: make(map[string]*cacheEntry),
 		lruList: list.New(),
-		maxSize: 128,
+		maxBytes: subgraphCacheMaxBytes,
 	}
 	got := cache.Get("nonexistent", time.Now())
 	if got != nil {
@@ -183,7 +182,7 @@ func TestSubgraphCacheEvictCount(t *testing.T) {
 	cache := &SubgraphCache{
 		entries: make(map[string]*cacheEntry),
 		lruList: list.New(),
-		maxSize: 128,
+		maxBytes: subgraphCacheMaxBytes,
 	}
 	now := time.Now()
 	cache.Set("a", now, &types.NativeGraph{Nodes: map[string]*types.NativeNode{"x": {ID: "x"}}})
@@ -202,7 +201,7 @@ func TestSubgraphCacheEvictAll(t *testing.T) {
 	cache := &SubgraphCache{
 		entries: make(map[string]*cacheEntry),
 		lruList: list.New(),
-		maxSize: 128,
+		maxBytes: subgraphCacheMaxBytes,
 	}
 	now := time.Now()
 	cache.Set("a", now, &types.NativeGraph{})
@@ -217,7 +216,7 @@ func TestSubgraphCacheConcurrentAccess(t *testing.T) {
 	cache := &SubgraphCache{
 		entries: make(map[string]*cacheEntry),
 		lruList: list.New(),
-		maxSize: 128,
+		maxBytes: subgraphCacheMaxBytes,
 	}
 	now := time.Now()
 	cache.Set("key1", now, &types.NativeGraph{})
@@ -291,7 +290,10 @@ func TestPipelineParseExtractRender(t *testing.T) {
 		t.Fatalf("ParseTTLFileToNative failed: %v", err)
 	}
 	cfg := stage1.GetExtractionConfig(types.UMLClass, types.QueryOptions{EntryPointID: "main.go::Main"})
-	sub := stage1.ExtractFromSubgraph(native, cfg, types.QueryOptions{EntryPointID: "main.go::Main"})
+	sub, err := stage1.ExtractFromSubgraph(native, cfg, types.QueryOptions{EntryPointID: "main.go::Main"})
+	if err != nil {
+		t.Fatalf("ExtractFromSubgraph failed: %v", err)
+	}
 	if len(sub.Nodes) == 0 {
 		t.Fatal("expected at least one extracted node")
 	}
@@ -309,11 +311,115 @@ func TestPipelineParseExtractRender(t *testing.T) {
 	}
 }
 
+// TestProjectDiagramFromGraphEqualsFilePath: the from-graph entry point
+// renders the same diagram as the file-parsing entry point for an identical
+// in-memory graph (AUDIT Issue 4 Phase 4A-1).
+func TestProjectDiagramFromGraphEqualsFilePath(t *testing.T) {
+	path := filepath.Join("testdata", "minimal.ttl")
+	ec := NewEngineCoordinator(path)
+	opts := types.QueryOptions{EntryPointID: "main.go::Main"}
+
+	fromFile, err := ec.ProjectDiagram(types.UMLClass, opts)
+	if err != nil {
+		t.Fatalf("ProjectDiagram failed: %v", err)
+	}
+
+	native, err := stage1.ParseTTLFileToNative(path)
+	if err != nil {
+		t.Fatalf("ParseTTLFileToNative failed: %v", err)
+	}
+	fromGraph, err := ProjectDiagramFromGraph(native, types.UMLClass, opts)
+	if err != nil {
+		t.Fatalf("ProjectDiagramFromGraph failed: %v", err)
+	}
+
+	if fromFile == "" || fromGraph == "" {
+		t.Fatal("expected non-empty diagrams")
+	}
+	if fromFile != fromGraph {
+		t.Errorf("from-graph diagram differs from from-file diagram:\nfromFile:\n%s\nfromGraph:\n%s", fromFile, fromGraph)
+	}
+}
+
+// TestComputeGraphSummaryFromGraphEqualsFilePath: same parity for the
+// summary path (AUDIT Issue 4 Phase 4A-1).
+func TestComputeGraphSummaryFromGraphEqualsFilePath(t *testing.T) {
+	path := filepath.Join("testdata", "minimal.ttl")
+	ec := NewEngineCoordinator(path)
+	opts := types.QueryOptions{EntryPointID: "main.go::Main"}
+
+	fromFile, err := ec.ComputeGraphSummary(types.UMLClass, opts)
+	if err != nil {
+		t.Fatalf("ComputeGraphSummary failed: %v", err)
+	}
+
+	native, err := stage1.ParseTTLFileToNative(path)
+	if err != nil {
+		t.Fatalf("ParseTTLFileToNative failed: %v", err)
+	}
+	fromGraph, err := ComputeGraphSummaryFromGraph(native, types.UMLClass, opts)
+	if err != nil {
+		t.Fatalf("ComputeGraphSummaryFromGraph failed: %v", err)
+	}
+
+	if fromFile == nil || fromGraph == nil {
+		t.Fatal("expected non-nil summaries")
+	}
+	if fromFile.NodeCount != fromGraph.NodeCount {
+		t.Errorf("node count mismatch: file=%d graph=%d", fromFile.NodeCount, fromGraph.NodeCount)
+	}
+	if fromFile.EdgeCount != fromGraph.EdgeCount {
+		t.Errorf("edge count mismatch: file=%d graph=%d", fromFile.EdgeCount, fromGraph.EdgeCount)
+	}
+}
+
+// TestProjectDiagramScopeFileUsesScopedParse: a file-scoped diagram parses
+// only the file's triples and still renders a correct non-empty diagram
+// (AUDIT Issue 4 Phase 4A-2).
+func TestProjectDiagramScopeFileUsesScopedParse(t *testing.T) {
+	path := filepath.Join("testdata", "scope_internal.ttl")
+	ec := NewEngineCoordinator(path)
+	opts := types.QueryOptions{
+		EntryPointID: "internal/api/handler.go::HandleRequest",
+		Scope:        types.ScopeFile,
+		ScopePath:    "internal/api/handler.go",
+	}
+	result, err := ec.ProjectDiagram(types.CallGraph, opts)
+	if err != nil {
+		t.Fatalf("file-scoped ProjectDiagram failed: %v", err)
+	}
+	if result == "" {
+		t.Fatal("expected non-empty file-scoped diagram")
+	}
+}
+
+// TestProjectDiagramFromGraphDoesNotMutateSource: the from-graph entry point
+// must not mutate the caller's graph (scoping works on a private clone).
+func TestProjectDiagramFromGraphDoesNotMutateSource(t *testing.T) {
+	path := filepath.Join("testdata", "minimal.ttl")
+	native, err := stage1.ParseTTLFileToNative(path)
+	if err != nil {
+		t.Fatalf("ParseTTLFileToNative failed: %v", err)
+	}
+	before := native.Clone()
+	_, err = ProjectDiagramFromGraph(native, types.UMLClass, types.QueryOptions{
+		EntryPointID: "main.go::Main",
+		Scope:        types.ScopeFile,
+		ScopePath:    "main.go",
+	})
+	if err != nil {
+		t.Fatalf("ProjectDiagramFromGraph failed: %v", err)
+	}
+	if len(native.Nodes) != len(before.Nodes) {
+		t.Errorf("source graph mutated: %d nodes before, %d after", len(before.Nodes), len(native.Nodes))
+	}
+}
+
 func TestSubgraphCacheSetOverwrite(t *testing.T) {
 	cache := &SubgraphCache{
 		entries: make(map[string]*cacheEntry),
 		lruList: list.New(),
-		maxSize: 128,
+		maxBytes: subgraphCacheMaxBytes,
 	}
 	now := time.Now()
 	g1 := &types.NativeGraph{Nodes: map[string]*types.NativeNode{"a": {ID: "a"}}}
@@ -468,11 +574,42 @@ func TestProjectDiagramInvalidTTLPath(t *testing.T) {
 	}
 }
 
+func TestSubgraphCacheByteBudget(t *testing.T) {
+	cache := &SubgraphCache{
+		entries:  make(map[string]*cacheEntry),
+		lruList:  list.New(),
+		maxBytes: 1536,
+	}
+	now := time.Now()
+	// Each empty-graph entry costs estimatedBytes(0) + 512 overhead.
+	cache.Set("a", now, &types.NativeGraph{})
+	cache.Set("b", now, &types.NativeGraph{})
+	cache.Set("c", now, &types.NativeGraph{})
+	// 3*512 fits exactly; a 4th exceeds the budget and must evict the LRU entry.
+	cache.Set("d", now, &types.NativeGraph{})
+	if len(cache.entries) != 3 {
+		t.Errorf("expected 3 entries under byte budget, got %d", len(cache.entries))
+	}
+	if cache.Get("a", now) != nil {
+		t.Error("entry a should have been evicted by the byte budget")
+	}
+	if cache.Get("d", now) == nil {
+		t.Error("entry d should be cached")
+	}
+	count, bytes := cache.Size()
+	if count != 3 {
+		t.Errorf("Size() count = %d, want 3", count)
+	}
+	if bytes > cache.maxBytes {
+		t.Errorf("Size() bytes = %d exceeds budget %d", bytes, cache.maxBytes)
+	}
+}
+
 func TestSubgraphCacheConcurrentGetSet(t *testing.T) {
 	cache := &SubgraphCache{
 		entries: make(map[string]*cacheEntry),
 		lruList: list.New(),
-		maxSize: 128,
+		maxBytes: subgraphCacheMaxBytes,
 	}
 	now := time.Now()
 	var wg sync.WaitGroup

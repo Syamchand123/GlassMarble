@@ -85,10 +85,10 @@ func TestCleanImportPath(t *testing.T) {
 
 func TestBaseNode(t *testing.T) {
 	tok := stage1.RawToken{
-		Kind:   stage1.TokenDeclaration,
-		Type:   "function_declaration",
-		Name:   "myFunc",
-		Content: "func myFunc() int { return 0 }",
+		Kind:      stage1.TokenDeclaration,
+		Type:      "function_declaration",
+		Name:      "myFunc",
+		Content:   "func myFunc() int { return 0 }",
 		StartLine: 10,
 		EndLine:   15,
 		StartByte: 100,
@@ -118,7 +118,7 @@ func TestBaseNode(t *testing.T) {
 
 func TestSetDeclarationFQN(t *testing.T) {
 	node := &GASTNode{
-		Name: "MyStruct",
+		Name:       "MyStruct",
 		Properties: map[string]string{},
 	}
 	setDeclarationFQN(node, "src/models/entity.go", "MyStruct")
@@ -221,13 +221,13 @@ func TestPropagatePrimitives(t *testing.T) {
 		Name: "file.go",
 		Children: []*GASTNode{
 			{
-				Type: GASTFunction,
-				Name: "doWork",
+				Type:       GASTFunction,
+				Name:       "doWork",
 				Primitives: []BehavioralPrimitive{PrimNetworkIO},
 				Children: []*GASTNode{
 					{
-						Type: GASTCallExpression,
-						Name: "http.Get",
+						Type:       GASTCallExpression,
+						Name:       "http.Get",
 						Primitives: []BehavioralPrimitive{PrimNetworkIO, PrimDiskIO},
 					},
 				},
@@ -372,8 +372,8 @@ func primitiveSetsMatch(a, b []BehavioralPrimitive) bool {
 
 func TestStage2PayloadStructure(t *testing.T) {
 	payload := &Stage2Payload{
-		CommitHash:    "abc123",
-		UpsertedTrees: make(map[string]*GASTNode),
+		CommitHash:        "abc123",
+		UpsertedTrees:     make(map[string]*GASTNode),
 		LocalSymbolTables: make(map[string]*FileSymbolTable),
 	}
 	payload.UpsertedTrees["main.go"] = &GASTNode{
@@ -400,11 +400,11 @@ func TestStage2PayloadStructure(t *testing.T) {
 
 func TestFileSymbolTable(t *testing.T) {
 	st := &FileSymbolTable{
-		FilePath: "/root/main.go",
-		RelPath:  "main.go",
-		Language: stage1.LangGo,
+		FilePath:    "/root/main.go",
+		RelPath:     "main.go",
+		Language:    stage1.LangGo,
 		PackageName: "main",
-		Imports: []string{"fmt", "net/http"},
+		Imports:     []string{"fmt", "net/http"},
 		Definitions: []SymbolMeta{
 			{Name: "main", Kind: "function_declaration", Visibility: "exported"},
 		},

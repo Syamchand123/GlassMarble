@@ -12,7 +12,7 @@ func LinkConcurrencyAndAsyncControlFlow(stage3Out *stage3.Stage3Output, cpg *Sta
 		return
 	}
 
-	om := stage3.BuildOwnershipMap(stage3Out.GlobalDefinitionIndex, stage3Out.WorkspaceCtx)
+	om := ownershipMap(cpg, stage3Out)
 
 	for _, callSite := range stage3Out.GlobalCallQueue {
 		if len(cpg.ModifiedFiles) > 0 && !cpg.ModifiedFiles[stage3.NormalizeRelativePath(callSite.SourceFilePath)] {
@@ -38,7 +38,7 @@ func LinkConcurrencyAndAsyncControlFlow(stage3Out *stage3.Stage3Output, cpg *Sta
 			if callerID == "" {
 				callerID = "file:" + callSite.SourceFilePath
 			}
-			
+
 			// We can use the receiver as the Channel/Queue ID
 			queueID := "QUEUE::" + callSite.ReceiverName
 			ensureVirtualNode(queueID, "VIRTUAL_QUEUE", callSite.ReceiverName, cpg)

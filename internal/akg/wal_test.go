@@ -3,6 +3,7 @@ package akg
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -269,4 +270,58 @@ func TestWAL_CheckpointTriggersRotation(t *testing.T) {
 		t.Fatalf("checkpoint error: %v", err)
 	}
 	t.Logf("Checkpoint rotated: %v", rotated)
+}
+
+func TestWAL_Truncate(t *testing.T) {
+	dir := t.TempDir()
+	wal, err := NewWriteAheadLog(dir)
+	if err != nil {
+		t.Fatalf("failed to create WAL: %v", err)
+	}
+
+	// Force a rotation so that base + segment files exist
+	for i := 0; i < 3; i++ {
+		entry := &WALEntry{
+			TxID:       uint64(i + 1),
+			CommitHash: fmt.Sprintf("hash_%d", i),
+			Timestamp:  time.Now().UTC(),
+			Status:     WALStatusCommitted,
+			ModifiedFiles: []string{
+				strings.Repeat("a", 1000) + ".go",
+			},
+		}
+		if err := wal.AppendEntry(entry); err != nil {
+			t.Fatalf("failed to append: %v", err)
+		}
+	}
+	if _, err := wal.Checkpoint(); err != nil {
+		t.Fatalf("checkpoint error: %v", err)
+	}
+	if err := wal.AppendEntry(&WALEntry{TxID: 10, CommitHash: "x", Status: WALStatusCommitted}); err != nil {
+		t.Fatalf("append after rotation failed: %v", err)
+	}
+
+	// Truncate removes base + all segments (AUDIT Issue 4 Phase 4B-8).
+	if err := wal.Truncate(); err != nil {
+		t.Fatalf("truncate error: %v", err)
+	}
+
+	for _, path := range []string{wal.LogFilePath, wal.LogFilePath + ".1", wal.LogFilePath + ".2"} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("expected %s to be removed after truncate (stat err=%v)", path, err)
+		}
+	}
+
+	entries, err := wal.ReadAllEntries()
+	if err != nil {
+		t.Fatalf("ReadAllEntries after truncate failed: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected 0 entries after truncate, got %d", len(entries))
+	}
+
+	// Truncate must be idempotent / tolerant of already-missing files.
+	if err := wal.Truncate(); err != nil {
+		t.Fatalf("second truncate should be a no-op, got %v", err)
+	}
 }

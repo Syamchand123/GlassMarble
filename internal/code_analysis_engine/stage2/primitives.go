@@ -488,12 +488,12 @@ func hasResilience(node *GASTNode, symTable *FileSymbolTable) bool {
 			return true
 		}
 	}
-	
+
 	// Add Go-specific resilience checks (defer/recover) via deep search
 	if searchForRecover(node) {
 		return true
 	}
-	
+
 	return false
 }
 

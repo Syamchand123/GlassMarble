@@ -7,6 +7,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestConcurrentReadWrite_NoRace(t *testing.T) {
@@ -85,4 +86,46 @@ func TestSafeMethods_Basic(t *testing.T) {
 
 	q := g.SafeQuery(stage4.QueryFilter{Kind: "STRUCT"})
 	assert.Len(t, q, 2)
+}
+
+// TestConcurrentDeltaTransactions_NoRace hammers the transaction manager with
+// concurrent delta commits and verifies every committed node is visible in the
+// final snapshot with no data races (run under -race).
+func TestConcurrentDeltaTransactions_NoRace(t *testing.T) {
+	dir := t.TempDir()
+	tm, err := NewAKGTransactionManager(dir)
+	require.NoError(t, err)
+	defer tm.Close()
+
+	const workers = 8
+	const commitsPerWorker = 25
+
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			for c := 0; c < commitsPerWorker; c++ {
+				id := fmt.Sprintf("w%d_c%d", worker, c)
+				payload := stage4.NewStage4Output("hash")
+				payload.GraphNodes[id] = &stage4.ResolvedNode{ID: id, Kind: "FUNCTION", Name: id}
+				if err := tm.ExecuteDeltaTransaction(payload, []string{"f.go"}); err != nil {
+					t.Errorf("concurrent delta failed: %v", err)
+					return
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+
+	snapshot := tm.GetActiveSnapshot()
+	for w := 0; w < workers; w++ {
+		for c := 0; c < commitsPerWorker; c++ {
+			id := fmt.Sprintf("w%d_c%d", w, c)
+			node, ok := snapshot.GetNode(id)
+			if !ok || node.Name != id {
+				t.Errorf("expected committed node %s in final snapshot (ok=%v)", id, ok)
+			}
+		}
+	}
 }

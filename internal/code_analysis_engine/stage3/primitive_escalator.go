@@ -1,8 +1,8 @@
 package stage3
 
 import (
-	"strings"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage2"
+	"strings"
 )
 
 // EscalatePrimitives performs a bottom-up traversal of the directory tree
@@ -62,7 +62,7 @@ func gatherFilePrimitives(node *stage2.GASTNode, counts map[string]int) {
 	if node == nil {
 		return
 	}
-	
+
 	if node.Properties != nil {
 		if prim := node.Properties["primitive"]; prim != "" {
 			// standardizing names

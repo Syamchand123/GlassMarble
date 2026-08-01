@@ -18,14 +18,13 @@ func LinkIntraProceduralControlFlow(stage3Out *stage3.Stage3Output, cpg *Stage4O
 		return
 	}
 
-	om := stage3.BuildOwnershipMap(stage3Out.GlobalDefinitionIndex, stage3Out.WorkspaceCtx)
+	om := ownershipMap(cpg, stage3Out)
 
 	// In standard mode, aggregate branch counts per function; in full mode, pass nil
 	var branchCounts map[string]map[string]int
 	if cpg.Config.LevelOfDetail == LevelStandard {
 		branchCounts = make(map[string]map[string]int)
 	}
-
 
 	traverseForCFG(stage3Out.RootNode, cpg, stage3Out, om, branchCounts)
 
@@ -67,7 +66,7 @@ func extractCFGNodesFromGAST(node *stage2.GASTNode, relPath, currentEnclosingFun
 
 	if node.Type == stage2.GASTFunction {
 		receiver := node.ReceiverType
-		enclosingFuncID = BuildUniversalID(relPath, receiver, node.Name)
+		enclosingFuncID = universalFuncID(relPath, receiver, node.Name)
 		// Initialize counters for this function in standard mode
 		if branchCounts != nil && enclosingFuncID != "" {
 			if _, ok := branchCounts[enclosingFuncID]; !ok {

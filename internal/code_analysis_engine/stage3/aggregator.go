@@ -62,7 +62,7 @@ func Aggregate(payload *stage2.Stage2Payload, existingState *Stage3Output) (*Sta
 			}()
 			relPath := NormalizeRelativePath(dp)
 			PruneFileNode(output.RootNode, relPath)
-			
+
 			pruneMu.Lock()
 			// O(1) Global Definition Pruning
 			if symbols, ok := output.FileToSymbols[relPath]; ok {
@@ -118,15 +118,15 @@ func Aggregate(payload *stage2.Stage2Payload, existingState *Stage3Output) (*Sta
 				lang = string(symTable.Language)
 			}
 			GraftFileNode(output.RootNode, normRelPath, root, imports, lang)
-			
+
 			// Stamp Visibility (Step 3.3) directly on nodes
 			ComputeVisibilityEnclave(root, normRelPath, output.WorkspaceCtx)
-			
+
 			// Extract new symbols for O(1) Indexing
 			var localSyms []string
 			var nodes []IndexedNode
 			collectExportedGASTNodes(root, normRelPath, &nodes, &localSyms)
-			
+
 			resultCh <- graftResult{
 				relPath:   normRelPath,
 				symTable:  symTable,
@@ -135,7 +135,7 @@ func Aggregate(payload *stage2.Stage2Payload, existingState *Stage3Output) (*Sta
 			}
 		}(relPath, gastRoot)
 	}
-	
+
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -182,19 +182,37 @@ func Aggregate(payload *stage2.Stage2Payload, existingState *Stage3Output) (*Sta
 	return output, nil
 }
 
+// normalizeCallerID prefixes a bare caller symbol with its file path and
+// normalizes dotted method-style IDs ("Store.Save") into universal ID form
+// ("Store::Save") so they match the graph nodes produced by the stage4
+// builder (AUDIT Issue 1.6 — Go method caller IDs never matched).
+//
+// Only symbol-style callers undergo the dotted-method conversion. Path-like
+// callers (file-root defaults on Windows, e.g. "cmd\diff.go") keep their
+// separators and extension untouched — converting those would mangle the
+// path ("cmd\diff.go" -> "cmd\diff::go") and the ".go" extension dot of the
+// file-prefix must never be interpreted as a method separator.
+func normalizeCallerID(rp, callerID string) string {
+	if strings.Contains(callerID, "::") {
+		return callerID
+	}
+	if NormalizeRelativePath(callerID) == NormalizeRelativePath(rp) {
+		return "file:" + NormalizeRelativePath(rp)
+	}
+	if strings.Contains(callerID, ".") && !strings.ContainsAny(callerID, "/\\") {
+		if dot := strings.LastIndex(callerID, "."); dot != -1 {
+			callerID = callerID[:dot] + "::" + callerID[dot+1:]
+		}
+	}
+	return NormalizeRelativePath(rp) + "::" + callerID
+}
+
 // extractCallsFromFile parses LocalCalls into LinkedCallSites.
 func extractCallsFromFile(rp string, st *stage2.FileSymbolTable) []LinkedCallSite {
 	folderPath := NormalizeRelativePath(filepath.Dir(rp))
 	var localQueue []LinkedCallSite
 	for _, call := range st.LocalCalls {
-		callerID := call.CallerNodeID
-		if !strings.Contains(callerID, "::") {
-			if callerID == NormalizeRelativePath(rp) {
-				callerID = "file:" + NormalizeRelativePath(rp)
-			} else {
-				callerID = NormalizeRelativePath(rp) + "::" + callerID
-			}
-		}
+		callerID := normalizeCallerID(rp, call.CallerNodeID)
 		localQueue = append(localQueue, LinkedCallSite{
 			SourceFileNodeID: callerID,
 			SourceFilePath:   NormalizeRelativePath(rp),
@@ -347,14 +365,7 @@ func SynthesizeGlobalCallQueue(localTables map[string]*stage2.FileSymbolTable) [
 			var localQueue []LinkedCallSite
 
 			for _, call := range st.LocalCalls {
-				callerID := call.CallerNodeID
-				if !strings.Contains(callerID, "::") {
-					if callerID == NormalizeRelativePath(rp) {
-						callerID = "file:" + NormalizeRelativePath(rp)
-					} else {
-						callerID = NormalizeRelativePath(rp) + "::" + callerID
-					}
-				}
+				callerID := normalizeCallerID(rp, call.CallerNodeID)
 				localQueue = append(localQueue, LinkedCallSite{
 					SourceFileNodeID: callerID,
 					SourceFilePath:   NormalizeRelativePath(rp),

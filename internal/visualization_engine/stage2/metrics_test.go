@@ -258,8 +258,8 @@ func TestComputeGraphSummaryEmpty(t *testing.T) {
 
 func TestComputeInDegree(t *testing.T) {
 	sub := &types.VirtualSubgraph{
-		Nodes:  map[string]*types.TTLNode{"a": {ID: "a"}, "b": {ID: "b"}},
-		Edges:  []types.TTLEdge{{SourceID: "a", TargetID: "b", Predicate: "gm:calls"}},
+		Nodes: map[string]*types.TTLNode{"a": {ID: "a"}, "b": {ID: "b"}},
+		Edges: []types.TTLEdge{{SourceID: "a", TargetID: "b", Predicate: "gm:calls"}},
 	}
 	inDeg := ComputeInDegree(sub)
 	if inDeg["a"] != 0 {

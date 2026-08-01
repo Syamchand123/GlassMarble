@@ -35,12 +35,18 @@ func (t *PythonTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) 
 		} else if strings.Contains(tok.Type, "parameter") || strings.Contains(tok.Type, "argument") {
 			node.Type = GASTParameter
 			node.Kind = "parameter"
+		} else if isControlFlowType(tok.Type) {
+			node.Type = GASTControlFlow
+			node.Kind = tok.Type
+			node.Visibility = "internal"
 		} else {
 			node.Type = GASTFunction
 			node.Kind = "function"
 		}
-		node.Visibility = resolvePythonVisibility(tok.Name)
-		setDeclarationFQN(node, fileRelPath, tok.Name)
+		if node.Type != GASTControlFlow {
+			node.Visibility = resolvePythonVisibility(tok.Name)
+			setDeclarationFQN(node, fileRelPath, tok.Name)
+		}
 	case stage1.TokenCall:
 		node.Type = GASTCallExpression
 		node.Kind = "call"

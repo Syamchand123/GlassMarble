@@ -104,6 +104,61 @@ func (w *WriteAheadLog) Checkpoint() (bool, error) {
 	return false, nil
 }
 
+// Truncate removes all WAL segments. It must be called only after a
+// successful atomic TTL write: every committed transaction up to the graph's
+// current Version is then captured in the TTL, so replaying the WAL would be
+// redundant. Recovery remains correct after a crash between the atomic write
+// and the truncation because replay is bounded by maxAppliedTx (the TTL
+// metadata gm:version), not by WAL contents (AUDIT Issue 3 Phase 3B-7 /
+// Issue 4 Phase 4B-8).
+func (w *WriteAheadLog) Truncate() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	segments := []string{w.LogFilePath + ".2", w.LogFilePath + ".1", w.LogFilePath}
+	for _, seg := range segments {
+		if err := os.Remove(seg); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to truncate WAL segment %s: %w", seg, err)
+		}
+	}
+	return nil
+}
+
+// ForEachEntry streams every WAL entry from the segment chain (.2, .1,
+// current) in chronological order, invoking fn for each entry. Streaming
+// keeps recovery memory bounded by the in-flight transaction rather than by
+// the whole log (AUDIT Issue 4 Phase 4B-5 — ReadAllEntries materialized every
+// entry of every segment before replay). If fn returns an error, iteration
+// stops and that error is returned.
+func (w *WriteAheadLog) ForEachEntry(fn func(*WALEntry) error) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	filesToRead := []string{w.LogFilePath + ".2", w.LogFilePath + ".1", w.LogFilePath}
+	for _, fp := range filesToRead {
+		f, err := os.Open(fp)
+		if err != nil {
+			continue // Skip if missing
+		}
+
+		decoder := json.NewDecoder(f)
+		for {
+			var entry WALEntry
+			if err := decoder.Decode(&entry); err != nil {
+				break
+			}
+			e := entry
+			if err := fn(&e); err != nil {
+				f.Close()
+				return err
+			}
+		}
+		f.Close()
+	}
+
+	return nil
+}
+
 // ReadAllEntries reads all entries from the WAL file for crash recovery replay.
 func (w *WriteAheadLog) ReadAllEntries() ([]*WALEntry, error) {
 	w.mu.Lock()

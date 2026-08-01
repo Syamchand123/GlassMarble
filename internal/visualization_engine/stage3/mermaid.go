@@ -79,12 +79,18 @@ func RenderDiagram(tree *types.LayoutTree, t types.DiagramType) string {
 		renderFlowchartFallback(tree, &sb)
 	}
 
-	renderSummaryFooter(tree, &sb)
+	// Mindmap rejects comments, so its footer (and any other comment) must not
+	// be emitted (AUDIT Issue 2 Phase 2C-11).
+	if t != types.Mindmap {
+		renderSummaryFooter(tree, &sb)
+	}
 	return sb.String()
 }
 
 func renderClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("classDiagram\n")
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	classes := make(map[string]*types.LayoutNode)
 	methods := make(map[string][]string)
 
@@ -94,9 +100,10 @@ func renderClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 			return
 		}
 		for _, node := range t.Nodes {
-			if node.Kind == "gm:TypeDecl" {
+			switch node.Kind {
+			case "gm:TypeDecl", "gm:Struct", "gm:Class", "gm:Interface":
 				classes[node.ID] = node
-			} else if node.Kind == "gm:Executable" {
+			case "gm:Executable", "gm:Function", "gm:Method":
 				_, rec, sym := parseFQN(node.ID)
 				if rec != "" {
 					parentID := findParentClassID(node.ID, classes)
@@ -104,7 +111,7 @@ func renderClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 						methods[parentID] = append(methods[parentID], sym)
 					}
 				}
-			} else if node.Kind == "gm:Member" {
+			case "gm:Member":
 				_, rec, sym := parseFQN(node.ID)
 				if rec != "" {
 					parentID := findParentClassID(node.ID, classes)
@@ -124,7 +131,7 @@ func renderClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	collectNodes(tree)
 
 	for id, class := range classes {
-		classAlias := sanitizeName(id)
+		classAlias := reg.alias(id)
 		sb.WriteString(fmt.Sprintf("    class %s {\n", classAlias))
 		lbl := sanitizeMermaidLabel(class.Name)
 		if lbl != "" {
@@ -153,17 +160,23 @@ func renderClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 						continue
 					}
 					drawnRelations[relationKey] = true
-					srcAlias := sanitizeName(src)
-					tgtAlias := sanitizeName(tgt)
+					srcAlias := reg.alias(src)
+					tgtAlias := reg.alias(tgt)
 					switch edge.Predicate {
 					case "gm:inheritsFrom":
 						sb.WriteString(fmt.Sprintf("    %s --|> %s : inherits\n", srcAlias, tgtAlias))
+					case "gm:extends":
+						sb.WriteString(fmt.Sprintf("    %s --|> %s : extends\n", srcAlias, tgtAlias))
 					case "gm:implements":
 						sb.WriteString(fmt.Sprintf("    %s ..|> %s : implements\n", srcAlias, tgtAlias))
+					case "gm:mixes":
+						sb.WriteString(fmt.Sprintf("    %s ..|> %s : mixes\n", srcAlias, tgtAlias))
 					case "gm:composes":
 						sb.WriteString(fmt.Sprintf("    %s --* %s : composes\n", srcAlias, tgtAlias))
 					case "gm:aggregates":
 						sb.WriteString(fmt.Sprintf("    %s --o %s : aggregates\n", srcAlias, tgtAlias))
+					case "gm:hasMember", "gm:hasField":
+						sb.WriteString(fmt.Sprintf("    %s --* %s : has\n", srcAlias, tgtAlias))
 					default:
 						sb.WriteString(fmt.Sprintf("    %s ..> %s : uses\n", srcAlias, tgtAlias))
 					}
@@ -175,14 +188,17 @@ func renderClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 
 func renderObjectDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("classDiagram\n")
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	var renderObjects func(t *types.LayoutTree)
 	renderObjects = func(t *types.LayoutTree) {
 		if t == nil {
 			return
 		}
 		for _, node := range t.Nodes {
-			if node.Kind == "gm:TypeDecl" {
-				alias := sanitizeName(node.ID)
+			switch node.Kind {
+			case "gm:TypeDecl", "gm:Struct", "gm:Class", "gm:Interface":
+				alias := reg.alias(node.ID)
 				sb.WriteString(fmt.Sprintf("    class %s {\n", alias))
 				sb.WriteString(fmt.Sprintf("        %s : Instance\n", sanitizeMermaidLabel(node.Name)))
 				sb.WriteString("    }\n")
@@ -194,26 +210,28 @@ func renderObjectDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	}
 	renderObjects(tree)
 	for _, edge := range tree.Edges {
-		srcAlias := sanitizeName(edge.SourceID)
-		tgtAlias := sanitizeName(edge.TargetID)
+		srcAlias := reg.alias(edge.SourceID)
+		tgtAlias := reg.alias(edge.TargetID)
 		sb.WriteString(fmt.Sprintf("    %s --- %s : link\n", srcAlias, tgtAlias))
 	}
 }
 
 func renderUMLComponentDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("flowchart TB\n")
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	var renderComp func(t *types.LayoutTree, indent string)
 	renderComp = func(t *types.LayoutTree, indent string) {
 		if t == nil {
 			return
 		}
 		if t.BoundaryName != "Root" {
-			boundaryAlias := sanitizeName(t.BoundaryName)
+			boundaryAlias := reg.boundary(t.BoundaryName)
 			sb.WriteString(fmt.Sprintf("%ssubgraph %s [\"<<component>> %s\"]\n", indent, boundaryAlias, t.BoundaryName))
 			indent += "    "
 		}
 		for _, node := range t.Nodes {
-			alias := sanitizeName(node.ID)
+			alias := reg.alias(node.ID)
 			sb.WriteString(fmt.Sprintf("%s%s[[\"%s\"]]\n", indent, alias, node.Name))
 		}
 		for _, child := range t.Children {
@@ -226,26 +244,28 @@ func renderUMLComponentDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	}
 	renderComp(tree, "")
 	for _, edge := range tree.Edges {
-		srcAlias := sanitizeName(edge.SourceID)
-		tgtAlias := sanitizeName(edge.TargetID)
+		srcAlias := reg.alias(edge.SourceID)
+		tgtAlias := reg.alias(edge.TargetID)
 		sb.WriteString(fmt.Sprintf("    %s ..> %s\n", srcAlias, tgtAlias))
 	}
 }
 
 func renderUMLDeploymentDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("flowchart TB\n")
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	var renderNode func(t *types.LayoutTree, indent string)
 	renderNode = func(t *types.LayoutTree, indent string) {
 		if t == nil {
 			return
 		}
 		if t.BoundaryName != "Root" {
-			boundaryAlias := sanitizeName(t.BoundaryName)
+			boundaryAlias := reg.boundary(t.BoundaryName)
 			sb.WriteString(fmt.Sprintf("%ssubgraph %s [\"<<device>> %s\"]\n", indent, boundaryAlias, t.BoundaryName))
 			indent += "    "
 		}
 		for _, node := range t.Nodes {
-			alias := sanitizeName(node.ID)
+			alias := reg.alias(node.ID)
 			if node.PrimitiveType == "DATABASE" {
 				sb.WriteString(fmt.Sprintf("%s%s[(\"%s (db)\")]\n", indent, alias, node.Name))
 			} else {
@@ -262,26 +282,28 @@ func renderUMLDeploymentDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	}
 	renderNode(tree, "")
 	for _, edge := range tree.Edges {
-		srcAlias := sanitizeName(edge.SourceID)
-		tgtAlias := sanitizeName(edge.TargetID)
+		srcAlias := reg.alias(edge.SourceID)
+		tgtAlias := reg.alias(edge.TargetID)
 		sb.WriteString(fmt.Sprintf("    %s ===|protocol| %s\n", srcAlias, tgtAlias))
 	}
 }
 
 func renderUMLPackageDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("flowchart TB\n")
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	var renderPack func(t *types.LayoutTree, indent string)
 	renderPack = func(t *types.LayoutTree, indent string) {
 		if t == nil {
 			return
 		}
 		if t.BoundaryName != "Root" {
-			boundaryAlias := sanitizeName(t.BoundaryName)
+			boundaryAlias := reg.boundary(t.BoundaryName)
 			sb.WriteString(fmt.Sprintf("%ssubgraph %s [\"folder: %s\"]\n", indent, boundaryAlias, t.BoundaryName))
 			indent += "    "
 		}
 		for _, node := range t.Nodes {
-			alias := sanitizeName(node.ID)
+			alias := reg.alias(node.ID)
 			sb.WriteString(fmt.Sprintf("%s%s[\"%s\"]\n", indent, alias, node.Name))
 		}
 		for _, child := range t.Children {
@@ -294,26 +316,28 @@ func renderUMLPackageDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	}
 	renderPack(tree, "")
 	for _, edge := range tree.Edges {
-		srcAlias := sanitizeName(edge.SourceID)
-		tgtAlias := sanitizeName(edge.TargetID)
+		srcAlias := reg.alias(edge.SourceID)
+		tgtAlias := reg.alias(edge.TargetID)
 		sb.WriteString(fmt.Sprintf("    %s -.->|import| %s\n", srcAlias, tgtAlias))
 	}
 }
 
 func renderUMLCompositeDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("flowchart LR\n")
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	var renderComposite func(t *types.LayoutTree, indent string)
 	renderComposite = func(t *types.LayoutTree, indent string) {
 		if t == nil {
 			return
 		}
 		if t.BoundaryName != "Root" {
-			boundaryAlias := sanitizeName(t.BoundaryName)
+			boundaryAlias := reg.boundary(t.BoundaryName)
 			sb.WriteString(fmt.Sprintf("%ssubgraph %s [\"composite structure: %s\"]\n", indent, boundaryAlias, t.BoundaryName))
 			indent += "    "
 		}
 		for _, node := range t.Nodes {
-			alias := sanitizeName(node.ID)
+			alias := reg.alias(node.ID)
 			name := sanitizeMermaidLabel(node.Name)
 			if node.Kind == "gm:Interface" || node.Kind == "gm:Port" {
 				sb.WriteString(fmt.Sprintf("%s%s([\"Port: %s\"])\n", indent, alias, name))
@@ -331,21 +355,23 @@ func renderUMLCompositeDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	}
 	renderComposite(tree, "")
 	for _, edge := range tree.Edges {
-		srcAlias := sanitizeName(edge.SourceID)
-		tgtAlias := sanitizeName(edge.TargetID)
+		srcAlias := reg.alias(edge.SourceID)
+		tgtAlias := reg.alias(edge.TargetID)
 		sb.WriteString(fmt.Sprintf("    %s --- %s\n", srcAlias, tgtAlias))
 	}
 }
 
 func renderUMLProfileDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("classDiagram\n")
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	var renderProfile func(t *types.LayoutTree)
 	renderProfile = func(t *types.LayoutTree) {
 		if t == nil {
 			return
 		}
 		for _, node := range t.Nodes {
-			alias := sanitizeName(node.ID)
+			alias := reg.alias(node.ID)
 			sb.WriteString(fmt.Sprintf("    class %s {\n", alias))
 			stereo := node.PrimitiveType
 			if stereo == "" {
@@ -364,13 +390,15 @@ func renderUMLProfileDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 func renderUsecaseDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("graph LR\n")
 	sb.WriteString("    Actor((Client))\n")
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	var renderUsecases func(t *types.LayoutTree)
 	renderUsecases = func(t *types.LayoutTree) {
 		if t == nil {
 			return
 		}
 		for _, node := range t.Nodes {
-			alias := sanitizeName(node.ID)
+			alias := reg.alias(node.ID)
 			name := sanitizeMermaidLabel(node.Name)
 			if node.Kind == "gm:Annotation" {
 				sb.WriteString(fmt.Sprintf("    %s((\"Use Case: %s\"))\n", alias, name))
@@ -385,8 +413,8 @@ func renderUsecaseDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	}
 	renderUsecases(tree)
 	for _, edge := range tree.Edges {
-		srcAlias := sanitizeName(edge.SourceID)
-		tgtAlias := sanitizeName(edge.TargetID)
+		srcAlias := reg.alias(edge.SourceID)
+		tgtAlias := reg.alias(edge.TargetID)
 		sb.WriteString(fmt.Sprintf("    %s --> %s\n", srcAlias, tgtAlias))
 	}
 }
@@ -394,6 +422,8 @@ func renderUsecaseDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 func renderActivityDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("flowchart TB\n")
 	sb.WriteString("    Start([Start])\n")
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	var firstNodeAlias string
 	var lastNodeAlias string
 	var renderFlow func(t *types.LayoutTree)
@@ -402,7 +432,7 @@ func renderActivityDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 			return
 		}
 		for _, node := range t.Nodes {
-			alias := sanitizeName(node.ID)
+			alias := reg.alias(node.ID)
 			if firstNodeAlias == "" {
 				firstNodeAlias = alias
 			}
@@ -426,8 +456,8 @@ func renderActivityDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 		sb.WriteString(fmt.Sprintf("    Start --> %s\n", firstNodeAlias))
 	}
 	for _, edge := range tree.Edges {
-		srcAlias := sanitizeName(edge.SourceID)
-		tgtAlias := sanitizeName(edge.TargetID)
+		srcAlias := reg.alias(edge.SourceID)
+		tgtAlias := reg.alias(edge.TargetID)
 		if edge.Predicate == "gm:spawnsConcurrent" {
 			sb.WriteString(fmt.Sprintf("    %s -->|fork| %s\n", srcAlias, tgtAlias))
 		} else if edge.Predicate == "gm:controlFlowToTrue" {
@@ -449,21 +479,21 @@ func renderActivityDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 
 func renderStateDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("stateDiagram-v2\n")
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	states := make(map[string]bool)
-	var firstState string
+	hasIncoming := make(map[string]bool)
+	hasOutgoing := make(map[string]bool)
 	var renderStates func(t *types.LayoutTree)
 	renderStates = func(t *types.LayoutTree) {
 		if t == nil {
 			return
 		}
 		for _, node := range t.Nodes {
-			alias := sanitizeName(node.ID)
+			alias := reg.alias(node.ID)
 			name := sanitizeMermaidLabel(node.Name)
 			if name == "" {
 				name = sanitizeMermaidLabel(node.ID)
-			}
-			if firstState == "" {
-				firstState = alias
 			}
 			sb.WriteString(fmt.Sprintf("    state %s as \"%s\"\n", alias, name))
 			states[alias] = true
@@ -473,28 +503,60 @@ func renderStateDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 		}
 	}
 	renderStates(tree)
-	if firstState != "" {
-		sb.WriteString(fmt.Sprintf("    [*] --> %s\n", firstState))
+
+	// Initial/final transitions come from graph structure, never fabricated:
+	// the initial state is a state with no incoming edges, the final states
+	// have no outgoing edges (AUDIT Issue 2 Phase 2C-14).
+	if len(states) > 0 {
+		initialWritten := false
+		for _, edge := range tree.Edges {
+			srcAlias := reg.alias(edge.SourceID)
+			tgtAlias := reg.alias(edge.TargetID)
+			if states[srcAlias] {
+				hasOutgoing[srcAlias] = true
+			}
+			if states[tgtAlias] {
+				hasIncoming[tgtAlias] = true
+			}
+		}
+		for _, edge := range tree.Edges {
+			srcAlias := reg.alias(edge.SourceID)
+			tgtAlias := reg.alias(edge.TargetID)
+			if states[srcAlias] && states[tgtAlias] && srcAlias != tgtAlias {
+				label := sanitizeMermaidLabel(strings.TrimPrefix(edge.Predicate, "gm:"))
+				sb.WriteString(fmt.Sprintf("    %s --> %s : %s\n", srcAlias, tgtAlias, label))
+			}
+		}
+		// Deterministic order: sorted by alias.
+		var ids []string
+		for alias := range states {
+			ids = append(ids, alias)
+		}
+		sort.Strings(ids)
+		for _, alias := range ids {
+			if !hasIncoming[alias] {
+				sb.WriteString(fmt.Sprintf("    [*] --> %s\n", alias))
+				initialWritten = true
+			}
+			if !hasOutgoing[alias] {
+				sb.WriteString(fmt.Sprintf("    %s --> [*]\n", alias))
+			}
+		}
+		_ = initialWritten
 	} else {
 		sb.WriteString("    [*] --> Idle\n")
 		sb.WriteString("    Idle --> [*]\n")
-	}
-	for _, edge := range tree.Edges {
-		srcAlias := sanitizeName(edge.SourceID)
-		tgtAlias := sanitizeName(edge.TargetID)
-		if states[srcAlias] && states[tgtAlias] && srcAlias != tgtAlias {
-			label := sanitizeMermaidLabel(strings.TrimPrefix(edge.Predicate, "gm:"))
-			sb.WriteString(fmt.Sprintf("    %s --> %s : %s\n", srcAlias, tgtAlias, label))
-		}
 	}
 }
 
 func renderSequenceDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("sequenceDiagram\n")
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	participants := make(map[string]bool)
 	for _, edge := range tree.Edges {
-		srcAlias := sanitizeName(edge.SourceID)
-		tgtAlias := sanitizeName(edge.TargetID)
+		srcAlias := reg.alias(edge.SourceID)
+		tgtAlias := reg.alias(edge.TargetID)
 		if !participants[srcAlias] {
 			sb.WriteString(fmt.Sprintf("    participant %s as %s\n", srcAlias, getParticipantLabel(edge.SourceID)))
 			participants[srcAlias] = true
@@ -510,8 +572,8 @@ func renderSequenceDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 		return edges[i].LineNumber < edges[j].LineNumber
 	})
 	for _, edge := range edges {
-		srcAlias := sanitizeName(edge.SourceID)
-		tgtAlias := sanitizeName(edge.TargetID)
+		srcAlias := reg.alias(edge.SourceID)
+		tgtAlias := reg.alias(edge.TargetID)
 		_, _, symbol := parseFQN(edge.TargetID)
 		symbolLabel := sanitizeMermaidLabel(symbol)
 		if symbolLabel == "" {
@@ -534,13 +596,15 @@ func renderSequenceDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 
 func renderCommunicationDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("flowchart LR\n")
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	var renderComm func(t *types.LayoutTree)
 	renderComm = func(t *types.LayoutTree) {
 		if t == nil {
 			return
 		}
 		for _, node := range t.Nodes {
-			alias := sanitizeName(node.ID)
+			alias := reg.alias(node.ID)
 			sb.WriteString(fmt.Sprintf("    %s[\"%s\"]\n", alias, sanitizeMermaidLabel(node.Name)))
 		}
 		for _, child := range t.Children {
@@ -549,8 +613,8 @@ func renderCommunicationDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	}
 	renderComm(tree)
 	for i, edge := range tree.Edges {
-		srcAlias := sanitizeName(edge.SourceID)
-		tgtAlias := sanitizeName(edge.TargetID)
+		srcAlias := reg.alias(edge.SourceID)
+		tgtAlias := reg.alias(edge.TargetID)
 		_, _, symbol := parseFQN(edge.TargetID)
 		sb.WriteString(fmt.Sprintf("    %s -->|%d: %s()| %s\n", srcAlias, i+1, symbol, tgtAlias))
 	}
@@ -559,13 +623,15 @@ func renderCommunicationDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 func renderInteractionOverviewDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("flowchart TB\n")
 	sb.WriteString("    Start([Start])\n")
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	var renderOverview func(t *types.LayoutTree)
 	renderOverview = func(t *types.LayoutTree) {
 		if t == nil {
 			return
 		}
 		for _, node := range t.Nodes {
-			alias := sanitizeName(node.ID)
+			alias := reg.alias(node.ID)
 			sb.WriteString(fmt.Sprintf("    %s[\"ref: %s()\"]\n", alias, sanitizeMermaidLabel(node.Name)))
 		}
 		for _, child := range t.Children {
@@ -574,31 +640,59 @@ func renderInteractionOverviewDiagram(tree *types.LayoutTree, sb *strings.Builde
 	}
 	renderOverview(tree)
 	for _, edge := range tree.Edges {
-		srcAlias := sanitizeName(edge.SourceID)
-		tgtAlias := sanitizeName(edge.TargetID)
+		srcAlias := reg.alias(edge.SourceID)
+		tgtAlias := reg.alias(edge.TargetID)
 		sb.WriteString(fmt.Sprintf("    %s --> %s\n", srcAlias, tgtAlias))
 	}
 }
 
 func renderTimingDiagram(tree *types.LayoutTree, sb *strings.Builder) {
+	// Mermaid has no native UML timing diagram; `timeline` is its closest
+	// valid time-oriented diagram (AUDIT Issue 2 Phase 2C-14). Each
+	// participant becomes a section with its states in execution order.
 	sb.WriteString("timeline\n")
 	sb.WriteString("    title UML Timing Diagram\n")
-	var renderTimeline func(t *types.LayoutTree, step int) int
-	renderTimeline = func(t *types.LayoutTree, step int) int {
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
+	participants := make(map[string][]string)
+	var collectSteps func(t *types.LayoutTree)
+	collectSteps = func(t *types.LayoutTree) {
 		if t == nil {
-			return step
+			return
 		}
 		for _, node := range t.Nodes {
-			sb.WriteString(fmt.Sprintf("    section %s\n", sanitizeMermaidLabel(node.Name)))
-			sb.WriteString(fmt.Sprintf("        State %d : Active\n", step))
-			step++
+			alias := reg.alias(node.ID)
+			name := sanitizeMermaidLabel(node.Name)
+			if name == "" {
+				name = sanitizeMermaidLabel(node.ID)
+			}
+			participants[alias] = append(participants[alias], name)
 		}
 		for _, child := range t.Children {
-			step = renderTimeline(child, step)
+			collectSteps(child)
 		}
-		return step
 	}
-	renderTimeline(tree, 0)
+	collectSteps(tree)
+
+	if len(participants) == 0 {
+		sb.WriteString("    section System\n")
+		sb.WriteString("        Idle : Active\n")
+		return
+	}
+
+	var aliases []string
+	for alias := range participants {
+		aliases = append(aliases, alias)
+	}
+	sort.Strings(aliases)
+	step := 0
+	for _, alias := range aliases {
+		sb.WriteString(fmt.Sprintf("    section %s\n", alias))
+		for _, name := range participants[alias] {
+			sb.WriteString(fmt.Sprintf("        %s : %d\n", name, step))
+			step++
+		}
+	}
 }
 
 func getNodeTags(node *types.LayoutNode) string {
@@ -623,13 +717,15 @@ func getNodeTags(node *types.LayoutNode) string {
 
 func renderDataFlowDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("graph LR\n")
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	var renderDFD func(t *types.LayoutTree)
 	renderDFD = func(t *types.LayoutTree) {
 		if t == nil {
 			return
 		}
 		for _, node := range t.Nodes {
-			alias := sanitizeName(node.ID)
+			alias := reg.alias(node.ID)
 			name := sanitizeMermaidLabel(node.Name)
 			if node.Kind == "gm:Variable" || node.Kind == "gm:Parameter" {
 				sb.WriteString(fmt.Sprintf("    %s((\"%s\"))\n", alias, name))
@@ -643,66 +739,89 @@ func renderDataFlowDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	}
 	renderDFD(tree)
 	for _, edge := range tree.Edges {
-		srcAlias := sanitizeName(edge.SourceID)
-		tgtAlias := sanitizeName(edge.TargetID)
-		arrow := " -.->|"
+		srcAlias := reg.alias(edge.SourceID)
+		tgtAlias := reg.alias(edge.TargetID)
+		label := shortPredicate(edge.Predicate)
+		// Valid arrow grammar: link text markers must be closed (AUDIT Issue
+		// 2 Phase 2A-1). `==>|label|` is only valid on the first of a pair,
+		// so taint/mutation edges emit the doubled form.
 		if edge.Predicate == "gm:mutatesGlobal" || edge.Predicate == "gm:vulnerableTaint" {
-			arrow = " ==>" + strings.TrimPrefix(edge.Predicate, "gm:") + "|| "
+			sb.WriteString(fmt.Sprintf("    %s ==>|%s| %s\n", srcAlias, label, tgtAlias))
+		} else {
+			sb.WriteString(fmt.Sprintf("    %s -.->|%s| %s\n", srcAlias, label, tgtAlias))
 		}
-		sb.WriteString(fmt.Sprintf("    %s %s %s\n", srcAlias, arrow, tgtAlias))
 	}
 }
 
 func renderERDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("erDiagram\n")
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	for _, node := range collectAllNodes(tree) {
-		alias := sanitizeName(node.ID)
+		alias := reg.alias(node.ID)
 		name := sanitizeMermaidLabel(node.Name)
 		sb.WriteString(fmt.Sprintf("    %s {\n        string id PK\n", alias))
 		if name != "" {
-			sb.WriteString(fmt.Sprintf("        string name\n"))
+			sb.WriteString("        string name\n")
 		}
 		sb.WriteString("    }\n")
 	}
 	for _, edge := range tree.Edges {
-		srcAlias := sanitizeName(edge.SourceID)
-		tgtAlias := sanitizeName(edge.TargetID)
+		srcAlias := reg.alias(edge.SourceID)
+		tgtAlias := reg.alias(edge.TargetID)
 		sb.WriteString(fmt.Sprintf("    %s ||--o{ %s : has\n", srcAlias, tgtAlias))
 	}
 }
 
 func renderMindmapDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("mindmap\n")
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
+	// Mindmap requires a single root node (AUDIT Issue 2 Phase 2C-14).
+	if tree == nil || (len(tree.Nodes) == 0 && len(tree.Children) == 0) {
+		sb.WriteString("    root((Project))\n")
+		return
+	}
+	var rootName string
+	if tree != nil && tree.BoundaryName != "" && tree.BoundaryName != "Root" {
+		rootName = tree.BoundaryName
+	} else {
+		rootName = "Project"
+	}
+	sb.WriteString(fmt.Sprintf("    root((%s))\n", sanitizeMermaidLabel(rootName)))
 	var renderMindmap func(t *types.LayoutTree, indent string)
 	renderMindmap = func(t *types.LayoutTree, indent string) {
 		if t == nil {
 			return
 		}
 		for _, node := range t.Nodes {
-			alias := sanitizeName(node.ID)
+			alias := reg.alias(node.ID)
 			sb.WriteString(fmt.Sprintf("%s%s[ %s ]\n", indent, alias, sanitizeMermaidLabel(node.Name)))
 		}
 		for _, child := range t.Children {
+			sb.WriteString(fmt.Sprintf("%s%s[ %s ]\n", indent, reg.boundary(child.BoundaryName), sanitizeMermaidLabel(child.BoundaryName)))
 			renderMindmap(child, indent+"    ")
 		}
 	}
-	renderMindmap(tree, "")
+	renderMindmap(tree, "    ")
 }
 
 func renderFlowchartFallback(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("flowchart TB\n")
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	var renderFlow func(t *types.LayoutTree, indent string)
 	renderFlow = func(t *types.LayoutTree, indent string) {
 		if t == nil {
 			return
 		}
 		if t.BoundaryName != "Root" {
-			boundaryAlias := sanitizeName(t.BoundaryName)
+			boundaryAlias := reg.boundary(t.BoundaryName)
 			sb.WriteString(fmt.Sprintf("%ssubgraph %s[\"%s\"]\n", indent, boundaryAlias, t.BoundaryName))
 			indent += "    "
 		}
 		for _, node := range t.Nodes {
-			alias := sanitizeName(node.ID)
+			alias := reg.alias(node.ID)
 			name := sanitizeMermaidLabel(node.Name)
 			if name == "" {
 				name = sanitizeMermaidLabel(node.ID)
@@ -719,8 +838,8 @@ func renderFlowchartFallback(tree *types.LayoutTree, sb *strings.Builder) {
 	}
 	renderFlow(tree, "")
 	for _, edge := range tree.Edges {
-		srcAlias := sanitizeName(edge.SourceID)
-		tgtAlias := sanitizeName(edge.TargetID)
+		srcAlias := reg.alias(edge.SourceID)
+		tgtAlias := reg.alias(edge.TargetID)
 		renderEdgeStyles(edge, srcAlias, tgtAlias, sb)
 	}
 }
@@ -729,15 +848,17 @@ func renderInfrastructureDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("C4Context\n")
 	title := getDiagramTitle(tree, "Infrastructure Diagram")
 	sb.WriteString(fmt.Sprintf("    title %s\n", title))
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	for _, boundary := range tree.Children {
 		if !isSystemBoundary(boundary) {
 			continue
 		}
-		alias := sanitizeName(boundary.BoundaryName)
+		alias := reg.boundary(boundary.BoundaryName)
 		name := sanitizeMermaidLabel(boundary.BoundaryName)
 		sb.WriteString(fmt.Sprintf("    System_Boundary(%s_sys, \"%s Infrastructure\") {\n", alias, name))
 		for _, node := range boundary.Nodes {
-			nodeAlias := sanitizeName(node.ID)
+			nodeAlias := reg.alias(node.ID)
 			nodeName := sanitizeMermaidLabel(node.Name)
 			if isDatabase(node) {
 				sb.WriteString(fmt.Sprintf("        ContainerDb(%s, \"%s\", \"%s\", \"Data Store\")\n",
@@ -749,32 +870,36 @@ func renderInfrastructureDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 		}
 		sb.WriteString("    }\n")
 	}
-	for _, node := range collectNodesByKind(tree, "gm:ExternalSystem") {
+	for _, node := range collectExternalNodes(tree) {
 		tags := getNodeTags(node)
 		sb.WriteString(fmt.Sprintf("    SystemExt(%s, \"%s\", \"External System%s\")\n",
-			sanitizeName(node.ID), sanitizeMermaidLabel(node.Name), tags))
+			reg.alias(node.ID), sanitizeMermaidLabel(node.Name), tags))
 	}
-	renderC4Edges(tree, sb)
+	renderC4Edges(tree, reg, sb)
 }
 
 func renderDependencyGraphDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("graph TD\n")
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	for _, node := range collectAllNodes(tree) {
-		alias := sanitizeName(node.ID)
+		alias := reg.alias(node.ID)
 		name := sanitizeMermaidLabel(node.Name)
 		sb.WriteString(fmt.Sprintf("    %s[\"%s\"]\n", alias, name))
 	}
 	for _, edge := range tree.Edges {
-		srcAlias := sanitizeName(edge.SourceID)
-		tgtAlias := sanitizeName(edge.TargetID)
+		srcAlias := reg.alias(edge.SourceID)
+		tgtAlias := reg.alias(edge.TargetID)
 		sb.WriteString(fmt.Sprintf("    %s --> %s\n", srcAlias, tgtAlias))
 	}
 }
 
 func renderHotspotComplexityDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("graph TD\n")
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	for _, node := range collectAllNodes(tree) {
-		alias := sanitizeName(node.ID)
+		alias := reg.alias(node.ID)
 		name := sanitizeMermaidLabel(node.Name)
 		if name == "" {
 			name = alias
@@ -782,40 +907,44 @@ func renderHotspotComplexityDiagram(tree *types.LayoutTree, sb *strings.Builder)
 		sb.WriteString(fmt.Sprintf("    %s[\"%s\"]\n", alias, name))
 	}
 	for _, edge := range tree.Edges {
-		srcAlias := sanitizeName(edge.SourceID)
-		tgtAlias := sanitizeName(edge.TargetID)
+		srcAlias := reg.alias(edge.SourceID)
+		tgtAlias := reg.alias(edge.TargetID)
 		sb.WriteString(fmt.Sprintf("    %s -.-> %s\n", srcAlias, tgtAlias))
 	}
 }
 
 func renderCallGraphDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("graph TD\n")
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	for _, node := range collectAllNodes(tree) {
-		alias := sanitizeName(node.ID)
+		alias := reg.alias(node.ID)
 		name := sanitizeMermaidLabel(node.Name)
 		sb.WriteString(fmt.Sprintf("    %s[\"%s\"]\n", alias, name))
 	}
 	for _, edge := range tree.Edges {
-		srcAlias := sanitizeName(edge.SourceID)
-		tgtAlias := sanitizeName(edge.TargetID)
+		srcAlias := reg.alias(edge.SourceID)
+		tgtAlias := reg.alias(edge.TargetID)
 		sb.WriteString(fmt.Sprintf("    %s --> %s\n", srcAlias, tgtAlias))
 	}
 }
 
 func renderLayeredArchitectureDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("graph TD\n")
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	var renderLayers func(t *types.LayoutTree, indent string)
 	renderLayers = func(t *types.LayoutTree, indent string) {
 		if t == nil {
 			return
 		}
 		if t.BoundaryName != "Root" {
-			boundaryAlias := sanitizeName(t.BoundaryName)
+			boundaryAlias := reg.boundary(t.BoundaryName)
 			sb.WriteString(fmt.Sprintf("%ssubgraph %s[\"%s\"]\n", indent, boundaryAlias, t.BoundaryName))
 			indent += "    "
 		}
 		for _, node := range t.Nodes {
-			alias := sanitizeName(node.ID)
+			alias := reg.alias(node.ID)
 			name := sanitizeMermaidLabel(node.Name)
 			sb.WriteString(fmt.Sprintf("%s%s[\"%s\"]\n", indent, alias, name))
 		}
@@ -829,16 +958,18 @@ func renderLayeredArchitectureDiagram(tree *types.LayoutTree, sb *strings.Builde
 	}
 	renderLayers(tree, "")
 	for _, edge := range tree.Edges {
-		srcAlias := sanitizeName(edge.SourceID)
-		tgtAlias := sanitizeName(edge.TargetID)
+		srcAlias := reg.alias(edge.SourceID)
+		tgtAlias := reg.alias(edge.TargetID)
 		sb.WriteString(fmt.Sprintf("    %s -.-> %s\n", srcAlias, tgtAlias))
 	}
 }
 
 func renderChangeImpactDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("graph TD\n")
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	for _, node := range collectAllNodes(tree) {
-		alias := sanitizeName(node.ID)
+		alias := reg.alias(node.ID)
 		name := sanitizeMermaidLabel(node.Name)
 		if node.IsHotspot {
 			sb.WriteString(fmt.Sprintf("    %s[\"%s\"]:::hotspot\n", alias, name))
@@ -847,8 +978,8 @@ func renderChangeImpactDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 		}
 	}
 	for _, edge := range tree.Edges {
-		srcAlias := sanitizeName(edge.SourceID)
-		tgtAlias := sanitizeName(edge.TargetID)
+		srcAlias := reg.alias(edge.SourceID)
+		tgtAlias := reg.alias(edge.TargetID)
 		sb.WriteString(fmt.Sprintf("    %s --> %s\n", srcAlias, tgtAlias))
 	}
 	sb.WriteString("    classDef hotspot fill:#ffcccc\n")

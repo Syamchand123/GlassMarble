@@ -1,8 +1,8 @@
 package stage4
 
 import (
-	"strings"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage3"
+	"strings"
 )
 
 // LinkCrossLanguageRPC constructs EdgeNetworkCall edges linking client fetch/axios calls
@@ -43,7 +43,7 @@ func LinkCrossLanguageRPC(stage3Out *stage3.Stage3Output, cpg *Stage4Output) {
 			if !exists {
 				continue
 			}
-			
+
 			content := strings.ToLower(callerNode.Properties["content"])
 			if content == "" {
 				continue

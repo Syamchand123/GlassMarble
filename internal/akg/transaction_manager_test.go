@@ -1,11 +1,15 @@
 package akg
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	akgerrs "github.com/Syamchand123/GlassMarble/internal/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,6 +22,59 @@ func TestExecuteDelta_NilPayload(t *testing.T) {
 	if err != nil {
 		t.Errorf("expected no error for nil payload, got %v", err)
 	}
+}
+
+// TestMaxTTLBytesGuardRejectsOversizedCommit: a delta whose staged TTL would
+// exceed the --max-ttl-mb budget is refused and the previous good file is
+// kept (AUDIT Issue 4 Phase 4A-4).
+func TestMaxTTLBytesGuardRejectsOversizedCommit(t *testing.T) {
+	dir := t.TempDir()
+	// 1-byte budget: any serialized graph exceeds it, so the commit must be
+	// refused and the previous good file kept.
+	tm, err := NewAKGTransactionManagerWithOptions(dir, 1)
+	require.NoError(t, err)
+	defer tm.Close()
+
+	payload := stage4.NewStage4Output("testhash")
+	payload.GraphNodes["n1"] = &stage4.ResolvedNode{ID: "n1", Kind: "FUNCTION", Name: "testFunc"}
+
+	err = tm.ExecuteDeltaTransaction(payload, []string{"test.go"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--max-ttl-mb")
+
+	// The commit must not leave a state file behind.
+	if _, statErr := os.Stat(filepath.Join(dir, "akg_state.ttl")); !os.IsNotExist(statErr) {
+		t.Error("oversized commit must not leave a state file behind")
+	}
+
+	// WAL must not block future recovery (rollback on failed save).
+	walPath := filepath.Join(dir, "wal", "akg_transactions.wal")
+	if st, statErr := os.Stat(walPath); statErr == nil && st.Size() > 0 {
+		t.Errorf("WAL must be truncated after a refused commit, got %d bytes", st.Size())
+	}
+}
+
+// TestMaxTTLBytesGuardRejectsOversizedLoad: an existing state file larger
+// than the budget is refused at load (AUDIT Issue 4 Phase 4A-4).
+func TestMaxTTLBytesGuardRejectsOversizedLoad(t *testing.T) {
+	dir := t.TempDir()
+	tm, err := NewAKGTransactionManager(dir)
+	require.NoError(t, err)
+	payload := stage4.NewStage4Output("testhash")
+	payload.GraphNodes["n1"] = &stage4.ResolvedNode{ID: "n1", Kind: "FUNCTION", Name: "testFunc"}
+	require.NoError(t, tm.ExecuteDeltaTransaction(payload, []string{"test.go"}))
+	tm.Close()
+
+	// 1-byte budget: any existing state file is refused on reload.
+	_, err = NewAKGTransactionManagerWithOptions(dir, 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--max-ttl-mb")
+
+	// A fresh database (no state file) is always allowed.
+	fresh := t.TempDir()
+	tm2, err := NewAKGTransactionManagerWithOptions(fresh, 1)
+	require.NoError(t, err)
+	tm2.Close()
 }
 
 func TestExecuteDelta_AddNode(t *testing.T) {
@@ -259,6 +316,9 @@ func TestExecuteDelta_DanglingReferenceAudit(t *testing.T) {
 	payload.GraphNodes["source"] = &stage4.ResolvedNode{ID: "source", Kind: "FUNCTION", Name: "source"}
 	payload.AddEdge("source", "nonexistent", stage4.EdgeCalls, 42)
 
+	// The merge sweep (Step C.4) drops the dangling edge and records it in
+	// graph.Errors; the commit succeeds with zero dangling edges persisted
+	// (AUDIT Issue 5 Phase 5A-1 engine-side zero-dangling guard).
 	if err := tm.ExecuteDeltaTransaction(payload, []string{"test.go"}); err != nil {
 		t.Fatalf("delta execution failed: %v", err)
 	}
@@ -276,6 +336,9 @@ func TestExecuteDelta_DanglingReferenceAudit(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected DanglingReferenceError from source to nonexistent, got errors: %+v", snapshot.Errors)
+	}
+	if q := MeasureGraphQuality(snapshot); q.DanglingEdges != 0 {
+		t.Errorf("dangling edges survived the merge sweep: %v", q)
 	}
 }
 
@@ -403,4 +466,186 @@ func TestGetActiveGraph(t *testing.T) {
 	assert.Equal(t, 0, graph.Nodes.Len())
 }
 
+// TestRecover_BoundedReplay verifies that WAL entries already captured in the
+// TTL (txID <= maxAppliedTx from the gm:version metadata) are skipped, while
+// newer committed entries are replayed exactly once (AUDIT Issue 3 Phase 3B-7).
+func TestRecover_BoundedReplay(t *testing.T) {
+	dir := t.TempDir()
+	tm, err := NewAKGTransactionManager(dir)
+	require.NoError(t, err)
+	defer tm.Close()
 
+	payload := stage4.NewStage4Output("hash1")
+	payload.GraphNodes["real1"] = &stage4.ResolvedNode{ID: "real1", Kind: "FUNCTION", Name: "real1"}
+	require.NoError(t, tm.ExecuteDeltaTransaction(payload, []string{"a.go"}))
+	// After a successful commit the WAL is truncated; graph.Version is now 1.
+
+	// Simulate a crash window: stale committed entry for the already-applied
+	// tx 1 (must be skipped) and a new committed entry tx 2 (must be replayed).
+	require.NoError(t, tm.wal.AppendEntry(&WALEntry{
+		TxID: 1, CommitHash: "hash1", Status: WALStatusStarted, ModifiedFiles: []string{"a.go"},
+		Payload: &stage4.Stage4Output{CommitHash: "hash1", GraphNodes: map[string]*stage4.ResolvedNode{
+			"staleNode": {ID: "staleNode", Kind: "FUNCTION", Name: "stale"},
+		}},
+	}))
+	require.NoError(t, tm.wal.MarkCommitted(1))
+	require.NoError(t, tm.wal.AppendEntry(&WALEntry{
+		TxID: 2, CommitHash: "hash2", Status: WALStatusStarted, ModifiedFiles: []string{"b.go"},
+		Payload: &stage4.Stage4Output{CommitHash: "hash2", GraphNodes: map[string]*stage4.ResolvedNode{
+			"replayed2": {ID: "replayed2", Kind: "FUNCTION", Name: "replayed2"},
+		}},
+	}))
+	require.NoError(t, tm.wal.MarkCommitted(2))
+
+	require.NoError(t, tm.Recover())
+
+	graph := tm.GetActiveSnapshot()
+	require.Equal(t, uint64(2), graph.Version, "replay bound should advance to newest replayed tx")
+	if _, ok := graph.GetNode("real1"); !ok {
+		t.Error("node from committed delta must survive")
+	}
+	if _, ok := graph.GetNode("replayed2"); !ok {
+		t.Error("newer committed WAL entry must be replayed")
+	}
+	if _, ok := graph.GetNode("staleNode"); ok {
+		t.Error("stale WAL entry at or below maxAppliedTx must NOT be replayed")
+	}
+}
+
+// TestSchemaVersionMismatchRejected verifies that a persisted TTL with a newer
+// schema version fails loudly instead of silently loading an empty graph
+// (AUDIT Issue 3 Phase 3A-3).
+func TestSchemaVersionMismatchRejected(t *testing.T) {
+	dir := t.TempDir()
+	ttlPath := filepath.Join(dir, "akg_state.ttl")
+	ttl := `@prefix gm: <http://glassmarble.org/ontology#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+<http://glassmarble.org/node/metadata> a gm:MetaData ;
+    gm:schemaVersion "99" ;
+    gm:commitHash "future" ;
+    gm:version "7" .
+`
+	require.NoError(t, os.WriteFile(ttlPath, []byte(ttl), 0644))
+
+	_, err := NewAKGTransactionManager(dir)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, akgerrs.ErrSchemaVersion)
+}
+
+// TestTombstoneRoundTrip_NoResurrection verifies that a deleted node is
+// persisted as a gm:Deleted tombstone (incremental append path) and never
+// resurrects after a reload (AUDIT Issue 3 Phase 3B-6).
+func TestTombstoneRoundTrip_NoResurrection(t *testing.T) {
+	dir := t.TempDir()
+	tm, err := NewAKGTransactionManager(dir)
+	require.NoError(t, err)
+
+	// Base graph of 5 nodes so the single-node delete delta is <= 20% of the
+	// base and takes the incremental append path (which is the path that
+	// requires tombstones: the old node block lingers in the base copy).
+	payload := stage4.NewStage4Output("hash1")
+	for i := 0; i < 5; i++ {
+		id := fmt.Sprintf("keep%d", i)
+		payload.GraphNodes[id] = &stage4.ResolvedNode{
+			ID: id, Kind: "FUNCTION", Name: id,
+			FileSpec: stage4.LocationMeta{Path: fmt.Sprintf("keep%d.go", i)},
+		}
+	}
+	payload.GraphNodes["gone"] = &stage4.ResolvedNode{
+		ID: "gone", Kind: "FUNCTION", Name: "gone",
+		FileSpec: stage4.LocationMeta{Path: "gone.go"},
+	}
+	files := []string{"keep0.go", "keep1.go", "keep2.go", "keep3.go", "keep4.go", "gone.go"}
+	require.NoError(t, tm.ExecuteDeltaTransaction(payload, files))
+
+	// Sweep: empty payload for the same file removes the node and appends a
+	// gm:Deleted tombstone block into the TTL (incremental append).
+	require.NoError(t, tm.ExecuteDeltaTransaction(stage4.NewStage4Output("hash1"), []string{"gone.go"}))
+	tm.Close()
+
+	ttl, err := os.ReadFile(filepath.Join(dir, "akg_state.ttl"))
+	require.NoError(t, err)
+	if !strings.Contains(string(ttl), "gm:Deleted") || !strings.Contains(string(ttl), `gm:status "DELETED"`) {
+		t.Fatalf("expected gm:Deleted tombstone block in TTL:\n%s", string(ttl))
+	}
+
+	reloaded, err := NewAKGTransactionManager(dir)
+	require.NoError(t, err)
+	defer reloaded.Close()
+	if _, ok := reloaded.GetActiveSnapshot().GetNode("gone"); ok {
+		t.Error("deleted node resurrected after reload")
+	}
+	for i := 0; i < 5; i++ {
+		id := fmt.Sprintf("keep%d", i)
+		if _, ok := reloaded.GetActiveSnapshot().GetNode(id); !ok {
+			t.Errorf("surviving node %s was lost after reload", id)
+		}
+	}
+}
+
+// TestDeltaPersistsEntrypointsAndZones verifies the delta serializer carries
+// gm:isEntrypoint and gm:primitiveZone so incremental saves preserve them
+// (AUDIT Issue 3 Phase 3B-8).
+func TestDeltaPersistsEntrypointsAndZones(t *testing.T) {
+	dir := t.TempDir()
+	tm, err := NewAKGTransactionManager(dir)
+	require.NoError(t, err)
+	defer tm.Close()
+
+	payload := stage4.NewStage4Output("hash1")
+	payload.GraphNodes["ep1"] = &stage4.ResolvedNode{ID: "ep1", Kind: "FUNCTION", Name: "main"}
+	payload.GraphNodes["mod1"] = &stage4.ResolvedNode{ID: "mod1", Kind: "MODULE", Name: "app"}
+	payload.EntrypointRegistry = []string{"ep1"}
+	payload.FolderZones = map[string]string{"mod1": "user"}
+	require.NoError(t, tm.ExecuteDeltaTransaction(payload, []string{"a.go"}))
+
+	reloaded, err := NewAKGTransactionManager(dir)
+	require.NoError(t, err)
+	defer reloaded.Close()
+
+	snapshot := reloaded.GetActiveSnapshot()
+	require.Contains(t, snapshot.Entrypoints, "ep1")
+	if zone, ok := snapshot.FolderZones.Get("mod1"); !ok || zone != "user" {
+		t.Errorf("expected folder zone user for mod1, got %q (ok=%v)", zone, ok)
+	}
+}
+
+// TestDanglingEdgeSweepNeverPersists verifies the engine-side zero-dangling
+// guard (AUDIT Issue 5 Phase 5A-1): a delta whose edge targets a missing
+// node commits cleanly — the sweep drops the edge, the WAL truncates, and
+// the reloaded graph contains zero dangling edges.
+func TestDanglingEdgeSweepNeverPersists(t *testing.T) {
+	dir := t.TempDir()
+	tm, err := NewAKGTransactionManager(dir)
+	require.NoError(t, err)
+	defer tm.Close()
+
+	// Seed a clean baseline state.
+	seed := stage4.NewStage4Output("hash1")
+	seed.GraphNodes["a.go::ok"] = &stage4.ResolvedNode{ID: "a.go::ok", Kind: "FUNCTION", Name: "ok"}
+	require.NoError(t, tm.ExecuteDeltaTransaction(seed, []string{"a.go"}))
+
+	// A delta carrying an edge to a node that does not exist anywhere.
+	bad := stage4.NewStage4Output("hash2")
+	bad.GraphNodes["a.go::caller"] = &stage4.ResolvedNode{ID: "a.go::caller", Kind: "FUNCTION", Name: "caller"}
+	bad.OutboundEdges["a.go::caller"] = []stage4.ResolvedEdge{
+		{SourceID: "a.go::caller", TargetID: "missing::callee", Type: stage4.EdgeCalls, LineNumber: 5},
+	}
+	require.NoError(t, tm.ExecuteDeltaTransaction(bad, []string{"a.go"}))
+
+	// The sweep must have dropped the dangling edge without touching the
+	// surviving baseline node.
+	snapshot := tm.GetActiveSnapshot()
+	require.Zero(t, MeasureGraphQuality(snapshot).DanglingEdges)
+	_, ok := snapshot.GetNode("a.go::ok")
+	require.True(t, ok, "baseline node must survive the sweep")
+
+	// The WAL truncates after the commit: a fresh manager opens cleanly and
+	// the persisted file carries no dangling edges.
+	reloaded, err := NewAKGTransactionManager(dir)
+	require.NoError(t, err)
+	defer reloaded.Close()
+	reloadedSnapshot := reloaded.GetActiveSnapshot()
+	require.Zero(t, MeasureGraphQuality(reloadedSnapshot).DanglingEdges)
+	require.Equal(t, 2, reloadedSnapshot.Nodes.Len())
+}

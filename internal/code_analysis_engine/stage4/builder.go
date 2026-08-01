@@ -30,6 +30,17 @@ func BuildUniversalID(relPath, receiver, name string) string {
 	return fmt.Sprintf("%s::%s", cleanPath, cleanName)
 }
 
+// universalFuncID mirrors the builder's GASTFunction naming: Go translator
+// names arrive dotted ("Receiver.Method", "pkg.Func") and the qualifier is
+// stripped so per-statement linkers derive the same ID as the function node
+// the builder registered (AUDIT Issue 1.6 — Go method ID mismatch).
+func universalFuncID(relPath, receiver, name string) string {
+	if idx := strings.LastIndex(name, "."); idx != -1 {
+		name = name[idx+1:]
+	}
+	return BuildUniversalID(relPath, receiver, name)
+}
+
 // InitialGraphBuilder traverses Stage 3's DirectoryNode topology and registers all vertices into GraphNodes.
 type InitialGraphBuilder struct {
 	output *Stage4Output
@@ -38,7 +49,7 @@ type InitialGraphBuilder struct {
 
 func (b *InitialGraphBuilder) registerNode(baseID string, node *ResolvedNode, gastNode *stage2.GASTNode) string {
 	finalID := baseID
-	
+
 	// Step 4.1: Cryptographic AST Hashing for Delta Stability
 	// If it's an anonymous function, shadowed variable, or collision, we hash the syntax structure.
 	if strings.Contains(baseID, "anonymous") || gastNode.Name == "" || gastNode.Name == "anonymous" {
@@ -78,7 +89,7 @@ func generateASTHash(node *stage2.GASTNode) string {
 // BuildInitialNodes populates Stage4Output.GraphNodes with Universal Namespace Prefixed IDs for modified files.
 func BuildInitialNodes(stage3Out *stage3.Stage3Output, modifiedFiles []string) *Stage4Output {
 	output := NewStage4Output(stage3Out.CommitHash)
-	
+
 	modSet := make(map[string]bool)
 	for _, f := range modifiedFiles {
 		modSet[stage3.NormalizeRelativePath(f)] = true
@@ -114,7 +125,7 @@ func (b *InitialGraphBuilder) traverseDirectory(dir *stage3.DirectoryNode) {
 				Path: stage3.NormalizeRelativePath(dir.RelativePath),
 			},
 		}
-		
+
 		// Map the Folder Zone if it exists
 		if dir.PrimitiveZone != "" {
 			b.output.FolderZones[modID] = string(dir.PrimitiveZone)
@@ -128,7 +139,7 @@ func (b *InitialGraphBuilder) traverseDirectory(dir *stage3.DirectoryNode) {
 		}
 
 		normPath := stage3.NormalizeRelativePath(file.RelativePath)
-		
+
 		// 1. Check if this file was modified. If modSet is empty, we process everything (Full Mode).
 		if len(b.modSet) > 0 && !b.modSet[normPath] {
 			continue
@@ -215,6 +226,12 @@ func (b *InitialGraphBuilder) extractNodesFromGAST(node *stage2.GASTNode, relPat
 			// Extract last segment from the ID e.g. "src/b.go::BFunc" -> "BFunc"
 			segments := strings.Split(node.ID, "::")
 			nodeName = segments[len(segments)-1]
+		}
+		// Go translators may produce dotted Names ("pkg.Func" / "Receiver.Method").
+		// Strip the qualifier so the universal ID matches BuildUniversalID from
+		// call sites (AUDIT Issue 1.6 — Go ID mismatch).
+		if idx := strings.LastIndex(nodeName, "."); idx != -1 {
+			nodeName = nodeName[idx+1:]
 		}
 
 		universalID := BuildUniversalID(relPath, receiver, nodeName)

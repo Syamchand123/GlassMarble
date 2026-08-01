@@ -59,7 +59,9 @@ func SeedAKG(t *testing.T, dir string) string {
 					LineStart: 15,
 					LineEnd:   21,
 				},
-				Properties: map[string]string{"macro_rules": "data_layer|persistence"},
+				// role is a persisted property; macro_rules is derived data and
+				// is intentionally NOT persisted (AUDIT Phase 3C-12).
+				Properties: map[string]string{"role": "persistence", "macro_rules": "data_layer|persistence"},
 			},
 			NodeMain: {
 				ID:   NodeMain,

@@ -167,12 +167,21 @@ func ComputeInDegree(sub *types.VirtualSubgraph) map[string]int {
 
 // ComputeAllMetrics runs all metric computations (PageRank, betweenness, degrees, god-objects, k-core, SCCs, summary, communities).
 func ComputeAllMetrics(sub *types.VirtualSubgraph) *DiagramMetrics {
+	return ComputeAllMetricsWithOptions(sub, true)
+}
+
+// ComputeAllMetricsWithOptions is ComputeAllMetrics with an explicit SCC toggle;
+// the PipelineConfig.EnableSCC flag was previously dead (AUDIT Issue 2 §2.4).
+func ComputeAllMetricsWithOptions(sub *types.VirtualSubgraph, includeSCC bool) *DiagramMetrics {
 	pr := ComputePageRank(sub, 0.85, 100)
 	bc := ComputeBetweenness(sub)
 	inDeg, outDeg := ComputeDegrees(sub)
 	godObjects := DetectGodObjects(sub, inDeg, outDeg)
 	kcore := ComputeKCores(sub)
-	sccs, _ := CountSCCs(sub)
+	var sccs [][]string
+	if includeSCC {
+		sccs, _ = CountSCCs(sub)
+	}
 	summary := ComputeGraphSummary(sub)
 	communities := ComputeWeightedModularity(sub)
 
@@ -196,9 +205,14 @@ func ComputeGraphSummary(sub *types.VirtualSubgraph) *types.GraphSummary {
 		EdgeCount: len(sub.Edges),
 	}
 	if summary.NodeCount > 1 {
+		// Directed density is clamped to [0,1]; dangling edges (endpoints
+		// outside the node set) must not inflate it (AUDIT Issue 2 §2.4).
 		maxEdges := summary.NodeCount * (summary.NodeCount - 1)
 		if maxEdges > 0 {
 			summary.Density = float64(summary.EdgeCount) / float64(maxEdges)
+			if summary.Density > 1 {
+				summary.Density = 1
+			}
 		}
 		summary.Diameter = ComputeDiameter(sub)
 		summary.AvgPathLength = ComputeAvgPathLength(sub)
@@ -211,6 +225,39 @@ func ComputeGraphSummary(sub *types.VirtualSubgraph) *types.GraphSummary {
 	inDeg, outDeg := ComputeDegrees(sub)
 	godObjects := DetectGodObjects(sub, inDeg, outDeg)
 	summary.GodObjectCount = len(godObjects)
+	summary.ConnectedComponents = CountConnectedComponents(sub)
 
 	return summary
+}
+
+// CountConnectedComponents returns the number of weakly connected components,
+// so disconnected graphs are reported instead of silently presenting
+// intra-component values as global metrics (AUDIT Issue 2 §2.4).
+func CountConnectedComponents(sub *types.VirtualSubgraph) int {
+	adj := make(map[string][]string, len(sub.Nodes))
+	for _, e := range sub.Edges {
+		adj[e.SourceID] = append(adj[e.SourceID], e.TargetID)
+		adj[e.TargetID] = append(adj[e.TargetID], e.SourceID)
+	}
+	seen := make(map[string]bool, len(sub.Nodes))
+	components := 0
+	for id := range sub.Nodes {
+		if seen[id] {
+			continue
+		}
+		components++
+		queue := []string{id}
+		seen[id] = true
+		for len(queue) > 0 {
+			cur := queue[0]
+			queue = queue[1:]
+			for _, nb := range adj[cur] {
+				if !seen[nb] {
+					seen[nb] = true
+					queue = append(queue, nb)
+				}
+			}
+		}
+	}
+	return components
 }

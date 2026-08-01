@@ -12,9 +12,20 @@ import (
 func (c *CodePropertyGraph) Query(filter stage4.QueryFilter) []*stage4.ResolvedNode {
 	var candidates []*stage4.ResolvedNode
 	if filter.Kind != "" {
-		if nodeSet, exists := c.KindIndex.Get(filter.Kind); exists {
-			for nodeID := range nodeSet {
-				if node, ok := c.Nodes.Get(nodeID); ok {
+		if c.KindIndex != nil {
+			if nodeSet, exists := c.KindIndex.Get(filter.Kind); exists {
+				for nodeID := range nodeSet {
+					if node, ok := c.Nodes.Get(nodeID); ok {
+						candidates = append(candidates, node)
+					}
+				}
+			}
+		} else {
+			// KindIndex is not built (e.g. a graph constructed directly in
+			// tests): fall back to a linear scan filtered by Kind so the
+			// query still returns correct results (AUDIT Issue 3 Phase 3D-13).
+			for _, node := range c.Nodes.Values() {
+				if node != nil && node.Kind == filter.Kind {
 					candidates = append(candidates, node)
 				}
 			}

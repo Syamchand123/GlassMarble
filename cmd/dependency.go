@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
 	"github.com/spf13/cobra"
 )
@@ -26,7 +25,7 @@ var dependencyCmd = &cobra.Command{
 		}
 
 		storageDir := filepath.Join(dir, ".glassmarble")
-		tm, err := akg.NewAKGTransactionManager(storageDir)
+		tm, err := newAKGManager(storageDir, cmd)
 		if err != nil {
 			return fmt.Errorf("failed to open AKG database: %w", err)
 		}

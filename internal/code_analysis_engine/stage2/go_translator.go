@@ -7,7 +7,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage1"
 )
 
-var goReceiverRegex = regexp.MustCompile(`func\s*\(\s*\w+\s+\*?(\w+)\s*\)`)
+var goReceiverRegex = regexp.MustCompile(`func\s*\(\s*\w+\s+(\*?\w+)[\w\[\],\s]*\)`)
 
 type GoTranslator struct{}
 
@@ -37,17 +37,27 @@ func (t *GoTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) *GAS
 			node.Kind = "function"
 			if tok.Type == "method_declaration" {
 				node.Kind = "method"
+				receiver := ""
 				if match := goReceiverRegex.FindStringSubmatch(tok.Content); len(match) > 1 {
-					node.ReceiverType = match[1]
-					node.Properties["receiver_type"] = match[1]
-					// FQN: pkg.Receiver.Method — fully qualified dot-notation
-					node.ID = pkgPrefix + "." + match[1] + "." + tok.Name
-					node.Name = node.ID
+					receiver = strings.TrimPrefix(match[1], "*")
 				}
-			} else {
-				// FQN: pkg.FunctionName
-				node.ID = pkgPrefix + "." + tok.Name
+				if receiver == "" {
+					// Unparseable receiver (e.g. generic `func (m *CowMap[K, V]) Len()`
+					// before the regex was hardened): fall back to a bare-ID method so
+					// the raw path-based baseNode ID never leaks into caller IDs.
+					receiver = tok.Name
+				}
+				node.ReceiverType = receiver
+				node.Properties["receiver_type"] = receiver
+				// ID/Name: bare Receiver.Method (pkg-qualified FQN kept in properties)
+				node.ID = receiver + "." + tok.Name
 				node.Name = node.ID
+				node.Properties["fully_qualified_name"] = pkgPrefix + "." + node.ID
+			} else {
+				// ID/Name: bare function name (pkg-qualified FQN kept in properties)
+				node.ID = tok.Name
+				node.Name = node.ID
+				node.Properties["fully_qualified_name"] = pkgPrefix + "." + node.ID
 			}
 			node.Visibility = resolveGoVisibility(tok.Name)
 		case "field_declaration":
@@ -65,8 +75,9 @@ func (t *GoTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) *GAS
 				node.Kind = "interface"
 			}
 			node.Visibility = resolveGoVisibility(tok.Name)
-			node.ID = pkgPrefix + "." + tok.Name
+			node.ID = tok.Name
 			node.Name = node.ID
+			node.Properties["fully_qualified_name"] = pkgPrefix + "." + node.ID
 		default:
 			// Handle control flow statements
 			switch tok.Type {
@@ -82,8 +93,9 @@ func (t *GoTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) *GAS
 				node.Type = GASTTypeDeclaration
 				node.Kind = tok.Type
 				node.Visibility = resolveGoVisibility(tok.Name)
-				node.ID = pkgPrefix + "." + tok.Name
+				node.ID = tok.Name
 				node.Name = node.ID
+				node.Properties["fully_qualified_name"] = pkgPrefix + "." + node.ID
 			}
 		}
 

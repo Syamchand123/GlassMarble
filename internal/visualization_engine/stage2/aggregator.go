@@ -231,7 +231,6 @@ func getOrCreateBoundary(dir string, treeMap map[string]*types.LayoutTree, root 
 	return newTree
 }
 
-
 func collapseEdges(edges []types.TTLEdge) []types.LayoutEdge {
 	type edgeKey struct {
 		src  string

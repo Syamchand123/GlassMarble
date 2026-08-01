@@ -39,12 +39,16 @@ func (t *RubyTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) *G
 		} else if strings.Contains(tok.Type, "parameter") || strings.Contains(tok.Type, "argument") {
 			node.Type = GASTParameter
 			node.Kind = "parameter"
+		} else if isControlFlowType(tok.Type) {
+			node.Type = GASTControlFlow
+			node.Kind = tok.Type
+			node.Visibility = "internal"
 		} else {
 			node.Type = GASTFunction
 			node.Kind = "method"
 		}
-		node.Visibility = "public"
-		if node.Type != GASTNamespace {
+		if node.Type != GASTNamespace && node.Type != GASTControlFlow {
+			node.Visibility = "public"
 			setDeclarationFQN(node, fileRelPath, tok.Name)
 		}
 	case stage1.TokenCall:

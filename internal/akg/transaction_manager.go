@@ -1,19 +1,21 @@
 package akg
 
 import (
-	"compress/gzip"
-	"encoding/json"
+	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	akgerrs "github.com/Syamchand123/GlassMarble/internal/errors"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/stage1"
+	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
 // AKGCommitEvent represents a change event broadcasted after an atomic transaction commit.
@@ -33,11 +35,26 @@ type AKGTransactionManager struct {
 	wal         *WriteAheadLog
 	storageDir  string
 	subscribers []chan AKGCommitEvent
-	wg          sync.WaitGroup
+	// MaxTTLBytes is the AKG state-file budget (AUDIT Issue 4 Phase 4A-4).
+	// Loading and committing are refused when the TTL would exceed it;
+	// 0 means unlimited.
+	MaxTTLBytes int64
 }
+
+// metadataNodeURI is the ID of the metadata node block written at the top of
+// every full TTL serialization. It carries gm:commitHash, gm:schemaVersion,
+// and gm:version (the WAL replay bound).
+const metadataNodeURI = "http://glassmarble.org/node/metadata"
 
 // NewAKGTransactionManager initializes the Transaction Manager, restores state from disk, and runs WAL recovery.
 func NewAKGTransactionManager(storageDir string) (*AKGTransactionManager, error) {
+	return NewAKGTransactionManagerWithOptions(storageDir, 0)
+}
+
+// NewAKGTransactionManagerWithOptions initializes the Transaction Manager
+// with an explicit state-file byte budget (--max-ttl-mb, AUDIT Issue 4
+// Phase 4A-4): oversized artifacts are refused on load and on commit.
+func NewAKGTransactionManagerWithOptions(storageDir string, maxTTLBytes int64) (*AKGTransactionManager, error) {
 	if err := os.MkdirAll(storageDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create AKG storage directory: %w", err)
 	}
@@ -49,9 +66,10 @@ func NewAKGTransactionManager(storageDir string) (*AKGTransactionManager, error)
 
 	container := NewMVCCGraphContainer()
 	tm := &AKGTransactionManager{
-		container:  container,
-		wal:        wal,
-		storageDir: storageDir,
+		container:   container,
+		wal:         wal,
+		storageDir:  storageDir,
+		MaxTTLBytes: maxTTLBytes,
 	}
 
 	// Acquire startup file lock to protect recovery and loading
@@ -60,63 +78,83 @@ func NewAKGTransactionManager(storageDir string) (*AKGTransactionManager, error)
 	}
 	defer tm.ReleaseLock()
 
-	// Restore persistent state from disk if present
-	_ = tm.loadFromDisk()
+	// Restore persistent state from disk. Failures surface loudly: a corrupt
+	// or incompatible TTL must never silently produce an empty graph
+	// (AUDIT Issue 3 Phase 3B-10 / Issue 5 §5.6).
+	if err := tm.loadFromDisk(); err != nil {
+		return nil, fmt.Errorf("failed to restore AKG state from disk: %w", err)
+	}
 
 	// Replay and recover any committed transactions from the WAL file
-	_ = tm.Recover()
+	if err := tm.Recover(); err != nil {
+		return nil, fmt.Errorf("WAL recovery failed: %w", err)
+	}
 
 	return tm, nil
 }
 
 // Recover checks the WAL log on disk to replay any committed transactions that weren't fully written to state.
 func (tm *AKGTransactionManager) Recover() error {
-	entries, err := tm.wal.ReadAllEntries()
-	if err != nil {
-		return err
-	}
-	if len(entries) == 0 {
-		return nil
-	}
-
-	startedMap := make(map[uint64]*WALEntry)
-	committedMap := make(map[uint64]bool)
-
-	for _, entry := range entries {
-		if entry.Status == WALStatusStarted {
-			startedMap[entry.TxID] = entry
-		} else if entry.Status == WALStatusCommitted {
-			committedMap[entry.TxID] = true
-		}
-	}
-
 	activeGraph := tm.container.GetSnapshot()
+
+	// Replay is bounded by maxAppliedTx (the TTL metadata gm:version):
+	// transactions already captured in the TTL are skipped instead of being
+	// replayed from scratch on every startup (AUDIT Issue 3 Phase 3B-7).
 	maxAppliedTx := activeGraph.Version
 
+	// Streaming single-pass recovery (AUDIT Issue 4 Phase 4B-5): entries are
+	// read in append order — which is transaction order — and a committed
+	// delta is applied the moment its COMMITTED marker is seen. Memory is
+	// bounded by the in-flight transaction's payload instead of the whole
+	// log. A STARTED entry whose marker never arrived (crash mid-transaction)
+	// or an ABORTED entry is simply dropped.
+	pending := make(map[uint64]*WALEntry)
 	replayed := false
-	for txID, entry := range startedMap {
-		if committedMap[txID] && txID > maxAppliedTx {
-			shadow := activeGraph.Clone()
-			shadow.CommitHash = entry.CommitHash
-			shadow.Version = txID
 
-			if _, err := tm.applyDeltaToShadow(shadow, entry.Payload, entry.ModifiedFiles); err != nil {
-				return fmt.Errorf("WAL recovery failed to apply transaction %d: %w", txID, err)
+	err := tm.wal.ForEachEntry(func(entry *WALEntry) error {
+		switch entry.Status {
+		case WALStatusStarted:
+			pending[entry.TxID] = entry
+		case WALStatusAborted:
+			delete(pending, entry.TxID)
+		case WALStatusCommitted:
+			started, ok := pending[entry.TxID]
+			delete(pending, entry.TxID)
+			if !ok || started.Payload == nil || started.TxID <= maxAppliedTx {
+				return nil
+			}
+			shadow := activeGraph.Clone()
+			shadow.CommitHash = started.CommitHash
+			shadow.Version = started.TxID
+
+			if _, err := tm.applyDeltaToShadow(shadow, started.Payload, started.ModifiedFiles); err != nil {
+				return fmt.Errorf("WAL recovery failed to apply transaction %d: %w", started.TxID, err)
 			}
 
 			tm.container.PromoteShadowSnapshot(shadow)
 			activeGraph = shadow
-			maxAppliedTx = txID
+			maxAppliedTx = started.TxID
 			replayed = true
 		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
 	if replayed {
-		_ = tm.saveToDisk(activeGraph, nil, nil)
+		if err := tm.saveToDisk(activeGraph, nil, nil, 0); err != nil {
+			return fmt.Errorf("WAL recovery failed to persist replayed state: %w", err)
+		}
 	}
 
-	_, err = tm.wal.Checkpoint()
-	return err
+	// After a successful recovery the TTL captures all committed state; the
+	// WAL can be truncated so it stays bounded (AUDIT Issue 4 Phase 4B-8).
+	if err := tm.wal.Truncate(); err != nil {
+		return fmt.Errorf("WAL truncation after recovery failed: %w", err)
+	}
+
+	return nil
 }
 
 // GetActiveSnapshot returns a thread-safe read-only pointer to the active graph.
@@ -151,7 +189,9 @@ func (tm *AKGTransactionManager) ExecuteDeltaTransaction(payload *stage4.Stage4O
 		return nil
 	}
 
-	// Acquire cross-process file lock during delta transaction
+	// Acquire the cross-process file lock for the ENTIRE transaction, including
+	// the disk write: a second process must never observe or overwrite a
+	// partially-written TTL (AUDIT Issue 3 §3.3 / Issue 4 Phase 4C-10).
 	if err := tm.AcquireLock(); err != nil {
 		return err
 	}
@@ -178,6 +218,9 @@ func (tm *AKGTransactionManager) ExecuteDeltaTransaction(payload *stage4.Stage4O
 	}
 
 	// Apply delta to shadow snapshot (Sub-Stage B, C, D)
+	// Capture the pre-transaction size BEFORE the sweep so delete-only deltas
+	// can still take the incremental append path (AUDIT Issue 3 Phase 3B-6).
+	preTxSize := tm.container.GetSnapshot().Nodes.Len()
 	deletedNodeIDs, err := tm.applyDeltaToShadow(shadow, payload, modifiedFiles)
 	if err != nil {
 		return err
@@ -186,28 +229,31 @@ func (tm *AKGTransactionManager) ExecuteDeltaTransaction(payload *stage4.Stage4O
 	// ------------------------------------------------------------------------
 	// SUB-STAGE D.3: Atomic Commit & Persistence
 	// ------------------------------------------------------------------------
-	_ = tm.wal.MarkCommitted(txID)
+	if err := tm.wal.MarkCommitted(txID); err != nil {
+		return fmt.Errorf("WAL commit marker failed: %w", err)
+	}
 
 	// Promote shadow snapshot to active graph snapshot
 	tm.container.PromoteShadowSnapshot(shadow)
 
-	// Save active graph to disk asynchronously
-	tm.wg.Add(1)
-	go func(g *CodePropertyGraph) {
-		defer tm.wg.Done()
-		if err := tm.saveToDisk(g, payload, deletedNodeIDs); err != nil {
-			// Optional: log error here
+	// Persist synchronously (single writer, lock held) with tmp+fsync+rename
+	// semantics: the previous good file survives any failure, and errors reach
+	// the caller instead of being swallowed (AUDIT Issue 3 Phase 3B-4/3B-10).
+	if err := tm.saveToDisk(shadow, payload, deletedNodeIDs, preTxSize); err != nil {
+		// Roll the WAL back: the staged TTL never replaced the previous good
+		// file, so the rejected transaction must not replay on the next
+		// startup — recovery would hit the same verification failure and
+		// block every subsequent run (zero-dangling guard, Issue 5 Phase 5A-1).
+		if truncErr := tm.wal.Truncate(); truncErr != nil {
+			return fmt.Errorf("failed to persist AKG state: %w (additionally failed to roll back WAL: %v)", err, truncErr)
 		}
-	}(shadow.Clone())
+		return fmt.Errorf("failed to persist AKG state: %w", err)
+	}
 
-	// Checkpoint WAL log file from disk if it exceeds limits
-	rotated, _ := tm.wal.Checkpoint()
-	if rotated {
-		tm.wg.Add(1)
-		go func(g *CodePropertyGraph) {
-			defer tm.wg.Done()
-			_ = tm.saveBaseSnapshot(g)
-		}(shadow.Clone())
+	// The TTL now captures every transaction up to txID; replaying the WAL
+	// would be redundant. Truncate keeps .glassmarble bounded.
+	if err := tm.wal.Truncate(); err != nil {
+		return fmt.Errorf("failed to truncate WAL after commit: %w", err)
 	}
 
 	// Broadcast commit event to visual layout subscribers
@@ -252,13 +298,20 @@ func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, p
 	// ------------------------------------------------------------------------
 	// SUB-STAGE B: TRANSACTIONAL INVALIDATION (THE SWEEP PHASE)
 	// ------------------------------------------------------------------------
-	// Step B.1: Node Context Sweep
+	// Step B.1: Node Context Sweep. Every node of every modified file is
+	// invalidated (removed from the graph and its indexes); the graft phase
+	// below re-adds the nodes that still exist. oldNodeIDs keeps track of the
+	// full pre-transaction set so tombstones can be restricted to nodes that
+	// are GENUINELY gone (deleted files / removed symbols) — blanket
+	// tombstones for still-existing symbols would also erase cross-file edges
+	// pointing at them (AUDIT Issue 3 Phase 3B-9).
+	oldNodeIDs := make(map[string]bool)
 	deletedNodeIDs := make(map[string]bool)
 	for _, filePath := range modifiedFiles {
 		normPath := normalizePath(filePath)
 		if nodeSet, exists := shadow.FileNodeIndex.Get(normPath); exists {
 			for nodeID := range nodeSet {
-				deletedNodeIDs[nodeID] = true
+				oldNodeIDs[nodeID] = true
 				if node, ok := shadow.Nodes.Get(nodeID); ok {
 					if kindSet, kindExists := shadow.KindIndex.Get(node.Kind); kindExists {
 						newKindSet := make(map[string]bool, len(kindSet))
@@ -297,55 +350,11 @@ func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, p
 	// Clean up Entrypoints associated with deleted nodes
 	var validEntrypoints []string
 	for _, ep := range shadow.Entrypoints {
-		if !deletedNodeIDs[ep] {
+		if !oldNodeIDs[ep] {
 			validEntrypoints = append(validEntrypoints, ep)
 		}
 	}
 	shadow.Entrypoints = validEntrypoints
-
-	// Step B.2: Dangling Edge Eradication
-	var sweepWg sync.WaitGroup
-	sweepWg.Add(2)
-
-	go func() {
-		defer sweepWg.Done()
-		for _, sourceID := range shadow.OutboundEdges.Keys() {
-			edges, _ := shadow.OutboundEdges.Get(sourceID)
-			n := 0
-			for _, edge := range edges {
-				if !deletedNodeIDs[edge.TargetID] {
-					edges[n] = edge
-					n++
-				}
-			}
-			if n == 0 {
-				shadow.OutboundEdges = shadow.OutboundEdges.Delete(sourceID)
-			} else {
-				shadow.OutboundEdges = shadow.OutboundEdges.Set(sourceID, edges[:n])
-			}
-		}
-	}()
-
-	go func() {
-		defer sweepWg.Done()
-		for _, targetID := range shadow.InboundEdges.Keys() {
-			if deletedNodeIDs[targetID] {
-				shadow.InboundEdges = shadow.InboundEdges.Delete(targetID)
-				continue
-			}
-			edges, _ := shadow.InboundEdges.Get(targetID)
-			n := 0
-			for _, edge := range edges {
-				if !deletedNodeIDs[edge.SourceID] {
-					edges[n] = edge
-					n++
-				}
-			}
-			shadow.InboundEdges = shadow.InboundEdges.Set(targetID, edges[:n])
-		}
-	}()
-
-	sweepWg.Wait()
 
 	shadow.macroCache = NewCowMap[string, []string]()
 
@@ -412,8 +421,19 @@ func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, p
 		shadow.OutboundEdges = shadow.OutboundEdges.Set(sourceID, newSlice)
 	}
 
-	// Step C.2.b: Stage 3.8 and 3.9 Metadata Binding
-	shadow.Entrypoints = append(shadow.Entrypoints, payload.EntrypointRegistry...)
+	// Step C.2.b: Stage 3.8 and 3.9 Metadata Binding.
+	// Entrypoints are deduplicated: repeated analyses must not accumulate
+	// duplicate entries for the same node (AUDIT Issue 3 §3.3).
+	existingEP := make(map[string]bool, len(shadow.Entrypoints))
+	for _, ep := range shadow.Entrypoints {
+		existingEP[ep] = true
+	}
+	for _, ep := range payload.EntrypointRegistry {
+		if !existingEP[ep] {
+			shadow.Entrypoints = append(shadow.Entrypoints, ep)
+			existingEP[ep] = true
+		}
+	}
 	for k, v := range payload.FolderZones {
 		shadow.FolderZones = shadow.FolderZones.Set(k, v)
 	}
@@ -446,11 +466,73 @@ func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, p
 		}
 	}
 
+	// Step C.4: Post-graft invariant sweep. With the graft complete, keep
+	// every edge whose endpoints exist and drop only those referencing nodes
+	// that are truly gone (deleted files, symbols removed by an edit). The
+	// previous pre-graft sweep removed ALL edges touching modified files —
+	// including cross-file edges from UNCHANGED files to surviving symbols —
+	// and the delta cannot regenerate them, so every incremental commit
+	// permanently lost them (AUDIT Issue 3 Phase 3B-9 / Issue 5 Phase 5A-1).
+	// Dropped edges are recorded in shadow.Errors so the loss stays visible
+	// to `gmb status` / `gmb doctor` instead of disappearing silently.
+	shadow.Errors = nil
+	keptOutbound := NewCowMap[string, []stage4.ResolvedEdge]()
+	shadow.OutboundEdges.Iterate(func(sourceID string, edges []stage4.ResolvedEdge) {
+		if _, srcOK := shadow.Nodes.Get(sourceID); !srcOK {
+			return
+		}
+		var kept []stage4.ResolvedEdge
+		for _, edge := range edges {
+			if _, tgtOK := shadow.Nodes.Get(edge.TargetID); tgtOK {
+				kept = append(kept, edge)
+				continue
+			}
+			shadow.Errors = append(shadow.Errors, DanglingReferenceError{
+				SourceID:   sourceID,
+				TargetID:   edge.TargetID,
+				EdgeType:   string(edge.Type),
+				LineNumber: edge.LineNumber,
+				Message:    fmt.Sprintf("Dangling edge from %s to missing node %s dropped by merge sweep", sourceID, edge.TargetID),
+			})
+		}
+		if len(kept) > 0 {
+			keptOutbound = keptOutbound.Set(sourceID, kept)
+		}
+	})
+	shadow.OutboundEdges = keptOutbound
+
+	// Inbound edges are derived from outbound edges; rebuild them so the two
+	// views stay mirror-consistent after the sweep (copy-on-write: never
+	// append to a CowMap slice in place).
+	newInbound := NewCowMap[string, []stage4.ResolvedEdge]()
+	shadow.OutboundEdges.Iterate(func(sourceID string, edges []stage4.ResolvedEdge) {
+		for _, edge := range edges {
+			existing, _ := newInbound.Get(edge.TargetID)
+			newEdges := make([]stage4.ResolvedEdge, len(existing)+1)
+			copy(newEdges, existing)
+			newEdges[len(newEdges)-1] = edge
+			newInbound = newInbound.Set(edge.TargetID, newEdges)
+		}
+	})
+	shadow.InboundEdges = newInbound
+
+	// Tombstones are written only for nodes that are genuinely gone: nodes
+	// that existed before this transaction and were NOT re-grafted by the
+	// payload. Blanket-tombstoning still-existing symbols would delete their
+	// incident edges from the appended file on restore (Issue 3 Phase 3B-6).
+	for id := range oldNodeIDs {
+		if n, ok := payload.GraphNodes[id]; !ok || n == nil {
+			deletedNodeIDs[id] = true
+		}
+	}
+
 	// ------------------------------------------------------------------------
 	// SUB-STAGE D: GRAPH INVARIANT VERIFICATION & REASONING
 	// ------------------------------------------------------------------------
-	// Step D.1: Dangling Reference Audit
-	shadow.Errors = nil
+	// Step D.1: Dangling Reference Audit. The post-graft sweep (Step C.4)
+	// already guarantees every surviving edge has both endpoints; this pass
+	// is the invariant check that catches any future regression before the
+	// zero-dangling guard at write time.
 	shadow.OutboundEdges.Iterate(func(sourceID string, edges []stage4.ResolvedEdge) {
 		for _, edge := range edges {
 			if _, targetExists := shadow.Nodes.Get(edge.TargetID); !targetExists {
@@ -472,126 +554,183 @@ func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, p
 	return deletedNodeIDs, nil
 }
 
-func (tm *AKGTransactionManager) saveBaseSnapshot(graph *CodePropertyGraph) error {
-	gzPath := filepath.Join(tm.storageDir, "akg_state.json.gz")
-	f, err := os.Create(gzPath)
-	if err == nil {
-		gw := gzip.NewWriter(f)
-		enc := json.NewEncoder(gw)
-		if err := enc.Encode(graph); err != nil {
-			return err
-		}
-		gw.Close()
-		f.Close()
+// saveToDisk persists the graph to the TTL file atomically:
+// tmp-file -> fsync -> post-write verification -> atomic rename.
+// The previous good file is preserved on any failure (AUDIT Issue 3
+// Phase 3B-4, Issue 5 Phase 5A-1).
+func (tm *AKGTransactionManager) saveToDisk(graph *CodePropertyGraph, payload *stage4.Stage4Output, deletedNodeIDs map[string]bool, baseSize int) error {
+	if graph == nil {
+		return fmt.Errorf("cannot persist nil graph")
 	}
-	os.Remove(filepath.Join(tm.storageDir, "akg_state.json"))
+
+	ttlPath := filepath.Join(tm.storageDir, "akg_state.ttl")
+
+	tmp, err := os.CreateTemp(tm.storageDir, "akg_state.ttl.tmp-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp TTL file: %w", err)
+	}
+	defer os.Remove(tmp.Name())
+
+	// Incremental append path: stage the existing TTL and append the delta
+	// (tombstones + new nodes/edges) instead of rewriting the whole graph.
+	// baseSize is the PRE-transaction active graph size: measuring the
+	// post-sweep shadow would see 0 nodes after a delete delta and force a
+	// full rewrite, losing the tombstones entirely.
+	incremental := false
+	if payload != nil && len(deletedNodeIDs) != 0 {
+		deltaSize := len(payload.GraphNodes) + len(deletedNodeIDs)
+		if _, statErr := os.Stat(ttlPath); statErr == nil && baseSize > 0 && float64(deltaSize) <= float64(baseSize)*0.20 {
+			src, openErr := os.Open(ttlPath)
+			if openErr != nil {
+				return fmt.Errorf("failed to open existing TTL for incremental append: %w", openErr)
+			}
+			if _, copyErr := io.Copy(tmp, src); copyErr != nil {
+				src.Close()
+				return fmt.Errorf("failed to stage existing TTL for incremental append: %w", copyErr)
+			}
+			src.Close()
+			if err := SerializeDeltaToTurtle(payload, deletedNodeIDs, graph.Version, tmp); err != nil {
+				return fmt.Errorf("delta serialization failed: %w", err)
+			}
+			incremental = true
+		}
+	}
+
+	// Full rewrite (compaction) path
+	if !incremental {
+		if err := SerializeToTurtle(graph, tmp); err != nil {
+			return fmt.Errorf("TTL serialization failed: %w", err)
+		}
+	}
+
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("failed to fsync temp TTL file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("failed to close temp TTL file: %w", err)
+	}
+
+	// State-file budget guard: an oversized staged TTL is rejected BEFORE
+	// verification and the atomic rename, so the previous good file stays in
+	// place and the WAL can be rolled back (AUDIT Issue 4 Phase 4A-4).
+	if err := tm.enforceTTLBudget(tmp.Name()); err != nil {
+		return err
+	}
+
+	// Post-write verification BEFORE the atomic rename: if the staged file is
+	// corrupt or lossy, the previous good file is still in place (AUDIT
+	// Issue 5 Phase 5A-1).
+	if err := tm.verifyTTLFile(tmp.Name(), graph); err != nil {
+		return err
+	}
+
+	if err := os.Rename(tmp.Name(), ttlPath); err != nil {
+		return fmt.Errorf("failed to atomically rename TTL into place: %w", err)
+	}
 	return nil
 }
 
-func (tm *AKGTransactionManager) saveToDisk(graph *CodePropertyGraph, payload *stage4.Stage4Output, deletedNodeIDs map[string]bool) error {
-	// 1. Base snapshots (.json.gz) are now exclusively handled by saveBaseSnapshot during WAL rotation.
+// verifyTTLFile re-reads a staged TTL with the canonical parser and asserts
+// node/edge parity with the in-memory graph. Any deviation — unparseable
+// file, node/edge lossiness, or a single dangling edge (source or target
+// missing from the node set) — fails the write so the previous good file
+// stays in place (AUDIT Issue 5 Phase 5A-1: zero dangling edges at write
+// time; the engine-side producers were fixed in the Issue 1 batches).
+func (tm *AKGTransactionManager) verifyTTLFile(ttlPath string, graph *CodePropertyGraph) error {
+	restored, err := reconstructFromTTLFile(ttlPath)
+	if err != nil {
+		return fmt.Errorf("post-write verification failed: file did not parse back cleanly: %w", err)
+	}
 
-	// 2. Save W3C RDF Turtle representation as primary persistent graph database
-	ttlPath := filepath.Join(tm.storageDir, "akg_state.ttl")
+	if restored.Nodes.Len() != graph.Nodes.Len() {
+		return fmt.Errorf("post-write verification failed: node count mismatch (file=%d graph=%d)", restored.Nodes.Len(), graph.Nodes.Len())
+	}
 
-	// Check if we can do an incremental append
-	if payload != nil && len(deletedNodeIDs) != 0 {
-		deltaSize := len(payload.GraphNodes) + len(deletedNodeIDs)
-		baseSize := graph.Nodes.Len()
+	restoredEdges := 0
+	restored.OutboundEdges.Iterate(func(_ string, edges []stage4.ResolvedEdge) {
+		restoredEdges += len(edges)
+	})
+	// The TTL is triple-oriented: parallel edges sharing (source, predicate,
+	// target) collapse to one canonical triple on persist (the serializer
+	// dedups, keeping the max line number). Verification must therefore
+	// compare against the deduplicated edge count, not the raw total.
+	type keyT struct{ s, p, t string }
+	seen := make(map[keyT]int)
+	graph.OutboundEdges.Iterate(func(sourceID string, edges []stage4.ResolvedEdge) {
+		for _, edge := range edges {
+			pred := mapEdgeTypeToPredicate(edge.Type)
+			if pred == "" {
+				continue
+			}
+			seen[keyT{sourceID, pred, edge.TargetID}]++
+		}
+	})
+	expectedEdges := len(seen)
+	if restoredEdges != expectedEdges {
+		return fmt.Errorf("post-write verification failed: edge count mismatch (file=%d graph=%d)", restoredEdges, expectedEdges)
+	}
 
-		// Compact when delta exceeds 20% of base, or file doesn't exist
-		_, statErr := os.Stat(ttlPath)
-		if statErr == nil && baseSize > 0 && float64(deltaSize) <= float64(baseSize)*0.20 {
-			// Incremental append
-			f, err := os.OpenFile(ttlPath, os.O_APPEND|os.O_WRONLY, 0644)
-			if err == nil {
-				err = SerializeDeltaToTurtle(payload, deletedNodeIDs, f)
-				f.Close()
-				if err == nil {
-					return nil // Success incremental write
-				}
+	// Zero-dangling guard: every persisted edge must reference real nodes.
+	// The merged graph is verified as a whole (base + delta), so a dangling
+	// edge is a hard integrity failure, never a tolerated warning.
+	dangling := 0
+	restored.OutboundEdges.Iterate(func(sourceID string, edges []stage4.ResolvedEdge) {
+		for _, edge := range edges {
+			if _, ok := restored.Nodes.Get(sourceID); !ok {
+				dangling++
+			}
+			if _, ok := restored.Nodes.Get(edge.TargetID); !ok {
+				dangling++
 			}
 		}
+	})
+	if dangling > 0 {
+		return fmt.Errorf("post-write verification failed: %d dangling edge(s) (edges referencing missing nodes); the write was rejected and the previous good TTL was kept. Remove .glassmarble/akg_state.ttl and .glassmarble/wal/akg_transactions.wal, then re-run `gmb analyze --full` to rebuild from scratch", dangling)
 	}
 
-	// Fallback to full rewrite (compaction)
-	f, err := os.OpenFile(ttlPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return SerializeToTurtle(graph, f)
+	graph.Verified = true
+	graph.VerificationMsg = ""
+	return nil
 }
 
+// enforceTTLBudget refuses to proceed when the state file at path exceeds
+// the configured --max-ttl-mb budget. It is applied on load (oversized
+// artifacts must not be pulled into RAM) and on save (an oversized commit is
+// rejected before the atomic rename, leaving the previous good file in place).
+func (tm *AKGTransactionManager) enforceTTLBudget(path string) error {
+	if tm.MaxTTLBytes <= 0 {
+		return nil
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return nil
+	}
+	if st.Size() > tm.MaxTTLBytes {
+		return fmt.Errorf("AKG state file is %.1f MB, exceeding the --max-ttl-mb budget of %.1f MB; refused. Lower the analysis scope (--link-level=architecture), raise the budget, or rebuild with `gmb analyze --full`",
+			float64(st.Size())/(1<<20), float64(tm.MaxTTLBytes)/(1<<20))
+	}
+	return nil
+}
+
+// loadFromDisk restores the active graph from the primary Turtle state
+// database (akg_state.ttl). The JSON snapshot cache was removed: the TTL is
+// the single source of truth and the WAL the only replay log (AUDIT Issue 3
+// Phase 3B-5 / Issue 4 Phase 4B-5).
 func (tm *AKGTransactionManager) loadFromDisk() error {
-	var graph *CodePropertyGraph
-
-	jsonPath := filepath.Join(tm.storageDir, "akg_state.json")
-	gzPath := filepath.Join(tm.storageDir, "akg_state.json.gz")
-	var loaded CodePropertyGraph
-	var readErr error
-	var successfullyLoaded bool
-
-	if _, err := os.Stat(gzPath); err == nil {
-		f, err := os.Open(gzPath)
-		if err == nil {
-			defer f.Close()
-			gr, err := gzip.NewReader(f)
-			if err == nil {
-				decoder := json.NewDecoder(gr)
-				if err := decoder.Decode(&loaded); err == nil {
-					successfullyLoaded = true
-				} else {
-					readErr = err
-				}
-				gr.Close()
-			}
-		}
-	} else if _, err := os.Stat(jsonPath); err == nil {
-		f, err := os.Open(jsonPath)
-		if err == nil {
-			defer f.Close()
-			decoder := json.NewDecoder(f)
-			if err := decoder.Decode(&loaded); err == nil {
-				successfullyLoaded = true
-			} else {
-				readErr = err
-			}
-		}
+	if err := tm.enforceTTLBudget(filepath.Join(tm.storageDir, "akg_state.ttl")); err != nil {
+		return err
 	}
-
-	if successfullyLoaded {
-		if loaded.SchemaVersion < CurrentSchemaVersion {
-			// Migration Logic for older schemas
-			loaded.SchemaVersion = CurrentSchemaVersion
-			if loaded.InboundEdges == nil {
-				loaded.InboundEdges = NewCowMap[string, []stage4.ResolvedEdge]()
-			}
-			if loaded.OutboundEdges == nil {
-				loaded.OutboundEdges = NewCowMap[string, []stage4.ResolvedEdge]()
-			}
+	graph, err := tm.reconstructFromTurtle()
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Fresh database: start empty. WAL replay still applies any
+			// committed-but-unpersisted transactions from a previous run.
+			graph = NewCodePropertyGraph("initial")
+			graph.Version = 0
+			tm.container.ActiveGraph = graph
+			return nil
 		}
-		graph = &loaded
-	} else {
-		if readErr == nil {
-			readErr = fmt.Errorf("no cache file found")
-		}
-	}
-
-	// Self-healing fallback if JSON cache is missing or corrupt
-	if graph == nil {
-		// Attempt to restore from primary Turtle state database
-		restored, err := tm.reconstructFromTurtle()
-		if err == nil {
-			graph = restored
-			// Repair the cache file immediately
-			_ = tm.saveToDisk(graph, nil, nil)
-		} else {
-			if readErr != nil {
-				return fmt.Errorf("JSON cache load failed (%v) and Turtle fallback failed: %w", readErr, err)
-			}
-			return err
-		}
+		return err
 	}
 
 	// Rebuild LineIndex since it is not serialized
@@ -616,25 +755,69 @@ func (tm *AKGTransactionManager) loadFromDisk() error {
 		graph.LineIndex = graph.LineIndex.Set(normPath, lineNodes)
 	}
 
+	// A restored file that reconstructs cleanly with zero dangling edges is
+	// verified state: every commit already passed the strict post-write
+	// verification, so a loaded graph is verified unless a check below fails
+	// (AUDIT Issue 5 Phase 5B-5 — status must not claim "not verified" for a
+	// clean artifact).
+	graph.Verified = true
+	graph.VerificationMsg = ""
+	graph.OutboundEdges.Iterate(func(sourceID string, edges []stage4.ResolvedEdge) {
+		for _, edge := range edges {
+			if _, ok := graph.Nodes.Get(sourceID); !ok {
+				graph.Verified = false
+				graph.VerificationMsg = "dangling edge source in persisted graph"
+				return
+			}
+			if _, ok := graph.Nodes.Get(edge.TargetID); !ok {
+				graph.Verified = false
+				graph.VerificationMsg = "dangling edge target in persisted graph"
+				return
+			}
+		}
+	})
+
 	tm.container.ActiveGraph = graph
 	return nil
 }
 
 func (tm *AKGTransactionManager) reconstructFromTurtle() (*CodePropertyGraph, error) {
-	ttlPath := filepath.Join(tm.storageDir, "akg_state.ttl")
+	return reconstructFromTTLFile(filepath.Join(tm.storageDir, "akg_state.ttl"))
+}
+
+// reconstructFromTTLFile rebuilds a CodePropertyGraph from a TTL file,
+// applying tombstones (deletions remove the node AND its incident edges, so
+// deleted nodes never resurrect across restarts — AUDIT Issue 3 Phase 3B-6),
+// restoring metadata (commit hash, schema version, WAL replay bound), and
+// rebuilding every index that is not serialized (AUDIT Issue 3 Phase 3D-13).
+func reconstructFromTTLFile(ttlPath string) (*CodePropertyGraph, error) {
 	if _, err := os.Stat(ttlPath); os.IsNotExist(err) {
+		return nil, err
+	}
+
+	// Tombstones first: both the node-block form (`<uri> a gm:Deleted ;
+	// gm:status "DELETED" .`) and the legacy bare-triple form (`<uri>
+	// gm:status "DELETED" .`) mark deletions. The canonical parser discards
+	// tombstone node blocks but keeps the deleted node's OLD block from the
+	// base state of an appended file — without this pre-scan the node would
+	// resurrect on restore.
+	deletedIDs, err := scanDeletedNodeIDs(ttlPath)
+	if err != nil {
 		return nil, err
 	}
 
 	nodes, edges, err := stage1.ParseTTLFile(ttlPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("TTL parse failed: %w", err)
 	}
 
 	graph := NewCodePropertyGraph("restored_from_ttl")
 
 	// Convert TTLNode to stage4.ResolvedNode
 	for id, tNode := range nodes {
+		if id == metadataNodeURI || deletedIDs[id] {
+			continue
+		}
 		kind := mapClassToKind(tNode.Kind)
 		prim := strings.TrimPrefix(tNode.PrimitiveType, "gm:")
 
@@ -650,7 +833,40 @@ func (tm *AKGTransactionManager) reconstructFromTurtle() (*CodePropertyGraph, er
 			},
 			Properties: make(map[string]string),
 		}
+		for k, v := range tNode.Properties {
+			resNode.Properties[k] = v
+		}
+		if tNode.Code != "" {
+			resNode.Properties["code"] = tNode.Code
+		}
 		graph.Nodes = graph.Nodes.Set(id, resNode)
+
+		// Restore Entrypoints / FolderZones / Code / CommitHash (they are
+		// parsed but were previously discarded — AUDIT Issue 3 Phase 3B-8).
+		if tNode.IsEntrypoint {
+			graph.Entrypoints = append(graph.Entrypoints, id)
+		}
+		if kind == "MODULE" && tNode.PrimitiveZone != "" {
+			graph.FolderZones = graph.FolderZones.Set(id, tNode.PrimitiveZone)
+		}
+
+		// Rebuild KindIndex
+		kindSet, _ := graph.KindIndex.Get(kind)
+		newKindSet := make(map[string]bool, len(kindSet)+1)
+		for k, v := range kindSet {
+			newKindSet[k] = v
+		}
+		newKindSet[id] = true
+		graph.KindIndex = graph.KindIndex.Set(kind, newKindSet)
+
+		// Rebuild HashIndex
+		if h, ok := resNode.Properties["hash"]; ok && h != "" {
+			hashList, _ := graph.HashIndex.Get(h)
+			newHashList := make([]string, len(hashList)+1)
+			copy(newHashList, hashList)
+			newHashList[len(newHashList)-1] = id
+			graph.HashIndex = graph.HashIndex.Set(h, newHashList)
+		}
 
 		// Rebuild FileNodeIndex
 		normPath := normalizePath(resNode.FileSpec.Path)
@@ -665,14 +881,21 @@ func (tm *AKGTransactionManager) reconstructFromTurtle() (*CodePropertyGraph, er
 		}
 	}
 
-	// Rebuild Outbound and Inbound Edges
+	// Rebuild Outbound and Inbound Edges with canonical edge types; skip
+	// tombstone incident edges and legacy gm:status triples.
 	for _, tEdge := range edges {
-		pred := stage4.RelationshipType(strings.ToUpper(strings.TrimPrefix(tEdge.Predicate, "gm:")))
+		if deletedIDs[tEdge.SourceID] || deletedIDs[tEdge.TargetID] {
+			continue
+		}
+		if strings.HasPrefix(tEdge.Predicate, "gm:status") {
+			// Legacy tombstone triple parsed as an edge: never reconstruct it.
+			continue
+		}
 
 		resolvedEdge := stage4.ResolvedEdge{
 			SourceID:   tEdge.SourceID,
 			TargetID:   tEdge.TargetID,
-			Type:       pred,
+			Type:       mapPredicateToEdgeType(tEdge.Predicate),
 			LineNumber: tEdge.LineNumber,
 		}
 
@@ -689,11 +912,146 @@ func (tm *AKGTransactionManager) reconstructFromTurtle() (*CodePropertyGraph, er
 		graph.InboundEdges = graph.InboundEdges.Set(tEdge.TargetID, newInEdges)
 	}
 
-	// Run macro inference on restored graph
+	// Restore metadata node: commit hash, WAL replay bound, schema version.
+	// The metadata block is scanned from the raw TTL because stage1's parser
+	// drops it from its node map (AUDIT Issue 3 Phase 3B-7).
+	commitHash, schemaVersion, ttlVersion, err := scanTTLMetadata(ttlPath)
+	if err != nil {
+		return nil, fmt.Errorf("metadata scan failed: %w", err)
+	}
+	if ttlVersion > 0 {
+		graph.Version = ttlVersion
+	}
+	if commitHash != "" {
+		graph.CommitHash = commitHash
+	}
+	if schemaVersion > CurrentSchemaVersion {
+		// Reject newer schemas loudly (AUDIT Issue 3 Phase 3A-3).
+		return nil, fmt.Errorf("%w: file schema version %d exceeds supported %d", akgerrs.ErrSchemaVersion, schemaVersion, CurrentSchemaVersion)
+	}
+
+	// Run macro inference on the restored graph (in-memory derived data only;
+	// macro_rules are intentionally not persisted to the TTL).
 	RunTopologicalMacroInference(graph)
 
 	return graph, nil
 }
+
+// scanDeletedNodeIDs scans a TTL file for tombstone blocks — both the modern
+// node-block form (`<uri> a gm:Deleted ; gm:status "DELETED" .`) and the
+// legacy bare-triple form (`<uri> gm:status "DELETED" .`) — and returns the
+// set of node IDs marked for deletion. Last block wins: a node that was
+// deleted and then re-added within the same delta stream keeps its latest
+// (non-tombstone) block.
+func scanDeletedNodeIDs(ttlPath string) (map[string]bool, error) {
+	deleted := make(map[string]bool)
+
+	f, err := os.Open(ttlPath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+
+	var block []string
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "@prefix") || strings.HasPrefix(line, "#") {
+			continue
+		}
+		block = append(block, line)
+		if strings.HasSuffix(line, ".") {
+			blockStr := strings.Join(block, " ")
+			block = nil
+			// Tombstone detection: `gm:status "DELETED"` as a predicate.
+			// Property VALUES containing the text are escaped by the
+			// serializer (\"DELETED\"), so this cannot false-positive on
+			// legitimate node content.
+			fields := strings.Fields(blockStr)
+			if len(fields) > 0 {
+				id := types.ParseNodeURI(fields[0])
+				if strings.Contains(blockStr, `gm:status "DELETED"`) {
+					deleted[id] = true
+				} else {
+					// A later non-tombstone block for the same ID resurrects it.
+					delete(deleted, id)
+				}
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return deleted, nil
+}
+
+// scanTTLMetadata extracts the metadata block fields (gm:commitHash,
+// gm:schemaVersion, gm:version) directly from the raw TTL text. The stage1
+// parser drops the metadata node (ID "metadata") from its node map, so the
+// restore path cannot rely on ParseTTLFile for it. Maxima are used for
+// version/schemaVersion so duplicate blocks from incremental appends can
+// never regress the WAL replay bound or smuggle an old schema past the check.
+func scanTTLMetadata(ttlPath string) (commitHash string, schemaVersion int, version uint64, err error) {
+	f, err := os.Open(ttlPath)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+
+	// gm:version in metadata is written as a bare integer; tolerate quoted
+	// legacy values too.
+	parseInt := func(raw string) int {
+		n, e := strconv.Atoi(strings.Trim(raw, `"`))
+		if e != nil {
+			return 0
+		}
+		return n
+	}
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "gm:commitHash") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				commitHash = strings.Trim(fields[1], `"`)
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "gm:schemaVersion") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				if n := parseInt(fields[1]); n > schemaVersion {
+					schemaVersion = n
+				}
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "gm:version") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				if n := uint64(parseInt(fields[1])); n > version {
+					version = n
+				}
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", 0, 0, err
+	}
+	return commitHash, schemaVersion, version, nil
+}
+
+// staleLockAge is how long a db.lock file may remain untouched before it is
+// considered stale and stolen. Transactions hold the lock for milliseconds to
+// seconds; anything older is a crashed holder.
+const staleLockAge = 30 * time.Second
+
+// lockTimeout bounds how long AcquireLock waits before failing.
+const lockTimeout = 60 * time.Second
 
 func (tm *AKGTransactionManager) AcquireLock() error {
 	lockPath := filepath.Join(tm.storageDir, "db.lock")
@@ -704,29 +1062,23 @@ func (tm *AKGTransactionManager) AcquireLock() error {
 		file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0666)
 		if err == nil {
 			pid := os.Getpid()
-			fmt.Fprintf(file, "%d\n", pid)
+			fmt.Fprintf(file, "%d\n%d\n", pid, time.Now().Unix())
 			file.Close()
 			return nil
 		}
 
-		if lockData, readErr := os.ReadFile(lockPath); readErr == nil {
-			var lockedPid int
-			if n, _ := fmt.Sscanf(strings.TrimSpace(string(lockData)), "%d", &lockedPid); n == 1 {
-				proc, err := os.FindProcess(lockedPid)
-				if err != nil {
-					_ = os.Remove(lockPath)
-				} else {
-					if sigErr := proc.Signal(syscall.Signal(0)); sigErr != nil {
-						if strings.Contains(sigErr.Error(), "already finished") || strings.Contains(sigErr.Error(), "no such process") {
-							_ = os.Remove(lockPath)
-						}
-					}
-				}
-			}
+		// Stale-lock detection by file age. Probing the lock holder's process
+		// via os.FindProcess + Signal relies on OS error text that is
+		// localized on Windows and unreliable cross-platform (AUDIT Issue 4
+		// §4.5); file age is deterministic. A crashed holder's lock is
+		// reclaimed once it is stale.
+		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > staleLockAge {
+			_ = os.Remove(lockPath)
+			continue
 		}
 
-		if time.Since(start) > 10*time.Second {
-			return fmt.Errorf("failed to acquire database lock within 10 seconds (another transaction is active)")
+		if time.Since(start) > lockTimeout {
+			return akgerrs.ErrLockTimeout
 		}
 
 		time.Sleep(sleepDur)
@@ -749,5 +1101,6 @@ func normalizePath(path string) string {
 
 // Close blocks until all asynchronous tasks (like disk writes) are complete.
 func (tm *AKGTransactionManager) Close() {
-	tm.wg.Wait()
+	// Persistence is synchronous within ExecuteDeltaTransaction; Close is
+	// retained for API compatibility.
 }

@@ -1,0 +1,135 @@
+package cmd_test
+
+import (
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/Syamchand123/GlassMarble/cmd"
+)
+
+const doctorFixtureTTL = `@prefix gm: <http://glassmarble.org/schema#> .
+
+<http://glassmarble.org/node/metadata> a gm:MetaData ;
+    gm:version 7 ;
+    gm:schemaVersion 1 ;
+    gm:commitHash "abcdef1234567890" ;
+    .
+
+<http://glassmarble.org/node/cmd/app/main.go::Main> a gm:Executable ;
+    gm:name "Main" ;
+    gm:belongsToFile <http://glassmarble.org/file/cmd/app/main.go> ;
+    .
+
+<http://glassmarble.org/node/internal/db/db.go::Connect> a gm:Executable ;
+    gm:name "Connect" ;
+    gm:belongsToFile <http://glassmarble.org/file/internal/db/db.go> ;
+    .
+
+<http://glassmarble.org/node/cmd/app/main.go::Main> gm:calls <http://glassmarble.org/node/internal/db/db.go::Connect> .
+`
+
+func writeDoctorState(t *testing.T, dir, ttl string) {
+	t.Helper()
+	gmDir := filepath.Join(dir, ".glassmarble")
+	if err := os.MkdirAll(gmDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gmDir, "akg_state.ttl"), []byte(ttl), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runGmbCommand(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	// fmt.Printf in command RunE functions writes to os.Stdout directly, so
+	// capture it with a pipe instead of cobra's SetOut buffer.
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	command := cmd.RootCmdForTesting()
+	command.SetOut(w)
+	command.SetErr(w)
+	command.SetArgs(args)
+	runErr := command.Execute()
+	os.Stdout = oldStdout
+	w.Close()
+	out, _ := io.ReadAll(r)
+	r.Close()
+	return string(out), runErr
+}
+
+func TestDoctorCommandHealthy(t *testing.T) {
+	tempDir := t.TempDir()
+	writeDoctorState(t, tempDir, doctorFixtureTTL)
+
+	output, err := runGmbCommand(t, "doctor", "--dir", tempDir)
+	if err != nil {
+		t.Fatalf("doctor command failed: %v\n%s", err, output)
+	}
+	for _, want := range []string{"DOCTOR: OK", "Schema:        v1", "Parse-back:    ok", "Dangling:      0", "ontology conformant"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("doctor output missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestDoctorCommandUninitialized(t *testing.T) {
+	tempDir := t.TempDir()
+	output, err := runGmbCommand(t, "doctor", "--dir", tempDir)
+	if err != nil {
+		t.Fatalf("doctor command failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "Uninitialized") {
+		t.Errorf("expected Uninitialized report:\n%s", output)
+	}
+}
+
+func TestDoctorCommandCorruptFails(t *testing.T) {
+	tempDir := t.TempDir()
+	writeDoctorState(t, tempDir, "@prefix gm: <http://glassmarble.org/schema#> .\n<http://glassmarble.org/node/x> a gm:Executable ;\n")
+
+	output, err := runGmbCommand(t, "doctor", "--dir", tempDir)
+	if err == nil {
+		t.Fatalf("expected doctor to fail on truncated TTL, got success:\n%s", output)
+	}
+	if !strings.Contains(output, "Parse-back:    FAILED") {
+		t.Errorf("expected parse-back failure report:\n%s", output)
+	}
+}
+
+func TestDiffCommandWALTruncated(t *testing.T) {
+	tempDir := t.TempDir()
+	writeDoctorState(t, tempDir, doctorFixtureTTL)
+
+	output, err := runGmbCommand(t, "diff", "--dir", tempDir)
+	if err != nil {
+		t.Fatalf("diff command failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "No pending transactions") {
+		t.Errorf("expected truncated-WAL message:\n%s", output)
+	}
+	if !strings.Contains(output, "abcdef123456") {
+		t.Errorf("expected current commit hash in diff output:\n%s", output)
+	}
+}
+
+func TestStatusCommandExtended(t *testing.T) {
+	tempDir := t.TempDir()
+	writeDoctorState(t, tempDir, doctorFixtureTTL)
+
+	output, err := runGmbCommand(t, "status", "--dir", tempDir)
+	if err != nil {
+		t.Fatalf("status command failed: %v\n%s", err, output)
+	}
+	for _, want := range []string{"Schema Version: 1", "Graph Version: 7", "abcdef1234567890", "Entrypoints:   0", "Virtual Nodes:"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("status output missing %q:\n%s", want, output)
+		}
+	}
+}

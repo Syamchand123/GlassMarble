@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 
+	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/app"
 	"github.com/Syamchand123/GlassMarble/internal/config"
 	"github.com/spf13/cobra"
@@ -47,6 +48,18 @@ func init() {
 	rootCmd.PersistentFlags().Bool("debug", false, "Enable debug logging")
 	rootCmd.PersistentFlags().StringP("config", "c", "", "config file (default is $HOME/.glassmarble.yaml)")
 	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "verbose output")
+	rootCmd.PersistentFlags().Int("max-ttl-mb", 0, "Refuse to load or commit an AKG state file larger than this many MiB (0 = unlimited) (AUDIT Phase 4A-4)")
+}
+
+// newAKGManager builds the AKG transaction manager for a storage directory,
+// honoring the persistent --max-ttl-mb budget flag (AUDIT Issue 4 Phase 4A-4).
+func newAKGManager(storageDir string, cmd *cobra.Command) (*akg.AKGTransactionManager, error) {
+	maxMB, _ := cmd.Flags().GetInt("max-ttl-mb")
+	var maxBytes int64
+	if maxMB > 0 {
+		maxBytes = int64(maxMB) << 20
+	}
+	return akg.NewAKGTransactionManagerWithOptions(storageDir, maxBytes)
 }
 
 func RootCmdForTesting() *cobra.Command {

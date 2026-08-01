@@ -52,14 +52,16 @@ func TestSnapshotLoadsAndCaches(t *testing.T) {
 	if got := snap.Nodes.Len(); got != 4 {
 		t.Errorf("nodes = %d, want 4", got)
 	}
-	if got := snap.CommitHash; got != "restored_from_ttl" {
-		t.Errorf("commit = %q, want restored_from_ttl (TTL restore behavior)", got)
+	// The TTL metadata now carries the commit hash and the entrypoint
+	// registry, so both survive restore (AUDIT Issue 3 Phase 3B-7/3B-8).
+	if got := snap.CommitHash; got != "abc1234" {
+		t.Errorf("commit = %q, want abc1234 (TTL restore behavior)", got)
 	}
 	if got := akgbridge.EdgeCount(snap); got != 3 {
 		t.Errorf("edges = %d, want 3", got)
 	}
-	if len(snap.Entrypoints) != 0 {
-		t.Errorf("entrypoints = %v, want 0 (TTL restore does not carry the registry)", snap.Entrypoints)
+	if len(snap.Entrypoints) != 1 || snap.Entrypoints[0] != "src/app.go::main" {
+		t.Errorf("entrypoints = %v, want [src/app.go::main] (registry restored from TTL)", snap.Entrypoints)
 	}
 
 	// Same pointer from cache.

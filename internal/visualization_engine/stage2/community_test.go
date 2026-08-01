@@ -108,7 +108,7 @@ func TestBuildWeightedAdjacency(t *testing.T) {
 
 func TestCommunityEdgeWeight(t *testing.T) {
 	tests := []struct {
-		pred    string
+		pred     string
 		expected float64
 	}{
 		{"gm:belongsToFile", 3.0},

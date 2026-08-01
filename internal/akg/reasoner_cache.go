@@ -3,6 +3,7 @@ package akg
 import (
 	"crypto/sha256"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
@@ -18,14 +19,14 @@ type RuleDefinition struct {
 }
 
 type ruleFlags struct {
-	hasSecurityGate         bool
-	hasAsyncProcessing      bool
-	hasContextPass          bool
-	hasEventPubSub          bool
-	hasDependencyInjection  bool
-	hasHeapEscape           bool
-	hasFFI                  bool
-	hasConstraint           bool
+	hasSecurityGate        bool
+	hasAsyncProcessing     bool
+	hasContextPass         bool
+	hasEventPubSub         bool
+	hasDependencyInjection bool
+	hasHeapEscape          bool
+	hasFFI                 bool
+	hasConstraint          bool
 }
 
 // RuleRegistry contains all 28 heuristic/structural macro-inference rules.
@@ -36,7 +37,9 @@ func init() {
 		{
 			ID: "rule_01", Name: "Web-to-Storage Traffic", Tier: RuleTierStructural,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_01"] { return false }
+				if dr["rule_01"] {
+					return false
+				}
 				lowerName := strings.ToLower(n.Name)
 				return (pf["NETWORK_IO"] || strings.Contains(lowerName, "router") || strings.Contains(lowerName, "api") || strings.Contains(lowerName, "http")) &&
 					(pf["DISK_IO"] || pf["DATABASE"])
@@ -48,7 +51,9 @@ func init() {
 		{
 			ID: "rule_02", Name: "Security Gate Audit", Tier: RuleTierStructural,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_02"] { return false }
+				if dr["rule_02"] {
+					return false
+				}
 				return f.hasSecurityGate && (pf["DISK_IO"] || pf["DATABASE"])
 			},
 			Apply: func(n *stage4.ResolvedNode, g *CodePropertyGraph, pf map[string]bool, f ruleFlags) string {
@@ -58,7 +63,9 @@ func init() {
 		{
 			ID: "rule_03", Name: "Async Background Tasks", Tier: RuleTierStructural,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_03"] { return false }
+				if dr["rule_03"] {
+					return false
+				}
 				return f.hasAsyncProcessing
 			},
 			Apply: func(n *stage4.ResolvedNode, g *CodePropertyGraph, pf map[string]bool, f ruleFlags) string {
@@ -68,7 +75,9 @@ func init() {
 		{
 			ID: "rule_04", Name: "External API Integrator", Tier: RuleTierStructural,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_04"] { return false }
+				if dr["rule_04"] {
+					return false
+				}
 				return pf["NETWORK_IO"]
 			},
 			Apply: func(n *stage4.ResolvedNode, g *CodePropertyGraph, pf map[string]bool, f ruleFlags) string {
@@ -78,7 +87,9 @@ func init() {
 		{
 			ID: "rule_05", Name: "Repository Pattern", Tier: RuleTierHeuristic,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_05"] { return false }
+				if dr["rule_05"] {
+					return false
+				}
 				lowerName := strings.ToLower(n.Name)
 				return (strings.Contains(lowerName, "repository") || strings.Contains(lowerName, "repo") || strings.Contains(lowerName, "store")) && pf["DATABASE"]
 			},
@@ -89,7 +100,9 @@ func init() {
 		{
 			ID: "rule_06", Name: "Service Layer", Tier: RuleTierHeuristic,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_06"] { return false }
+				if dr["rule_06"] {
+					return false
+				}
 				lowerName := strings.ToLower(n.Name)
 				return strings.Contains(lowerName, "service") || strings.Contains(lowerName, "usecase")
 			},
@@ -100,7 +113,9 @@ func init() {
 		{
 			ID: "rule_07", Name: "Controller / Handler Layer", Tier: RuleTierHeuristic,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_07"] { return false }
+				if dr["rule_07"] {
+					return false
+				}
 				lowerName := strings.ToLower(n.Name)
 				return strings.Contains(lowerName, "controller") || strings.Contains(lowerName, "handler") || strings.Contains(lowerName, "endpoint")
 			},
@@ -111,7 +126,9 @@ func init() {
 		{
 			ID: "rule_08", Name: "Gateway Pattern", Tier: RuleTierHeuristic,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_08"] { return false }
+				if dr["rule_08"] {
+					return false
+				}
 				lowerName := strings.ToLower(n.Name)
 				return strings.Contains(lowerName, "gateway") || strings.Contains(lowerName, "client")
 			},
@@ -122,7 +139,9 @@ func init() {
 		{
 			ID: "rule_09", Name: "Event Publisher / Producer", Tier: RuleTierHeuristic,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_09"] { return false }
+				if dr["rule_09"] {
+					return false
+				}
 				lowerName := strings.ToLower(n.Name)
 				return strings.Contains(lowerName, "publisher") || strings.Contains(lowerName, "producer") || strings.Contains(lowerName, "emitter") || f.hasEventPubSub
 			},
@@ -133,7 +152,9 @@ func init() {
 		{
 			ID: "rule_10", Name: "Event Consumer / Subscriber", Tier: RuleTierHeuristic,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_10"] { return false }
+				if dr["rule_10"] {
+					return false
+				}
 				lowerName := strings.ToLower(n.Name)
 				return strings.Contains(lowerName, "consumer") || strings.Contains(lowerName, "subscriber") || strings.Contains(lowerName, "listener")
 			},
@@ -144,7 +165,9 @@ func init() {
 		{
 			ID: "rule_11", Name: "CQRS Command Handler", Tier: RuleTierHeuristic,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_11"] { return false }
+				if dr["rule_11"] {
+					return false
+				}
 				lowerName := strings.ToLower(n.Name)
 				return strings.Contains(lowerName, "command") || strings.Contains(lowerName, "mutation")
 			},
@@ -155,7 +178,9 @@ func init() {
 		{
 			ID: "rule_12", Name: "CQRS Query Handler", Tier: RuleTierHeuristic,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_12"] { return false }
+				if dr["rule_12"] {
+					return false
+				}
 				lowerName := strings.ToLower(n.Name)
 				return strings.Contains(lowerName, "query") || strings.Contains(lowerName, "reader")
 			},
@@ -166,7 +191,9 @@ func init() {
 		{
 			ID: "rule_13", Name: "Cache Layer", Tier: RuleTierHeuristic,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_13"] { return false }
+				if dr["rule_13"] {
+					return false
+				}
 				lowerName := strings.ToLower(n.Name)
 				return strings.Contains(lowerName, "cache") || strings.Contains(lowerName, "redis") || strings.Contains(lowerName, "memcached")
 			},
@@ -177,7 +204,9 @@ func init() {
 		{
 			ID: "rule_14", Name: "Authentication / Authorization Middleware", Tier: RuleTierHeuristic,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_14"] { return false }
+				if dr["rule_14"] {
+					return false
+				}
 				lowerName := strings.ToLower(n.Name)
 				return strings.Contains(lowerName, "auth") || strings.Contains(lowerName, "jwt") || strings.Contains(lowerName, "token")
 			},
@@ -188,7 +217,9 @@ func init() {
 		{
 			ID: "rule_15", Name: "Input Validation Gate", Tier: RuleTierHeuristic,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_15"] { return false }
+				if dr["rule_15"] {
+					return false
+				}
 				lowerName := strings.ToLower(n.Name)
 				return strings.Contains(lowerName, "validator") || strings.Contains(lowerName, "sanitizer")
 			},
@@ -199,7 +230,9 @@ func init() {
 		{
 			ID: "rule_16", Name: "Secret Manager Access", Tier: RuleTierHeuristic,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_16"] { return false }
+				if dr["rule_16"] {
+					return false
+				}
 				lowerName := strings.ToLower(n.Name)
 				return strings.Contains(lowerName, "secret") || strings.Contains(lowerName, "vault") || strings.Contains(lowerName, "keyvault")
 			},
@@ -210,7 +243,9 @@ func init() {
 		{
 			ID: "rule_17", Name: "Metrics Emitter", Tier: RuleTierHeuristic,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_17"] { return false }
+				if dr["rule_17"] {
+					return false
+				}
 				lowerName := strings.ToLower(n.Name)
 				return strings.Contains(lowerName, "metric") || strings.Contains(lowerName, "prometheus") || strings.Contains(lowerName, "statsd")
 			},
@@ -221,7 +256,9 @@ func init() {
 		{
 			ID: "rule_18", Name: "Distributed Tracer", Tier: RuleTierHeuristic,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_18"] { return false }
+				if dr["rule_18"] {
+					return false
+				}
 				lowerName := strings.ToLower(n.Name)
 				return strings.Contains(lowerName, "trace") || strings.Contains(lowerName, "opentelemetry") || strings.Contains(lowerName, "jaeger")
 			},
@@ -232,7 +269,9 @@ func init() {
 		{
 			ID: "rule_19", Name: "Structured Logger", Tier: RuleTierHeuristic,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_19"] { return false }
+				if dr["rule_19"] {
+					return false
+				}
 				lowerName := strings.ToLower(n.Name)
 				return strings.Contains(lowerName, "logger") || strings.Contains(lowerName, "log")
 			},
@@ -243,7 +282,9 @@ func init() {
 		{
 			ID: "rule_20", Name: "Circuit Breaker / Resilience", Tier: RuleTierHeuristic,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_20"] { return false }
+				if dr["rule_20"] {
+					return false
+				}
 				lowerName := strings.ToLower(n.Name)
 				return strings.Contains(lowerName, "circuit") || strings.Contains(lowerName, "retry") || strings.Contains(lowerName, "fallback")
 			},
@@ -254,7 +295,9 @@ func init() {
 		{
 			ID: "rule_21", Name: "Cache-Aside Pattern", Tier: RuleTierStructural,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_21"] { return false }
+				if dr["rule_21"] {
+					return false
+				}
 				lowerName := strings.ToLower(n.Name)
 				return (strings.Contains(lowerName, "cache") || pf["CACHE"]) && pf["DATABASE"]
 			},
@@ -265,7 +308,9 @@ func init() {
 		{
 			ID: "rule_22", Name: "Saga Orchestrator", Tier: RuleTierHeuristic,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_22"] { return false }
+				if dr["rule_22"] {
+					return false
+				}
 				lowerName := strings.ToLower(n.Name)
 				return strings.Contains(lowerName, "saga") || strings.Contains(lowerName, "orchestrator")
 			},
@@ -276,7 +321,9 @@ func init() {
 		{
 			ID: "rule_23", Name: "Event-Driven Architecture (Pub/Sub)", Tier: RuleTierStructural,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_23"] { return false }
+				if dr["rule_23"] {
+					return false
+				}
 				return f.hasEventPubSub
 			},
 			Apply: func(n *stage4.ResolvedNode, g *CodePropertyGraph, pf map[string]bool, f ruleFlags) string {
@@ -286,7 +333,9 @@ func init() {
 		{
 			ID: "rule_24", Name: "Dependency Injection", Tier: RuleTierStructural,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_24"] { return false }
+				if dr["rule_24"] {
+					return false
+				}
 				return f.hasDependencyInjection || pf["DI_CONTAINER"]
 			},
 			Apply: func(n *stage4.ResolvedNode, g *CodePropertyGraph, pf map[string]bool, f ruleFlags) string {
@@ -296,7 +345,9 @@ func init() {
 		{
 			ID: "rule_25", Name: "Context Cancellation/Propagation", Tier: RuleTierStructural,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_25"] { return false }
+				if dr["rule_25"] {
+					return false
+				}
 				return f.hasContextPass
 			},
 			Apply: func(n *stage4.ResolvedNode, g *CodePropertyGraph, pf map[string]bool, f ruleFlags) string {
@@ -306,7 +357,9 @@ func init() {
 		{
 			ID: "rule_26", Name: "Memory-Intensive / Escape Analysis", Tier: RuleTierStructural,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_26"] { return false }
+				if dr["rule_26"] {
+					return false
+				}
 				return f.hasHeapEscape
 			},
 			Apply: func(n *stage4.ResolvedNode, g *CodePropertyGraph, pf map[string]bool, f ruleFlags) string {
@@ -316,7 +369,9 @@ func init() {
 		{
 			ID: "rule_27", Name: "FFI / CGO Bridge", Tier: RuleTierStructural,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_27"] { return false }
+				if dr["rule_27"] {
+					return false
+				}
 				return f.hasFFI
 			},
 			Apply: func(n *stage4.ResolvedNode, g *CodePropertyGraph, pf map[string]bool, f ruleFlags) string {
@@ -326,7 +381,9 @@ func init() {
 		{
 			ID: "rule_28", Name: "Security / Bounds Checking", Tier: RuleTierStructural,
 			Enabled: func(n *stage4.ResolvedNode, g *CodePropertyGraph, dr map[string]bool, pf map[string]bool, f ruleFlags) bool {
-				if dr["rule_28"] { return false }
+				if dr["rule_28"] {
+					return false
+				}
 				return f.hasConstraint
 			},
 			Apply: func(n *stage4.ResolvedNode, g *CodePropertyGraph, pf map[string]bool, f ruleFlags) string {
@@ -336,13 +393,27 @@ func init() {
 	}
 }
 
-// nodeMacroKey computes a content-addressable hash for a node's macro-inference inputs.
-func nodeMacroKey(node *stage4.ResolvedNode, graph *CodePropertyGraph) string {
+// nodeMacroKey computes a content-addressable hash for a node's macro-inference
+// inputs. It includes macroMode and the sorted disabled-rule set: changing
+// either must invalidate cached results (AUDIT Issue 3 Phase 3C-12 /
+// reasoner_cache.go:340-351 stale-cache bug).
+func nodeMacroKey(node *stage4.ResolvedNode, graph *CodePropertyGraph, macroMode string, disabledRules map[string]bool) string {
 	h := sha256.New()
 	h.Write([]byte(node.ID))
 	h.Write([]byte(node.Kind))
 	h.Write([]byte(node.Name))
 	h.Write([]byte(node.Primitive))
+	h.Write([]byte("mode:"))
+	h.Write([]byte(macroMode))
+	ruleIDs := make([]string, 0, len(disabledRules))
+	for id := range disabledRules {
+		ruleIDs = append(ruleIDs, id)
+	}
+	sort.Strings(ruleIDs)
+	for _, id := range ruleIDs {
+		h.Write([]byte("rule:"))
+		h.Write([]byte(id))
+	}
 	for _, e := range graph.GetOutboundEdges(node.ID) {
 		h.Write([]byte(e.TargetID))
 		h.Write([]byte(e.Type))

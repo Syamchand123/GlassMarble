@@ -38,13 +38,15 @@ func TestSerializeAllKinds(t *testing.T) {
 		kind  string
 		class string
 	}{
-		{"MODULE", "gm:Namespace"},
+		{"MODULE", "gm:Module"},
+		{"NAMESPACE", "gm:Namespace"},
 		{"FILE", "gm:File"},
-		{"STRUCT", "gm:TypeDecl"},
-		{"CLASS", "gm:TypeDecl"},
-		{"INTERFACE", "gm:TypeDecl"},
-		{"FUNCTION", "gm:Executable"},
-		{"METHOD", "gm:Executable"},
+		{"STRUCT", "gm:Struct"},
+		{"CLASS", "gm:Class"},
+		{"INTERFACE", "gm:Interface"},
+		{"FUNCTION", "gm:Function"},
+		{"METHOD", "gm:Method"},
+		{"FIELD", "gm:Member"},
 		{"PARAMETER", "gm:Parameter"},
 		{"IF_BRANCH", "gm:ControlStructure"},
 		{"LOOP_BRANCH", "gm:ControlStructure"},
@@ -175,17 +177,61 @@ func TestSerializeDelta(t *testing.T) {
 	deleted := map[string]bool{"old_n1": true}
 
 	var buf bytes.Buffer
-	err := SerializeDeltaToTurtle(payload, deleted, &buf)
+	err := SerializeDeltaToTurtle(payload, deleted, 7, &buf)
 	if err != nil {
 		t.Fatalf("serialize delta error: %v", err)
 	}
 
 	output := buf.String()
-	if !contains(output, "DELETED") {
-		t.Error("expected DELETED tombstone in delta output")
+	// Tombstones must be written as node blocks (`<uri> a gm:Deleted ;
+	// gm:status "DELETED" .`) so the parser treats them as deletions instead
+	// of phantom edges (AUDIT Issue 3 Phase 3B-6).
+	if !contains(output, "a gm:Deleted") {
+		t.Error("expected gm:Deleted tombstone class in delta output")
+	}
+	if !contains(output, `gm:status "DELETED"`) {
+		t.Error("expected DELETED status tombstone in delta output")
 	}
 	if !contains(output, "newfunc") {
 		t.Error("expected newfunc node in delta output")
+	}
+	// The delta metadata block must carry the committing graph's version so
+	// incremental appends never regress the WAL replay bound.
+	if !contains(output, "gm:version 7") {
+		t.Error("expected gm:version 7 in delta metadata block")
+	}
+}
+
+func TestSerializeMetadataSchemaVersion(t *testing.T) {
+	g := NewCodePropertyGraph("hash123")
+	g.Version = 7
+	g.Nodes = g.Nodes.Set("n1", &stage4.ResolvedNode{ID: "n1", Kind: "FUNCTION", Name: "f"})
+
+	var buf bytes.Buffer
+	if err := SerializeToTurtle(g, &buf); err != nil {
+		t.Fatalf("serialize error: %v", err)
+	}
+	ttl := buf.String()
+
+	// Metadata node must carry the schema version and the WAL replay bound so
+	// recovery can skip already-applied transactions (AUDIT Issue 3 Phase 3B-7).
+	if !contains(ttl, "gm:schemaVersion") {
+		t.Error("output missing gm:schemaVersion in metadata block")
+	}
+	if !contains(ttl, "gm:version") {
+		t.Error("output missing gm:version (WAL replay bound) in metadata block")
+	}
+
+	// Round-trip through the TTL reader: version and commit hash must be restored.
+	roundTrip, err := reconstructFromTTLFile(writeTTLToTemp(t, ttl))
+	if err != nil {
+		t.Fatalf("reconstruct error: %v", err)
+	}
+	if roundTrip.Version != 7 {
+		t.Errorf("expected restored Version=7, got %d", roundTrip.Version)
+	}
+	if roundTrip.CommitHash != "hash123" {
+		t.Errorf("expected restored CommitHash hash123, got %q", roundTrip.CommitHash)
 	}
 }
 
@@ -194,12 +240,19 @@ func TestMapClassToKind(t *testing.T) {
 		class string
 		want  string
 	}{
-		{"gm:Namespace", "MODULE"},
+		{"gm:Module", "MODULE"},
+		{"gm:Namespace", "NAMESPACE"},
 		{"gm:File", "FILE"},
+		{"gm:Struct", "STRUCT"},
+		{"gm:Class", "CLASS"},
+		{"gm:Interface", "INTERFACE"},
+		{"gm:Function", "FUNCTION"},
+		{"gm:Method", "METHOD"},
+		{"gm:Member", "FIELD"},
+		{"gm:Variable", "VARIABLE"},
 		{"gm:TypeDecl", "STRUCT"},
 		{"gm:Executable", "FUNCTION"},
 		{"gm:ControlStructure", "IF_BRANCH"},
-		{"gm:Variable", "DFG_VAR"},
 		{"gm:Parameter", "PARAMETER"},
 		{"gm:CFGSummary", "CFG_SUMMARY"},
 		{"gm:DFGSummary", "DFG_SUMMARY"},
@@ -221,9 +274,9 @@ func TestMapClassToKind(t *testing.T) {
 func TestSerializeRoundTripKindStability(t *testing.T) {
 	g := NewCodePropertyGraph("test")
 	for _, kind := range []string{
-		"MODULE", "FILE", "STRUCT", "INTERFACE", "FUNCTION", "METHOD",
-		"IF_BRANCH", "PARAMETER", "CFG_SUMMARY", "EVENT_TOPIC",
-		"VIRTUAL_DATABASE", "BLOCK", "ANNOTATION", "UNKNOWN_KIND",
+		"MODULE", "NAMESPACE", "FILE", "STRUCT", "CLASS", "INTERFACE",
+		"FUNCTION", "METHOD", "FIELD", "IF_BRANCH", "PARAMETER", "CFG_SUMMARY",
+		"EVENT_TOPIC", "VIRTUAL_DATABASE", "BLOCK", "ANNOTATION", "UNKNOWN_KIND",
 	} {
 		id := "k::" + kind
 		g.Nodes = g.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: kind, Name: kind})
@@ -260,7 +313,8 @@ func TestSerializeRoundTripKindStability(t *testing.T) {
 	// Kinds must not degrade to rdfs:Class across cycles.
 	ttl := serialize()
 	for _, class := range []string{
-		"gm:Namespace", "gm:File", "gm:TypeDecl", "gm:Executable", "gm:ControlStructure",
+		"gm:Module", "gm:Namespace", "gm:File", "gm:Struct", "gm:Class",
+		"gm:Interface", "gm:Function", "gm:Method", "gm:ControlStructure",
 	} {
 		if !contains(ttl, class) {
 			t.Errorf("class %s lost across serialization cycles", class)
@@ -275,7 +329,9 @@ func TestSerializePropertiesRoundTripStable(t *testing.T) {
 	g := NewCodePropertyGraph("test")
 	g.Nodes = g.Nodes.Set("n1", &stage4.ResolvedNode{
 		ID: "n1", Kind: "CLASS", Name: "Test",
-		Properties: map[string]string{"macro_rules": `Dead Sub-system: "quoted" \ back`},
+		// macro_rules is intentionally NOT persisted (derived data); use a
+		// regular vocabulary property for the escaping round-trip check.
+		Properties: map[string]string{"blast_radius": `Dead Sub-system: "quoted" \ back`},
 	})
 
 	serialize := func() string {
@@ -311,7 +367,7 @@ func TestSerializePropertiesRoundTripStable(t *testing.T) {
 	if contains(ttl, "gm:gm:") {
 		t.Error("property keys accumulate gm: prefixes across cycles")
 	}
-	if !contains(ttl, `gm:macro_rules "Dead Sub-system: \"quoted\" \\ back"`) {
+	if !contains(ttl, `gm:blast_radius "Dead Sub-system: \"quoted\" \\ back"`) {
 		t.Errorf("property value not stable across cycles:\n%s", ttl)
 	}
 }
@@ -361,4 +417,13 @@ func TestSerialize_AllKindsCoverage(t *testing.T) {
 	err := SerializeToTurtle(g, &buf)
 	require.NoError(t, err)
 	assert.NotEmpty(t, buf.String())
+}
+
+func writeTTLToTemp(t *testing.T, ttl string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "roundtrip.ttl")
+	if err := os.WriteFile(path, []byte(ttl), 0644); err != nil {
+		t.Fatalf("write error: %v", err)
+	}
+	return path
 }

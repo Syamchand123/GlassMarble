@@ -54,7 +54,7 @@ const (
 	PrimIPC     BehavioralPrimitive = "IPC"
 	PrimRPC     BehavioralPrimitive = "RPC"
 	PrimUIEvent BehavioralPrimitive = "UI_EVENT"
-	
+
 	// Category F: Architectural Violations
 	PrimCycleViolation BehavioralPrimitive = "CYCLE_VIOLATION"
 )

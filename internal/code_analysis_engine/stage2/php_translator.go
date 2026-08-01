@@ -36,6 +36,9 @@ func (t *PHPTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) *GA
 		} else if strings.Contains(tok.Type, "parameter") || strings.Contains(tok.Type, "argument") {
 			node.Type = GASTParameter
 			node.Kind = "parameter"
+		} else if isControlFlowType(tok.Type) {
+			node.Type = GASTControlFlow
+			node.Kind = tok.Type
 		} else {
 			node.Type = GASTFunction
 			node.Kind = "function"
@@ -44,7 +47,7 @@ func (t *PHPTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) *GA
 			}
 		}
 		node.Visibility = resolveJavaVisibility(tok.Content)
-		if tok.Type != "namespace_use_declaration" {
+		if node.Type != GASTControlFlow && tok.Type != "namespace_use_declaration" {
 			setDeclarationFQN(node, fileRelPath, tok.Name)
 		}
 	case stage1.TokenCall:

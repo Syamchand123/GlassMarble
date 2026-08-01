@@ -117,6 +117,31 @@ func TestParseNodeWithDeletedStatus(t *testing.T) {
 	}
 }
 
+func TestParseLegacyTombstoneTriple(t *testing.T) {
+	// Legacy serializer form: a bare `<uri> gm:status "DELETED" .` triple is a
+	// deletion marker, not an edge (AUDIT Issue 2 Phase 2A-4).
+	edgeMap := make(map[string]*types.TTLEdge)
+	err := parseBaseEdge(`<http://glassmarble.org/node/old.go::OldFunc> gm:status "DELETED" .`, edgeMap)
+	if err != nil {
+		t.Fatalf("tombstone triple should be skipped silently, got error: %v", err)
+	}
+	if len(edgeMap) != 0 {
+		t.Errorf("expected 0 edges from tombstone triple, got %d", len(edgeMap))
+	}
+}
+
+func TestParseNodeBlockKindDeleted(t *testing.T) {
+	// A block typed gm:Deleted is a tombstone even without gm:status.
+	nodes := make(map[string]*types.TTLNode)
+	block := `<http://glassmarble.org/node/old.go::OldFunc> a gm:Deleted ;
+    gm:name "OldFunc" ;
+    .`
+	parseNodeBlock(block, nodes)
+	if len(nodes) != 0 {
+		t.Errorf("expected 0 nodes for gm:Deleted block, got %d", len(nodes))
+	}
+}
+
 func TestParseNodeWithBelongsToFile(t *testing.T) {
 	nodes := make(map[string]*types.TTLNode)
 	block := `<http://glassmarble.org/node/main.go::Main> a gm:Executable ;

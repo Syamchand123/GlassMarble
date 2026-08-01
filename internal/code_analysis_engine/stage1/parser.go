@@ -1,13 +1,11 @@
 package stage1
 
 import (
-	
 	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"sync"
-	
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
@@ -216,7 +214,7 @@ func makeToken(node *sitter.Node, source []byte, kind TokenKind, parentIdx int, 
 	}
 	startPt := node.StartPosition()
 	endPt := node.EndPosition()
-	
+
 	contentSlice := source[start:end]
 	const maxSnippetBytes = 2048
 	if len(contentSlice) > maxSnippetBytes {

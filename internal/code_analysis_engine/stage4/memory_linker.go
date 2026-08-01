@@ -9,8 +9,13 @@ import (
 
 // LinkEscapeAnalysis performs a lightweight escape analysis to find variables
 // that outlive their stack frames and must be allocated on the heap.
+// Escape edges are heuristic and only run in full mode (AUDIT Issue 1.4 /
+// Phase 1B-5).
 func LinkEscapeAnalysis(stage3Out *stage3.Stage3Output, cpg *Stage4Output) {
 	if stage3Out == nil || stage3Out.RootNode == nil || cpg == nil {
+		return
+	}
+	if !isFullMode(cpg) {
 		return
 	}
 	traverseForEscapes(stage3Out.RootNode, cpg)
@@ -40,12 +45,15 @@ func extractEscapesFromGAST(node *stage2.GASTNode, relPath, currentFuncID string
 	}
 	funcID := currentFuncID
 	if node.Type == stage2.GASTFunction {
-		funcID = BuildUniversalID(relPath, node.ReceiverType, node.Name)
+		funcID = universalFuncID(relPath, node.ReceiverType, node.Name)
 	}
 
-	// 1. Returning a pointer to a local variable
-	lowerType := strings.ToLower(string(node.Type) + " " + node.Kind + " " + node.Name)
-	if funcID != "" && strings.Contains(lowerType, "return") {
+	// 1. Returning a pointer to a local variable.
+	// Exact control-flow kind match — never the old strings.Contains heuristic,
+	// which matched any name containing "return" (e.g. "returnValue").
+	isReturn := node.Type == stage2.GASTControlFlow &&
+		(node.Kind == "return_statement" || node.Kind == "return")
+	if funcID != "" && isReturn {
 		content := node.Properties["content"]
 		if strings.Contains(content, "&") {
 			// e.g. return &User{} -> Escapes to Heap
@@ -58,6 +66,12 @@ func extractEscapesFromGAST(node *stage2.GASTNode, relPath, currentFuncID string
 				}
 				if escapedObj != "" {
 					varID := funcID + "::VAR_" + escapedObj
+					// The escape target must exist — previously every edge
+					// dangled because VAR_ nodes were never created
+					// (AUDIT Issue 1.6).
+					if !cpg.NodeExists(varID) {
+						ensureVirtualNode(varID, "VIRTUAL_VARIABLE", escapedObj, cpg)
+					}
 					cpg.AddEdge(funcID, varID, EdgeEscapesToHeap, int(node.StartLine))
 				}
 			}
@@ -67,7 +81,9 @@ func extractEscapesFromGAST(node *stage2.GASTNode, relPath, currentFuncID string
 	// 2. Closure capture (goroutine capturing local variables)
 	if funcID != "" && node.Type == stage2.GASTCallExpression && strings.HasPrefix(node.Properties["content"], "go ") {
 		// All variables inside the closure escape.
-		// For now we map an edge from the concurrency spawn to the generic HEAP
+		// For now we map an edge from the concurrency spawn to the generic HEAP.
+		// The HEAP target must exist — previously the edge dangled (AUDIT Issue 1.6).
+		ensureVirtualNode("memory::HEAP", "VIRTUAL_HEAP", "Heap", cpg)
 		cpg.AddEdge(funcID, "memory::HEAP", EdgeEscapesToHeap, int(node.StartLine))
 	}
 

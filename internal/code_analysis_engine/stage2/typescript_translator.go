@@ -44,6 +44,12 @@ func (t *TSTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) *GAS
 			} else if strings.Contains(tok.Type, "type_alias") {
 				node.Kind = "type_alias"
 			}
+		} else if isControlFlowType(tok.Type) {
+			node.Type = GASTControlFlow
+			node.Kind = tok.Type
+		} else if strings.Contains(tok.Type, "variable") || strings.Contains(tok.Type, "lexical") {
+			node.Type = GASTVariable
+			node.Kind = "variable"
 		} else {
 			node.Type = GASTFunction
 			node.Kind = "function"
@@ -61,7 +67,9 @@ func (t *TSTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) *GAS
 		} else {
 			node.Visibility = "internal"
 		}
-		setDeclarationFQN(node, fileRelPath, tok.Name)
+		if node.Type != GASTControlFlow {
+			setDeclarationFQN(node, fileRelPath, tok.Name)
+		}
 	case stage1.TokenCall:
 		node.Type = GASTCallExpression
 		node.Kind = "call"

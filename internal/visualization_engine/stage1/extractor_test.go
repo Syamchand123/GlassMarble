@@ -437,7 +437,7 @@ func TestReverseBFS(t *testing.T) {
 		{SourceID: "a", TargetID: "c", Predicate: "gm:calls"},
 		{SourceID: "b", TargetID: "c", Predicate: "gm:calls"},
 	}
-	sub := reverseBFS([]string{"c"}, nodes, edges, 3, func(e types.TTLEdge) bool { return true })
+	sub := reverseBFS([]string{"c"}, nodes, edges, buildAdjacencyIndex(nodes, edges), 3, func(e types.TTLEdge) bool { return true })
 	if sub == nil {
 		t.Fatal("expected non-nil subgraph")
 	}
@@ -459,7 +459,7 @@ func TestBothPassSubgraph(t *testing.T) {
 	edges := []types.TTLEdge{
 		{SourceID: "a", TargetID: "b", Predicate: "gm:calls"},
 	}
-	sub := bothPassSubgraph([]string{}, nodes, edges, 3,
+	sub := bothPassSubgraph([]string{}, nodes, edges, buildAdjacencyIndex(nodes, edges), 3,
 		func(n *types.TTLNode) bool { return n.Kind == "gm:Executable" },
 		func(e types.TTLEdge) bool { return true },
 	)
@@ -539,7 +539,10 @@ func TestExtractWithConfigMaxNodesZero(t *testing.T) {
 		Direction: types.EdgeDirectionBoth,
 	}
 	opts := types.QueryOptions{MaxNodes: 0}
-	sub := extractWithConfig(nodes, edges, cfg, opts)
+	sub, err := extractWithConfig(nodes, edges, cfg, opts)
+	if err != nil {
+		t.Fatalf("extractWithConfig failed: %v", err)
+	}
 	if len(sub.Nodes) != 2 {
 		t.Errorf("expected 2 nodes when MaxNodes=0, got %d", len(sub.Nodes))
 	}
@@ -556,7 +559,10 @@ func TestExtractWithConfigEntryPointOverride(t *testing.T) {
 		Direction: types.EdgeDirectionForward, MaxDepth: 5,
 	}
 	opts := types.QueryOptions{EntryPointID: "a"}
-	sub := extractWithConfig(nodes, edges, cfg, opts)
+	sub, err := extractWithConfig(nodes, edges, cfg, opts)
+	if err != nil {
+		t.Fatalf("extractWithConfig failed: %v", err)
+	}
 	if _, ok := sub.Nodes["a"]; !ok {
 		t.Error("expected entry point 'a' to be included")
 	}
@@ -576,9 +582,12 @@ func TestExtractWithConfigGroupAny(t *testing.T) {
 	cfg := types.ExtractionConfig{
 		Name: "Test", EntryStrategy: types.EntryStrategyAll,
 		PredicateGroup: []types.PredicateGroup{types.GroupAny},
-		Direction: types.EdgeDirectionForward, MaxDepth: 5,
+		Direction:      types.EdgeDirectionForward, MaxDepth: 5,
 	}
-	sub := extractWithConfig(nodes, edges, cfg, types.QueryOptions{})
+	sub, err := extractWithConfig(nodes, edges, cfg, types.QueryOptions{})
+	if err != nil {
+		t.Fatalf("extractWithConfig failed: %v", err)
+	}
 	// GroupAny should allow all predicates, including custom ones
 	if len(sub.Edges) != 1 {
 		t.Errorf("expected 1 edge with GroupAny, got %d", len(sub.Edges))
@@ -588,7 +597,7 @@ func TestExtractWithConfigGroupAny(t *testing.T) {
 func TestExtractWithConfigChangedFiles(t *testing.T) {
 	nodes := map[string]*types.TTLNode{
 		"main.go::a": {ID: "main.go::a", Kind: "gm:Executable", FileURI: "main.go"},
-		"util.go::b":  {ID: "util.go::b", Kind: "gm:Executable", FileURI: "util.go"},
+		"util.go::b": {ID: "util.go::b", Kind: "gm:Executable", FileURI: "util.go"},
 	}
 	edges := []types.TTLEdge{
 		{SourceID: "main.go::a", TargetID: "util.go::b", Predicate: "gm:calls"},
@@ -598,7 +607,10 @@ func TestExtractWithConfigChangedFiles(t *testing.T) {
 		Direction: types.EdgeDirectionReverse,
 	}
 	opts := types.QueryOptions{ChangedFiles: []string{"main.go"}}
-	sub := extractWithConfig(nodes, edges, cfg, opts)
+	sub, err := extractWithConfig(nodes, edges, cfg, opts)
+	if err != nil {
+		t.Fatalf("extractWithConfig failed: %v", err)
+	}
 	if _, ok := sub.Nodes["main.go::a"]; !ok {
 		t.Error("expected node from changed file 'main.go' to be included")
 	}

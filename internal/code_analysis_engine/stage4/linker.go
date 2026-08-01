@@ -43,6 +43,9 @@ func Link(stage3Out *stage3.Stage3Output, modifiedFiles []string, db GraphDB, co
 	cpg := BuildInitialNodes(stage3Out, modifiedFiles)
 	cpg.SetDB(db)
 	cpg.Config = cfg
+	// Build the ownership index exactly once for the whole run; linkers read
+	// it from Config instead of rebuilding it (AUDIT Issue 1.7 / Phase 1C-8).
+	cpg.Config.OwnershipMap = stage3.BuildOwnershipMap(stage3Out.GlobalDefinitionIndex, stage3Out.WorkspaceCtx)
 
 	// Dispatch table for all linker passes (in execution order)
 	passes := []passDef{
@@ -116,7 +119,11 @@ func Link(stage3Out *stage3.Stage3Output, modifiedFiles []string, db GraphDB, co
 
 	go func() {
 		defer mergeWg.Done()
-		defer func() { if r := recover(); r != nil { log.Printf("stage4: node merge panicked: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("stage4: node merge panicked: %v", r)
+			}
+		}()
 		for _, buf := range buffers {
 			for id, node := range buf.GraphNodes {
 				if _, exists := cpg.GraphNodes[id]; !exists {
@@ -128,7 +135,11 @@ func Link(stage3Out *stage3.Stage3Output, modifiedFiles []string, db GraphDB, co
 
 	go func() {
 		defer mergeWg.Done()
-		defer func() { if r := recover(); r != nil { log.Printf("stage4: outbound merge panicked: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("stage4: outbound merge panicked: %v", r)
+			}
+		}()
 		outboundCap := make(map[string]int)
 		for _, buf := range buffers {
 			for src, edges := range buf.OutboundEdges {
@@ -149,7 +160,11 @@ func Link(stage3Out *stage3.Stage3Output, modifiedFiles []string, db GraphDB, co
 
 	go func() {
 		defer mergeWg.Done()
-		defer func() { if r := recover(); r != nil { log.Printf("stage4: inbound merge panicked: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("stage4: inbound merge panicked: %v", r)
+			}
+		}()
 		inboundCap := make(map[string]int)
 		for _, buf := range buffers {
 			for dst, edges := range buf.InboundEdges {

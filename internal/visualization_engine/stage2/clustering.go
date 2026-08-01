@@ -6,13 +6,19 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
-// ComputeKCores computes the k-core decomposition for all nodes using iterative degree-based pruning.
+// ComputeKCores computes the k-core decomposition for all nodes using the
+// standard peeling algorithm with a min-priority queue: a node's core number
+// is its degree at removal time. This gives exact core numbers and fixes the
+// old tail bug where leftover nodes could be assigned N+1 (AUDIT Issue 2 §2.4).
 func ComputeKCores(sub *types.VirtualSubgraph) map[string]int {
 	adj := make(map[string]map[string]bool)
 	for id := range sub.Nodes {
 		adj[id] = make(map[string]bool)
 	}
 	for _, e := range sub.Edges {
+		if e.SourceID == e.TargetID {
+			continue
+		}
 		adj[e.SourceID][e.TargetID] = true
 		adj[e.TargetID][e.SourceID] = true
 	}
@@ -22,56 +28,75 @@ func ComputeKCores(sub *types.VirtualSubgraph) map[string]int {
 		degree[id] = len(adj[id])
 	}
 
-	kCore := make(map[string]int)
+	kCore := make(map[string]int, len(sub.Nodes))
+	removed := make(map[string]bool)
+
+	h := &degreeHeap{deg: degree}
 	for id := range sub.Nodes {
-		kCore[id] = 0
+		h.push(id)
 	}
 
-	queue := make([]string, 0)
-	for id, d := range degree {
-		if d == 0 {
-			kCore[id] = 0
+	for h.len() > 0 {
+		v := h.pop()
+		if removed[v] {
+			continue
 		}
-	}
-
-	currentK := 1
-	for {
-		for len(queue) == 0 && currentK <= len(sub.Nodes) {
-			for id, d := range degree {
-				if d > 0 && d <= currentK {
-					queue = append(queue, id)
-				}
+		removed[v] = true
+		kCore[v] = degree[v]
+		for nb := range adj[v] {
+			if removed[nb] {
+				continue
 			}
-			if len(queue) == 0 {
-				currentK++
-			}
-		}
-		if len(queue) == 0 {
-			break
-		}
-		for len(queue) > 0 {
-			node := queue[0]
-			queue = queue[1:]
-			kCore[node] = currentK
-			degree[node] = 0
-			for neighbor := range adj[node] {
-				if degree[neighbor] > 0 {
-					degree[neighbor]--
-					if degree[neighbor] <= currentK {
-						queue = append(queue, neighbor)
-					}
-				}
-			}
-		}
-	}
-
-	for id := range sub.Nodes {
-		if kCore[id] == 0 && len(adj[id]) > 0 {
-			kCore[id] = currentK
+			degree[nb]--
+			h.push(nb)
 		}
 	}
 
 	return kCore
+}
+
+// degreeHeap is a binary min-heap over node IDs keyed by their current degree.
+type degreeHeap struct {
+	deg map[string]int
+	ids []string
+}
+
+func (h *degreeHeap) len() int { return len(h.ids) }
+
+func (h *degreeHeap) push(id string) {
+	h.ids = append(h.ids, id)
+	i := len(h.ids) - 1
+	for i > 0 {
+		parent := (i - 1) / 2
+		if h.deg[h.ids[parent]] <= h.deg[h.ids[i]] {
+			break
+		}
+		h.ids[parent], h.ids[i] = h.ids[i], h.ids[parent]
+		i = parent
+	}
+}
+
+func (h *degreeHeap) pop() string {
+	top := h.ids[0]
+	h.ids[0] = h.ids[len(h.ids)-1]
+	h.ids = h.ids[:len(h.ids)-1]
+	i := 0
+	for {
+		left, right := 2*i+1, 2*i+2
+		smallest := i
+		if left < len(h.ids) && h.deg[h.ids[left]] < h.deg[h.ids[smallest]] {
+			smallest = left
+		}
+		if right < len(h.ids) && h.deg[h.ids[right]] < h.deg[h.ids[smallest]] {
+			smallest = right
+		}
+		if smallest == i {
+			break
+		}
+		h.ids[i], h.ids[smallest] = h.ids[smallest], h.ids[i]
+		i = smallest
+	}
+	return top
 }
 
 type weightedEdge struct {

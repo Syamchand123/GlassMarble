@@ -225,12 +225,10 @@ func TestVirtualNodeExistence(t *testing.T) {
 		CommitHash: "test",
 		LocalTables: map[string]*stage2.FileSymbolTable{
 			"test.go": {
-				ConcurrencySpawns: []stage2.SpawnMeta{{LineNumber: 1}},
-				EventHooks:        []stage2.EventMeta{{EventName: "testEvent", LineNumber: 2}},
-				Endpoints:         []stage2.EndpointMeta{{Method: "GET", Route: "/api/test", LineNumber: 3}},
-				SecuritySinks:     []stage2.SecuritySinkMeta{{SinkType: "SQL", LineNumber: 4}},
-				ResourceLinks:     []stage2.ResourceMeta{{ResourceType: "FileSystem", LineNumber: 5}},
-				GlobalState:       []stage2.SymbolMeta{{Name: "globalVar"}},
+				Endpoints:     []stage2.EndpointMeta{{Method: "GET", Route: "/api/test", LineNumber: 3}},
+				SecuritySinks: []stage2.SecuritySinkMeta{{SinkType: "SQL", LineNumber: 4}},
+				ResourceLinks: []stage2.ResourceMeta{{ResourceType: "FileSystem", LineNumber: 5}},
+				GlobalState:   []stage2.SymbolMeta{{Name: "globalVar"}},
 			},
 		},
 	}
@@ -238,14 +236,15 @@ func TestVirtualNodeExistence(t *testing.T) {
 	// Run the semantic linker
 	LinkEnterpriseSemantics(stage3Out, cpg)
 
-	// Verify all virtual nodes were created
+	// Verify all virtual nodes were created. Concurrency spawns and event
+	// hooks are no longer fabricated here — they are linked to real targets by
+	// LinkConcurrencyAndAsyncControlFlow and LinkEventSourcing respectively
+	// (AUDIT Issue 1.5 / Phase 1B-6).
 	cases := []struct {
 		id   string
 		kind string
 		name string
 	}{
-		{"thread_or_coroutine", "VIRTUAL_RESOURCE", "Concurrent Execution"},
-		{"event:testEvent", "EVENT_TOPIC", "testEvent"},
 		{"endpoint:GET:/api/test", "VIRTUAL_ENDPOINT", "GET:/api/test"},
 		{"sink:SQL", "VIRTUAL_SECURITY_SINK", "SQL"},
 		{"resource:FileSystem", "VIRTUAL_RESOURCE", "FileSystem"},
@@ -263,6 +262,12 @@ func TestVirtualNodeExistence(t *testing.T) {
 		}
 		if n.Name != c.name {
 			t.Errorf("node %q Name = %q, want %q", c.id, n.Name, c.name)
+		}
+	}
+
+	for _, ghost := range []string{"thread_or_coroutine", "event:testEvent"} {
+		if _, exists := cpg.GraphNodes[ghost]; exists {
+			t.Errorf("ghost virtual node %q must not be fabricated by semantic_linker", ghost)
 		}
 	}
 }
@@ -363,9 +368,9 @@ func buildTestStage3Out() *stage3.Stage3Output {
 					RelativePath: "test.go",
 					Language:     "go",
 					GASTRoot: &stage2.GASTNode{
-						Type: stage2.GASTFunction,
-						Name: "main",
-						Kind: "function",
+						Type:      stage2.GASTFunction,
+						Name:      "main",
+						Kind:      "function",
 						StartLine: 1,
 						EndLine:   20,
 						Children: []*stage2.GASTNode{
@@ -566,5 +571,61 @@ func TestCFGNoFalsePositiveOnSpecification(t *testing.T) {
 				t.Errorf("unexpected node created for %q: %s", tc.name, id)
 			}
 		})
+	}
+}
+
+// TestEscapeAnalysisTargetsExist drives the full-mode escape analysis over a
+// GAST fixture with a pointer return and a goroutine spawn, and asserts every
+// ESCAPES_TO_HEAP edge lands on a real node (AUDIT Issue 1.6 — every edge
+// used to dangle because the VAR_/HEAP targets were never created).
+func TestEscapeAnalysisTargetsExist(t *testing.T) {
+	root := &stage2.GASTNode{
+		Type: stage2.GASTFunction,
+		Kind: "function",
+		Name: "makeUser",
+		Children: []*stage2.GASTNode{
+			{
+				Type:       stage2.GASTControlFlow,
+				Kind:       "return_statement",
+				StartLine:  8,
+				Properties: map[string]string{"content": "return &user"},
+			},
+			{
+				Type:       stage2.GASTCallExpression,
+				Kind:       "call_expression",
+				StartLine:  12,
+				Properties: map[string]string{"content": "go worker()"},
+			},
+		},
+	}
+	stage3Out := &stage3.Stage3Output{
+		CommitHash: "test",
+		RootNode: &stage3.DirectoryNode{
+			FolderName:   ".",
+			RelativePath: ".",
+			Files: map[string]*stage3.FileBoundaryNode{
+				"a.go": {
+					FileName:     "a.go",
+					RelativePath: "a.go",
+					GASTRoot:     root,
+				},
+			},
+		},
+	}
+
+	cpg := NewStage4Output("test")
+	cpg.Config.LevelOfDetail = LevelFull
+	cpg.ModifiedFiles = map[string]bool{"a.go": true}
+	cpg.GraphNodes["a.go::makeUser"] = &ResolvedNode{ID: "a.go::makeUser", Kind: "FUNCTION", Name: "makeUser"}
+
+	LinkEscapeAnalysis(stage3Out, cpg)
+
+	for _, want := range []string{"a.go::makeUser::VAR_user", "memory::HEAP"} {
+		if !cpg.NodeExists(want) {
+			t.Errorf("escape target %q was not created", want)
+		}
+	}
+	if q := MeasureQuality(cpg); q.DanglingEdges != 0 {
+		t.Errorf("escape analysis left %d dangling edge(s): %v", q.DanglingEdges, q)
 	}
 }

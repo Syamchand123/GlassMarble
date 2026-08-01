@@ -12,7 +12,7 @@ func LinkDependencyInjection(stage3Out *stage3.Stage3Output, cpg *Stage4Output) 
 	if stage3Out == nil || stage3Out.RootNode == nil || cpg == nil {
 		return
 	}
-	om := stage3.BuildOwnershipMap(stage3Out.GlobalDefinitionIndex, stage3Out.WorkspaceCtx)
+	om := ownershipMap(cpg, stage3Out)
 	traverseForDI(stage3Out.RootNode, om, stage3Out, cpg)
 }
 
@@ -40,7 +40,7 @@ func extractDIFromGAST(node *stage2.GASTNode, relPath, currentFuncID string, loc
 	}
 	funcID := currentFuncID
 	if node.Type == stage2.GASTFunction {
-		funcID = BuildUniversalID(relPath, node.ReceiverType, node.Name)
+		funcID = universalFuncID(relPath, node.ReceiverType, node.Name)
 	}
 
 	if funcID != "" && node.Type == stage2.GASTCallExpression {
@@ -53,7 +53,7 @@ func extractDIFromGAST(node *stage2.GASTNode, relPath, currentFuncID string, loc
 				parts := strings.FieldsFunc(content, func(r rune) bool {
 					return r == '(' || r == ')' || r == ',' || r == ' ' || r == '\n' || r == '\t'
 				})
-				
+
 				for _, part := range parts {
 					if part == "wire.Build" || part == "fx.Provide" || part == "Bind" {
 						continue

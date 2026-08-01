@@ -246,8 +246,8 @@ func TestImportResolvers(t *testing.T) {
 	wc := NewWorkspaceContext()
 
 	tests := []struct {
-		name    string
-		resolver ImportResolver
+		name       string
+		resolver   ImportResolver
 		importPath string
 		fromFile   string
 		rootDir    string
@@ -394,8 +394,8 @@ func TestAggregateWithOneFile(t *testing.T) {
 	}
 
 	payload := &stage2.Stage2Payload{
-		CommitHash:    "abc",
-		UpsertedTrees: map[string]*stage2.GASTNode{"main.go": gastRoot},
+		CommitHash:        "abc",
+		UpsertedTrees:     map[string]*stage2.GASTNode{"main.go": gastRoot},
 		LocalSymbolTables: map[string]*stage2.FileSymbolTable{"main.go": symTable},
 	}
 	out, err := Aggregate(payload, nil)

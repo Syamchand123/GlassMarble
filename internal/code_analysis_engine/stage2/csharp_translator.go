@@ -39,12 +39,15 @@ func (t *CSharpTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) 
 			} else if strings.Contains(tok.Type, "enum") {
 				node.Kind = "enum"
 			}
+		} else if isControlFlowType(tok.Type) {
+			node.Type = GASTControlFlow
+			node.Kind = tok.Type
 		} else {
 			node.Type = GASTFunction
 			node.Kind = "method"
 		}
 		node.Visibility = resolveJavaVisibility(tok.Content)
-		if tok.Type != "namespace_declaration" && tok.Type != "field_declaration" && tok.Type != "parameter" {
+		if node.Type != GASTControlFlow && tok.Type != "namespace_declaration" && tok.Type != "field_declaration" && tok.Type != "parameter" {
 			setDeclarationFQN(node, fileRelPath, tok.Name)
 		}
 	case stage1.TokenCall:

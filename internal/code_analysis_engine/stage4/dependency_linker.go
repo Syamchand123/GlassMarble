@@ -37,7 +37,8 @@ func LinkFileDependencies(stage3Out *stage3.Stage3Output, cpg *Stage4Output) {
 
 	// Create EdgeDependsOn for each file that imports another known file
 	for _, fe := range files {
-		srcID := fe.relPath
+		// File nodes are registered under the "file:" prefix by the builder.
+		srcID := "file:" + fe.relPath
 		for _, imp := range fe.imports {
 			imp = strings.TrimSpace(imp)
 			if imp == "" {
@@ -59,8 +60,8 @@ func LinkFileDependencies(stage3Out *stage3.Stage3Output, cpg *Stage4Output) {
 				}
 			}
 
-			if targetPath != "" && targetPath != srcID {
-				cpg.AddEdge(srcID, targetPath, EdgeDependsOn, 0)
+			if targetPath != "" && targetPath != fe.relPath {
+				cpg.AddEdge(srcID, "file:"+targetPath, EdgeDependsOn, 0)
 			}
 		}
 	}
@@ -157,11 +158,21 @@ func detectCyclicDependencies(cpg *Stage4Output) {
 				}
 			}
 			if len(scc) > 1 {
-				// Mark edges in this SCC as cyclic
+				// Mark the SCC as cyclic, but only along dependency pairs that
+				// already exist — never the O(k²) Cartesian product of the
+				// component (AUDIT Issue 1.5 / Phase 1A-4).
+				sccSet := make(map[string]bool, len(scc))
+				for _, n := range scc {
+					sccSet[n] = true
+				}
 				for _, src := range scc {
-					for _, tgt := range scc {
-						if src != tgt {
-							cpg.AddEdge(src, tgt, EdgeCyclic, 0)
+					edges := cpg.OutboundEdges[src]
+					if len(edges) == 0 && cpg.db != nil {
+						edges = cpg.db.GetOutboundEdges(src)
+					}
+					for _, e := range edges {
+						if e.Type == EdgeDependsOn && sccSet[e.TargetID] {
+							cpg.AddEdge(src, e.TargetID, EdgeCyclic, 0)
 						}
 					}
 				}

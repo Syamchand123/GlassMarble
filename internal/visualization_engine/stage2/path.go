@@ -157,12 +157,14 @@ func FindCriticalPath(sub *types.VirtualSubgraph) []string {
 	return path
 }
 
-// ComputeDiameter returns the longest shortest-path distance between any two reachable nodes.
+// ComputeDiameter returns the longest shortest-path distance between any two
+// reachable nodes, computed on the DIRECTED graph (matching the semantics of
+// the architecture graph, AUDIT Issue 2 §2.4). Disconnectedness is reported
+// via GraphSummary.ConnectedComponents.
 func ComputeDiameter(sub *types.VirtualSubgraph) int {
 	adj := make(map[string][]string)
 	for _, e := range sub.Edges {
 		adj[e.SourceID] = append(adj[e.SourceID], e.TargetID)
-		adj[e.TargetID] = append(adj[e.TargetID], e.SourceID)
 	}
 
 	maxDist := 0
@@ -188,12 +190,12 @@ func ComputeDiameter(sub *types.VirtualSubgraph) int {
 	return maxDist
 }
 
-// ComputeAvgPathLength returns the average shortest-path distance between all ordered pairs of reachable nodes.
+// ComputeAvgPathLength returns the average shortest-path distance between all
+// ordered pairs of reachable nodes on the DIRECTED graph.
 func ComputeAvgPathLength(sub *types.VirtualSubgraph) float64 {
 	adj := make(map[string][]string)
 	for _, e := range sub.Edges {
 		adj[e.SourceID] = append(adj[e.SourceID], e.TargetID)
-		adj[e.TargetID] = append(adj[e.TargetID], e.SourceID)
 	}
 
 	var totalDist int
@@ -361,6 +363,3 @@ func ComputeBipartiteScore(sub *types.VirtualSubgraph) float64 {
 	}
 	return float64(bipartiteComponents) / float64(totalComponents)
 }
-
-
-
