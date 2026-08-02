@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
@@ -43,7 +44,13 @@ var treeCmd = &cobra.Command{
 		})
 
 		printedFiles := 0
-		for path, symbols := range fileTree {
+		paths := make([]string, 0, len(fileTree))
+		for p := range fileTree {
+			paths = append(paths, p)
+		}
+		sort.Strings(paths)
+		for _, path := range paths {
+			symbols := fileTree[path]
 			if treeDepth > 0 && strings.Count(path, "/") >= treeDepth {
 				continue
 			}

@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/Syamchand123/GlassMarble/cmd"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 const doctorFixtureTTL = `@prefix gm: <http://glassmarble.org/schema#> .
@@ -53,6 +55,23 @@ func runGmbCommand(t *testing.T, args ...string) (string, error) {
 	}
 	os.Stdout = w
 	command := cmd.RootCmdForTesting()
+	// The root command is a package-level singleton; flag values set by a
+	// prior test invocation persist across Execute calls (e.g. a --json=true
+	// from one test would leak into the next). Walk the whole command tree and
+	// reset every flag back to its declared default so each test starts clean.
+	var resetFlags func(c *cobra.Command)
+	resetFlags = func(c *cobra.Command) {
+		c.Flags().VisitAll(func(f *pflag.Flag) {
+			_ = f.Value.Set(f.DefValue)
+		})
+		c.InheritedFlags().VisitAll(func(f *pflag.Flag) {
+			_ = f.Value.Set(f.DefValue)
+		})
+		for _, sub := range c.Commands() {
+			resetFlags(sub)
+		}
+	}
+	resetFlags(command)
 	command.SetOut(w)
 	command.SetErr(w)
 	command.SetArgs(args)

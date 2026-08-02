@@ -17,7 +17,11 @@ type IndexedNode struct {
 
 // Aggregate executes Stage 3, processing a Stage2Payload and emitting the Stage3Output topology.
 // It supports both cold full-repository runs and fast incremental Git delta runs.
-func Aggregate(payload *stage2.Stage2Payload, existingState *Stage3Output) (*Stage3Output, error) {
+// rootDir is the repository root used to discover workspace/monorepo config
+// files (go.mod, tsconfig.json, go.work). Passing the actual analysis root —
+// instead of a hardcoded "." — ensures module aliases resolve correctly when
+// gmb runs from a different working directory (AUDIT Issue 2 Phase 2A-1).
+func Aggregate(payload *stage2.Stage2Payload, existingState *Stage3Output, rootDir string) (*Stage3Output, error) {
 	output := existingState
 	if output == nil {
 		output = &Stage3Output{
@@ -45,7 +49,10 @@ func Aggregate(payload *stage2.Stage2Payload, existingState *Stage3Output) (*Sta
 	if output.WorkspaceCtx == nil {
 		output.WorkspaceCtx = NewWorkspaceContext()
 	}
-	output.WorkspaceCtx.ScanWorkspace(".")
+	if rootDir == "" {
+		rootDir = "."
+	}
+	output.WorkspaceCtx.ScanWorkspace(rootDir)
 
 	// Step 3.1 (Pruning): Remove deleted files and prune empty directories incrementally
 	var pruneWg sync.WaitGroup

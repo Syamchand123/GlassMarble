@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,20 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
 	"github.com/spf13/cobra"
 )
+
+// dependencyEdge is the machine-readable form of a resolved dependency edge.
+type dependencyEdge struct {
+	Type       string `json:"type"`
+	OtherID    string `json:"id"`
+	LineNumber int    `json:"line"`
+}
+
+// dependencyNodeJSON captures the report for one matched target node.
+type dependencyNodeJSON struct {
+	ID       string            `json:"id"`
+	Outbound []dependencyEdge  `json:"outbound"`
+	Inbound  []dependencyEdge  `json:"inbound"`
+}
 
 var dependencyCmd = &cobra.Command{
 	Use:   "dependency [target_file_or_symbol]",
@@ -20,6 +35,7 @@ var dependencyCmd = &cobra.Command{
 			target = args[0]
 		}
 		dir, _ := cmd.Flags().GetString("dir")
+		asJSON, _ := cmd.Flags().GetBool("json")
 		if dir == "" {
 			dir = "."
 		}
@@ -36,25 +52,42 @@ var dependencyCmd = &cobra.Command{
 		}
 
 		if target == "" {
-			fmt.Println("=== Repository Dependency Summary ===")
-			fmt.Printf("Total Graph Nodes: %d\n", snapshot.Nodes.Len())
-			fmt.Printf("Total Outbound Edge Mappings: %d\n", snapshot.OutboundEdges.Len())
-			fmt.Printf("Total Inbound Edge Mappings: %d\n\n", snapshot.InboundEdges.Len())
-			fmt.Println("Top Dependency Nodes:")
-			count := 0
+			summary := dependencySummaryJSON{
+				TotalNodes:            snapshot.Nodes.Len(),
+				OutboundEdgeMappings:  snapshot.OutboundEdges.Len(),
+				InboundEdgeMappings:   snapshot.InboundEdges.Len(),
+			}
+			var topNodes []topDependencyNode
 			var done bool
+			count := 0
 			snapshot.OutboundEdges.Iterate(func(id string, outbound []stage4.ResolvedEdge) {
 				if done {
 					return
 				}
 				if len(outbound) > 0 {
-					fmt.Printf("  Node: %s (%d outbound dependencies)\n", id, len(outbound))
+					topNodes = append(topNodes, topDependencyNode{ID: id, Outbound: len(outbound)})
 					count++
 					if count >= 20 {
 						done = true
 					}
 				}
 			})
+			summary.TopDependencyNodes = topNodes
+
+			if asJSON {
+				out, _ := json.MarshalIndent(summary, "", "  ")
+				fmt.Println(string(out))
+				return nil
+			}
+
+			fmt.Println("=== Repository Dependency Summary ===")
+			fmt.Printf("Total Graph Nodes: %d\n", snapshot.Nodes.Len())
+			fmt.Printf("Total Outbound Edge Mappings: %d\n", snapshot.OutboundEdges.Len())
+			fmt.Printf("Total Inbound Edge Mappings: %d\n\n", snapshot.InboundEdges.Len())
+			fmt.Println("Top Dependency Nodes:")
+			for _, n := range topNodes {
+				fmt.Printf("  Node: %s (%d outbound dependencies)\n", n.ID, n.Outbound)
+			}
 			return nil
 		}
 
@@ -71,6 +104,30 @@ var dependencyCmd = &cobra.Command{
 
 		if len(matchingNodes) == 0 {
 			return fmt.Errorf("no matching node or file found for '%s'", target)
+		}
+
+		var jsonNodes []dependencyNodeJSON
+		if asJSON {
+			for _, nodeID := range matchingNodes {
+				entry := dependencyNodeJSON{ID: nodeID}
+				if outbound, ok := snapshot.OutboundEdges.Get(nodeID); ok {
+					for _, edge := range outbound {
+						entry.Outbound = append(entry.Outbound, dependencyEdge{Type: string(edge.Type), OtherID: edge.TargetID, LineNumber: edge.LineNumber})
+					}
+				}
+				if inbound, ok := snapshot.InboundEdges.Get(nodeID); ok {
+					for _, edge := range inbound {
+						entry.Inbound = append(entry.Inbound, dependencyEdge{Type: string(edge.Type), OtherID: edge.SourceID, LineNumber: edge.LineNumber})
+					}
+				}
+				jsonNodes = append(jsonNodes, entry)
+			}
+			out, _ := json.MarshalIndent(map[string]any{
+				"target": target,
+				"nodes":  jsonNodes,
+			}, "", "  ")
+			fmt.Println(string(out))
+			return nil
 		}
 
 		for _, nodeID := range matchingNodes {
@@ -101,7 +158,21 @@ var dependencyCmd = &cobra.Command{
 	},
 }
 
+// dependencySummaryJSON is the machine-readable repository summary.
+type dependencySummaryJSON struct {
+	TotalNodes           int                  `json:"total_nodes"`
+	OutboundEdgeMappings int                  `json:"outbound_edge_mappings"`
+	InboundEdgeMappings  int                  `json:"inbound_edge_mappings"`
+	TopDependencyNodes   []topDependencyNode  `json:"top_dependency_nodes"`
+}
+
+type topDependencyNode struct {
+	ID       string `json:"id"`
+	Outbound int    `json:"outbound_dependencies"`
+}
+
 func init() {
 	dependencyCmd.Flags().String("dir", ".", "Directory path containing the .glassmarble/ database folder")
+	dependencyCmd.Flags().Bool("json", false, "Emit machine-readable JSON instead of the human report")
 	rootCmd.AddCommand(dependencyCmd)
 }

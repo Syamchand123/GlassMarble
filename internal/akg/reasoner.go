@@ -45,6 +45,14 @@ func RunTopologicalMacroInference(graph *CodePropertyGraph, config ...stage4.Lin
 		return
 	}
 
+	// Detach node Properties/PrimitiveScores so derived-metric writes below
+	// never mutate maps shared with the active graph snapshot (concurrent
+	// readers via SafeQuery / the AI bridge would otherwise race). The shadow
+	// snapshot shares unchanged node pointers with the active graph
+	// (transaction_manager.go graft phase); deep-copying before inference
+	// preserves MVCC isolation.
+	graph.detachNodesForWrite()
+
 	// Determine macro inference mode from config
 	macroMode := "all"
 	if len(config) > 0 {
@@ -440,3 +448,179 @@ func dfsWalkPrimitives(currentID string, graph *CodePropertyGraph, visited map[s
 		}
 	}
 }
+
+// affectedReasonerDepth bounds the reverse reachability walk that expands the
+// changed-file seed set to its transitive inbound dependents. A caller one or
+// two hops up may change its inferred rules when a callee it reaches changes
+// primitives; beyond that the risk of a stale inference is outweighed by the
+// cost of walking the whole graph.
+const affectedReasonerDepth = 2
+
+// RunIncrementalMacroInference re-infers macro rules for ONLY the changed
+// subgraph: nodes whose files are in modifiedFiles, plus their bounded inbound
+// dependents (callers/composers that reach a changed node). Unchanged nodes
+// keep their previously inferred rules, so an incremental delta transaction no
+// longer re-walks the entire graph (AUDIT Issue 1 Phase 1C-9 companion to the
+// delta linker). The macro cache is honored: nodes whose content hash is
+// unchanged fall through to the cached result instead of a full rule pass.
+//
+// Architectural topology rules (dead code, cycles, articulation points,
+// centrality) are graph-global and are NOT re-derived here; callers that need
+// them (e.g. `gmb analyze --full`) use RunTopologicalMacroInference. The
+// summary is refreshed from the merged graph so status/queries stay current.
+func RunIncrementalMacroInference(graph *CodePropertyGraph, modifiedFiles []string, changedNodeIDs []string, config ...stage4.LinkerConfig) {
+	if graph == nil || graph.Nodes == nil || graph.Nodes.Len() == 0 {
+		return
+	}
+
+	macroMode := "all"
+	disabledRules := make(map[string]bool)
+	if len(config) > 0 {
+		if config[0].MacroInference != "" {
+			macroMode = config[0].MacroInference
+		}
+		for _, ruleID := range config[0].DisabledRules {
+			disabledRules[ruleID] = true
+		}
+	}
+	if macroMode == "disabled" {
+		return
+	}
+
+	// Detach node properties before writing so concurrent readers via
+	// SafeQuery / the AI bridge never race the in-place mutation (same
+	// isolation the full reasoner provides).
+	graph.detachNodesForWrite()
+
+	if graph.macroCache == nil {
+		graph.macroCache = NewCowMap[string, []string]()
+	}
+	graph.macroCache = capMacroCache(graph.macroCache)
+
+	// Seed the affected set from the delta payload node IDs (authoritative:
+	// these are the nodes that actually changed, even if their file path is
+	// unset) and from the modified files. FileNodeIndex maps normalized paths
+	// to their node IDs (kept in sync by the delta graft).
+	affected := make(map[string]bool)
+	for _, id := range changedNodeIDs {
+		affected[id] = true
+	}
+	for _, filePath := range modifiedFiles {
+		normPath := normalizePath(filePath)
+		if nodeSet, ok := graph.FileNodeIndex.Get(normPath); ok {
+			for id := range nodeSet {
+				affected[id] = true
+			}
+		}
+	}
+	// Fallback: if the file index was not populated (e.g. direct callers in
+	// tests), match by scanning node file paths.
+	if len(affected) == 0 {
+		need := make(map[string]bool)
+		for _, filePath := range modifiedFiles {
+			need[normalizePath(filePath)] = true
+		}
+		graph.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
+			if node != nil && need[normalizePath(node.FileSpec.Path)] {
+				affected[id] = true
+			}
+		})
+	}
+
+	// Expand to bounded inbound dependents: a node that reaches a changed node
+	// may infer different rules (its primitivesFound/flags depend on the DFS
+	// walk), so it must be re-inferred too.
+	frontier := make(map[string]bool)
+	for id := range affected {
+		frontier[id] = true
+	}
+	for depth := 0; depth < affectedReasonerDepth && len(frontier) > 0; depth++ {
+		next := make(map[string]bool)
+		for id := range frontier {
+			// InboundEdges is keyed by target; the inbound dependents of `id`
+			// are the SourceIDs of edges whose TargetID == id.
+			graph.InboundEdges.Iterate(func(_ string, edges []stage4.ResolvedEdge) {
+				for _, e := range edges {
+					if e.TargetID == id && !affected[e.SourceID] {
+						if node, ok := graph.Nodes.Get(e.SourceID); ok && node != nil {
+							if isReasonerRelevantKind(node.Kind) {
+								affected[e.SourceID] = true
+								next[e.SourceID] = true
+							}
+						}
+					}
+				}
+			})
+		}
+		frontier = next
+	}
+
+	if len(affected) == 0 {
+		buildArchitecturalSummary(graph)
+		return
+	}
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 32)
+
+	// Collect tasks first so no goroutine mutates the macro cache while the
+	// collection loop is still reading it (same pattern as the full reasoner).
+	type task struct {
+		id   string
+		node *stage4.ResolvedNode
+		key  string
+	}
+	var tasks []task
+	for id := range affected {
+		node, ok := graph.Nodes.Get(id)
+		if !ok || node == nil {
+			continue
+		}
+		key := nodeMacroKey(node, graph, macroMode, disabledRules)
+		if cached, ok := graph.macroCache.Get(key); ok {
+			graph.MacroRules = graph.MacroRules.Set(id, cached)
+			if node.Properties == nil {
+				node.Properties = make(map[string]string)
+			}
+			node.Properties["macro_rules"] = strings.Join(cached, " | ")
+			continue
+		}
+		tasks = append(tasks, task{id: id, node: node, key: key})
+	}
+
+	for _, tk := range tasks {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(id string, n *stage4.ResolvedNode, key string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			inferMacroRulesForNode(id, n, graph, &mu, macroMode, disabledRules)
+
+			mu.Lock()
+			graph.macroCache = capMacroCache(graph.macroCache)
+			rules, _ := graph.MacroRules.Get(id)
+			graph.macroCache = graph.macroCache.Set(key, rules)
+			mu.Unlock()
+		}(tk.id, tk.node, tk.key)
+	}
+	wg.Wait()
+
+	buildArchitecturalSummary(graph)
+}
+
+// isReasonerRelevantKind reports whether a node kind participates in macro
+// inference (mirrors the kind filter in RunTopologicalMacroInference).
+func isReasonerRelevantKind(kind string) bool {
+	switch kind {
+	case "MODULE", "FILE", "STRUCT", "CLASS", "FUNCTION", "PACKAGE":
+		return true
+	}
+	return false
+}
+
+
+
+
+
+

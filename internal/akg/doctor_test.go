@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const doctorFixtureTTL = `@prefix gm: <http://glassmarble.org/schema#> .
@@ -129,6 +130,10 @@ func TestRunDoctorStaleWAL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Filesystem timestamps can be coarse (e.g. 1s on some Windows/FAT
+	// filesystems). Ensure the WAL entry is strictly newer than the TTL's
+	// modtime, otherwise StaleWAL is spuriously false (flaky test).
+	time.Sleep(1100 * time.Millisecond)
 	if err := wal.AppendEntry(&WALEntry{
 		TxID:       1,
 		CommitHash: "pendinghash",

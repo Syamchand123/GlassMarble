@@ -83,6 +83,24 @@ func CollectGitDiff(rootDir string, commitHash string) ([]FileTask, error) {
 	return tasks, nil
 }
 
+// GitCommandOutput runs a git command in rootDir and returns its trimmed
+// stdout. It is used by callers that need raw git output (e.g. the watch
+// command's working-tree fingerprint) without parsing FileTasks.
+func GitCommandOutput(rootDir string, args ...string) (string, error) {
+	absRoot, err := filepath.Abs(rootDir)
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.Command("git", args...)
+	cmd.Dir = absRoot
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("stage1: git %s failed: %w", strings.Join(args, " "), err)
+	}
+	return strings.TrimSpace(out.String()), nil
+}
+
 func collectGitStatus(absRoot string) ([]FileTask, error) {
 	cmd := exec.Command("git", "status", "--porcelain")
 	cmd.Dir = absRoot

@@ -587,6 +587,57 @@ func TestPageRank_CustomIterations(t *testing.T) {
 	}
 }
 
+// TestPageRank_DanglingMassConserved verifies that PageRank conserves total
+// mass when dangling (leaf) nodes are present: without dangling-rank
+// redistribution, ranks leak every iteration and the sum drifts well below 1.
+func TestPageRank_DanglingMassConserved(t *testing.T) {
+	g := NewCodePropertyGraph("test")
+	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
+	g.Nodes = g.Nodes.Set("leaf1", &stage4.ResolvedNode{ID: "leaf1", Kind: "FUNCTION", Name: "leaf1"})
+	g.Nodes = g.Nodes.Set("leaf2", &stage4.ResolvedNode{ID: "leaf2", Kind: "FUNCTION", Name: "leaf2"})
+	addPageRankEdge := func(src, dst string) {
+		g.OutboundEdges = g.OutboundEdges.Set(src, append(g.GetOutboundEdges(src),
+			stage4.ResolvedEdge{SourceID: src, TargetID: dst, Type: stage4.EdgeCalls}))
+		g.InboundEdges = g.InboundEdges.Set(dst, append(g.GetInboundEdges(dst),
+			stage4.ResolvedEdge{SourceID: src, TargetID: dst, Type: stage4.EdgeCalls}))
+	}
+	addPageRankEdge("a", "b")
+	addPageRankEdge("b", "leaf1")
+	addPageRankEdge("leaf1", "leaf2")
+	// leaf2 has no outbound edges -> dangling mass must be redistributed.
+
+	ranks := g.CalculatePageRank(50, 0.85)
+	var total float64
+	for _, r := range ranks {
+		total += r
+	}
+	assert.InDelta(t, 1.0, total, 0.01, "PageRank mass should be conserved with dangling nodes")
+}
+
+// TestBetweenness_DirectedNoHalving verifies that a directed chain does NOT
+// halve betweenness (the /2 correction is only valid for undirected graphs).
+// In the directed chain a->b->c->d, node b and c lie on shortest paths from
+// sources that can reach them (a->b->c, a->b->c->d, b->c->d), giving b=2, c=2.
+func TestBetweenness_DirectedNoHalving(t *testing.T) {
+	g := NewCodePropertyGraph("test")
+	for _, id := range []string{"a", "b", "c", "d"} {
+		g.Nodes = g.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: "STRUCT", Name: id})
+	}
+	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: stage4.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("c", []stage4.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: stage4.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("c", []stage4.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: stage4.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("d", []stage4.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: stage4.EdgeCalls}})
+
+	bc := g.CalculateBetweennessCentrality(true)
+	assert.Equal(t, 2.0, bc["b"])
+	assert.Equal(t, 2.0, bc["c"])
+	assert.Equal(t, 0.0, bc["a"])
+	assert.Equal(t, 0.0, bc["d"])
+}
+
 // ===== ADDITIONAL BetweennessCentrality TESTS =====
 
 func TestBetweenness_LineGraph(t *testing.T) {
@@ -1066,7 +1117,6 @@ func TestMVCC_Isolation(t *testing.T) {
 }
 
 // ==================== PageRank Convergence Tests ====================
-
 func TestPageRank_Convergence(t *testing.T) {
 	g := NewCodePropertyGraph("test")
 	g.Nodes = g.Nodes.Set("A", &stage4.ResolvedNode{ID: "A", Kind: "FUNCTION", Name: "A"})

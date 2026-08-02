@@ -171,6 +171,55 @@ func TestOpenAICompatNoTools(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatMaxOutputTokens(t *testing.T) {
+	var gotBody []byte
+	srv := openAICompatServer(t, `{"choices":[{"message":{"content":"ok"}}],"usage":{}}`, func(r *http.Request, body []byte) {
+		gotBody = body
+	})
+	defer srv.Close()
+
+	p := NewOpenAICompatProvider("", srv.URL, 30*time.Second)
+	if _, err := p.Complete(context.Background(), Request{
+		Model:            "m",
+		MaxOutputTokens:  256,
+		Messages:         []Message{{Role: RoleUser, Content: "hi"}},
+	}); err != nil {
+		t.Fatalf("Complete() failed: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(gotBody, &payload); err != nil {
+		t.Fatalf("request body is not JSON: %v", err)
+	}
+	if payload["max_tokens"] != float64(256) {
+		t.Errorf("max_tokens = %v, want 256", payload["max_tokens"])
+	}
+}
+
+func TestOpenAICompatMaxOutputTokensZero(t *testing.T) {
+	var gotBody []byte
+	srv := openAICompatServer(t, `{"choices":[{"message":{"content":"ok"}}],"usage":{}}`, func(r *http.Request, body []byte) {
+		gotBody = body
+	})
+	defer srv.Close()
+
+	p := NewOpenAICompatProvider("", srv.URL, 30*time.Second)
+	if _, err := p.Complete(context.Background(), Request{
+		Model:    "m",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	}); err != nil {
+		t.Fatalf("Complete() failed: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(gotBody, &payload); err != nil {
+		t.Fatalf("request body is not JSON: %v", err)
+	}
+	if _, has := payload["max_tokens"]; has {
+		t.Errorf("max_tokens should be omitted when 0")
+	}
+}
+
 func TestOpenAICompatPing(t *testing.T) {
 	var gotBody []byte
 	srv := openAICompatServer(t, `{"choices":[{"message":{"content":"OK"}}],"usage":{}}`, func(r *http.Request, body []byte) {

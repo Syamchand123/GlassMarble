@@ -16,6 +16,35 @@ type Config struct {
 	StorageDir    string `yaml:"storage_dir"`
 	OutputFormat  string `yaml:"output_format"` // "mermaid", "plantuml", "dot"
 	IncludeHidden bool   `yaml:"include_hidden"`
+	Drift         DriftConfig `yaml:"drift"`
+}
+
+// DriftConfig declares the architecture invariants checked by `gmb drift`.
+// All are optional; when absent the drift command reports only cycles.
+type DriftConfig struct {
+	// Layers partitions the codebase by path glob so cross-layer edges can be
+	// checked against ForbiddenDeps. Each node is assigned to the first layer
+	// whose pattern matches its file path.
+	Layers []DriftLayer `yaml:"layers"`
+	// ForbiddenDeps lists directed source-layer -> target-layer dependencies
+	// that are not allowed. Source and Target name a layer from Layers.
+	ForbiddenDeps []ForbiddenDepRule `yaml:"forbidden_deps"`
+	// CycleBudget is the maximum number of tolerated cycles between layers.
+	// A non-positive value means "any cycles fail".
+	CycleBudget int `yaml:"cycle_budget"`
+}
+
+// DriftLayer is a named path pattern used to bucket nodes for drift checks.
+type DriftLayer struct {
+	Name  string   `yaml:"name"`
+	Paths []string `yaml:"paths"`
+}
+
+// ForbiddenDepRule forbids dependencies from Source layer to Target layer.
+type ForbiddenDepRule struct {
+	Source string `yaml:"source"`
+	Target string `yaml:"target"`
+	Reason string `yaml:"reason,omitempty"`
 }
 
 // Load loads configuration with precedence:
@@ -135,5 +164,8 @@ func mergeYAML(path string, cfg *Config) {
 	}
 	if temp.IncludeHidden {
 		cfg.IncludeHidden = temp.IncludeHidden
+	}
+	if temp.Drift.Layers != nil || temp.Drift.ForbiddenDeps != nil {
+		cfg.Drift = temp.Drift
 	}
 }

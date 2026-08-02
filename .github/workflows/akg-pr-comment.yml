@@ -1,0 +1,132 @@
+name: GlassMarble AKG PR Comment
+
+# CI companion workflow: on every pull request, build the AKG for the merge
+# branch (base) and the PR head, diff the two snapshots, and post an
+# architecture-change summary as a pull-request comment.
+#
+# The comment is produced by `gmb compare --json` and rendered with the
+# GlassMarble GraphJSON schema, so it is stable and reviewable.
+
+on:
+  pull_request:
+    branches: [main, master, develop]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: read
+
+jobs:
+  akg-diff:
+    name: Architecture Knowledge Graph Diff
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout merge-base
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Build gmb
+        run: |
+          go build -o gmb ./cmd/...
+
+      - name: Analyze base (merge-base)
+        run: |
+          BASE_SHA=$(git merge-base origin/${{ github.base_ref }} HEAD)
+          git worktree add --detach /tmp/gm-base "$BASE_SHA" >/dev/null
+          (cd /tmp/gm-base && "$GITHUB_WORKSPACE/gmb" analyze --dir . --full --json > /tmp/base-analysis.json 2>&1 || true)
+          (cd /tmp/gm-base && "$GITHUB_WORKSPACE/gmb" export --dir . --output /tmp/base.json || true)
+          git worktree remove --force /tmp/gm-base
+
+      - name: Analyze head (PR branch)
+        run: |
+          ./gmb analyze --dir . --full --json > /tmp/head-analysis.json 2>&1 || true
+          ./gmb export --dir . --output /tmp/head.json || true
+
+      - name: Compute architectural diff
+        id: diff
+        run: |
+          if [ -f /tmp/base.json ] && [ -f /tmp/head.json ]; then
+            ./gmb compare /tmp/base.json /tmp/head.json --json > /tmp/diff.json || true
+          else
+            echo '{"base_commit":"none","head_commit":"none","nodes_added":[],"nodes_removed":[],"edges_added":[],"edges_removed":[],"files_changed":[]}' > /tmp/diff.json
+          fi
+          echo "payload=$(cat /tmp/diff.json | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+
+      - name: Post PR architecture comment
+        uses: actions/github-script@v7
+        if: always()
+        with:
+          script: |
+            const diff = JSON.parse(`${{ steps.diff.outputs.payload }}`);
+            const lines = [];
+            lines.push('## :building_construction: GlassMarble AKG Diff');
+            lines.push('');
+            lines.push(`Base: \`${diff.base_commit || '(none)'}\` · Head: \`${diff.head_commit || '(none)'}\``);
+            lines.push('');
+            lines.push(`| Metric | Count |`);
+            lines.push(`| --- | --- |`);
+            lines.push(`| Nodes added | ${diff.nodes_added ? diff.nodes_added.length : 0} |`);
+            lines.push(`| Nodes removed | ${diff.nodes_removed ? diff.nodes_removed.length : 0} |`);
+            lines.push(`| Edges added | ${diff.edges_added ? diff.edges_added.length : 0} |`);
+            lines.push(`| Edges removed | ${diff.edges_removed ? diff.edges_removed.length : 0} |`);
+            lines.push('');
+            const added = (diff.nodes_added || []).slice(0, 25);
+            if (added.length) {
+              lines.push('**Added symbols:**');
+              lines.push('<details><summary>show</summary>');
+              lines.push('');
+              lines.push('```text');
+              for (const n of added) lines.push(`+ ${n.id} [${n.kind}] (${n.file || '?'})`);
+              lines.push('```');
+              lines.push('</details>');
+            }
+            const removed = (diff.nodes_removed || []).slice(0, 25);
+            if (removed.length) {
+              lines.push('**Removed symbols:**');
+              lines.push('<details><summary>show</summary>');
+              lines.push('');
+              lines.push('```text');
+              for (const n of removed) lines.push(`- ${n.id} [${n.kind}] (${n.file || '?'})`);
+              lines.push('```');
+              lines.push('</details>');
+            }
+            const files = (diff.files_changed || []).slice(0, 50);
+            if (files.length) {
+              lines.push('**Files with architectural impact:**');
+              lines.push('');
+              for (const f of files) lines.push(`- \`${f}\``);
+            }
+            if (!added.length && !removed.length && !files.length) {
+              lines.push('No architectural changes detected between base and head.');
+            }
+            const body = lines.join('\n');
+            const existing = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const marker = 'GlassMarble AKG Diff';
+            const prior = existing.data.find(c => c.body && c.body.includes(marker));
+            if (prior) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: prior.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

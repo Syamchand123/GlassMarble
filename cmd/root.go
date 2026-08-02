@@ -53,11 +53,13 @@ func init() {
 
 // newAKGManager builds the AKG transaction manager for a storage directory,
 // honoring the persistent --max-ttl-mb budget flag (AUDIT Issue 4 Phase 4A-4).
+// A nil cmd (e.g. from the watch loop) means "no budget flag" — unlimited.
 func newAKGManager(storageDir string, cmd *cobra.Command) (*akg.AKGTransactionManager, error) {
-	maxMB, _ := cmd.Flags().GetInt("max-ttl-mb")
 	var maxBytes int64
-	if maxMB > 0 {
-		maxBytes = int64(maxMB) << 20
+	if cmd != nil {
+		if maxMB, _ := cmd.Flags().GetInt("max-ttl-mb"); maxMB > 0 {
+			maxBytes = int64(maxMB) << 20
+		}
 	}
 	return akg.NewAKGTransactionManagerWithOptions(storageDir, maxBytes)
 }

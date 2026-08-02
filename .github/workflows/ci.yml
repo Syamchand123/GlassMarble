@@ -44,3 +44,35 @@ jobs:
       - name: Run Benchmarks
         run: |
           CGO_ENABLED=0 go test -bench=. ./internal/code_analysis_engine/...
+
+  drift-gate:
+    name: Architecture Drift Gate
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Build gmb
+        run: go build -o gmb ./cmd/...
+
+      - name: Analyze repository
+        run: ./gmb analyze --dir . --full --json > /tmp/analysis.json 2>&1 || true
+
+      - name: Enforce architecture drift invariants
+        # `gmb drift` reads .glassmarble/config.yaml (drift.layers,
+        # drift.forbidden_deps, drift.cycle_budget) and exits non-zero when a
+        # forbidden dependency or a cycle over the declared budget is found.
+        run: |
+          if [ -f .glassmarble/config.yaml ]; then
+            ./gmb drift --dir . --json || (echo "::error::Architecture drift detected (see output above)"; exit 1)
+          else
+            echo "No drift config declared (.glassmarble/config.yaml missing); skipping drift gate."
+          fi

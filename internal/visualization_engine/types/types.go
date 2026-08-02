@@ -249,7 +249,11 @@ type GraphSummary struct {
 // including a literal '%' (encoded as %25).
 func FormatNodeURI(id string) string {
 	clean := strings.ReplaceAll(id, "%", "%25")
-	clean = strings.ReplaceAll(clean, "\\", "/")
+	// Backslashes are encoded, not rewritten to '/', so the encoding is an
+	// exact inverse of ParseNodeURI's percentDecode: a Windows path or a
+	// source snippet containing '\' survives Format->Parse unchanged
+	// (AUDIT Issue 2 Phase 2B-6 round-trip invariant).
+	clean = strings.ReplaceAll(clean, "\\", "%5C")
 	clean = strings.ReplaceAll(clean, "\"", "%22")
 	clean = strings.ReplaceAll(clean, " ", "%20")
 	clean = strings.ReplaceAll(clean, "<", "%3C")

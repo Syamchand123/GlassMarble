@@ -51,6 +51,9 @@ func (p *OpenAICompatProvider) Complete(ctx context.Context, req Request) (*Resp
 	if temp := effectiveTemperature(req.Temperature); temp != nil {
 		payload.Temperature = temp
 	}
+	if req.MaxOutputTokens > 0 {
+		payload.MaxTokens = intPtr(req.MaxOutputTokens)
+	}
 	if len(req.Tools) > 0 {
 		payload.Tools = buildOpenAICompatTools(req.Tools)
 	}

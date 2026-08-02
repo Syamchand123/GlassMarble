@@ -1,6 +1,7 @@
 package types
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -93,5 +94,135 @@ func TestExtractionConfigDefault(t *testing.T) {
 	}
 	if cfg.Name != "" {
 		t.Errorf("expected Name empty, got %s", cfg.Name)
+	}
+}
+
+// ============================================================================
+// URI encoding/decoding round-trip tests (AUDIT Issue 2 Phase 2B-6 and Issue 3
+// Phase 3D-14). FormatNodeURI and ParseNodeURI must be exact inverses for every
+// character the serializer escapes, including the later additions { } | ^ and
+// control characters.
+// ============================================================================
+
+func TestFormatNodeURINamespaces(t *testing.T) {
+	cases := []struct {
+		id, want string
+	}{
+		{"path::Func", "<http://glassmarble.org/node/path::Func>"},
+		{"file:src/main.go", "<http://glassmarble.org/file/src/main.go>"},
+		{"module:internal/db", "<http://glassmarble.org/namespace/internal/db>"},
+	}
+	for _, c := range cases {
+		if got := FormatNodeURI(c.id); got != c.want {
+			t.Errorf("FormatNodeURI(%q) = %q, want %q", c.id, got, c.want)
+		}
+	}
+}
+
+func TestFormatNodeURIEscapes(t *testing.T) {
+	// Every special character the serializer escapes (AUDIT Issue 3 Phase
+	// 3D-14 / ontology_test.go's "special-chars" node). The angle brackets are
+	// the IRI delimiters themselves, so they are intentionally present.
+	input := "my dir/x.go::Foo\"<>&|^`{}"
+	got := FormatNodeURI(input)
+	for _, forbidden := range []string{" ", "\"", "{", "}", "|", "^", "`"} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("FormatNodeURI(%q) still contains %q in %q", input, forbidden, got)
+		}
+	}
+}
+
+func TestParseNodeURINamespaces(t *testing.T) {
+	cases := []struct {
+		uri, want string
+	}{
+		{"<http://glassmarble.org/node/path::Func>", "path::Func"},
+		{"<http://glassmarble.org/file/src/main.go>", "file:src/main.go"},
+		{"<http://glassmarble.org/namespace/internal/db>", "module:internal/db"},
+		{"<ext:foo>", "ext:foo"},
+		{"bare", "bare"},
+	}
+	for _, c := range cases {
+		if got := ParseNodeURI(c.uri); got != c.want {
+			t.Errorf("ParseNodeURI(%q) = %q, want %q", c.uri, got, c.want)
+		}
+	}
+}
+
+func TestRoundTripFormatParseNodeURI(t *testing.T) {
+	// Any node ID with special characters must survive
+	// FormatNodeURI -> ParseNodeURI unchanged (AUDIT Issue 2 Phase 2B-6).
+	inputs := []string{
+		"file:my dir/x.go",
+		"src/db.go::DBStore::Fetch(id)",
+		"ext:( \"fmt\" )::{: defer tm.saveToDisk(...)}",
+		"path::Func{param|with|pipes}",
+		"node::with%20percent::x",
+		"module:internal/db",
+		"file:x.go::Name\"with\"quotes",
+		"::{}|^`<>\\",
+	}
+	for _, in := range inputs {
+		got := ParseNodeURI(FormatNodeURI(in))
+		if got != in {
+			t.Errorf("round-trip %q -> %q -> %q", in, FormatNodeURI(in), got)
+		}
+	}
+}
+
+func TestParseNodeURIInvalidSequences(t *testing.T) {
+	// Invalid %XX escapes must be left verbatim, not dropped.
+	if got := ParseNodeURI("<http://glassmarble.org/node/a%2>b>"); got != "a%2>b" {
+		t.Errorf("invalid escape not preserved: %q", got)
+	}
+	if got := ParseNodeURI("<http://glassmarble.org/node/a%GGb>"); got != "a%GGb" {
+		t.Errorf("non-hex escape not preserved: %q", got)
+	}
+	if got := ParseNodeURI("<http://glassmarble.org/node/a%b>"); got != "a%b" {
+		t.Errorf("truncated escape not preserved: %q", got)
+	}
+}
+
+func TestNativeGraphCloneDeepCopy(t *testing.T) {
+	g := &NativeGraph{
+		Nodes: map[string]*NativeNode{
+			"a": {ID: "a", Kind: "gm:TypeDecl", Properties: map[string]string{"k": "v"}},
+		},
+		Edges: []NativeEdge{{SourceID: "a", Predicate: "gm:calls", TargetID: "b"}},
+	}
+
+	clone := g.Clone()
+	if clone == nil {
+		t.Fatal("Clone returned nil")
+	}
+	if len(clone.Nodes) != 1 || len(clone.Edges) != 1 {
+		t.Fatalf("clone size = %d/%d, want 1/1", len(clone.Nodes), len(clone.Edges))
+	}
+
+	// Mutating the clone's node properties must not affect the original.
+	clone.Nodes["a"].Properties["k"] = "changed"
+	if g.Nodes["a"].Properties["k"] != "v" {
+		t.Error("properties map was shared, not deep-copied")
+	}
+	clone.Nodes["a"].Name = "renamed"
+	if g.Nodes["a"].Name != "" {
+		t.Error("node pointer was shared, not deep-copied")
+	}
+
+	// Mutating the clone's edge slice must not affect the original.
+	clone.Edges[0].LineNumber = 99
+	if g.Edges[0].LineNumber != 0 {
+		t.Error("edge slice was shared, not deep-copied")
+	}
+}
+
+func TestNativeGraphCloneNilAndEmpty(t *testing.T) {
+	var g *NativeGraph
+	if got := g.Clone(); got != nil {
+		t.Errorf("Clone of nil graph = %v, want nil", got)
+	}
+	empty := &NativeGraph{Nodes: map[string]*NativeNode{}, Edges: []NativeEdge{}}
+	if got := empty.Clone(); got == nil || len(got.Nodes) != 0 || len(got.Edges) != 0 {
+		t.Errorf("Clone of empty graph = %v, want empty non-nil graph", got)
 	}
 }

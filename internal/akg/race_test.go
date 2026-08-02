@@ -129,3 +129,69 @@ func TestConcurrentDeltaTransactions_NoRace(t *testing.T) {
 		}
 	}
 }
+
+// TestConcurrentReadersWithReasonerCommits_NoRace exercises the exact scenario
+// that used to race: the reasoner (RunTopologicalMacroInference) writes derived
+// metrics into node.Properties during a delta commit while concurrent readers
+// (SafeQuery / akgbridge pattern) read the active snapshot. Before the
+// detachNodesForWrite fix, unchanged nodes were SHARED pointers between the
+// shadow and the active graph, so the reasoner mutated maps concurrently
+// readers were iterating. Run under -race.
+func TestConcurrentReadersWithReasonerCommits_NoRace(t *testing.T) {
+	dir := t.TempDir()
+	tm, err := NewAKGTransactionManager(dir)
+	require.NoError(t, err)
+	defer tm.Close()
+
+	// Seed a base graph so the shadow shares unchanged nodes with the active
+	// snapshot (the pre-fix race condition).
+	base := stage4.NewStage4Output("base")
+	for i := 0; i < 50; i++ {
+		id := fmt.Sprintf("svc_%d", i)
+		base.GraphNodes[id] = &stage4.ResolvedNode{ID: id, Kind: "CLASS", Name: "Service" + fmt.Sprint(i)}
+		base.OutboundEdges[id] = []stage4.ResolvedEdge{{SourceID: id, TargetID: "svc_0", Type: stage4.EdgeCalls, LineNumber: i}}
+	}
+	require.NoError(t, tm.ExecuteDeltaTransaction(base, []string{"base.go"}))
+
+	var wg sync.WaitGroup
+	var start chan struct{}
+	start = make(chan struct{})
+	close(start)
+
+	// Concurrent readers hammering the active snapshot (reads Properties).
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for j := 0; j < 500; j++ {
+				snap := tm.GetActiveSnapshot()
+				snap.SafeQuery(stage4.QueryFilter{Kind: "CLASS"})
+				snap.SafeQuery(stage4.QueryFilter{PropertyRegex: map[string]string{"pagerank": ".+"}})
+				if n, ok := snap.SafeGetNode("svc_0"); ok {
+					_ = n.Properties["macro_rules"]
+				}
+				snap.SafeCalculatePageRank(10, 0.85)
+				snap.SafeCalculateBetweennessCentrality(false)
+			}
+		}()
+	}
+
+	// Concurrent delta commits that trigger reasoner property writes.
+	for c := 0; c < 20; c++ {
+		wg.Add(1)
+		go func(commit int) {
+			defer wg.Done()
+			<-start
+			payload := stage4.NewStage4Output("hash")
+			id := fmt.Sprintf("new_svc_%d", commit)
+			payload.GraphNodes[id] = &stage4.ResolvedNode{ID: id, Kind: "CLASS", Name: "NewService" + fmt.Sprint(commit)}
+			payload.OutboundEdges[id] = []stage4.ResolvedEdge{{SourceID: id, TargetID: "svc_0", Type: stage4.EdgeCalls, LineNumber: commit}}
+			if err := tm.ExecuteDeltaTransaction(payload, []string{"new.go"}); err != nil {
+				t.Errorf("concurrent delta failed: %v", err)
+			}
+		}(c)
+	}
+
+	wg.Wait()
+}

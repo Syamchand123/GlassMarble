@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -26,6 +27,7 @@ var hotspotCmd = &cobra.Command{
 	Long:  `Ranks nodes by in-degree call density and centrality to highlight architectural hotspots.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, _ := cmd.Flags().GetString("dir")
+		asJSON, _ := cmd.Flags().GetBool("json")
 		if dir == "" {
 			dir = "."
 		}
@@ -63,6 +65,21 @@ var hotspotCmd = &cobra.Command{
 			return degrees[i].InDegree > degrees[j].InDegree
 		})
 
+		limit := hotspotTop
+		if len(degrees) < limit {
+			limit = len(degrees)
+		}
+		top := degrees[:limit]
+
+		if asJSON {
+			out, _ := json.MarshalIndent(map[string]any{
+				"top":      limit,
+				"hotspots": top,
+			}, "", "  ")
+			fmt.Println(string(out))
+			return nil
+		}
+
 		fmt.Printf("=== Top %d Architectural Hotspots (Ranked by In-Degree Centrality) ===\n\n", hotspotTop)
 		fmt.Printf("%-5s %-45s %-12s %-10s %-10s %-15s\n", "Rank", "Symbol ID", "Kind", "In-Degree", "Out-Degree", "Primitive")
 		fmt.Println("---------------------------------------------------------------------------------------------------")
@@ -83,5 +100,6 @@ var hotspotCmd = &cobra.Command{
 func init() {
 	hotspotCmd.Flags().IntVar(&hotspotTop, "top", 10, "Number of top hotspot symbols to display")
 	hotspotCmd.Flags().String("dir", ".", "Directory path containing the .glassmarble/ database folder")
+	hotspotCmd.Flags().Bool("json", false, "Emit machine-readable JSON instead of the human report")
 	rootCmd.AddCommand(hotspotCmd)
 }

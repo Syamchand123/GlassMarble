@@ -2,6 +2,8 @@ package cmd_test
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -302,5 +304,85 @@ func TestVisualizeCommand_SccFlag(t *testing.T) {
 	output := buf.String()
 	if !strings.Contains(output, "classDiagram") {
 		t.Errorf("Expected classDiagram output, got:\n%s", output)
+	}
+}
+
+func TestRenderMermaidToImage_ViaKroki(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "cmd_render_kroki_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	var gotMarkup string
+	var gotFormat string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotFormat = r.URL.Path
+		body := new(bytes.Buffer)
+		_, _ = body.ReadFrom(r.Body)
+		gotMarkup = body.String()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("<svg>rendered</svg>"))
+	}))
+	defer srv.Close()
+
+	outPath := filepath.Join(tempDir, "graph.svg")
+	err = cmd.RenderMermaidToImageForTest("classDiagram\nclass Foo", outPath, "mermaid", srv.URL)
+	if err != nil {
+		t.Fatalf("RenderMermaidToImage failed: %v", err)
+	}
+
+	if gotFormat != "/mermaid/svg" {
+		t.Errorf("Expected Kroki path /mermaid/svg, got %q", gotFormat)
+	}
+	if !strings.Contains(gotMarkup, "classDiagram") {
+		t.Errorf("Expected markup sent to Kroki, got %q", gotMarkup)
+	}
+
+	content, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("Rendered file could not be read: %v", err)
+	}
+	if string(content) != "<svg>rendered</svg>" {
+		t.Errorf("Expected rendered SVG content, got %q", string(content))
+	}
+}
+
+func TestRenderMermaidToImage_FallbackPersistsMarkup(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "cmd_render_fallback_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Unreachable endpoint -> no renderer available -> markup persisted to <target>.txt
+	outPath := filepath.Join(tempDir, "graph.png")
+	err = cmd.RenderMermaidToImageForTest("graph TD\nA-->B", outPath, "mermaid", "http://127.0.0.1:1")
+	if err == nil {
+		t.Fatalf("Expected an error when no renderer is available, got nil")
+	}
+	if !strings.Contains(err.Error(), ".txt") {
+		t.Errorf("Expected error to reference persisted markup file, got: %v", err)
+	}
+
+	if _, statErr := os.Stat(outPath + ".txt"); statErr != nil {
+		t.Errorf("Expected markup persisted to %s.txt, got stat error: %v", outPath, statErr)
+	}
+}
+
+func TestRenderMermaidToImage_UnsupportedFormat(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "cmd_render_badfmt_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	outPath := filepath.Join(tempDir, "graph.jpg")
+	err = cmd.RenderMermaidToImageForTest("graph TD\nA", outPath, "mermaid", "http://127.0.0.1:1")
+	if err == nil {
+		t.Fatalf("Expected an error for unsupported render format, got nil")
+	}
+	if !strings.Contains(err.Error(), "unsupported render format") {
+		t.Errorf("Expected unsupported render format error, got: %v", err)
 	}
 }

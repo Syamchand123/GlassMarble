@@ -1,8 +1,12 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
 	"fmt"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -26,6 +30,7 @@ var (
 	pagerankFlag  bool
 	communityFlag bool
 	sccFlag       bool
+	renderFlag    string
 )
 
 var visualizeCmd = &cobra.Command{
@@ -191,6 +196,16 @@ var visualizeCmd = &cobra.Command{
 			fmt.Fprintf(cmd.OutOrStdout(), "========================\n")
 		}
 
+		// Render the diagram to an image (SVG or PNG) when --render is set.
+		// Mermaid markup is sent to a renderer: Kroki (network) by default,
+		// with mermaid-cli (`mmdc`) as a local fallback.
+		if renderFlag != "" {
+			if err := renderMermaidToImage(markup, renderFlag, formatFlag); err != nil {
+				return err
+			}
+			return nil
+		}
+
 		// Stream or save diagram markup (Marble)
 		if saveFile != "" {
 			fileName := saveFile
@@ -249,6 +264,86 @@ func parseScope(scopeStr string) (types.ScopeLevel, string, error) {
 	return types.ScopeGlobal, "", fmt.Errorf("invalid scope: %q (valid values: global, folder:path, file:path)", scopeStr)
 }
 
+// renderMermaidToImage converts diagram markup to an SVG or PNG image. The
+// markup language (mermaid/plantuml/dot) is selected by formatFlag; the target
+// format is derived from the --render file extension (.svg or .png). It tries
+// the Kroki rendering service first, then a locally-installed mermaid-cli
+// (`mmdc`). When both are unavailable the raw markup is saved next to the
+// target path and a descriptive error is returned.
+func renderMermaidToImage(markup, targetPath, formatFlag string) error {
+	return renderMermaidToImageWithEndpoint(markup, targetPath, formatFlag, "https://kroki.io")
+}
+
+// RenderMermaidToImageForTest is the testable entry point for the render
+// pipeline with an injectable Kroki base URL.
+func RenderMermaidToImageForTest(markup, targetPath, formatFlag, krokiBase string) error {
+	return renderMermaidToImageWithEndpoint(markup, targetPath, formatFlag, krokiBase)
+}
+
+func renderMermaidToImageWithEndpoint(markup, targetPath, formatFlag, krokiBase string) error {
+	ext := strings.ToLower(filepath.Ext(targetPath))
+	switch ext {
+	case ".svg", ".png":
+	default:
+		return fmt.Errorf("unsupported render format %q (use .svg or .png)", ext)
+	}
+	imgFormat := strings.TrimPrefix(ext, ".")
+
+	// Kroki diagram-type keyword per markup language.
+	krokiType := "mermaid"
+	switch {
+	case strings.EqualFold(formatFlag, "plantuml"):
+		krokiType = "plantuml"
+	case strings.EqualFold(formatFlag, "dot") || strings.EqualFold(formatFlag, "graphviz"):
+		krokiType = "graphviz"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	endpoint := krokiBase + "/" + krokiType + "/" + imgFormat
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(markup))
+	if err != nil {
+		return fmt.Errorf("failed to build render request: %w", err)
+	}
+	req.Header.Set("Content-Type", "text/plain; charset=utf-8")
+	resp, err := http.DefaultClient.Do(req)
+	if err == nil {
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			var buf bytes.Buffer
+			if _, cerr := buf.ReadFrom(resp.Body); cerr != nil {
+				return fmt.Errorf("failed to read rendered image: %w", cerr)
+			}
+			if err := os.WriteFile(targetPath, buf.Bytes(), 0o644); err != nil {
+				return fmt.Errorf("failed to write rendered image: %w", err)
+			}
+			fmt.Fprintf(os.Stdout, "Rendered %s image to %s (via Kroki)\n", imgFormat, targetPath)
+			return nil
+		}
+	}
+
+	// Fallback: mermaid-cli local renderer.
+	mmdc, findErr := exec.LookPath("mmdc")
+	if findErr == nil {
+		// mermaid-cli accepts .mmd input and --output with an extension.
+		cmd := exec.CommandContext(ctx, mmdc, "-i", "-", "-o", targetPath)
+		cmd.Stdin = strings.NewReader(markup)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if runErr := cmd.Run(); runErr == nil {
+			fmt.Fprintf(os.Stdout, "Rendered %s image to %s (via mermaid-cli)\n", imgFormat, targetPath)
+			return nil
+		}
+		_ = stderr
+	}
+
+	// Neither renderer succeeded: persist the markup so nothing is lost.
+	markupPath := targetPath + ".txt"
+	_ = os.WriteFile(markupPath, []byte(markup), 0o644)
+	return fmt.Errorf("no diagram renderer available (Kroki unreachable and mermaid-cli not installed); markup written to %s", markupPath)
+}
+
 func ResetVisualizeFlags() {
 	entryPointID = ""
 	maxDepth = 7
@@ -262,6 +357,7 @@ func ResetVisualizeFlags() {
 	pagerankFlag = false
 	communityFlag = false
 	sccFlag = false
+	renderFlag = ""
 }
 
 func init() {
@@ -277,6 +373,7 @@ func init() {
 	visualizeCmd.Flags().BoolVar(&pagerankFlag, "pagerank", false, "Enable PageRank computation")
 	visualizeCmd.Flags().BoolVar(&communityFlag, "community", false, "Enable community detection")
 	visualizeCmd.Flags().BoolVar(&sccFlag, "scc", false, "Enable strongly connected components analysis")
+	visualizeCmd.Flags().StringVar(&renderFlag, "render", "", "Render the diagram to an image file (.svg or .png) via Kroki or mermaid-cli")
 
 	rootCmd.AddCommand(visualizeCmd)
 }

@@ -1,6 +1,8 @@
 package stage3
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage2"
@@ -316,7 +318,7 @@ func TestTSImportResolverWithAliases(t *testing.T) {
 }
 
 func TestAggregateNilInput(t *testing.T) {
-	out, err := Aggregate(nil, nil)
+	out, err := Aggregate(nil, nil, ".")
 	if err != nil {
 		t.Fatalf("Aggregate(nil, nil) returned error: %v", err)
 	}
@@ -337,7 +339,7 @@ func TestAggregateEmptyPayload(t *testing.T) {
 		UpsertedTrees:     make(map[string]*stage2.GASTNode),
 		LocalSymbolTables: make(map[string]*stage2.FileSymbolTable),
 	}
-	out, err := Aggregate(payload, nil)
+	out, err := Aggregate(payload, nil, ".")
 	if err != nil {
 		t.Fatalf("Aggregate returned error: %v", err)
 	}
@@ -359,7 +361,7 @@ func TestAggregateWithExistingState(t *testing.T) {
 		UpsertedTrees:     make(map[string]*stage2.GASTNode),
 		LocalSymbolTables: make(map[string]*stage2.FileSymbolTable),
 	}
-	out, err := Aggregate(payload, existing)
+	out, err := Aggregate(payload, existing, ".")
 	if err != nil {
 		t.Fatalf("Aggregate returned error: %v", err)
 	}
@@ -398,7 +400,7 @@ func TestAggregateWithOneFile(t *testing.T) {
 		UpsertedTrees:     map[string]*stage2.GASTNode{"main.go": gastRoot},
 		LocalSymbolTables: map[string]*stage2.FileSymbolTable{"main.go": symTable},
 	}
-	out, err := Aggregate(payload, nil)
+	out, err := Aggregate(payload, nil, ".")
 	if err != nil {
 		t.Fatalf("Aggregate returned error: %v", err)
 	}
@@ -581,5 +583,30 @@ func TestCollectExportedGASTNodes(t *testing.T) {
 	}
 	if len(localSyms) == 0 {
 		t.Error("should collect local symbols")
+	}
+}
+
+// TestAggregateDiscoversWorkspaceFromRootDir verifies Aggregate scans the
+// provided rootDir (not the process CWD) for workspace config. Regression for
+// the bug where ScanWorkspace(".") resolved module boundaries relative to the
+// working directory, breaking monorepo aliases when gmb runs elsewhere.
+func TestAggregateDiscoversWorkspaceFromRootDir(t *testing.T) {
+	root := t.TempDir()
+	modFile := filepath.Join(root, "go.mod")
+	if err := os.WriteFile(modFile, []byte("module github.com/acme/widget\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := &stage2.Stage2Payload{
+		CommitHash:        "abc",
+		UpsertedTrees:     make(map[string]*stage2.GASTNode),
+		LocalSymbolTables: make(map[string]*stage2.FileSymbolTable),
+	}
+	out, err := Aggregate(payload, nil, root)
+	if err != nil {
+		t.Fatalf("Aggregate returned error: %v", err)
+	}
+	if out.WorkspaceCtx == nil || out.WorkspaceCtx.ModulePrefix != "github.com/acme/widget" {
+		t.Errorf("ModulePrefix = %q, want github.com/acme/widget", out.WorkspaceCtx.ModulePrefix)
 	}
 }

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,12 +11,37 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// statusJSON is the machine-readable representation of `gmb status --json`.
+type statusJSON struct {
+	Initialized    bool      `json:"initialized"`
+	StorageDir     string    `json:"storage_dir,omitempty"`
+	SchemaVersion  int       `json:"schema_version,omitempty"`
+	GraphVersion   uint64    `json:"graph_version,omitempty"`
+	CommitHash     string    `json:"commit_hash,omitempty"`
+	LastAnalysis   string    `json:"last_analysis,omitempty"`
+	NodeCount      int       `json:"nodes,omitempty"`
+	EdgeCount      int       `json:"edges,omitempty"`
+	IndexedFiles   int       `json:"indexed_files,omitempty"`
+	Entrypoints    int       `json:"entrypoints,omitempty"`
+	VirtualCount   int       `json:"virtual_nodes,omitempty"`
+	VirtualShare   float64   `json:"virtual_share_pct,omitempty"`
+	Dangling       int       `json:"dangling_references,omitempty"`
+	TTLBytes       int64     `json:"ttl_bytes,omitempty"`
+	WALBytes       int64     `json:"wal_bytes,omitempty"`
+	Verified       bool      `json:"verified,omitempty"`
+	FreshnessOK    bool      `json:"freshness_ok,omitempty"`
+	UnpersistedTx  int       `json:"unpersisted_transactions,omitempty"`
+	Error          string    `json:"error,omitempty"`
+	GeneratedAt    time.Time `json:"generated_at"`
+}
+
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Display AKG database status, node statistics, and graph health",
 	Long:  `Inspects the active .glassmarble state file and prints graph counts, schema version, commit, freshness, and health summary (AUDIT Issue 5 Phase 5B-5).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, _ := cmd.Flags().GetString("dir")
+		asJSON, _ := cmd.Flags().GetBool("json")
 		if dir == "" {
 			dir = "."
 		}
@@ -24,6 +50,11 @@ var statusCmd = &cobra.Command{
 		ttlPath := filepath.Join(storageDir, "akg_state.ttl")
 
 		if _, err := os.Stat(ttlPath); os.IsNotExist(err) {
+			if asJSON {
+				out, _ := json.MarshalIndent(statusJSON{Initialized: false, Error: "no active AKG database", GeneratedAt: time.Now()}, "", "  ")
+				fmt.Println(string(out))
+				return nil
+			}
 			fmt.Printf("GlassMarble Status: Uninitialized\nNo active AKG database found at %s. Run 'glassmarble analyze' first.\n", ttlPath)
 			return nil
 		}
@@ -52,6 +83,37 @@ var statusCmd = &cobra.Command{
 			virtualShare = 100 * float64(stats.VirtualCount) / float64(stats.NodeCount)
 		}
 
+		ttlSize, walSize := akgStorageSizes(storageDir)
+
+		if asJSON {
+			sj := statusJSON{
+				Initialized:   true,
+				StorageDir:    storageDir,
+				SchemaVersion: schemaVersion,
+				GraphVersion:  version,
+				CommitHash:    commitHash,
+				LastAnalysis:  ttlInfo.ModTime().Format(time.RFC3339),
+				NodeCount:     stats.NodeCount,
+				EdgeCount:     stats.Edges,
+				IndexedFiles:  stats.IndexedFiles,
+				Entrypoints:   stats.Entrypoints,
+				VirtualCount:  stats.VirtualCount,
+				VirtualShare:  virtualShare,
+				Dangling:      stats.Dangling,
+				TTLBytes:      ttlSize,
+				WALBytes:      walSize,
+				Verified:      stats.Dangling == 0,
+				GeneratedAt:   time.Now(),
+			}
+			if stale, txCount, err := akg.WALFreshness(storageDir); err == nil {
+				sj.FreshnessOK = !stale
+				sj.UnpersistedTx = txCount
+			}
+			out, _ := json.MarshalIndent(sj, "", "  ")
+			fmt.Println(string(out))
+			return nil
+		}
+
 		fmt.Println("=== GlassMarble Architecture Knowledge Graph Status ===")
 		fmt.Printf("  Storage Dir:   %s\n", storageDir)
 		fmt.Printf("  Schema Version: %d\n", schemaVersion)
@@ -68,7 +130,6 @@ var statusCmd = &cobra.Command{
 		fmt.Printf("  Entrypoints:   %d\n", stats.Entrypoints)
 		fmt.Printf("  Virtual Nodes: %d (%.1f%%)\n", stats.VirtualCount, virtualShare)
 		fmt.Printf("  Health Errors: %d dangling reference(s)\n", stats.Dangling)
-		ttlSize, walSize := akgStorageSizes(storageDir)
 		fmt.Printf("  Storage:       TTL %s | WAL %s\n", humanBytes(ttlSize), humanBytes(walSize))
 		if stats.Dangling == 0 {
 			fmt.Println("  Verification:  verified (no dangling edges)")
@@ -89,5 +150,6 @@ var statusCmd = &cobra.Command{
 
 func init() {
 	statusCmd.Flags().String("dir", ".", "Directory path containing the .glassmarble/ folder")
+	statusCmd.Flags().Bool("json", false, "Emit machine-readable JSON instead of the human report")
 	rootCmd.AddCommand(statusCmd)
 }

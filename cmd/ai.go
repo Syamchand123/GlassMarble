@@ -17,6 +17,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/session"
 	"github.com/Syamchand123/GlassMarble/internal/terminal"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var (
@@ -706,8 +707,8 @@ func configureInteractive(cmd *cobra.Command, cfg *aiconfig.Config) error {
 	cfg.Provider = meta.Name
 
 	if meta.RequiresKey {
-		fmt.Fprint(out, "API key (paste it; it will be stored locally): ")
-		key, err := reader.ReadString('\n')
+		fmt.Fprint(out, "API key (paste it; it will be stored locally, not echoed): ")
+		key, err := readSecret(reader, cmd.InOrStdin())
 		if err != nil {
 			return fmt.Errorf("setup aborted")
 		}
@@ -716,6 +717,7 @@ func configureInteractive(cmd *cobra.Command, cfg *aiconfig.Config) error {
 			return fmt.Errorf("API key is required for provider %q", meta.Name)
 		}
 		cfg.APIKey = key
+		fmt.Fprintln(out)
 	}
 
 	defaultModel := ""
@@ -759,6 +761,28 @@ func configureInteractive(cmd *cobra.Command, cfg *aiconfig.Config) error {
 	cfg.BaseURL = baseURL
 
 	return nil
+}
+
+// readSecret reads a secret from the terminal without echoing it back. When
+// stdin is not a TTY (e.g. piped input or a test double) it falls back to the
+// provided buffered reader so behavior stays scriptable. A trailing newline is
+// stripped; the returned value is the raw secret.
+func readSecret(reader *bufio.Reader, in io.Reader) (string, error) {
+	if f, ok := in.(*os.File); ok {
+		fd := int(f.Fd())
+		if term.IsTerminal(fd) {
+			byteKey, err := term.ReadPassword(fd)
+			if err != nil {
+				return "", err
+			}
+			return string(byteKey), nil
+		}
+	}
+	line, err := reader.ReadString('\n')
+	if err != nil && line == "" {
+		return "", err
+	}
+	return strings.TrimRight(line, "\r\n"), nil
 }
 
 func defaultOrCustom(v string) string {

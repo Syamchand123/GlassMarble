@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,15 +21,74 @@ var analyzeCmd = &cobra.Command{
 	Short: "Run full source code ingestion and build Architecture Knowledge Graph (AKG)",
 	Long:  `Executes Stage 1 (ingestion), Stage 2 (normalization), Stage 3 (topology aggregation), Stage 4 (CPG linking), and commits the graph state to AKG.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		start := time.Now()
 		targetDir, _ := cmd.Flags().GetString("dir")
 		commitHash, _ := cmd.Flags().GetString("commit")
 		full, _ := cmd.Flags().GetBool("full")
 		workers, _ := cmd.Flags().GetInt("workers")
 		verbose, _ := cmd.Flags().GetBool("verbose")
+		linkLevel, _ := cmd.Flags().GetString("link-level")
+		macroInference, _ := cmd.Flags().GetString("macro-inference")
+		maxNodes, _ := cmd.Flags().GetInt("max-nodes")
+		abortOnLimit, _ := cmd.Flags().GetBool("abort-on-limit")
+		asJSON, _ := cmd.Flags().GetBool("json")
 		if targetDir == "" {
 			targetDir = "."
 		}
+		return runAnalysis(runAnalysisOptions{
+			targetDir:       targetDir,
+			commitHash:      commitHash,
+			full:            full,
+			workers:         workers,
+			verbose:         verbose,
+			linkLevel:       linkLevel,
+			macroInference:  macroInference,
+			maxNodes:        maxNodes,
+			abortOnLimit:    abortOnLimit,
+			json:            asJSON,
+		})
+	},
+}
+
+// runAnalysisOptions carries the flags that control a single analysis run.
+type runAnalysisOptions struct {
+	targetDir       string
+	commitHash      string
+	full            bool
+	workers         int
+	verbose         bool
+	linkLevel       string
+	macroInference  string
+	maxNodes        int
+	abortOnLimit    bool
+	json            bool
+}
+
+// analysisJSON is the machine-readable result of a successful analysis run.
+type analysisJSON struct {
+	TargetDir     string   `json:"target_dir"`
+	CommitHash    string   `json:"commit_hash,omitempty"`
+	FilesAnalyzed int      `json:"files_analyzed"`
+	Nodes         int      `json:"nodes"`
+	Edges         int      `json:"edges"`
+	VirtualNodes  int      `json:"virtual_nodes"`
+	DanglingEdges int      `json:"dangling_edges"`
+	TTLBytes      int64    `json:"ttl_bytes"`
+	WALBytes      int64    `json:"wal_bytes"`
+	DurationMs    int64    `json:"duration_ms"`
+	Skipped       []string `json:"skipped,omitempty"`
+	Warnings      []string `json:"warnings,omitempty"`
+	StorageDir    string   `json:"storage_dir"`
+}
+
+// runAnalysis executes the full four-stage pipeline. It is shared by
+// `gmb analyze` and `gmb watch` so both commands drive the same engine.
+func runAnalysis(opts runAnalysisOptions) error {
+		start := time.Now()
+		targetDir := opts.targetDir
+		commitHash := opts.commitHash
+		full := opts.full
+		workers := opts.workers
+		verbose := opts.verbose
 
 		absDir, err := filepath.Abs(targetDir)
 		if err != nil {
@@ -103,7 +163,7 @@ var analyzeCmd = &cobra.Command{
 		}
 
 		// Stage 3: Topology Aggregation
-		stage3Out, err := stage3.Aggregate(stage2Payload, nil)
+		stage3Out, err := stage3.Aggregate(stage2Payload, nil, absDir)
 		if err != nil {
 			return fmt.Errorf("stage 3 aggregation failed: %w", err)
 		}
@@ -113,7 +173,7 @@ var analyzeCmd = &cobra.Command{
 
 		// Initialize AKG before Stage 4 so we have a persistent GraphDB for incremental lookups
 		storageDir := filepath.Join(absDir, ".glassmarble")
-		tm, err := newAKGManager(storageDir, cmd)
+		tm, err := newAKGManager(storageDir, nil)
 		if err != nil {
 			return fmt.Errorf("failed to initialize AKG transaction manager: %w", err)
 		}
@@ -130,19 +190,19 @@ var analyzeCmd = &cobra.Command{
 		// edges only. CFG/DFG and per-statement heuristic passes are opt-in via
 		// --link-level=standard|full (AUDIT Issue 1.1 / Phase 1A-1).
 		linkerCfg := stage4.LinkerConfig{}
-		if linkLevel, _ := cmd.Flags().GetString("link-level"); linkLevel != "" {
-			linkerCfg.LevelOfDetail = linkLevel
+		if opts.linkLevel != "" {
+			linkerCfg.LevelOfDetail = opts.linkLevel
 		}
 		if full {
 			linkerCfg.LevelOfDetail = stage4.LevelFull
 		}
-		if mi, _ := cmd.Flags().GetString("macro-inference"); mi != "" {
-			linkerCfg.MacroInference = mi
+		if opts.macroInference != "" {
+			linkerCfg.MacroInference = opts.macroInference
 		}
-		if maxNodes, _ := cmd.Flags().GetInt("max-nodes"); maxNodes > 0 {
-			linkerCfg.MaxTotalNodes = maxNodes
+		if opts.maxNodes > 0 {
+			linkerCfg.MaxTotalNodes = opts.maxNodes
 		}
-		if abortOnLimit, _ := cmd.Flags().GetBool("abort-on-limit"); abortOnLimit {
+		if opts.abortOnLimit {
 			linkerCfg.AbortOnLimit = true
 		}
 		if verbose {
@@ -182,10 +242,46 @@ var analyzeCmd = &cobra.Command{
 		// part of the noise budget so bloat stays visible.
 		q := akg.MeasureGraphQuality(tm.GetActiveGraph())
 		ttlSize, walSize := akgStorageSizes(storageDir)
+
+		if opts.json {
+			out, _ := json.MarshalIndent(analysisJSON{
+				TargetDir:     absDir,
+				CommitHash:    commitHash,
+				FilesAnalyzed: len(stage1Out.Updated),
+				Nodes:         q.TotalNodes,
+				Edges:         q.TotalEdges,
+				VirtualNodes:  q.VirtualNodes,
+				DanglingEdges: q.DanglingEdges,
+				TTLBytes:      ttlSize,
+				WALBytes:      walSize,
+				DurationMs:    duration.Milliseconds(),
+				Skipped:       stage1Out.Skipped,
+				Warnings:      stage1Out.Warnings,
+				StorageDir:    storageDir,
+			}, "", "  ")
+			fmt.Println(string(out))
+			return nil
+		}
+
 		fmt.Printf("Analyzed %d files | %d nodes | %d edges | %d virtual | %d dangling | ttl=%s wal=%s | %.1fs\n",
 			len(stage1Out.Updated), q.TotalNodes, q.TotalEdges, q.VirtualNodes, q.DanglingEdges, humanBytes(ttlSize), humanBytes(walSize), duration.Seconds())
 		if q.DanglingEdges > 0 {
 			fmt.Printf("WARNING: %d edges reference missing nodes (dangling). Run `gmb analyze --full` to rebuild.\n", q.DanglingEdges)
+		}
+		// Surface files that were skipped (oversized, unknown grammar) or that
+		// produced warnings so silent data loss stays visible (AUDIT Issue 1
+		// Phase 1C-10: skipped/warnings were collected but never printed).
+		if len(stage1Out.Skipped) > 0 {
+			fmt.Printf("WARNING: %d file(s) skipped during ingestion (oversized or unsupported language):\n", len(stage1Out.Skipped))
+			for _, s := range stage1Out.Skipped {
+				fmt.Printf("  - %s\n", s)
+			}
+		}
+		if len(stage1Out.Warnings) > 0 {
+			fmt.Printf("Note: %d ingestion warning(s):\n", len(stage1Out.Warnings))
+			for _, w := range stage1Out.Warnings {
+				fmt.Printf("  - %s\n", w)
+			}
 		}
 
 		if verbose {
@@ -193,7 +289,6 @@ var analyzeCmd = &cobra.Command{
 		}
 
 		return nil
-	},
 }
 
 // akgStorageSizes reports the persisted artifact sizes for the QA report.
@@ -231,5 +326,6 @@ func init() {
 	analyzeCmd.Flags().Int("max-nodes", 0, "Max total CPG nodes before warning/abort (0 = unlimited)")
 	analyzeCmd.Flags().Bool("abort-on-limit", false, "Abort analysis if --max-nodes is exceeded (otherwise warn)")
 	analyzeCmd.Flags().Bool("verbose", false, "Enable verbose output")
+	analyzeCmd.Flags().Bool("json", false, "Emit machine-readable JSON instead of the human summary")
 	rootCmd.AddCommand(analyzeCmd)
 }

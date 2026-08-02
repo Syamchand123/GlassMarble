@@ -38,7 +38,7 @@ func TestBloatRegressionGuard(t *testing.T) {
 		t.Fatalf("stage 2 normalization failed: %v", err)
 	}
 
-	stage3Out, err := stage3.Aggregate(stage2Payload, nil)
+	stage3Out, err := stage3.Aggregate(stage2Payload, nil, repoRoot)
 	if err != nil {
 		t.Fatalf("stage 3 aggregation failed: %v", err)
 	}

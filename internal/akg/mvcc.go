@@ -422,14 +422,34 @@ func (c *CodePropertyGraph) CalculatePageRank(iterations int, dampingFactor floa
 		ranks[id] = initialRank
 	})
 
+	// Pre-compute out-degree once so the per-iteration loops do not re-scan
+	// every node's edge list (also keeps dangling detection O(1) per node).
+	outDegree := make(map[string]int)
+	c.Nodes.Iterate(func(id string, _ *stage4.ResolvedNode) {
+		outDegree[id] = len(c.GetOutboundEdges(id))
+	})
+
 	for i := 0; i < iterations; i++ {
 		newRanks := make(map[string]float64)
+
+		// Dangling nodes (no outbound edges) leak mass: their rank never
+		// propagates. Redistribute that mass evenly, matching the parallel
+		// implementation in visualization_engine/stage2/metrics.go, so rank
+		// stays conserved and pageRanks remain comparable across engines.
+		var danglingSum float64
+		for id, deg := range outDegree {
+			if deg == 0 {
+				danglingSum += ranks[id]
+			}
+		}
+		danglingContrib := dampingFactor * danglingSum / numNodes
+
 		c.Nodes.Iterate(func(id string, _ *stage4.ResolvedNode) {
-			rank := (1.0 - dampingFactor) / numNodes
+			rank := (1.0-dampingFactor)/numNodes + danglingContrib
 			for _, edge := range c.GetInboundEdges(id) {
-				outDegree := float64(len(c.GetOutboundEdges(edge.SourceID)))
+				outDegree := outDegree[edge.SourceID]
 				if outDegree > 0 {
-					rank += dampingFactor * (ranks[edge.SourceID] / outDegree)
+					rank += dampingFactor * (ranks[edge.SourceID] / float64(outDegree))
 				}
 			}
 			newRanks[id] = rank
@@ -624,10 +644,12 @@ func (c *CodePropertyGraph) CalculateBetweennessCentrality(includeAll ...bool) m
 		}
 	}
 
-	for k, v := range bc {
-		bc[k] = v / 2.0
-	}
-
+	// The AKG is a DIRECTED graph (edges have a source and target). Brandes'
+	// algorithm accumulates betweenness per directed traversal; the "/2"
+	// correction is only valid for UNDIRECTED graphs where each edge is counted
+	// in both directions. Matching the visualization engine's directed
+	// implementation (stage2/metrics.go ComputeBetweenness), no halving is
+	// applied here.
 	return bc
 }
 
@@ -710,6 +732,41 @@ func (cpg *CodePropertyGraph) Clone() *CodePropertyGraph {
 	clone.VerificationMsg = cpg.VerificationMsg
 
 	return clone
+}
+
+// detachNodesForWrite deep-copies the Properties and PrimitiveScores maps of
+// every node in the graph and re-registers the detached copies in the Nodes
+// index. The reasoner derives metrics (pagerank, betweenness, macro_rules,
+// cohesion, ...) by writing to node.Properties. When inference runs on an MVCC
+// shadow (transaction_manager.go applyDeltaToShadow), unchanged nodes are
+// still SHARED pointers with the active graph; mutating them in place would
+// race with concurrent readers of the active snapshot (SafeQuery, AI bridge).
+// Detaching first guarantees every reasoner write lands on shadow-private maps.
+func (c *CodePropertyGraph) detachNodesForWrite() {
+	if c == nil || c.Nodes == nil {
+		return
+	}
+	c.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
+		if node == nil {
+			return
+		}
+		clone := *node
+		if node.Properties != nil {
+			props := make(map[string]string, len(node.Properties))
+			for k, v := range node.Properties {
+				props[k] = v
+			}
+			clone.Properties = props
+		}
+		if node.PrimitiveScores != nil {
+			scores := make(map[string]float64, len(node.PrimitiveScores))
+			for k, v := range node.PrimitiveScores {
+				scores[k] = v
+			}
+			clone.PrimitiveScores = scores
+		}
+		c.Nodes = c.Nodes.Set(id, &clone)
+	})
 }
 
 // SafeGetNode is a concurrency-safe wrapper that acquires the read lock.

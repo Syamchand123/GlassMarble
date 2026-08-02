@@ -180,6 +180,98 @@ func (tm *AKGTransactionManager) GetActiveGraph() *CodePropertyGraph {
 	return tm.container.GetSnapshot()
 }
 
+// ReplaceGraph atomically swaps the active graph with the supplied graph and
+// persists it as a full TTL rewrite (used by `gmb import`). The graph is
+// validated before promotion: dangling edges are rejected so the persisted
+// state never carries references to missing nodes. The WAL is truncated
+// afterwards because the imported graph is a full snapshot, not a delta.
+func (tm *AKGTransactionManager) ReplaceGraph(graph *CodePropertyGraph) error {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+
+	if graph == nil {
+		return fmt.Errorf("cannot replace with nil graph")
+	}
+
+	// Reject dangling edges up front: the post-write verification would reject
+	// the TTL anyway, but failing early with a clearer message beats a
+	// serialization/rename round-trip (AUDIT Issue 5 Phase 5A-1).
+	dangling := 0
+	graph.OutboundEdges.Iterate(func(srcID string, edges []stage4.ResolvedEdge) {
+		for _, edge := range edges {
+			if _, ok := graph.Nodes.Get(srcID); !ok {
+				dangling++
+			}
+			if _, ok := graph.Nodes.Get(edge.TargetID); !ok {
+				dangling++
+			}
+		}
+	})
+	if dangling > 0 {
+		return fmt.Errorf("import rejected: %d edge(s) reference nodes missing from the graph (dangling); fix the export/import document first", dangling)
+	}
+
+	// Rebuild non-serialized indexes the way loadFromDisk does.
+	rebuildIndexes(graph)
+
+	if err := tm.saveToDisk(graph, nil, nil, 0); err != nil {
+		return fmt.Errorf("failed to persist imported graph: %w", err)
+	}
+
+	tm.container.PromoteShadowSnapshot(graph)
+
+	// The WAL holds only pre-import delta transactions; they were captured by
+	// the full rewrite so truncating keeps the log bounded (AUDIT Issue 4
+	// Phase 4B-8).
+	if err := tm.wal.Truncate(); err != nil {
+		return fmt.Errorf("failed to truncate WAL after import: %w", err)
+	}
+	return nil
+}
+
+// rebuildIndexes reconstructs LineIndex (the only in-memory index that the
+// TTL round-trip does not serialize) and re-verifies the graph for status
+// reporting. Shared by import and loadFromDisk.
+func rebuildIndexes(graph *CodePropertyGraph) {
+	if graph.LineIndex == nil {
+		graph.LineIndex = NewCowMap[string, []*stage4.ResolvedNode]()
+	}
+	graph.Nodes.Iterate(func(_ string, node *stage4.ResolvedNode) {
+		normPath := normalizePath(node.FileSpec.Path)
+		if normPath != "" {
+			lineNodes, _ := graph.LineIndex.Get(normPath)
+			newLineNodes := make([]*stage4.ResolvedNode, len(lineNodes)+1)
+			copy(newLineNodes, lineNodes)
+			newLineNodes[len(newLineNodes)-1] = node
+			graph.LineIndex = graph.LineIndex.Set(normPath, newLineNodes)
+		}
+	})
+	for _, normPath := range graph.LineIndex.Keys() {
+		lineNodes, _ := graph.LineIndex.Get(normPath)
+		sort.Slice(lineNodes, func(i, j int) bool {
+			return lineNodes[i].FileSpec.LineStart < lineNodes[j].FileSpec.LineStart
+		})
+		graph.LineIndex = graph.LineIndex.Set(normPath, lineNodes)
+	}
+
+	graph.Verified = true
+	graph.VerificationMsg = ""
+	graph.OutboundEdges.Iterate(func(sourceID string, edges []stage4.ResolvedEdge) {
+		for _, edge := range edges {
+			if _, ok := graph.Nodes.Get(sourceID); !ok {
+				graph.Verified = false
+				graph.VerificationMsg = "dangling edge source in persisted graph"
+				return
+			}
+			if _, ok := graph.Nodes.Get(edge.TargetID); !ok {
+				graph.Verified = false
+				graph.VerificationMsg = "dangling edge target in persisted graph"
+				return
+			}
+		}
+	})
+}
+
 // ExecuteDeltaTransaction executes the complete 4-Sub-Stage Delta Transaction Lifecycle on the AKG.
 func (tm *AKGTransactionManager) ExecuteDeltaTransaction(payload *stage4.Stage4Output, modifiedFiles []string) error {
 	tm.mu.Lock()
@@ -548,8 +640,15 @@ func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, p
 		}
 	})
 
-	// Step D.2: Topological Macro-Inference Parsing
-	RunTopologicalMacroInference(shadow, payload.Config)
+	// Step D.2: Topological Macro-Inference Parsing. Delta transactions
+	// re-infer ONLY the changed subgraph (modified files + their inbound
+	// dependents) instead of re-walking the entire graph — the incremental
+	// reasoner companion to the delta linker (AUDIT Issue 1 Phase 1C-9).
+	var changedNodeIDs []string
+	for id := range payload.GraphNodes {
+		changedNodeIDs = append(changedNodeIDs, id)
+	}
+	RunIncrementalMacroInference(shadow, modifiedFiles, changedNodeIDs, payload.Config)
 
 	return deletedNodeIDs, nil
 }
@@ -734,48 +833,7 @@ func (tm *AKGTransactionManager) loadFromDisk() error {
 	}
 
 	// Rebuild LineIndex since it is not serialized
-	if graph.LineIndex == nil {
-		graph.LineIndex = NewCowMap[string, []*stage4.ResolvedNode]()
-	}
-	graph.Nodes.Iterate(func(_ string, node *stage4.ResolvedNode) {
-		normPath := normalizePath(node.FileSpec.Path)
-		if normPath != "" {
-			lineNodes, _ := graph.LineIndex.Get(normPath)
-			newLineNodes := make([]*stage4.ResolvedNode, len(lineNodes)+1)
-			copy(newLineNodes, lineNodes)
-			newLineNodes[len(newLineNodes)-1] = node
-			graph.LineIndex = graph.LineIndex.Set(normPath, newLineNodes)
-		}
-	})
-	for _, normPath := range graph.LineIndex.Keys() {
-		lineNodes, _ := graph.LineIndex.Get(normPath)
-		sort.Slice(lineNodes, func(i, j int) bool {
-			return lineNodes[i].FileSpec.LineStart < lineNodes[j].FileSpec.LineStart
-		})
-		graph.LineIndex = graph.LineIndex.Set(normPath, lineNodes)
-	}
-
-	// A restored file that reconstructs cleanly with zero dangling edges is
-	// verified state: every commit already passed the strict post-write
-	// verification, so a loaded graph is verified unless a check below fails
-	// (AUDIT Issue 5 Phase 5B-5 — status must not claim "not verified" for a
-	// clean artifact).
-	graph.Verified = true
-	graph.VerificationMsg = ""
-	graph.OutboundEdges.Iterate(func(sourceID string, edges []stage4.ResolvedEdge) {
-		for _, edge := range edges {
-			if _, ok := graph.Nodes.Get(sourceID); !ok {
-				graph.Verified = false
-				graph.VerificationMsg = "dangling edge source in persisted graph"
-				return
-			}
-			if _, ok := graph.Nodes.Get(edge.TargetID); !ok {
-				graph.Verified = false
-				graph.VerificationMsg = "dangling edge target in persisted graph"
-				return
-			}
-		}
-	})
+	rebuildIndexes(graph)
 
 	tm.container.ActiveGraph = graph
 	return nil
