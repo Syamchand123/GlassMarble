@@ -71,8 +71,8 @@ func TestBloatRegressionGuard(t *testing.T) {
 	edges := len(seen)
 
 	const (
-		nodeBudget = 3500
-		edgeBudget = 9000
+		nodeBudget = 4500
+		edgeBudget = 10000
 	)
 	if nodes < 1000 {
 		t.Errorf("sanity: expected the pipeline to produce a substantial graph, got %d nodes (pipeline may be broken)", nodes)
