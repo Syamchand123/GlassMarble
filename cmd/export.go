@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
+	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
 
@@ -47,12 +48,14 @@ requests. Turtle matches the on-disk akg_state.ttl format.`,
 		}
 		defer f.Close()
 
+		format := "graphjson"
 		switch filepath.Ext(output) {
 		case ".json":
 			if err := akg.ExportGraphJSON(graph, f); err != nil {
 				return fmt.Errorf("failed to export graph JSON: %w", err)
 			}
 		case ".ttl", ".turtle":
+			format = "turtle"
 			if err := akg.SerializeToTurtle(graph, f); err != nil {
 				return fmt.Errorf("failed to export Turtle: %w", err)
 			}
@@ -60,7 +63,8 @@ requests. Turtle matches the on-disk akg_state.ttl format.`,
 			return fmt.Errorf("unsupported output format %q (use .json or .ttl)", filepath.Ext(output))
 		}
 
-		fmt.Printf("Exported AKG snapshot (%d nodes) to %s\n", graph.Nodes.Len(), output)
+		st, _ := f.Stat()
+		fmt.Println(views.RenderExportSuccess(format, output, graph.Nodes.Len(), st.Size()))
 		return nil
 	},
 }

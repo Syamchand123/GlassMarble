@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
 
@@ -43,17 +44,16 @@ var hooksCmd = &cobra.Command{
 			if err := os.WriteFile(hookPath, []byte(script), 0755); err != nil {
 				return fmt.Errorf("failed to install git hook: %w", err)
 			}
-			fmt.Printf("GlassMarble post-commit hook installed successfully at %s\n", hookPath)
-			fmt.Printf("Hook runs: %q analyze --dir %q\n", binary, absDir)
+			fmt.Println(views.RenderHooksInstalled(hookPath, binary, absDir))
 
 		case "uninstall":
 			if _, err := os.Stat(hookPath); err == nil {
 				if err := os.Remove(hookPath); err != nil {
 					return fmt.Errorf("failed to uninstall git hook: %w", err)
 				}
-				fmt.Println("GlassMarble post-commit hook uninstalled successfully.")
+				fmt.Println(views.RenderHooksUninstalled())
 			} else {
-				fmt.Println("No active GlassMarble post-commit hook found.")
+				fmt.Println(views.RenderHooksNone())
 			}
 
 		default:

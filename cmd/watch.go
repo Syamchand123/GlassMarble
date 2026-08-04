@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage1"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
+	"github.com/Syamchand123/GlassMarble/internal/tui/programs/watch"
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 )
@@ -42,8 +44,6 @@ changes made outside the watcher's scope are also picked up.`,
 			return fmt.Errorf("watch requires a git repository (no .git found at %s)", absDir)
 		}
 
-		fmt.Printf("GlassMarble Watcher active on '%s' (fsnotify, debounce: %s)\nPress Ctrl+C to stop.\n\n", absDir, watchInterval)
-
 		opts := runAnalysisOptions{
 			targetDir:      absDir,
 			commitHash:     commitHash,
@@ -55,75 +55,107 @@ changes made outside the watcher's scope are also picked up.`,
 			abortOnLimit:   abortOnLimit,
 		}
 
-		// Run an initial analysis so the AKG is current before watching.
-		fmt.Printf("[%s] Initial analysis...\n", time.Now().Format("15:04:05"))
-		if err := runAnalysis(opts); err != nil {
-			fmt.Printf("[%s] Initial analysis failed: %v\n", time.Now().Format("15:04:05"), err)
+		if tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout()) {
+			return runWatchTUI(cmd, opts)
 		}
 
-		lastFingerprint := workingTreeFingerprint(absDir, commitHash)
-
-		watcher, err := fsnotify.NewWatcher()
-		if err != nil {
-			return fmt.Errorf("failed to start filesystem watcher: %w", err)
-		}
-		defer watcher.Close()
-
-		// Watch the whole tree (recursively), pruning standard tool directories.
-		if err := watchTree(watcher, absDir); err != nil {
-			return fmt.Errorf("failed to register watches: %w", err)
-		}
-
-		// Debounce: coalesce bursts of filesystem events into a single rebuild.
-		debounce := watchInterval
-		if debounce <= 0 {
-			debounce = 500 * time.Millisecond
-		}
-		var pending chan struct{}
-		runNow := func() {
-			if pending != nil {
-				close(pending)
-				pending = nil
-			}
-			pending = make(chan struct{})
-			go func(done chan struct{}) {
-				select {
-				case <-time.After(debounce):
-				case <-done:
-					return
-				}
-				fp := workingTreeFingerprint(absDir, commitHash)
-				if fp == lastFingerprint {
-					return
-				}
-				lastFingerprint = fp
-				fmt.Printf("[%s] Repository changes detected, running analysis...\n", time.Now().Format("15:04:05"))
-				if err := runAnalysis(opts); err != nil {
-					fmt.Printf("[%s] Analysis failed: %v\n", time.Now().Format("15:04:05"), err)
-				}
-			}(pending)
-		}
-
-		for {
-			select {
-			case <-cmd.Context().Done():
-				fmt.Println("\nWatcher stopped.")
-				return nil
-			case ev, ok := <-watcher.Events:
-				if !ok {
-					return nil
-				}
-				if watchEventRelevant(watcher, ev) {
-					runNow()
-				}
-			case err, ok := <-watcher.Errors:
-				if !ok {
-					return nil
-				}
-				fmt.Printf("[%s] watcher error: %v\n", time.Now().Format("15:04:05"), err)
-			}
-		}
+		return runWatchPlain(cmd, opts)
 	},
+}
+
+// runWatchTUI launches the interactive watcher, handing the fsnotify helpers
+// and the analysis pipeline into the program as callbacks (the program must
+// not import cmd).
+func runWatchTUI(c *cobra.Command, opts runAnalysisOptions) error {
+	runFn := func(progress func(stage int, name string, current, total int)) error {
+		opts.progress = progress
+		return runAnalysis(opts)
+	}
+	register := func(w *fsnotify.Watcher) error { return watchTree(w, opts.targetDir) }
+	relevant := func(w *fsnotify.Watcher, ev fsnotify.Event) bool { return watchEventRelevant(w, ev) }
+	fingerprint := func() string { return workingTreeFingerprint(opts.targetDir, opts.commitHash) }
+	return watch.RunWatch(watch.Options{
+		TargetDir:  opts.targetDir,
+		CommitHash: opts.commitHash,
+		Interval:   watchInterval,
+	}, register, relevant, fingerprint, runFn, c.InOrStdin(), c.OutOrStdout())
+}
+
+// runWatchPlain runs the non-interactive ticker loop with plain-text output.
+// Its behavior and output are unchanged from the pre-TUI implementation.
+func runWatchPlain(cmd *cobra.Command, opts runAnalysisOptions) error {
+	absDir := opts.targetDir
+
+	fmt.Printf("GlassMarble Watcher active on '%s' (fsnotify, debounce: %s)\nPress Ctrl+C to stop.\n\n", absDir, watchInterval)
+
+	// Run an initial analysis so the AKG is current before watching.
+	fmt.Printf("[%s] Initial analysis...\n", time.Now().Format("15:04:05"))
+	if err := runAnalysis(opts); err != nil {
+		fmt.Printf("[%s] Initial analysis failed: %v\n", time.Now().Format("15:04:05"), err)
+	}
+
+	lastFingerprint := workingTreeFingerprint(absDir, opts.commitHash)
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("failed to start filesystem watcher: %w", err)
+	}
+	defer watcher.Close()
+
+	// Watch the whole tree (recursively), pruning standard tool directories.
+	if err := watchTree(watcher, absDir); err != nil {
+		return fmt.Errorf("failed to register watches: %w", err)
+	}
+
+	// Debounce: coalesce bursts of filesystem events into a single rebuild.
+	debounce := watchInterval
+	if debounce <= 0 {
+		debounce = 500 * time.Millisecond
+	}
+	var pending chan struct{}
+	runNow := func() {
+		if pending != nil {
+			close(pending)
+			pending = nil
+		}
+		pending = make(chan struct{})
+		go func(done chan struct{}) {
+			select {
+			case <-time.After(debounce):
+			case <-done:
+				return
+			}
+			fp := workingTreeFingerprint(absDir, opts.commitHash)
+			if fp == lastFingerprint {
+				return
+			}
+			lastFingerprint = fp
+			fmt.Printf("[%s] Repository changes detected, running analysis...\n", time.Now().Format("15:04:05"))
+			if err := runAnalysis(opts); err != nil {
+				fmt.Printf("[%s] Analysis failed: %v\n", time.Now().Format("15:04:05"), err)
+			}
+		}(pending)
+	}
+
+	for {
+		select {
+		case <-cmd.Context().Done():
+			fmt.Println("\nWatcher stopped.")
+			return nil
+		case ev, ok := <-watcher.Events:
+			if !ok {
+				return nil
+			}
+			if watchEventRelevant(watcher, ev) {
+				runNow()
+			}
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return nil
+			}
+			fmt.Printf("[%s] watcher error: %v\n", time.Now().Format("15:04:05"), err)
+		}
+	}
 }
 
 // watchEventRelevant filters filesystem events to source-like paths and

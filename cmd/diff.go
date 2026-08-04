@@ -9,6 +9,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
 
@@ -52,26 +53,24 @@ in akg_state.ttl).`,
 			return entries[i].TxID < entries[j].TxID
 		})
 
-		fmt.Println("=== Architectural Graph Mutation Diff ===")
-		fmt.Printf("  Current: %s (schema v%d, graph version %d)\n", shortHash(commitHash), schemaVersion, version)
-
-		if len(entries) == 0 {
-			fmt.Println("  No pending transactions: the WAL was truncated after the last atomic write.")
-			fmt.Println("  The current akg_state.ttl is the fully persisted latest state.")
-			return nil
-		}
-
-		fmt.Printf("  %d recorded transaction(s):\n\n", len(entries))
+		var viewEntries []views.DiffEntry
 		for _, e := range entries {
-			fmt.Printf("  tx #%d  %s  %s\n", e.TxID, shortHash(e.CommitHash), e.Timestamp.Format(time.RFC3339))
-			fmt.Printf("    status: %s\n", e.Status)
+			ve := views.DiffEntry{
+				TxID:       int(e.TxID),
+				CommitHash: e.CommitHash,
+				Timestamp:  e.Timestamp.Format(time.RFC3339),
+				Status:     string(e.Status),
+			}
 			if e.Payload != nil {
-				fmt.Printf("    +%d nodes, %d edges\n", len(e.Payload.GraphNodes), countOutboundEdges(e.Payload.OutboundEdges))
+				ve.HasPayload = true
+				ve.NodesAdded = len(e.Payload.GraphNodes)
+				ve.EdgesAdded = countOutboundEdges(e.Payload.OutboundEdges)
 			}
-			if len(e.ModifiedFiles) > 0 {
-				fmt.Printf("    files: %d changed\n", len(e.ModifiedFiles))
-			}
+			ve.ModifiedFiles = len(e.ModifiedFiles)
+			viewEntries = append(viewEntries, ve)
 		}
+
+		fmt.Println(views.RenderDiff(commitHash, schemaVersion, version, viewEntries))
 		return nil
 	},
 }

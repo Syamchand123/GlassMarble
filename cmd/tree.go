@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
+	treeprog "github.com/Syamchand123/GlassMarble/internal/tui/programs/tree"
 	"github.com/spf13/cobra"
 )
 
@@ -33,13 +35,19 @@ var treeCmd = &cobra.Command{
 			return fmt.Errorf("AKG database is empty -- run 'glassmarble analyze' first")
 		}
 
-		fmt.Println("=== Architecture Workspace Tree ===")
+		lines := []string{"=== Architecture Workspace Tree ==="}
 
 		// Group nodes by file path
 		fileTree := make(map[string][]string)
 		snapshot.Nodes.Iterate(func(_ string, node *stage4.ResolvedNode) {
 			if node.FileSpec.Path != "" {
-				fileTree[node.FileSpec.Path] = append(fileTree[node.FileSpec.Path], fmt.Sprintf("%s [%s]", node.Name, node.Kind))
+				sym := node.Name
+				if node.Primitive != "" {
+					sym = fmt.Sprintf("%s [%s] <%s>", node.Name, node.Kind, node.Primitive)
+				} else {
+					sym = fmt.Sprintf("%s [%s]", node.Name, node.Kind)
+				}
+				fileTree[node.FileSpec.Path] = append(fileTree[node.FileSpec.Path], sym)
 			}
 		})
 
@@ -49,20 +57,42 @@ var treeCmd = &cobra.Command{
 			paths = append(paths, p)
 		}
 		sort.Strings(paths)
+
+		totalFiles := len(paths)
+		totalSymbols := 0
+		for _, syms := range fileTree {
+			totalSymbols += len(syms)
+		}
+
 		for _, path := range paths {
 			symbols := fileTree[path]
 			if treeDepth > 0 && strings.Count(path, "/") >= treeDepth {
 				continue
 			}
-			fmt.Printf("├── %s\n", path)
+			lines = append(lines, fmt.Sprintf("├── %s", path))
 			for _, sym := range symbols {
-				fmt.Printf("│   └── %s\n", sym)
+				lines = append(lines, fmt.Sprintf("│   └── %s", sym))
 			}
 			printedFiles++
-			if printedFiles >= 50 {
-				fmt.Println("└── ... (showing top 50 files)")
+			if printedFiles >= 200 {
+				lines = append(lines, fmt.Sprintf("└── ... (showing 200 of %d files)", totalFiles))
 				break
 			}
+		}
+
+		lines = append(lines, fmt.Sprintf("  %d file(s) indexed · %d symbol(s)", totalFiles, totalSymbols))
+
+		if tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout()) {
+			return treeprog.Run(treeprog.Config{
+				Lines: lines,
+				Depth: treeDepth,
+				In:    cmd.InOrStdin(),
+				Out:   cmd.OutOrStdout(),
+			})
+		}
+
+		for _, l := range lines {
+			fmt.Println(l)
 		}
 
 		return nil

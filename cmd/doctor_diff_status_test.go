@@ -1,7 +1,6 @@
 package cmd_test
 
 import (
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,13 +46,19 @@ func writeDoctorState(t *testing.T, dir, ttl string) {
 func runGmbCommand(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	// fmt.Printf in command RunE functions writes to os.Stdout directly, so
-	// capture it with a pipe instead of cobra's SetOut buffer.
+	// capture it with a temp file instead of a pipe. A pipe deadlocks when the
+	// writer blocks on a full 64KB buffer while the reader only drains after
+	// Execute returns (e.g. the large `gmb completion bash` script).
+	var out strings.Builder
 	oldStdout := os.Stdout
-	r, w, err := os.Pipe()
+	tmp, err := os.CreateTemp("", "gmb-out-*.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.Stdout = w
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	os.Stdout = tmp
+	defer func() { os.Stdout = oldStdout }()
 	command := cmd.RootCmdForTesting()
 	// The root command is a package-level singleton; flag values set by a
 	// prior test invocation persist across Execute calls (e.g. a --json=true
@@ -72,15 +77,22 @@ func runGmbCommand(t *testing.T, args ...string) (string, error) {
 		}
 	}
 	resetFlags(command)
-	command.SetOut(w)
-	command.SetErr(w)
+	command.SetOut(tmp)
+	command.SetErr(tmp)
 	command.SetArgs(args)
 	runErr := command.Execute()
 	os.Stdout = oldStdout
-	w.Close()
-	out, _ := io.ReadAll(r)
-	r.Close()
-	return string(out), runErr
+	if err := tmp.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(tmpName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out.Write(data)
+	// Cobra appends a trailing newline after help output; read the file
+	// contents we captured (already includes it) and return it.
+	return out.String(), runErr
 }
 
 func TestDoctorCommandHealthy(t *testing.T) {

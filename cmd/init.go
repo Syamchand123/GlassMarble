@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
 
@@ -53,6 +54,7 @@ var initCmd = &cobra.Command{
 		// Update .gitignore to ignore .glassmarble folder
 		gitignorePath := filepath.Join(abs, ".gitignore")
 		entry := ".glassmarble\n"
+		gitignoreUpdated := false
 		if data, err := os.ReadFile(gitignorePath); err == nil {
 			content := string(data)
 			if !strings.Contains(content, ".glassmarble") {
@@ -62,14 +64,16 @@ var initCmd = &cobra.Command{
 				if err := os.WriteFile(gitignorePath, []byte(content+entry), 0644); err != nil {
 					return fmt.Errorf("failed to update .gitignore: %w", err)
 				}
+				gitignoreUpdated = true
 			}
 		} else if os.IsNotExist(err) {
 			if err := os.WriteFile(gitignorePath, []byte(entry), 0644); err != nil {
 				return fmt.Errorf("failed to create .gitignore: %w", err)
 			}
+			gitignoreUpdated = true
 		}
 
-		fmt.Printf("GlassMarble workspace initialized successfully at %s\n", gmDir)
+		fmt.Println(views.RenderInitSuccess(gmDir, gitignoreUpdated))
 		return nil
 	},
 }

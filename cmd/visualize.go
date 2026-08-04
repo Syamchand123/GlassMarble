@@ -11,7 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Syamchand123/GlassMarble/internal/terminal"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
+	visualizeprog "github.com/Syamchand123/GlassMarble/internal/tui/programs/visualize"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 	"github.com/spf13/cobra"
@@ -132,8 +133,6 @@ var visualizeCmd = &cobra.Command{
 		coordinator := visualization_engine.NewEngineCoordinator(ttlPath)
 		start := time.Now()
 
-		spinner := terminal.NewSpinner()
-
 		scope, scopePath, err := parseScope(scopeFlag)
 		if err != nil {
 			return err
@@ -146,13 +145,6 @@ var visualizeCmd = &cobra.Command{
 			Format:        formatFlag,
 			Scope:         scope,
 			ScopePath:     scopePath,
-			OnProgress: func(stage, detail string) {
-				msg := stage
-				if detail != "" {
-					msg += " " + detail
-				}
-				spinner.Start(msg)
-			},
 		}
 
 		if cmd.Flags().Changed("pagerank") || cmd.Flags().Changed("community") || cmd.Flags().Changed("scc") {
@@ -179,9 +171,35 @@ var visualizeCmd = &cobra.Command{
 			}
 		}
 
+		if renderFlag == "" && tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout()) {
+			return visualizeprog.Run(visualizeprog.Config{
+				DiagType:    diagType,
+				TTLPath:     ttlPath,
+				Opts:        opts,
+				SaveFile:    saveFile,
+				OutputFlag:  outputFlag,
+				FormatFlag:  formatFlag,
+				StoragePath: storagePath,
+				SummaryFlag: cmd.Flags().Changed("summary") && summaryFlag,
+				In:          cmd.InOrStdin(),
+				Out:         cmd.OutOrStdout(),
+			})
+		}
+
+		// Non-interactive fallback: report pipeline stages to stderr (same
+		// channel the old terminal spinner used) so buffered test writers stay
+		// byte-compatible.
+		opts.OnProgress = func(stage, detail string) {
+			msg := stage
+			if detail != "" {
+				msg += " " + detail
+			}
+			fmt.Fprintf(os.Stderr, "%s...\n", msg)
+		}
+
 		// Generate Diagram Markup (Marble)
 		markup, err := coordinator.ProjectDiagram(diagType, opts)
-		spinner.Stop(fmt.Sprintf("Done in %.1fs", time.Since(start).Seconds()))
+		fmt.Fprintf(os.Stderr, "Done in %.1fs\n", time.Since(start).Seconds())
 		if err != nil {
 			return fmt.Errorf("failed to generate diagram: %w", err)
 		}

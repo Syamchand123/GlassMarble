@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -16,8 +15,13 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/provider"
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/session"
 	"github.com/Syamchand123/GlassMarble/internal/terminal"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
+	"github.com/Syamchand123/GlassMarble/internal/tui/programs/ai_query"
+	"github.com/Syamchand123/GlassMarble/internal/tui/programs/chat"
+	"github.com/Syamchand123/GlassMarble/internal/tui/programs/configure"
+	"github.com/Syamchand123/GlassMarble/internal/tui/programs/sessions"
+	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 var (
@@ -204,6 +208,18 @@ Examples:
 		opts := agentOptions(cmd, sink)
 		streaming := engine.Config.Stream
 
+		if tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout()) {
+			verbose := false
+			if v, _ := cmd.Flags().GetBool("verbose"); v {
+				verbose = true
+			}
+			var save func(text string) error
+			if aiSaveFlag != "" {
+				save = func(text string) error { return saveArtifact(cmd, aiRootDir(cmd), aiSaveFlag, text) }
+			}
+			return ai_query.Run(cmd.Context(), engine, args[0], opts, streaming, verbose, cmd.InOrStdin(), cmd.OutOrStdout(), save)
+		}
+
 		start := time.Now()
 		if streaming {
 			res, err := engine.AskAgent(cmd.Context(), args[0], opts)
@@ -230,10 +246,9 @@ Examples:
 			return nil
 		}
 
-		spinner := terminal.NewSpinner()
-		spinner.Start(fmt.Sprintf("Consulting %s (%s)...", engine.Config.Model, engine.Config.Provider))
+		fmt.Fprintf(cmd.ErrOrStderr(), "Consulting %s (%s)...\n", engine.Config.Model, engine.Config.Provider)
 		res, err := engine.AskAgent(cmd.Context(), args[0], opts)
-		spinner.Stop(fmt.Sprintf("Done in %.1fs", time.Since(start).Seconds()))
+		fmt.Fprintf(cmd.ErrOrStderr(), "Done in %.1fs\n", time.Since(start).Seconds())
 		if err != nil {
 			return fmt.Errorf("AI request failed: %w", err)
 		}
@@ -279,6 +294,23 @@ func saveArtifact(cmd *cobra.Command, rootDir, filename, text string) error {
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Artifact saved to %s\n", path)
 	return nil
+}
+
+// saveChatAnswer writes the last chat turn to .glassmarble/ai/ and returns
+// the written path (Ctrl+S in the interactive chat program).
+func saveChatAnswer(cmd *cobra.Command, rootDir, sessID, text string) (string, error) {
+	if text == "" {
+		return "", fmt.Errorf("nothing to save")
+	}
+	dir := filepath.Join(rootDir, ".glassmarble", "ai")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("cannot create artifact directory: %w", err)
+	}
+	path := filepath.Join(dir, "chat-"+sessID+".md")
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		return "", fmt.Errorf("cannot write artifact: %w", err)
+	}
+	return path, nil
 }
 
 // looksLikeDiagram heuristically detects diagram markup in a model answer:
@@ -358,6 +390,14 @@ and "exit", "quit", or Ctrl+D to leave.
 			}
 		}
 
+		if tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout()) {
+			opts := agentOptions(cmd, &aiStreamSink{out: bufio.NewWriter(cmd.OutOrStdout())})
+			save := func(text string) (string, error) {
+				return saveChatAnswer(cmd, rootDir, sess.ID, text)
+			}
+			return chat.Run(cmd.Context(), engine, sess, sessDir, opts, applyToSession, save, cmd.InOrStdin(), cmd.OutOrStdout())
+		}
+
 		reader := bufio.NewReader(cmd.InOrStdin())
 		isTTY := terminal.IsTTY()
 
@@ -409,10 +449,8 @@ and "exit", "quit", or Ctrl+D to leave.
 				continue
 			}
 
-			spinner := terminal.NewSpinner()
-			spinner.Start(fmt.Sprintf("Consulting %s...", engine.Config.Model))
+			fmt.Fprintf(cmd.ErrOrStderr(), "Consulting %s...\n", engine.Config.Model)
 			res, err := engine.AskAgent(cmd.Context(), line, opts)
-			spinner.Stop("")
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Error: %v\n", err)
 				continue
@@ -482,22 +520,20 @@ Sessions are written by "gmb ai chat" and can be resumed with
 			return nil
 		}
 
+		if tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout()) {
+			del := func(id string) error { return session.Delete(dir, id) }
+			return sessions.Run(dir, cmd.InOrStdin(), cmd.OutOrStdout(), del)
+		}
+
 		list, err := session.List(dir)
 		if err != nil {
 			return err
 		}
 		if len(list) == 0 {
-			fmt.Fprintln(cmd.OutOrStdout(), "No saved sessions. Start one with `gmb ai chat`.")
+			fmt.Fprintln(cmd.OutOrStdout(), views.RenderSessions(list))
 			return nil
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "%-22s %-19s %-24s %5s %6s %8s %7s %9s\n",
-			"ID", "UPDATED", "PROVIDER/MODEL", "MSGS", "TURNS", "TOKENS", "COST", "TOOLS")
-		for _, s := range list {
-			fmt.Fprintf(cmd.OutOrStdout(), "%-22s %-19s %-24s %5d %6d %8d %7s %9d\n",
-				s.ID, s.Updated.Format("2006-01-02 15:04"), s.Provider+"/"+s.Model,
-				s.Messages, s.Turns, s.Tokens, formatCost(s.CostUSD, s.Tokens > 0), s.ToolCalls)
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "\n%d session(s). Resume with: gmb ai chat --session <id>\n", len(list))
+		fmt.Fprintln(cmd.OutOrStdout(), views.RenderSessions(list))
 		return nil
 	},
 }
@@ -540,8 +576,20 @@ and are never logged.
 		}
 
 		if !changed {
-			if err := configureInteractive(cmd, cfg); err != nil {
-				return err
+			if tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout()) {
+				res, err := configure.Run(provider.Registry, cfg, cmd.InOrStdin(), cmd.OutOrStdout())
+				if err != nil {
+					return err
+				}
+				cfg.Provider = res.Provider
+				cfg.APIKey = res.APIKey
+				cfg.Model = res.Model
+				cfg.BaseURL = res.BaseURL
+			} else {
+				// §12 Phase 3: the raw bufio wizard was replaced by the Huh
+				// form. Without a TTY there is no interactive path, so guide
+				// the caller to the flag-driven setup instead.
+				return fmt.Errorf("interactive configuration requires a terminal — run `gmb ai configure --provider NAME --model MODEL --key KEY`, or set GLASSMARBLE_AI_* environment variables")
 			}
 		} else {
 			if cmd.Flags().Changed("provider") {
@@ -605,28 +653,9 @@ var aiModelsCmd = &cobra.Command{
 			return err
 		}
 
-		for _, m := range provider.Registry {
-			marker := " "
-			if m.Name == cfg.Provider {
-				marker = "*"
-			}
-			keyStatus := "no key"
-			if !m.RequiresKey {
-				keyStatus = "no key required"
-			} else if aiconfig.EffectiveAPIKey(cfg, m.KeyEnvVar) != "" {
-				keyStatus = "key set"
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s %-12s %-24s [%s]\n", marker, m.Name, m.DisplayName, keyStatus)
-			fmt.Fprintf(cmd.OutOrStdout(), "   adapter: %s\n", m.Adapter)
-			fmt.Fprintf(cmd.OutOrStdout(), "   base URL: %s\n", defaultOrCustom(m.DefaultBaseURL))
-			fmt.Fprintf(cmd.OutOrStdout(), "   key env: %s\n", m.KeyEnvVar)
-			if len(m.Models) > 0 {
-				fmt.Fprintf(cmd.OutOrStdout(), "   models: %s\n", strings.Join(m.Models, ", "))
-			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "   models: (set any model with --model)\n")
-			}
-		}
-		fmt.Fprintln(cmd.OutOrStdout(), "\n* = configured provider")
+		fmt.Fprintln(cmd.OutOrStdout(), views.RenderModels(provider.Registry, cfg.Provider, func(envVar string) bool {
+			return aiconfig.EffectiveAPIKey(cfg, envVar) != ""
+		}))
 		return nil
 	},
 }
@@ -645,144 +674,13 @@ the state of the Architecture Knowledge Graph.`,
 		rep := ai_engine.Doctor(cmd.Context(), cfg, aiRootDir(cmd))
 
 		w := cmd.OutOrStdout()
-		fmt.Fprintln(w, "AI Engine Doctor")
-		fmt.Fprintln(w, "================")
-		fmt.Fprintf(w, "Provider   : %s", rep.Provider)
-		if rep.DisplayName != "" {
-			fmt.Fprintf(w, " (%s)", rep.DisplayName)
-		}
-		fmt.Fprintln(w)
-		fmt.Fprintf(w, "Adapter    : %s\n", rep.Adapter)
-		fmt.Fprintf(w, "Model      : %s\n", rep.Model)
-		fmt.Fprintf(w, "Base URL   : %s\n", defaultOrCustom(rep.BaseURL))
-		fmt.Fprintf(w, "API key    : %s", ai_engine.MaskAPIKey(cfg.APIKey))
-		if rep.KeySource != "" {
-			fmt.Fprintf(w, " (%s)", rep.KeySource)
-		}
-		fmt.Fprintln(w)
-		fmt.Fprintf(w, "Ping       : %s\n", pingStatus(rep))
-		fmt.Fprintf(w, "AKG        : %s\n", akgStatus(rep))
+		fmt.Fprintln(w, views.RenderAIDoctor(rep, ai_engine.MaskAPIKey(cfg.APIKey)))
 
 		if len(rep.Problems) > 0 {
-			fmt.Fprintf(w, "\n%d problem(s):\n", len(rep.Problems))
-			for _, p := range rep.Problems {
-				fmt.Fprintf(w, "  - %s\n", p)
-			}
 			return fmt.Errorf("doctor found %d problem(s)", len(rep.Problems))
 		}
-		fmt.Fprintln(w, "\nAll checks passed.")
 		return nil
 	},
-}
-
-func configureInteractive(cmd *cobra.Command, cfg *aiconfig.Config) error {
-	reader := bufio.NewReader(cmd.InOrStdin())
-	out := cmd.OutOrStdout()
-
-	fmt.Fprintln(out, "Select an AI provider:")
-	for i, m := range provider.Registry {
-		fmt.Fprintf(out, "  %2d) %-24s %s\n", i+1, m.Name, m.Description)
-	}
-	fmt.Fprint(out, "Provider [1]: ")
-	choice, err := reader.ReadString('\n')
-	if err != nil {
-		return fmt.Errorf("setup aborted")
-	}
-	choice = strings.TrimSpace(choice)
-	idx := 0
-	if choice != "" {
-		if n, convErr := strconv.Atoi(choice); convErr == nil && n >= 1 && n <= len(provider.Registry) {
-			idx = n - 1
-		} else if _, ok := provider.Get(choice); ok {
-			for i, m := range provider.Registry {
-				if m.Name == choice {
-					idx = i
-				}
-			}
-		} else {
-			return fmt.Errorf("unknown provider %q", choice)
-		}
-	}
-	meta := provider.Registry[idx]
-	cfg.Provider = meta.Name
-
-	if meta.RequiresKey {
-		fmt.Fprint(out, "API key (paste it; it will be stored locally, not echoed): ")
-		key, err := readSecret(reader, cmd.InOrStdin())
-		if err != nil {
-			return fmt.Errorf("setup aborted")
-		}
-		key = strings.TrimSpace(key)
-		if key == "" {
-			return fmt.Errorf("API key is required for provider %q", meta.Name)
-		}
-		cfg.APIKey = key
-		fmt.Fprintln(out)
-	}
-
-	defaultModel := ""
-	if len(meta.Models) > 0 {
-		defaultModel = meta.Models[0]
-	}
-	if defaultModel == "" {
-		fmt.Fprint(out, "Model: ")
-	} else {
-		fmt.Fprintf(out, "Model [%s]: ", defaultModel)
-	}
-	model, err := reader.ReadString('\n')
-	if err != nil {
-		return fmt.Errorf("setup aborted")
-	}
-	model = strings.TrimSpace(model)
-	if model == "" {
-		if defaultModel == "" {
-			return fmt.Errorf("model is required for provider %q", meta.Name)
-		}
-		model = defaultModel
-	}
-	cfg.Model = model
-
-	if meta.DefaultBaseURL == "" {
-		fmt.Fprint(out, "Base URL (required for this provider): ")
-	} else {
-		fmt.Fprintf(out, "Base URL [%s, press Enter to accept]: ", meta.DefaultBaseURL)
-	}
-	baseURL, err := reader.ReadString('\n')
-	if err != nil {
-		return fmt.Errorf("setup aborted")
-	}
-	baseURL = strings.TrimSpace(baseURL)
-	if baseURL == "" {
-		baseURL = meta.DefaultBaseURL
-	}
-	if baseURL == "" {
-		return fmt.Errorf("base URL is required for provider %q", meta.Name)
-	}
-	cfg.BaseURL = baseURL
-
-	return nil
-}
-
-// readSecret reads a secret from the terminal without echoing it back. When
-// stdin is not a TTY (e.g. piped input or a test double) it falls back to the
-// provided buffered reader so behavior stays scriptable. A trailing newline is
-// stripped; the returned value is the raw secret.
-func readSecret(reader *bufio.Reader, in io.Reader) (string, error) {
-	if f, ok := in.(*os.File); ok {
-		fd := int(f.Fd())
-		if term.IsTerminal(fd) {
-			byteKey, err := term.ReadPassword(fd)
-			if err != nil {
-				return "", err
-			}
-			return string(byteKey), nil
-		}
-	}
-	line, err := reader.ReadString('\n')
-	if err != nil && line == "" {
-		return "", err
-	}
-	return strings.TrimRight(line, "\r\n"), nil
 }
 
 func defaultOrCustom(v string) string {

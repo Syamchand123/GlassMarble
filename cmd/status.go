@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
+	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
 
@@ -55,7 +56,7 @@ var statusCmd = &cobra.Command{
 				fmt.Println(string(out))
 				return nil
 			}
-			fmt.Printf("GlassMarble Status: Uninitialized\nNo active AKG database found at %s. Run 'glassmarble analyze' first.\n", ttlPath)
+			fmt.Println(views.RenderStatusUninitialized(ttlPath))
 			return nil
 		}
 
@@ -114,36 +115,29 @@ var statusCmd = &cobra.Command{
 			return nil
 		}
 
-		fmt.Println("=== GlassMarble Architecture Knowledge Graph Status ===")
-		fmt.Printf("  Storage Dir:   %s\n", storageDir)
-		fmt.Printf("  Schema Version: %d\n", schemaVersion)
-		fmt.Printf("  Graph Version: %d\n", version)
-		fmt.Printf("  Commit Hash:   %s\n", commitHash)
-		fmt.Printf("  Last Analysis: %s\n", ttlInfo.ModTime().Format(time.RFC3339))
-		fmt.Printf("  Nodes Count:   %d\n", stats.NodeCount)
-		// Cumulative graph totals: each persisted (s,p,t) triple is one
-		// outbound and one inbound edge of the restored graph (AUDIT Issue 5
-		// Phase 5B-5).
-		fmt.Printf("  Outbound Edges:%d\n", stats.Edges)
-		fmt.Printf("  Inbound Edges: %d\n", stats.Edges)
-		fmt.Printf("  Indexed Files: %d\n", stats.IndexedFiles)
-		fmt.Printf("  Entrypoints:   %d\n", stats.Entrypoints)
-		fmt.Printf("  Virtual Nodes: %d (%.1f%%)\n", stats.VirtualCount, virtualShare)
-		fmt.Printf("  Health Errors: %d dangling reference(s)\n", stats.Dangling)
-		fmt.Printf("  Storage:       TTL %s | WAL %s\n", humanBytes(ttlSize), humanBytes(walSize))
-		if stats.Dangling == 0 {
-			fmt.Println("  Verification:  verified (no dangling edges)")
-		} else {
-			fmt.Printf("  Verification:  UNVERIFIED — %d dangling reference(s)\n", stats.Dangling)
+		sd := views.StatusData{
+			Initialized:   true,
+			StorageDir:    storageDir,
+			SchemaVersion: schemaVersion,
+			GraphVersion:  version,
+			CommitHash:    commitHash,
+			LastAnalysis:  ttlInfo.ModTime().Format(time.RFC3339),
+			NodeCount:     stats.NodeCount,
+			EdgeCount:     stats.Edges,
+			IndexedFiles:  stats.IndexedFiles,
+			Entrypoints:   stats.Entrypoints,
+			VirtualCount:  stats.VirtualCount,
+			VirtualShare:  virtualShare,
+			Dangling:      stats.Dangling,
+			TTLBytes:      ttlSize,
+			WALBytes:      walSize,
+			Verified:      stats.Dangling == 0,
 		}
 		if stale, txCount, err := akg.WALFreshness(storageDir); err == nil {
-			if stale {
-				fmt.Printf("  Freshness:     WARNING — WAL is newer than the TTL (%d unpersisted transaction(s))\n", txCount)
-			} else {
-				fmt.Println("  Freshness:     ok")
-			}
+			sd.FreshnessOK = !stale
+			sd.UnpersistedTx = txCount
 		}
-
+		fmt.Println(views.RenderStatus(sd))
 		return nil
 	},
 }

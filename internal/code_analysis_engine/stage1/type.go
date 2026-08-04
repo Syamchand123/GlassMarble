@@ -115,6 +115,11 @@ type Config struct {
 	// falls back to scanning everything (AUDIT Issue 1.8 / Phase 1C-9).
 	GitTrackedOnly bool
 	Ctx            context.Context
+	// OnProgress, when non-nil, is invoked as files are discovered and parsed
+	// so a BubbleTea program can animate a live per-file counter. done is the
+	// number of files emitted so far; total is the number of parse tasks
+	// dispatched (0 when unknown, e.g. streaming discovery in flight).
+	OnProgress func(done, total int)
 }
 
 const defaultMaxFileBytes = 2 << 20

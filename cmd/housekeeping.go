@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Syamchand123/GlassMarble/internal/tui"
+	"github.com/Syamchand123/GlassMarble/internal/tui/programs/housekeeping"
+	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
 
@@ -56,7 +59,7 @@ WAL segments are truncated automatically after every successful load; the
 
 		var totalBytes int64
 		var totalFiles int
-		fmt.Println("=== .glassmarble Working Set ===")
+		var areaRows []views.HousekeepingArea
 		for _, a := range areas {
 			info, err := os.Stat(a.path)
 			if err != nil {
@@ -80,13 +83,37 @@ WAL segments are truncated automatically after every successful load; the
 			a.files = count
 			totalBytes += size
 			totalFiles += count
-			fmt.Printf("  %-24s %8s  %d file(s)\n", a.name, humanBytes(size), count)
+			areaRows = append(areaRows, views.HousekeepingArea{Name: a.name, Bytes: size, Files: count})
 		}
-		fmt.Printf("  %-24s %8s  %d file(s)\n", "total", humanBytes(totalBytes), totalFiles)
+		fmt.Println(views.RenderHousekeepingReport(areaRows, totalBytes, totalFiles))
 
 		if !prune {
 			fmt.Println("\nRun `gmb housekeeping --prune` to delete marbles/sessions older than the retention window.")
 			return nil
+		}
+
+		// Interactive terminals confirm the prune before anything is deleted;
+		// non-TTY runs (CI, tests, pipes) prune directly without a prompt.
+		if tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout()) {
+			var toPruneBytes int64
+			var toPruneFiles int
+			for _, a := range areas {
+				if a.name != "marbles/" && a.name != "ai/" {
+					continue
+				}
+				toPruneBytes += prunePreview(a.path, cutoff, &toPruneFiles)
+			}
+			if toPruneFiles > 0 {
+				ok, err := housekeeping.ConfirmPrune(cmd.InOrStdin(), cmd.OutOrStdout(),
+					fmt.Sprintf("Delete marbles/sessions older than %d days? This removes %d file(s) and reclaims %s.", olderThan, toPruneFiles, humanBytes(toPruneBytes)))
+				if err != nil {
+					return err
+				}
+				if !ok {
+					fmt.Println("Prune cancelled.")
+					return nil
+				}
+			}
 		}
 
 		// Prune only derived working-set areas, never the AKG state.
@@ -131,6 +158,24 @@ func pruneArea(dir string, cutoff time.Time, prunedFiles *int) int64 {
 				reclaimed += fi.Size()
 				*prunedFiles++
 			}
+		}
+		return nil
+	})
+	return reclaimed
+}
+
+// prunePreview reports how many bytes and files pruneArea would remove without
+// deleting anything, mirroring pruneArea's stale-file walk so the interactive
+// confirm can show the exact prune scope before deletion.
+func prunePreview(dir string, cutoff time.Time, staleFiles *int) int64 {
+	var reclaimed int64
+	filepath.Walk(dir, func(_ string, fi os.FileInfo, err error) error {
+		if err != nil || fi == nil || !fi.Mode().IsRegular() {
+			return nil
+		}
+		if fi.ModTime().Before(cutoff) {
+			reclaimed += fi.Size()
+			*staleFiles++
 		}
 		return nil
 	})

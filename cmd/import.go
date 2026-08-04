@@ -7,6 +7,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
 
@@ -49,8 +50,7 @@ state always stays verified.`,
 			return fmt.Errorf("import rejected: %w", err)
 		}
 
-		fmt.Printf("Imported AKG snapshot (%d nodes, %d edges) from %s\n",
-			graph.Nodes.Len(), countGraphEdges(graph), input)
+		fmt.Println(views.RenderImportSuccess(input, storageDir, graph.Nodes.Len(), countGraphEdges(graph)))
 		return nil
 	},
 }

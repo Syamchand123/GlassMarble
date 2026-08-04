@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"fmt"
+
+	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
 
@@ -12,7 +14,7 @@ var versionCmd = &cobra.Command{
 	Long:  "This command prints the version of the Glassmarble ",
 
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("GlassMarble v0.1.0")
+		fmt.Println(views.RenderVersion(version))
 	},
 }
 

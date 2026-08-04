@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // RunIngestion is the full-scan entry point for Stage 1. It discovers every
@@ -155,6 +156,7 @@ func streamTasks(pathCh <-chan string, errorCh <-chan error, skipWarnCh <-chan s
 	}()
 
 	// Feeder goroutine: reads pathCh, builds indexTask, feeds taskCh
+	var discovered int64
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -173,6 +175,7 @@ func streamTasks(pathCh <-chan string, errorCh <-chan error, skipWarnCh <-chan s
 			if !ok || lang == LangUnknown {
 				continue
 			}
+			atomic.AddInt64(&discovered, 1)
 			rel, err := filepath.Rel(root, p)
 			if err != nil {
 				rel = p
@@ -193,8 +196,13 @@ func streamTasks(pathCh <-chan string, errorCh <-chan error, skipWarnCh <-chan s
 
 	// Collect results
 	var updated []*IngestionResult
+	onProgress := cfg.OnProgress
+	var emitted int64
 	for r := range resultCh {
 		updated = append(updated, r)
+		if onProgress != nil {
+			onProgress(int(atomic.AddInt64(&emitted, 1)), int(atomic.LoadInt64(&discovered)))
+		}
 	}
 
 	collectWg.Wait()
@@ -233,6 +241,8 @@ func runTasks(tasks []indexTask, cfg Config, warnings, skipped []string) (*Stage
 	taskCh := make(chan indexTask, cfg.BufferSize)
 	results := make([]*IngestionResult, n)
 	reg := Registry()
+	onProgress := cfg.OnProgress
+	var done int64
 
 	var wg sync.WaitGroup
 	wg.Add(cfg.WorkerCount)
@@ -258,6 +268,9 @@ func runTasks(tasks []indexTask, cfg Config, warnings, skipped []string) (*Stage
 					continue
 				}
 				results[it.idx] = processFile(p, it.task, spec)
+				if onProgress != nil {
+					onProgress(int(atomic.AddInt64(&done, 1)), n)
+				}
 			}
 		}()
 	}

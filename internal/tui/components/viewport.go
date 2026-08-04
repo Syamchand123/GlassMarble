@@ -1,0 +1,63 @@
+package components
+
+import (
+	"strings"
+
+	"github.com/Syamchand123/GlassMarble/internal/tui"
+	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/charmbracelet/lipgloss"
+)
+
+// NewGMViewport builds a themed scrollable viewport with padding 1,2 and a
+// scroll-position indicator footer.
+func NewGMViewport(width, height int) viewport.Model {
+	if width < 20 {
+		width = 40
+	}
+	if height < 3 {
+		height = 10
+	}
+	vp := viewport.New(width, height)
+	vp.KeyMap.PageUp.SetEnabled(true)
+	vp.KeyMap.PageDown.SetEnabled(true)
+	vp.MouseWheelEnabled = true
+	return vp
+}
+
+// StyleViewportContent wraps content that will be placed inside the viewport.
+func StyleViewportContent(content string) string {
+	return lipgloss.NewStyle().Padding(0, 2).Render(content)
+}
+
+// ScrollPosition renders "↑↓ 3/12 pages" style indicator (page / total pages).
+func ScrollPosition(vp viewport.Model) string {
+	total := vp.TotalLineCount()
+	pageHeight := vp.Height
+	if pageHeight < 1 {
+		pageHeight = 1
+	}
+	pages := (total + pageHeight - 1) / pageHeight
+	if pages < 1 {
+		pages = 1
+	}
+	current := vp.YOffset/pageHeight + 1
+	if current < 1 {
+		current = 1
+	}
+	if current > pages {
+		current = pages
+	}
+	return tui.StyleMuted.Render(strings.Repeat(" ", 2) + "↑↓ " + itoa(current) + "/" + itoa(pages) + " pages")
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	digits := []byte{}
+	for n > 0 {
+		digits = append([]byte{byte('0' + n%10)}, digits...)
+		n /= 10
+	}
+	return string(digits)
+}

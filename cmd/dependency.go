@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
 
@@ -80,18 +81,13 @@ var dependencyCmd = &cobra.Command{
 				return nil
 			}
 
-			fmt.Println("=== Repository Dependency Summary ===")
-			fmt.Printf("Total Graph Nodes: %d\n", snapshot.Nodes.Len())
-			fmt.Printf("Total Outbound Edge Mappings: %d\n", snapshot.OutboundEdges.Len())
-			fmt.Printf("Total Inbound Edge Mappings: %d\n\n", snapshot.InboundEdges.Len())
-			fmt.Println("Top Dependency Nodes:")
+			var topNodesView []views.TopDependencyNode
 			for _, n := range topNodes {
-				fmt.Printf("  Node: %s (%d outbound dependencies)\n", n.ID, n.Outbound)
+				topNodesView = append(topNodesView, views.TopDependencyNode{ID: n.ID, Outbound: n.Outbound})
 			}
+			fmt.Println(views.RenderDependencySummary(snapshot.Nodes.Len(), snapshot.OutboundEdges.Len(), snapshot.InboundEdges.Len(), topNodesView))
 			return nil
 		}
-
-		fmt.Printf("=== Dependency Analysis for '%s' ===\n", target)
 
 		var matchingNodes []string
 		lowerTarget := strings.ToLower(target)
@@ -131,27 +127,20 @@ var dependencyCmd = &cobra.Command{
 		}
 
 		for _, nodeID := range matchingNodes {
-			fmt.Printf("\nNode: %s\n", nodeID)
-
+			var outboundView, inboundView []views.DependencyEdge
 			outbound, ok := snapshot.OutboundEdges.Get(nodeID)
 			if ok && len(outbound) > 0 {
-				fmt.Println("  Direct Outbound Dependencies:")
 				for _, edge := range outbound {
-					fmt.Printf("    -> [%s] %s (L%d)\n", edge.Type, edge.TargetID, edge.LineNumber)
+					outboundView = append(outboundView, views.DependencyEdge{Type: string(edge.Type), OtherID: edge.TargetID, LineNumber: edge.LineNumber})
 				}
-			} else {
-				fmt.Println("  Direct Outbound Dependencies: None")
 			}
-
 			inbound, ok := snapshot.InboundEdges.Get(nodeID)
 			if ok && len(inbound) > 0 {
-				fmt.Println("  Direct Inbound Callers/Dependents:")
 				for _, edge := range inbound {
-					fmt.Printf("    <- [%s] %s (L%d)\n", edge.Type, edge.SourceID, edge.LineNumber)
+					inboundView = append(inboundView, views.DependencyEdge{Type: string(edge.Type), OtherID: edge.SourceID, LineNumber: edge.LineNumber})
 				}
-			} else {
-				fmt.Println("  Direct Inbound Callers/Dependents: None")
 			}
+			fmt.Println(views.RenderDependencyTarget(nodeID, outboundView, inboundView))
 		}
 
 		return nil

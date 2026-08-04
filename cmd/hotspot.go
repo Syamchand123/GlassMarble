@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
 
@@ -80,18 +81,19 @@ var hotspotCmd = &cobra.Command{
 			return nil
 		}
 
-		fmt.Printf("=== Top %d Architectural Hotspots (Ranked by In-Degree Centrality) ===\n\n", hotspotTop)
-		fmt.Printf("%-5s %-45s %-12s %-10s %-10s %-15s\n", "Rank", "Symbol ID", "Kind", "In-Degree", "Out-Degree", "Primitive")
-		fmt.Println("---------------------------------------------------------------------------------------------------")
-
+		var viewRows []views.HotspotRow
 		for i := 0; i < len(degrees) && i < hotspotTop; i++ {
 			d := degrees[i]
-			idDisp := d.ID
-			if len(idDisp) > 42 {
-				idDisp = "..." + idDisp[len(idDisp)-39:]
-			}
-			fmt.Printf("%-5d %-45s %-12s %-10d %-10d %-15s\n", i+1, idDisp, d.Kind, d.InDegree, d.OutDegree, d.Primitive)
+			viewRows = append(viewRows, views.HotspotRow{
+				Rank:      i + 1,
+				Name:      d.ID,
+				Kind:      d.Kind,
+				InDegree:  d.InDegree,
+				OutDegree: d.OutDegree,
+				Primitive: d.Primitive,
+			})
 		}
+		fmt.Println(views.RenderHotspot(hotspotTop, viewRows))
 
 		return nil
 	},

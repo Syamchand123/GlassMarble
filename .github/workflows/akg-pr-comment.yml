@@ -1,132 +1,311 @@
-name: GlassMarble AKG PR Comment
-
-# CI companion workflow: on every pull request, build the AKG for the merge
-# branch (base) and the PR head, diff the two snapshots, and post an
-# architecture-change summary as a pull-request comment.
+# ─────────────────────────────────────────────────────────────────────────────
+# GlassMarble AKG PR Architecture Comment
 #
-# The comment is produced by `gmb compare --json` and rendered with the
-# GlassMarble GraphJSON schema, so it is stable and reviewable.
+# On every pull request this workflow:
+#  1. Checks out the merge-base commit and runs `gmb analyze` to build the
+#     base Architecture Knowledge Graph snapshot.
+#  2. Checks out the PR head and runs `gmb analyze` on the new code.
+#  3. Exports both snapshots to GraphJSON via `gmb export`.
+#  4. Diffs them with `gmb compare --json`.
+#  5. Posts (or updates) a pull-request comment with a human-readable
+#     architecture-change summary.
+#
+# The comment is idempotent: a second push to the same PR branch re-uses the
+# existing comment rather than creating a new one.
+#
+# CGO_ENABLED=1 is mandatory — tree-sitter grammar libraries are C extensions.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: GlassMarble AKG PR Architecture Comment
 
 on:
   pull_request:
     branches: [main, master, develop]
     types: [opened, synchronize, reopened]
 
+# Cancel any in-progress run for the same PR to avoid stale comments.
+concurrency:
+  group: akg-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   pull-requests: write
-  checks: read
 
+env:
+  GO_VERSION: "1.24"
+  CGO_ENABLED: "1"
+
+# ─────────────────────────────────────────────────────────────────────────────
 jobs:
+
   akg-diff:
-    name: Architecture Knowledge Graph Diff
+    name: "Architecture Knowledge Graph Diff"
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout merge-base
+      # ── Checkout ────────────────────────────────────────────────────────────
+      # fetch-depth: 0 is required so git worktree can check out the merge-base.
+      - name: Checkout PR head
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # ── Go toolchain ────────────────────────────────────────────────────────
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Build gmb
+      # gcc is required for CGO (tree-sitter grammars are compiled C libraries)
+      - name: Install system dependencies
         run: |
-          go build -o gmb ./cmd/...
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc libc6-dev git
 
-      - name: Analyze base (merge-base)
+      - name: Download modules
+        run: go mod download
+
+      # ── Build gmb ───────────────────────────────────────────────────────────
+      - name: Build gmb binary
         run: |
-          BASE_SHA=$(git merge-base origin/${{ github.base_ref }} HEAD)
-          git worktree add --detach /tmp/gm-base "$BASE_SHA" >/dev/null
-          (cd /tmp/gm-base && "$GITHUB_WORKSPACE/gmb" analyze --dir . --full --json > /tmp/base-analysis.json 2>&1 || true)
-          (cd /tmp/gm-base && "$GITHUB_WORKSPACE/gmb" export --dir . --output /tmp/base.json || true)
+          CGO_ENABLED=1 go build \
+            -ldflags="-s -w -X main.version=pr-${{ github.event.pull_request.number }}" \
+            -o "$GITHUB_WORKSPACE/gmb" \
+            .
+          chmod +x "$GITHUB_WORKSPACE/gmb"
+
+      # ── Base snapshot (merge-base commit) ──────────────────────────────────
+      # Use git worktree to analyse the merge-base without discarding the
+      # PR head checkout.  The binary compiled above (from the PR head) is
+      # used to analyse both sides so there's no version mismatch.
+      - name: Compute merge-base SHA
+        id: base
+        run: |
+          BASE_SHA=$(git merge-base "origin/${{ github.base_ref }}" HEAD)
+          echo "sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "Merge-base: $BASE_SHA"
+
+      - name: Analyse base snapshot (merge-base)
+        run: |
+          git worktree add --detach /tmp/gm-base "${{ steps.base.outputs.sha }}"
+          cd /tmp/gm-base
+          # Analyse; soft-failure so partial graphs still produce a diff
+          "$GITHUB_WORKSPACE/gmb" analyze --dir . --full --json \
+            > /tmp/base-analysis.json 2>&1 || \
+            echo "::warning::Base analysis completed with errors (partial graph may be used)"
+          "$GITHUB_WORKSPACE/gmb" export --dir . --output /tmp/base.json 2>&1 || \
+            echo "::warning::Base export failed — diff will show all head symbols as new"
+          cd "$GITHUB_WORKSPACE"
           git worktree remove --force /tmp/gm-base
 
-      - name: Analyze head (PR branch)
+      # ── Head snapshot (PR branch) ──────────────────────────────────────────
+      - name: Analyse head snapshot (PR branch)
         run: |
-          ./gmb analyze --dir . --full --json > /tmp/head-analysis.json 2>&1 || true
-          ./gmb export --dir . --output /tmp/head.json || true
+          "$GITHUB_WORKSPACE/gmb" analyze --dir . --full --json \
+            > /tmp/head-analysis.json 2>&1 || \
+            echo "::warning::Head analysis completed with errors (partial graph may be used)"
+          "$GITHUB_WORKSPACE/gmb" export --dir . --output /tmp/head.json 2>&1 || \
+            echo "::warning::Head export failed — diff will be empty"
 
-      - name: Compute architectural diff
+      # ── Compute architectural diff ─────────────────────────────────────────
+      # Write a safe JSON file; if gmb compare itself fails we fall back to an
+      # empty diff object.  The payload is written to a temp file and read via
+      # the artifact upload path to avoid the shell-injection risk of embedding
+      # arbitrary JSON into a GitHub Actions expression.
+      - name: Compute architectural diff (gmb compare)
         id: diff
         run: |
-          if [ -f /tmp/base.json ] && [ -f /tmp/head.json ]; then
-            ./gmb compare /tmp/base.json /tmp/head.json --json > /tmp/diff.json || true
-          else
-            echo '{"base_commit":"none","head_commit":"none","nodes_added":[],"nodes_removed":[],"edges_added":[],"edges_removed":[],"files_changed":[]}' > /tmp/diff.json
-          fi
-          echo "payload=$(cat /tmp/diff.json | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+          DIFF_FILE=/tmp/diff.json
 
-      - name: Post PR architecture comment
-        uses: actions/github-script@v7
+          if [ -f /tmp/base.json ] && [ -f /tmp/head.json ]; then
+            "$GITHUB_WORKSPACE/gmb" compare /tmp/base.json /tmp/head.json --json \
+              > "$DIFF_FILE" 2>&1 \
+              || echo "::warning::gmb compare exited non-zero; using partial diff"
+          else
+            # Emit a well-formed empty diff so the comment step always runs.
+            cat > "$DIFF_FILE" <<'EOF'
+          {"base_commit":"(unavailable)","head_commit":"(unavailable)","nodes_added":[],"nodes_removed":[],"edges_added":[],"edges_removed":[],"files_changed":[]}
+          EOF
+          fi
+
+          # Validate the output is parseable JSON before proceeding.
+          python3 -c "import sys, json; json.load(open('$DIFF_FILE'))" \
+            || ( echo "::error::diff.json is not valid JSON"; cat "$DIFF_FILE"; exit 1 )
+
+      # Upload the raw diff JSON as an artifact for debugging / downstream use.
+      - name: Upload diff artifact
         if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: akg-diff-pr-${{ github.event.pull_request.number }}
+          path: /tmp/diff.json
+          retention-days: 14
+
+      # ── Post PR comment ────────────────────────────────────────────────────
+      # The diff JSON is read from the uploaded file inside the script rather
+      # than via a GitHub output variable, which avoids shell-injection when the
+      # JSON contains special characters.
+      - name: Post (or update) PR architecture comment
+        if: always()
+        uses: actions/github-script@v7
         with:
           script: |
-            const diff = JSON.parse(`${{ steps.diff.outputs.payload }}`);
-            const lines = [];
-            lines.push('## :building_construction: GlassMarble AKG Diff');
+            const fs = require('fs');
+
+            // ── Parse diff ────────────────────────────────────────────────
+            let diff = {};
+            try {
+              diff = JSON.parse(fs.readFileSync('/tmp/diff.json', 'utf8'));
+            } catch (e) {
+              console.error('Could not parse diff.json:', e.message);
+              diff = {
+                base_commit: '(parse error)',
+                head_commit: '(parse error)',
+                nodes_added: [],
+                nodes_removed: [],
+                edges_added: [],
+                edges_removed: [],
+                files_changed: [],
+              };
+            }
+
+            // ── Helpers ───────────────────────────────────────────────────
+            const nodesAdded   = Array.isArray(diff.nodes_added)   ? diff.nodes_added   : [];
+            const nodesRemoved = Array.isArray(diff.nodes_removed)  ? diff.nodes_removed : [];
+            const edgesAdded   = Array.isArray(diff.edges_added)    ? diff.edges_added   : [];
+            const edgesRemoved = Array.isArray(diff.edges_removed)  ? diff.edges_removed : [];
+            const files        = Array.isArray(diff.files_changed)  ? diff.files_changed : [];
+
+            const baseCommit = (diff.base_commit || '(none)').substring(0, 12);
+            const headCommit = (diff.head_commit || '(none)').substring(0, 12);
+
+            const noChanges =
+              !nodesAdded.length && !nodesRemoved.length &&
+              !edgesAdded.length && !edgesRemoved.length && !files.length;
+
+            // ── Build comment body ─────────────────────────────────────────
+            const MARKER = '<!-- glassmarble-akg-diff -->';
+            const lines = [MARKER];
+
+            lines.push('## 🏗️ GlassMarble — Architecture Knowledge Graph Diff');
             lines.push('');
-            lines.push(`Base: \`${diff.base_commit || '(none)'}\` · Head: \`${diff.head_commit || '(none)'}\``);
+            lines.push(`Base \`${baseCommit}\` → Head \`${headCommit}\``);
             lines.push('');
-            lines.push(`| Metric | Count |`);
-            lines.push(`| --- | --- |`);
-            lines.push(`| Nodes added | ${diff.nodes_added ? diff.nodes_added.length : 0} |`);
-            lines.push(`| Nodes removed | ${diff.nodes_removed ? diff.nodes_removed.length : 0} |`);
-            lines.push(`| Edges added | ${diff.edges_added ? diff.edges_added.length : 0} |`);
-            lines.push(`| Edges removed | ${diff.edges_removed ? diff.edges_removed.length : 0} |`);
+
+            // Summary table
+            lines.push('| Metric | Count |');
+            lines.push('| :--- | ---: |');
+            lines.push(`| 🟢 Nodes added    | **${nodesAdded.length}** |`);
+            lines.push(`| 🔴 Nodes removed  | **${nodesRemoved.length}** |`);
+            lines.push(`| ➕ Edges added    | **${edgesAdded.length}** |`);
+            lines.push(`| ➖ Edges removed  | **${edgesRemoved.length}** |`);
+            lines.push(`| 📁 Files changed  | **${files.length}** |`);
             lines.push('');
-            const added = (diff.nodes_added || []).slice(0, 25);
-            if (added.length) {
-              lines.push('**Added symbols:**');
-              lines.push('<details><summary>show</summary>');
+
+            if (noChanges) {
+              lines.push('> ✅ No architectural changes detected between base and head.');
+            }
+
+            // ── Added nodes ───────────────────────────────────────────────
+            const MAX_NODES = 30;
+            if (nodesAdded.length) {
+              const shown = nodesAdded.slice(0, MAX_NODES);
+              const overflow = nodesAdded.length - shown.length;
+              lines.push('<details>');
+              lines.push(`<summary><b>🟢 Added symbols (${nodesAdded.length})</b></summary>`);
               lines.push('');
               lines.push('```text');
-              for (const n of added) lines.push(`+ ${n.id} [${n.kind}] (${n.file || '?'})`);
+              for (const n of shown) {
+                const file = (n.file || '?').replace(/^.*\//, '');
+                lines.push(`+ ${n.id || n.ID || '?'} [${n.kind || n.Kind || '?'}] (${file})`);
+              }
+              if (overflow > 0) lines.push(`… and ${overflow} more`);
               lines.push('```');
               lines.push('</details>');
+              lines.push('');
             }
-            const removed = (diff.nodes_removed || []).slice(0, 25);
-            if (removed.length) {
-              lines.push('**Removed symbols:**');
-              lines.push('<details><summary>show</summary>');
+
+            // ── Removed nodes ─────────────────────────────────────────────
+            if (nodesRemoved.length) {
+              const shown = nodesRemoved.slice(0, MAX_NODES);
+              const overflow = nodesRemoved.length - shown.length;
+              lines.push('<details>');
+              lines.push(`<summary><b>🔴 Removed symbols (${nodesRemoved.length})</b></summary>`);
               lines.push('');
               lines.push('```text');
-              for (const n of removed) lines.push(`- ${n.id} [${n.kind}] (${n.file || '?'})`);
+              for (const n of shown) {
+                const file = (n.file || '?').replace(/^.*\//, '');
+                lines.push(`- ${n.id || n.ID || '?'} [${n.kind || n.Kind || '?'}] (${file})`);
+              }
+              if (overflow > 0) lines.push(`… and ${overflow} more`);
               lines.push('```');
               lines.push('</details>');
+              lines.push('');
             }
-            const files = (diff.files_changed || []).slice(0, 50);
+
+            // ── Changed edges ─────────────────────────────────────────────
+            const MAX_EDGES = 20;
+            if (edgesAdded.length || edgesRemoved.length) {
+              lines.push('<details>');
+              lines.push(`<summary><b>Edge changes (+${edgesAdded.length} / -${edgesRemoved.length})</b></summary>`);
+              lines.push('');
+              lines.push('```text');
+              for (const e of edgesAdded.slice(0, MAX_EDGES)) {
+                lines.push(`+ [${e.type || e.Type || '?'}] ${e.source_id || e.SourceID || '?'} → ${e.target_id || e.TargetID || '?'}`);
+              }
+              if (edgesAdded.length > MAX_EDGES) lines.push(`… and ${edgesAdded.length - MAX_EDGES} more added`);
+              for (const e of edgesRemoved.slice(0, MAX_EDGES)) {
+                lines.push(`- [${e.type || e.Type || '?'}] ${e.source_id || e.SourceID || '?'} → ${e.target_id || e.TargetID || '?'}`);
+              }
+              if (edgesRemoved.length > MAX_EDGES) lines.push(`… and ${edgesRemoved.length - MAX_EDGES} more removed`);
+              lines.push('```');
+              lines.push('</details>');
+              lines.push('');
+            }
+
+            // ── Files with architectural impact ───────────────────────────
             if (files.length) {
-              lines.push('**Files with architectural impact:**');
+              const shown = files.slice(0, 50);
+              const overflow = files.length - shown.length;
+              lines.push('<details>');
+              lines.push(`<summary><b>📁 Files with architectural impact (${files.length})</b></summary>`);
               lines.push('');
-              for (const f of files) lines.push(`- \`${f}\``);
+              for (const f of shown) lines.push(`- \`${f}\``);
+              if (overflow > 0) lines.push(`… and ${overflow} more`);
+              lines.push('</details>');
+              lines.push('');
             }
-            if (!added.length && !removed.length && !files.length) {
-              lines.push('No architectural changes detected between base and head.');
-            }
+
+            lines.push('---');
+            lines.push('*Generated by [GlassMarble](https://github.com/Syamchand123/GlassMarble) · `gmb compare`*');
+
             const body = lines.join('\n');
-            const existing = await github.rest.issues.listComments({
+
+            // ── Upsert comment ────────────────────────────────────────────
+            const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
-              repo: context.repo.repo,
+              repo:  context.repo.repo,
               issue_number: context.issue.number,
             });
-            const marker = 'GlassMarble AKG Diff';
-            const prior = existing.data.find(c => c.body && c.body.includes(marker));
+
+            const prior = comments.find(c => c.body && c.body.includes(MARKER));
+
             if (prior) {
               await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
+                owner:      context.repo.owner,
+                repo:       context.repo.repo,
                 comment_id: prior.id,
                 body,
               });
+              console.log(`Updated existing AKG diff comment (id: ${prior.id})`);
             } else {
               await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
+                owner:        context.repo.owner,
+                repo:         context.repo.repo,
                 issue_number: context.issue.number,
                 body,
               });
+              console.log('Created new AKG diff comment');
             }

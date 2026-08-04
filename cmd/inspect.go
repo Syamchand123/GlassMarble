@@ -8,6 +8,8 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
+	inspectprog "github.com/Syamchand123/GlassMarble/internal/tui/programs/inspect"
 	"github.com/spf13/cobra"
 )
 
@@ -45,15 +47,46 @@ var inspectCmd = &cobra.Command{
 			args = []string{target}
 		}
 
+		interactive := tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout())
+
 		if inspectList {
+			if interactive {
+				rows, err := collectNodeRows(storageDir, false, "")
+				if err != nil {
+					return err
+				}
+				return inspectprog.Run(inspectprog.Config{
+					Title:      "Entry Points & Callable Symbols",
+					Rows:       rows,
+					StorageDir: storageDir,
+					In:         cmd.InOrStdin(),
+					Out:        cmd.OutOrStdout(),
+				})
+			}
 			return streamNodeList(storageDir)
 		}
 
 		if inspectSearch != "" {
+			if interactive {
+				rows, err := collectNodeRows(storageDir, true, inspectSearch)
+				if err != nil {
+					return err
+				}
+				return inspectprog.Run(inspectprog.Config{
+					Title:      fmt.Sprintf("Search Results for '%s'", inspectSearch),
+					Rows:       rows,
+					StorageDir: storageDir,
+					In:         cmd.InOrStdin(),
+					Out:        cmd.OutOrStdout(),
+				})
+			}
 			return streamNodeSearch(storageDir)
 		}
 
 		if len(args) > 0 {
+			if interactive {
+				return inspectprog.RenderDetail(cmd.OutOrStdout(), storageDir, args[0])
+			}
 			return showNodeDetails(storageDir, args[0])
 		}
 
@@ -126,6 +159,46 @@ func streamNodeSearch(storageDir string) error {
 		return true
 	})
 	return err
+}
+
+// collectNodeRows streams nodes into table rows for the interactive inspect
+// program, applying the same filters and caps as the plain streamNodeList and
+// streamNodeSearch (30 for --list, 20 for --search).
+func collectNodeRows(storageDir string, search bool, query string) ([]inspectprog.NodeRow, error) {
+	limit := 30
+	lower := strings.ToLower(query)
+	if search {
+		limit = 20
+	}
+	rows := make([]inspectprog.NodeRow, 0, limit)
+	count := 0
+	err := akg.StreamNodes(storageDir, func(n *stage4.ResolvedNode) bool {
+		if search {
+			if !strings.Contains(strings.ToLower(n.ID), lower) && !strings.Contains(strings.ToLower(n.Name), lower) {
+				return true
+			}
+		} else {
+			if n.Kind != "FUNCTION" && n.Kind != "METHOD" {
+				return true
+			}
+			if inspectKind != "" && !strings.EqualFold(n.Kind, inspectKind) {
+				return true
+			}
+		}
+		rows = append(rows, inspectprog.NodeRow{
+			ID:   n.ID,
+			Kind: n.Kind,
+			Name: n.Name,
+			File: n.FileSpec.Path,
+			Line: n.FileSpec.LineStart,
+		})
+		count++
+		return count < limit
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan AKG: %w", err)
+	}
+	return rows, nil
 }
 
 func showNodeDetails(storageDir, targetID string) error {

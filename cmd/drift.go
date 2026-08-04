@@ -8,6 +8,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/config"
 	"github.com/Syamchand123/GlassMarble/internal/drift"
+	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -73,21 +74,7 @@ when the declared cycle budget is exceeded.`,
 			out, _ := json.MarshalIndent(rep, "", "  ")
 			fmt.Println(string(out))
 		} else {
-			fmt.Println("=== Architecture Drift Report ===")
-			fmt.Printf("  Layers declared:  %d\n", rep.LayersDefined)
-			fmt.Printf("  Forbidden deps:   %d\n", rep.ForbiddenEdges)
-			fmt.Printf("  Layer cycles:     %d (budget %d)\n", rep.CycleCount, rep.CycleBudget)
-			for _, v := range rep.Violations {
-				fmt.Printf("  VIOLATION [%s] %s -> %s (%s -> %s): %s\n",
-					v.Kind, v.SourceID, v.TargetID, v.SourceLayer, v.TargetLayer, v.Message)
-			}
-			if rep.ExceedsBudget() {
-				fmt.Printf("  RESULT: FAIL — %d cycles exceed the declared budget of %d\n", rep.CycleCount, rep.CycleBudget)
-			} else if rep.ForbiddenEdges > 0 {
-				fmt.Println("  RESULT: FAIL — forbidden dependencies found")
-			} else {
-				fmt.Println("  RESULT: PASS — no drift detected")
-			}
+			fmt.Println(views.RenderDrift(rep))
 		}
 
 		if rep.ExceedsBudget() || rep.ForbiddenEdges > 0 {

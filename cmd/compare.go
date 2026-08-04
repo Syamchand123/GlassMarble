@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
+	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
 
@@ -58,42 +59,7 @@ With --dir instead of two files, the base is the previously committed snapshot
 			return nil
 		}
 
-		fmt.Println("=== AKG Architecture Diff ===")
-		fmt.Printf("  Base: %s | Head: %s\n", shortHash(diff.BaseCommit), shortHash(diff.HeadCommit))
-		fmt.Printf("  Nodes added:   %d\n", len(diff.NodesAdded))
-		fmt.Printf("  Nodes removed: %d\n", len(diff.NodesRemoved))
-		fmt.Printf("  Edges added:   %d\n", len(diff.EdgesAdded))
-		fmt.Printf("  Edges removed: %d\n", len(diff.EdgesRemoved))
-		if len(diff.FilesChanged) > 0 {
-			fmt.Printf("  Files changed: %d\n", len(diff.FilesChanged))
-		}
-		if len(diff.NodesAdded) > 0 {
-			fmt.Println("\n  Added nodes:")
-			for _, n := range diff.NodesAdded {
-				fmt.Printf("    + %s [%s] (%s)\n", n.ID, n.Kind, n.File)
-			}
-		}
-		if len(diff.NodesRemoved) > 0 {
-			fmt.Println("\n  Removed nodes:")
-			for _, n := range diff.NodesRemoved {
-				fmt.Printf("    - %s [%s] (%s)\n", n.ID, n.Kind, n.File)
-			}
-		}
-		if len(diff.EdgesAdded) > 0 {
-			fmt.Println("\n  Added edges:")
-			for _, e := range diff.EdgesAdded {
-				fmt.Printf("    + [%s] %s -> %s\n", e.Type, e.SourceID, e.TargetID)
-			}
-		}
-		if len(diff.EdgesRemoved) > 0 {
-			fmt.Println("\n  Removed edges:")
-			for _, e := range diff.EdgesRemoved {
-				fmt.Printf("    - [%s] %s -> %s\n", e.Type, e.SourceID, e.TargetID)
-			}
-		}
-		if len(diff.NodesAdded) == 0 && len(diff.NodesRemoved) == 0 && len(diff.EdgesAdded) == 0 && len(diff.EdgesRemoved) == 0 {
-			fmt.Println("\n  No architectural changes between the two snapshots.")
-		}
+		fmt.Println(views.RenderCompare(diff))
 		return nil
 	},
 }
