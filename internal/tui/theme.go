@@ -48,15 +48,15 @@ var (
 		Foreground(ColorAccent)
 
 	StyleLabel = lipgloss.NewStyle().
-		Foreground(ColorTextSecondary)
+			Foreground(ColorTextSecondary)
 
 	StyleMuted = lipgloss.NewStyle().
-		Foreground(ColorTextMuted)
+			Foreground(ColorTextMuted)
 
 	StyleCode = lipgloss.NewStyle().
-		Foreground(ColorAccent).
-		Background(ColorSurfaceCard).
-		Padding(0, 1)
+			Foreground(ColorAccent).
+			Background(ColorSurfaceCard).
+			Padding(0, 1)
 )
 
 // === Semantic text styles ===
@@ -92,43 +92,43 @@ var (
 		Padding(0, 1)
 
 	BadgeWarn = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(ColorSurfaceDark).
-		Background(ColorWarning).
-		Padding(0, 1)
+			Bold(true).
+			Foreground(ColorSurfaceDark).
+			Background(ColorWarning).
+			Padding(0, 1)
 
 	BadgeError = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(ColorSurfaceDark).
-		Background(ColorError).
-		Padding(0, 1)
+			Bold(true).
+			Foreground(ColorSurfaceDark).
+			Background(ColorError).
+			Padding(0, 1)
 
 	BadgeInfo = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(ColorSurfaceDark).
-		Background(ColorInfo).
-		Padding(0, 1)
+			Bold(true).
+			Foreground(ColorSurfaceDark).
+			Background(ColorInfo).
+			Padding(0, 1)
 )
 
 // === Borders ===
 var (
 	StyleCard = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ColorBorder).
-		Padding(1, 2)
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorBorder).
+			Padding(1, 2)
 
 	StyleCardFocused = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ColorBorderFocus).
-		Padding(1, 2)
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(ColorBorderFocus).
+				Padding(1, 2)
 
 	StyleDivider = lipgloss.NewStyle().
-		Foreground(ColorBorder)
+			Foreground(ColorBorder)
 
 	StylePanel = lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), false, false, false, true).
-		BorderForeground(ColorPrimary).
-		PaddingLeft(1)
+			Border(lipgloss.NormalBorder(), false, false, false, true).
+			BorderForeground(ColorPrimary).
+			PaddingLeft(1)
 )
 
 // === Spinner frames (Charm-style dots) ===

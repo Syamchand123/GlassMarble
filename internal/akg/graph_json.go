@@ -14,28 +14,28 @@ import (
 // edge confidence, self-loops and duplicate parallel edges, and it is trivially
 // diffable / reviewable by humans and CI tooling.
 type GraphJSON struct {
-	SchemaVersion  int                     `json:"schema_version"`
-	CommitHash     string                  `json:"commit_hash"`
-	Version        uint64                  `json:"version"`
-	Entrypoints    []string                `json:"entrypoints,omitempty"`
-	FolderZones    map[string]string       `json:"folder_zones,omitempty"`
-	Nodes          []GraphNodeJSON         `json:"nodes"`
-	Edges          []GraphEdgeJSON         `json:"edges"`
-	Summary        *ArchitecturalSummary   `json:"summary,omitempty"`
-	Errors         []DanglingReferenceError `json:"errors,omitempty"`
-	Verified       bool                    `json:"verified,omitempty"`
-	VerificationMsg string                 `json:"verification_msg,omitempty"`
+	SchemaVersion   int                      `json:"schema_version"`
+	CommitHash      string                   `json:"commit_hash"`
+	Version         uint64                   `json:"version"`
+	Entrypoints     []string                 `json:"entrypoints,omitempty"`
+	FolderZones     map[string]string        `json:"folder_zones,omitempty"`
+	Nodes           []GraphNodeJSON          `json:"nodes"`
+	Edges           []GraphEdgeJSON          `json:"edges"`
+	Summary         *ArchitecturalSummary    `json:"summary,omitempty"`
+	Errors          []DanglingReferenceError `json:"errors,omitempty"`
+	Verified        bool                     `json:"verified,omitempty"`
+	VerificationMsg string                   `json:"verification_msg,omitempty"`
 }
 
 // GraphNodeJSON is the portable form of a ResolvedNode.
 type GraphNodeJSON struct {
-	ID              string            `json:"id"`
-	Kind            string            `json:"kind"`
-	Name            string            `json:"name"`
-	Primitive       string            `json:"primitive,omitempty"`
+	ID              string             `json:"id"`
+	Kind            string             `json:"kind"`
+	Name            string             `json:"name"`
+	Primitive       string             `json:"primitive,omitempty"`
 	PrimitiveScores map[string]float64 `json:"primitive_scores,omitempty"`
-	FileSpec        LocationMetaJSON  `json:"file_spec"`
-	Properties      map[string]string `json:"properties,omitempty"`
+	FileSpec        LocationMetaJSON   `json:"file_spec"`
+	Properties      map[string]string  `json:"properties,omitempty"`
 }
 
 // LocationMetaJSON mirrors stage4.LocationMeta.
@@ -64,12 +64,12 @@ func ExportGraphJSON(graph *CodePropertyGraph, w io.Writer) error {
 	}
 
 	doc := GraphJSON{
-		SchemaVersion:  graph.SchemaVersion,
-		CommitHash:     graph.CommitHash,
-		Version:        graph.Version,
-		Summary:        graph.Summary,
-		Errors:         graph.Errors,
-		Verified:       graph.Verified,
+		SchemaVersion:   graph.SchemaVersion,
+		CommitHash:      graph.CommitHash,
+		Version:         graph.Version,
+		Summary:         graph.Summary,
+		Errors:          graph.Errors,
+		Verified:        graph.Verified,
 		VerificationMsg: graph.VerificationMsg,
 	}
 

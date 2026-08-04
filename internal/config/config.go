@@ -9,13 +9,13 @@ import (
 )
 
 type Config struct {
-	RootDir       string `yaml:"root_dir"`
-	WorkerCount   int    `yaml:"worker_count"`
-	MaxFileBytes  int64  `yaml:"max_file_bytes"`
-	Debug         bool   `yaml:"debug"`
-	StorageDir    string `yaml:"storage_dir"`
-	OutputFormat  string `yaml:"output_format"` // "mermaid", "plantuml", "dot"
-	IncludeHidden bool   `yaml:"include_hidden"`
+	RootDir       string      `yaml:"root_dir"`
+	WorkerCount   int         `yaml:"worker_count"`
+	MaxFileBytes  int64       `yaml:"max_file_bytes"`
+	Debug         bool        `yaml:"debug"`
+	StorageDir    string      `yaml:"storage_dir"`
+	OutputFormat  string      `yaml:"output_format"` // "mermaid", "plantuml", "dot"
+	IncludeHidden bool        `yaml:"include_hidden"`
 	Drift         DriftConfig `yaml:"drift"`
 }
 

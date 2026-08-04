@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
-	"github.com/Syamchand123/GlassMarble/internal/config"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/config"
 )
 
 // ViolationKind discriminates drift findings.
@@ -26,23 +26,23 @@ const (
 
 // Violation is a single drift finding with enough context to be actionable.
 type Violation struct {
-	Kind       ViolationKind `json:"kind"`
-	SourceID   string        `json:"source_id"`
-	TargetID   string        `json:"target_id"`
-	SourceLayer string       `json:"source_layer,omitempty"`
-	TargetLayer string       `json:"target_layer,omitempty"`
-	EdgeType   string        `json:"edge_type,omitempty"`
-	Message    string        `json:"message"`
+	Kind        ViolationKind `json:"kind"`
+	SourceID    string        `json:"source_id"`
+	TargetID    string        `json:"target_id"`
+	SourceLayer string        `json:"source_layer,omitempty"`
+	TargetLayer string        `json:"target_layer,omitempty"`
+	EdgeType    string        `json:"edge_type,omitempty"`
+	Message     string        `json:"message"`
 }
 
 // Report is the complete drift assessment of one AKG snapshot.
 type Report struct {
-	CheckedAt        string      `json:"-"`
-	LayersDefined    int         `json:"layers_defined"`
-	Violations       []Violation `json:"violations"`
-	CycleCount       int         `json:"cycle_count"`
-	CycleBudget      int         `json:"cycle_budget"`
-	ForbiddenEdges   int         `json:"forbidden_dependencies"`
+	CheckedAt      string      `json:"-"`
+	LayersDefined  int         `json:"layers_defined"`
+	Violations     []Violation `json:"violations"`
+	CycleCount     int         `json:"cycle_count"`
+	CycleBudget    int         `json:"cycle_budget"`
+	ForbiddenEdges int         `json:"forbidden_dependencies"`
 }
 
 // LayerIndex assigns nodes to layers by path glob.

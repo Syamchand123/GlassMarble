@@ -14,7 +14,7 @@ func RenderExportSuccess(format, path string, nodeCount int, sizeBytes int64) st
 		formatBadge = tui.BadgeOK.Render("  Turtle (.ttl)  ")
 	}
 	rows := []string{
-		tui.StyleOK.Render("  ✓  Exported AKG snapshot ("+itoa(nodeCount)+" nodes)"),
+		tui.StyleOK.Render("  ✓  Exported AKG snapshot (" + itoa(nodeCount) + " nodes)"),
 		"",
 		tui.KV("Format", formatBadge),
 		tui.KV("File", tui.StyleCode.Render(path)),

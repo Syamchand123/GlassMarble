@@ -16,17 +16,17 @@ func buildExportTestGraph() *CodePropertyGraph {
 	g.SchemaVersion = CurrentSchemaVersion
 	g.Entrypoints = []string{"a::main"}
 	g.Nodes = g.Nodes.Set("a::main", &stage4.ResolvedNode{
-		ID:    "a::main",
-		Kind:  "FUNCTION",
-		Name:  "main",
-		Primitive: "COMPUTE",
-		FileSpec: stage4.LocationMeta{Path: "cmd/app/main.go", LineStart: 5, LineEnd: 9},
+		ID:         "a::main",
+		Kind:       "FUNCTION",
+		Name:       "main",
+		Primitive:  "COMPUTE",
+		FileSpec:   stage4.LocationMeta{Path: "cmd/app/main.go", LineStart: 5, LineEnd: 9},
 		Properties: map[string]string{"metric": "fan_in=3"},
 	})
 	g.Nodes = g.Nodes.Set("b::svc", &stage4.ResolvedNode{
-		ID:   "b::svc",
-		Kind: "MODULE",
-		Name: "svc",
+		ID:       "b::svc",
+		Kind:     "MODULE",
+		Name:     "svc",
 		FileSpec: stage4.LocationMeta{Path: "internal/svc/svc.go", LineStart: 1},
 	})
 	addEdgeToGraph(g, "a::main", "b::svc", stage4.EdgeCalls, 7)

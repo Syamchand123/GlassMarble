@@ -20,9 +20,9 @@ func RenderCompare(diff *akg.GraphDiff) string {
 		"",
 		"  " + tui.Divider("Summary", 56),
 		"  Nodes added:   " + itoa(len(diff.NodesAdded)) +
-			tui.StyleMuted.Render("  (+ ")+tui.StyleOK.Render(itoa(len(diff.NodesAdded)))+tui.StyleMuted.Render(" / - ")+tui.StyleError.Render(itoa(len(diff.NodesRemoved)))+tui.StyleMuted.Render(")"),
+			tui.StyleMuted.Render("  (+ ") + tui.StyleOK.Render(itoa(len(diff.NodesAdded))) + tui.StyleMuted.Render(" / - ") + tui.StyleError.Render(itoa(len(diff.NodesRemoved))) + tui.StyleMuted.Render(")"),
 		"  Edges added:   " + itoa(len(diff.EdgesAdded)) +
-			tui.StyleMuted.Render("  (+ ")+tui.StyleOK.Render(itoa(len(diff.EdgesAdded)))+tui.StyleMuted.Render(" / - ")+tui.StyleError.Render(itoa(len(diff.EdgesRemoved)))+tui.StyleMuted.Render(")"),
+			tui.StyleMuted.Render("  (+ ") + tui.StyleOK.Render(itoa(len(diff.EdgesAdded))) + tui.StyleMuted.Render(" / - ") + tui.StyleError.Render(itoa(len(diff.EdgesRemoved))) + tui.StyleMuted.Render(")"),
 		"  Files changed: " + itoa(len(diff.FilesChanged)),
 	}
 

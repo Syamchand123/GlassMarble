@@ -14,26 +14,26 @@ import (
 
 // statusJSON is the machine-readable representation of `gmb status --json`.
 type statusJSON struct {
-	Initialized    bool      `json:"initialized"`
-	StorageDir     string    `json:"storage_dir,omitempty"`
-	SchemaVersion  int       `json:"schema_version,omitempty"`
-	GraphVersion   uint64    `json:"graph_version,omitempty"`
-	CommitHash     string    `json:"commit_hash,omitempty"`
-	LastAnalysis   string    `json:"last_analysis,omitempty"`
-	NodeCount      int       `json:"nodes,omitempty"`
-	EdgeCount      int       `json:"edges,omitempty"`
-	IndexedFiles   int       `json:"indexed_files,omitempty"`
-	Entrypoints    int       `json:"entrypoints,omitempty"`
-	VirtualCount   int       `json:"virtual_nodes,omitempty"`
-	VirtualShare   float64   `json:"virtual_share_pct,omitempty"`
-	Dangling       int       `json:"dangling_references,omitempty"`
-	TTLBytes       int64     `json:"ttl_bytes,omitempty"`
-	WALBytes       int64     `json:"wal_bytes,omitempty"`
-	Verified       bool      `json:"verified,omitempty"`
-	FreshnessOK    bool      `json:"freshness_ok,omitempty"`
-	UnpersistedTx  int       `json:"unpersisted_transactions,omitempty"`
-	Error          string    `json:"error,omitempty"`
-	GeneratedAt    time.Time `json:"generated_at"`
+	Initialized   bool      `json:"initialized"`
+	StorageDir    string    `json:"storage_dir,omitempty"`
+	SchemaVersion int       `json:"schema_version,omitempty"`
+	GraphVersion  uint64    `json:"graph_version,omitempty"`
+	CommitHash    string    `json:"commit_hash,omitempty"`
+	LastAnalysis  string    `json:"last_analysis,omitempty"`
+	NodeCount     int       `json:"nodes,omitempty"`
+	EdgeCount     int       `json:"edges,omitempty"`
+	IndexedFiles  int       `json:"indexed_files,omitempty"`
+	Entrypoints   int       `json:"entrypoints,omitempty"`
+	VirtualCount  int       `json:"virtual_nodes,omitempty"`
+	VirtualShare  float64   `json:"virtual_share_pct,omitempty"`
+	Dangling      int       `json:"dangling_references,omitempty"`
+	TTLBytes      int64     `json:"ttl_bytes,omitempty"`
+	WALBytes      int64     `json:"wal_bytes,omitempty"`
+	Verified      bool      `json:"verified,omitempty"`
+	FreshnessOK   bool      `json:"freshness_ok,omitempty"`
+	UnpersistedTx int       `json:"unpersisted_transactions,omitempty"`
+	Error         string    `json:"error,omitempty"`
+	GeneratedAt   time.Time `json:"generated_at"`
 }
 
 var statusCmd = &cobra.Command{

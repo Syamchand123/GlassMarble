@@ -195,7 +195,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.analyzing = false
 		switch {
 		case msg.err != nil:
-			m.addLog(tui.StyleMuted.Render(ts()) + " " + tui.StyleError.Render("✗ Analysis failed: " + msg.err.Error()))
+			m.addLog(tui.StyleMuted.Render(ts()) + " " + tui.StyleError.Render("✗ Analysis failed: "+msg.err.Error()))
 		case msg.initial:
 			m.addLog(tui.StyleMuted.Render(ts()) + " " + tui.StyleOK.Render("✓ Initial analysis complete"))
 			m.addLog(tui.StyleMuted.Render(ts()) + " " + tui.StyleMuted.Render("Watching for changes..."))
@@ -204,7 +204,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case fsErrMsg:
-		m.addLog(tui.StyleMuted.Render(ts()) + " " + tui.StyleWarningText.Render("watcher error: " + msg.err.Error()))
+		m.addLog(tui.StyleMuted.Render(ts()) + " " + tui.StyleWarningText.Render("watcher error: "+msg.err.Error()))
 		return m, nil
 	}
 	var cmd tea.Cmd

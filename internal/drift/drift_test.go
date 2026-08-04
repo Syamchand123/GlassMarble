@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
-	"github.com/Syamchand123/GlassMarble/internal/config"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/config"
 )
 
 func testGraph() *akg.CodePropertyGraph {
@@ -130,13 +130,13 @@ func TestAnalyzeNilGraph(t *testing.T) {
 func TestLayerIndexAssign(t *testing.T) {
 	li := &layerIndex{layers: defaultConfig().Layers}
 	cases := map[string]string{
-		"cmd/web/handler.go":     "web",
-		"cmd/web/sub/page.go":    "web",
-		"internal/svc/svc.go":    "svc",
-		"internal/db/db.go":      "db",
-		"internal/repo/repo.go":  "",
-		"cmd/cli/main.go":        "",
-		"not/a/match.go":         "",
+		"cmd/web/handler.go":    "web",
+		"cmd/web/sub/page.go":   "web",
+		"internal/svc/svc.go":   "svc",
+		"internal/db/db.go":     "db",
+		"internal/repo/repo.go": "",
+		"cmd/cli/main.go":       "",
+		"not/a/match.go":        "",
 	}
 	for in, want := range cases {
 		if got := li.Assign(in); got != want {

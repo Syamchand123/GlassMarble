@@ -20,9 +20,9 @@ type dependencyEdge struct {
 
 // dependencyNodeJSON captures the report for one matched target node.
 type dependencyNodeJSON struct {
-	ID       string            `json:"id"`
-	Outbound []dependencyEdge  `json:"outbound"`
-	Inbound  []dependencyEdge  `json:"inbound"`
+	ID       string           `json:"id"`
+	Outbound []dependencyEdge `json:"outbound"`
+	Inbound  []dependencyEdge `json:"inbound"`
 }
 
 var dependencyCmd = &cobra.Command{
@@ -54,9 +54,9 @@ var dependencyCmd = &cobra.Command{
 
 		if target == "" {
 			summary := dependencySummaryJSON{
-				TotalNodes:            snapshot.Nodes.Len(),
-				OutboundEdgeMappings:  snapshot.OutboundEdges.Len(),
-				InboundEdgeMappings:   snapshot.InboundEdges.Len(),
+				TotalNodes:           snapshot.Nodes.Len(),
+				OutboundEdgeMappings: snapshot.OutboundEdges.Len(),
+				InboundEdgeMappings:  snapshot.InboundEdges.Len(),
 			}
 			var topNodes []topDependencyNode
 			var done bool
@@ -149,10 +149,10 @@ var dependencyCmd = &cobra.Command{
 
 // dependencySummaryJSON is the machine-readable repository summary.
 type dependencySummaryJSON struct {
-	TotalNodes           int                  `json:"total_nodes"`
-	OutboundEdgeMappings int                  `json:"outbound_edge_mappings"`
-	InboundEdgeMappings  int                  `json:"inbound_edge_mappings"`
-	TopDependencyNodes   []topDependencyNode  `json:"top_dependency_nodes"`
+	TotalNodes           int                 `json:"total_nodes"`
+	OutboundEdgeMappings int                 `json:"outbound_edge_mappings"`
+	InboundEdgeMappings  int                 `json:"inbound_edge_mappings"`
+	TopDependencyNodes   []topDependencyNode `json:"top_dependency_nodes"`
 }
 
 type topDependencyNode struct {

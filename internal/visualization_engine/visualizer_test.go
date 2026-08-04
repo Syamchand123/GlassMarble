@@ -26,8 +26,8 @@ func TestNewEngineCoordinator(t *testing.T) {
 
 func TestSubgraphCacheGetSet(t *testing.T) {
 	cache := &SubgraphCache{
-		entries: make(map[string]*cacheEntry),
-		lruList: list.New(),
+		entries:  make(map[string]*cacheEntry),
+		lruList:  list.New(),
 		maxBytes: subgraphCacheMaxBytes,
 	}
 	g := &types.NativeGraph{
@@ -48,8 +48,8 @@ func TestSubgraphCacheGetSet(t *testing.T) {
 
 func TestSubgraphCacheEviction(t *testing.T) {
 	cache := &SubgraphCache{
-		entries: make(map[string]*cacheEntry),
-		lruList: list.New(),
+		entries:  make(map[string]*cacheEntry),
+		lruList:  list.New(),
 		maxBytes: 1024,
 	}
 	now := time.Now()
@@ -66,8 +66,8 @@ func TestSubgraphCacheEviction(t *testing.T) {
 
 func TestSubgraphCacheExpiredMtime(t *testing.T) {
 	cache := &SubgraphCache{
-		entries: make(map[string]*cacheEntry),
-		lruList: list.New(),
+		entries:  make(map[string]*cacheEntry),
+		lruList:  list.New(),
 		maxBytes: subgraphCacheMaxBytes,
 	}
 	oldTime := time.Now().Add(-1 * time.Hour)
@@ -81,8 +81,8 @@ func TestSubgraphCacheExpiredMtime(t *testing.T) {
 
 func TestSubgraphCacheLRUOrdering(t *testing.T) {
 	cache := &SubgraphCache{
-		entries: make(map[string]*cacheEntry),
-		lruList: list.New(),
+		entries:  make(map[string]*cacheEntry),
+		lruList:  list.New(),
 		maxBytes: 1536,
 	}
 	now := time.Now()
@@ -101,8 +101,8 @@ func TestSubgraphCacheLRUOrdering(t *testing.T) {
 
 func TestSubgraphCacheEvict(t *testing.T) {
 	cache := &SubgraphCache{
-		entries: make(map[string]*cacheEntry),
-		lruList: list.New(),
+		entries:  make(map[string]*cacheEntry),
+		lruList:  list.New(),
 		maxBytes: subgraphCacheMaxBytes,
 	}
 	now := time.Now()
@@ -147,8 +147,8 @@ func TestNewEngineCoordinatorNilPath(t *testing.T) {
 
 func TestSubgraphCacheTTLExpiryOnGet(t *testing.T) {
 	cache := &SubgraphCache{
-		entries: make(map[string]*cacheEntry),
-		lruList: list.New(),
+		entries:  make(map[string]*cacheEntry),
+		lruList:  list.New(),
 		maxBytes: subgraphCacheMaxBytes,
 	}
 	now := time.Now()
@@ -168,8 +168,8 @@ func TestSubgraphCacheTTLExpiryOnGet(t *testing.T) {
 
 func TestSubgraphCacheGetNotFound(t *testing.T) {
 	cache := &SubgraphCache{
-		entries: make(map[string]*cacheEntry),
-		lruList: list.New(),
+		entries:  make(map[string]*cacheEntry),
+		lruList:  list.New(),
 		maxBytes: subgraphCacheMaxBytes,
 	}
 	got := cache.Get("nonexistent", time.Now())
@@ -180,8 +180,8 @@ func TestSubgraphCacheGetNotFound(t *testing.T) {
 
 func TestSubgraphCacheEvictCount(t *testing.T) {
 	cache := &SubgraphCache{
-		entries: make(map[string]*cacheEntry),
-		lruList: list.New(),
+		entries:  make(map[string]*cacheEntry),
+		lruList:  list.New(),
 		maxBytes: subgraphCacheMaxBytes,
 	}
 	now := time.Now()
@@ -199,8 +199,8 @@ func TestSubgraphCacheEvictCount(t *testing.T) {
 
 func TestSubgraphCacheEvictAll(t *testing.T) {
 	cache := &SubgraphCache{
-		entries: make(map[string]*cacheEntry),
-		lruList: list.New(),
+		entries:  make(map[string]*cacheEntry),
+		lruList:  list.New(),
 		maxBytes: subgraphCacheMaxBytes,
 	}
 	now := time.Now()
@@ -214,8 +214,8 @@ func TestSubgraphCacheEvictAll(t *testing.T) {
 
 func TestSubgraphCacheConcurrentAccess(t *testing.T) {
 	cache := &SubgraphCache{
-		entries: make(map[string]*cacheEntry),
-		lruList: list.New(),
+		entries:  make(map[string]*cacheEntry),
+		lruList:  list.New(),
 		maxBytes: subgraphCacheMaxBytes,
 	}
 	now := time.Now()
@@ -417,8 +417,8 @@ func TestProjectDiagramFromGraphDoesNotMutateSource(t *testing.T) {
 
 func TestSubgraphCacheSetOverwrite(t *testing.T) {
 	cache := &SubgraphCache{
-		entries: make(map[string]*cacheEntry),
-		lruList: list.New(),
+		entries:  make(map[string]*cacheEntry),
+		lruList:  list.New(),
 		maxBytes: subgraphCacheMaxBytes,
 	}
 	now := time.Now()
@@ -607,8 +607,8 @@ func TestSubgraphCacheByteBudget(t *testing.T) {
 
 func TestSubgraphCacheConcurrentGetSet(t *testing.T) {
 	cache := &SubgraphCache{
-		entries: make(map[string]*cacheEntry),
-		lruList: list.New(),
+		entries:  make(map[string]*cacheEntry),
+		lruList:  list.New(),
 		maxBytes: subgraphCacheMaxBytes,
 	}
 	now := time.Now()

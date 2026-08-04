@@ -14,7 +14,7 @@ func RenderHooksInstalled(hookPath, binary, targetDir string) string {
 		tui.KV("Trigger", tui.StyleMuted.Render("After every git commit")),
 		tui.KV("Action", tui.StyleCode.Render(binary+" analyze --dir "+targetDir)),
 		"",
-		tui.StyleMuted.Render("  GlassMarble post-commit hook installed successfully at "+hookPath),
+		tui.StyleMuted.Render("  GlassMarble post-commit hook installed successfully at " + hookPath),
 		tui.StyleMuted.Render("  GlassMarble will now analyze your repo automatically on every commit."),
 	}
 	return tui.StyleCard.Render("  " + joinLines(rows))

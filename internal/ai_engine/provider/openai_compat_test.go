@@ -180,9 +180,9 @@ func TestOpenAICompatMaxOutputTokens(t *testing.T) {
 
 	p := NewOpenAICompatProvider("", srv.URL, 30*time.Second)
 	if _, err := p.Complete(context.Background(), Request{
-		Model:            "m",
-		MaxOutputTokens:  256,
-		Messages:         []Message{{Role: RoleUser, Content: "hi"}},
+		Model:           "m",
+		MaxOutputTokens: 256,
+		Messages:        []Message{{Role: RoleUser, Content: "hi"}},
 	}); err != nil {
 		t.Fatalf("Complete() failed: %v", err)
 	}

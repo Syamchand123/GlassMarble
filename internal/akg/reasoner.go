@@ -618,9 +618,3 @@ func isReasonerRelevantKind(kind string) bool {
 	}
 	return false
 }
-
-
-
-
-
-

@@ -167,15 +167,15 @@ func TestLinkTypesExtendsAndComposes(t *testing.T) {
 		},
 		Children: []*stage2.GASTNode{
 			{
-				Type:     stage2.GASTField,
-				Name:     "svc",
-				DataType: "Base",
+				Type:      stage2.GASTField,
+				Name:      "svc",
+				DataType:  "Base",
 				StartLine: 8,
 			},
 			{
-				Type:     stage2.GASTField,
-				Name:     "items",
-				DataType: "List<Base>",
+				Type:      stage2.GASTField,
+				Name:      "items",
+				DataType:  "List<Base>",
 				StartLine: 9,
 			},
 		},
@@ -183,7 +183,7 @@ func TestLinkTypesExtendsAndComposes(t *testing.T) {
 	stage3Out := &stage3.Stage3Output{
 		CommitHash: "t",
 		GlobalDefinitionIndex: map[string][]*stage2.GASTNode{
-			"a.go::Base": {base},
+			"a.go::Base":  {base},
 			"a.go::Child": {child},
 		},
 		RootNode: &stage3.DirectoryNode{
@@ -296,16 +296,16 @@ func TestResolveCallTargetUnresolved(t *testing.T) {
 func TestLinkCallGraphBasic(t *testing.T) {
 	// caller: main() calls Process() on a local receiver
 	callSite := stage3.LinkedCallSite{
-		SourceFilePath: "svc.go",
+		SourceFilePath:   "svc.go",
 		SourceFileNodeID: "svc.go::main",
-		ReceiverName:   "Handler",
-		MethodName:     "Process",
-		LineNumber:     12,
+		ReceiverName:     "Handler",
+		MethodName:       "Process",
+		LineNumber:       12,
 	}
 	stage3Out := &stage3.Stage3Output{
-		CommitHash: "t",
+		CommitHash:      "t",
 		GlobalCallQueue: []stage3.LinkedCallSite{callSite},
-		WorkspaceCtx: stage3.NewWorkspaceContext(),
+		WorkspaceCtx:    stage3.NewWorkspaceContext(),
 	}
 
 	cpg := NewStage4Output("t")
@@ -441,20 +441,20 @@ func TestLinkConcurrencyAndMessagePassing(t *testing.T) {
 		CommitHash: "t",
 		GlobalCallQueue: []stage3.LinkedCallSite{
 			{
-				SourceFilePath: "async.go",
+				SourceFilePath:   "async.go",
 				SourceFileNodeID: "async.go::run",
 				SourceFolderPath: "async.go",
-				ReceiverName:   "worker",
-				MethodName:     "Process",
-				LineNumber:     3,
-				Primitives:     []stage2.BehavioralPrimitive{stage2.PrimConcurrency},
+				ReceiverName:     "worker",
+				MethodName:       "Process",
+				LineNumber:       3,
+				Primitives:       []stage2.BehavioralPrimitive{stage2.PrimConcurrency},
 			},
 			{
-				SourceFilePath: "mq.go",
+				SourceFilePath:   "mq.go",
 				SourceFileNodeID: "mq.go::pump",
-				ReceiverName:   "events",
-				MethodName:     "sendMessage",
-				LineNumber:     9,
+				ReceiverName:     "events",
+				MethodName:       "sendMessage",
+				LineNumber:       9,
 			},
 		},
 		WorkspaceCtx: stage3.NewWorkspaceContext(),
@@ -612,10 +612,10 @@ func TestLinkCrossLanguageRPC(t *testing.T) {
 		},
 		GlobalCallQueue: []stage3.LinkedCallSite{
 			{
-				SourceFilePath: "client.js",
+				SourceFilePath:   "client.js",
 				SourceFileNodeID: "client.js::load",
-				MethodName:     "fetch",
-				LineNumber:     7,
+				MethodName:       "fetch",
+				LineNumber:       7,
 			},
 		},
 	}
@@ -815,7 +815,7 @@ func TestMeasureQuality(t *testing.T) {
 	cpg := NewStage4Output("t")
 	cpg.GraphNodes["real.go::fn"] = &ResolvedNode{ID: "real.go::fn", Kind: "FUNCTION", Name: "fn"}
 	cpg.GraphNodes["sink:SQL"] = &ResolvedNode{ID: "sink:SQL", Kind: "VIRTUAL_SECURITY_SINK", Name: "SQL"}
-	cpg.AddEdge("real.go::fn", "sink:SQL", EdgeSecuritySink, 1) // resolved
+	cpg.AddEdge("real.go::fn", "sink:SQL", EdgeSecuritySink, 1)   // resolved
 	cpg.AddEdge("real.go::fn", "missing.go::ghost", EdgeCalls, 2) // dangling
 
 	q := MeasureQuality(cpg)
