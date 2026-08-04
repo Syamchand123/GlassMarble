@@ -177,7 +177,11 @@ func runAnalysis(opts runAnalysisOptions) error {
 		// unchanged files would all dangle (AUDIT Issue 1 Phase 1C-9: the
 		// base-graph merge is supplied by the AKG persistence layer).
 		hasBaseState := false
-		if _, err := os.Stat(filepath.Join(absDir, ".glassmarble", "akg_state.ttl")); err == nil {
+		// A delta build only makes sense against a non-empty persisted base
+		// graph. `gmb init` creates an empty akg_state.ttl, so existence alone
+		// must not gate the delta path — otherwise the first analysis after
+		// init would ingest only the changed files (AUDIT: partial graph bug).
+		if st, err := os.Stat(filepath.Join(absDir, ".glassmarble", "akg_state.ttl")); err == nil && st.Size() > 0 {
 			hasBaseState = true
 		}
 		diff, diffErr := stage1.CollectGitDiff(absDir, commitHash)
@@ -444,7 +448,7 @@ func humanBytes(b int64) string {
 
 func init() {
 	analyzeCmd.Flags().String("dir", ".", "Target repository directory to analyze")
-	analyzeCmd.Flags().String("commit", "HEAD", "Git commit hash to tag the analysis")
+	analyzeCmd.Flags().String("commit", "", "Git commit hash to tag the analysis. Empty (default) diffs the working tree against HEAD (incremental delta); a hash diffs that commit against its parent")
 	analyzeCmd.Flags().Bool("full", false, "Force a full clean scan of every file at full linker detail (default: incremental delta)")
 	analyzeCmd.Flags().Int("workers", 0, "Number of parallel workers (default: CPUs)")
 	analyzeCmd.Flags().String("link-level", "architecture", "Linker detail level: architecture (module/type/call/dep edges), standard (aggregate CFG), full (per-branch CFG+DFG)")

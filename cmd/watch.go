@@ -253,7 +253,7 @@ func workingTreeFingerprint(absDir, commitHash string) string {
 
 func init() {
 	watchCmd.Flags().String("dir", ".", "Target repository directory")
-	watchCmd.Flags().String("commit", "HEAD", "Git commit hash to tag the analysis")
+	watchCmd.Flags().String("commit", "", "Git commit hash to tag the analysis. Empty (default) diffs the working tree against HEAD (incremental delta)")
 	watchCmd.Flags().Int("workers", 0, "Number of parallel workers (default: CPUs)")
 	watchCmd.Flags().String("link-level", "architecture", "Linker detail level: architecture, standard, full")
 	watchCmd.Flags().String("macro-inference", "all", "Macro inference mode: disabled, structural, all")

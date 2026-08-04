@@ -10,7 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="docs/architecture.md">Architecture Manual</a> ·
+<a href="docs/architecture.md">Architecture Manual</a> ·
+  <a href="docs/commands_master_reference.md">CLI Master Reference</a> ·
   <a href="docs/ai.md">AI Architect Guide</a> ·
   <a href="#quick-start">Quick Start</a> ·
   <a href="#cli-reference">CLI Reference</a> ·
@@ -178,7 +179,7 @@ gmb analyze [--dir <path>] [--full] [--workers <n>] [--commit <hash>] [--verbose
 | `--dir` | `.` | Repository root to analyze |
 | `--full` | `false` | Force full re-scan of every file. Default is incremental (git diff). |
 | `--workers` | auto | Number of parallel parser worker goroutines |
-| `--commit` | HEAD | Git commit hash to associate with this analysis run |
+| `--commit` | (working tree) | Git commit hash to associate with this analysis run. Empty (default) diffs the working tree against HEAD; a hash diffs that commit against its parent |
 | `--verbose` | `false` | Print stage-by-stage progress |
 
 **Incremental mode**: On git repositories with an existing `akg_state.ttl`, GlassMarble runs `git diff HEAD` and only re-parses changed files, merging the delta into the persisted graph. On the first run (no TTL) or when `--full` is passed, every file is scanned.
