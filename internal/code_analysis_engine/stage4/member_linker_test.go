@@ -220,3 +220,20 @@ func TestMemberLinkerReturnsAndParams(t *testing.T) {
 	assert.Equal(t, "PARAM", paramNode.Kind)
 	assert.Equal(t, "name", paramNode.Name)
 }
+
+// TestMemberLinkerT2NameMatchFallback verifies name-match fallback for T2 languages (W6-03 / §10.0).
+func TestMemberLinkerT2NameMatchFallback(t *testing.T) {
+	cpg := NewStage4Output("HEAD")
+	cpg.GraphNodes["src/handler.py::Processor"] = &ResolvedNode{
+		ID:   "src/handler.py::Processor",
+		Kind: "CLASS",
+		Name: "Processor",
+	}
+
+	globalIndex := map[string][]*stage2.GASTNode{
+		"Processor": {{Name: "Processor", Properties: map[string]string{"file_path": "src/handler.py"}}},
+	}
+
+	targetFQN := resolveTypeToFQN("Processor", "src/client.py", globalIndex, cpg)
+	assert.Equal(t, "src/handler.py::Processor", targetFQN, "T2 name-match fallback must resolve Processor to its FQN")
+}

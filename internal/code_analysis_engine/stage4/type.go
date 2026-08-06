@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage3"
+	"github.com/Syamchand123/GlassMarble/internal/product"
 	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 )
 
@@ -443,9 +444,9 @@ func (s *Stage4Output) registerEdge(edge ResolvedEdge) bool {
 func ensureVirtualNode(id, kind, name string, cpg *Stage4Output) {
 	if _, exists := cpg.GraphNodes[id]; !exists {
 		cpg.GraphNodes[id] = &ResolvedNode{
-			ID:   id,
-			Kind: kind,
-			Name: name,
+			ID:   product.InternString(id),
+			Kind: product.InternString(kind),
+			Name: product.InternString(name),
 		}
 	}
 }

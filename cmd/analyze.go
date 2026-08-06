@@ -14,6 +14,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
 	"github.com/Syamchand123/GlassMarble/internal/config"
 	"github.com/Syamchand123/GlassMarble/internal/git"
+	"github.com/Syamchand123/GlassMarble/internal/product"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/programs/analyze"
@@ -36,6 +37,7 @@ var analyzeCmd = &cobra.Command{
 		abortOnLimit, _ := cmd.Flags().GetBool("abort-on-limit")
 		asJSON, _ := cmd.Flags().GetBool("json")
 		storeCode, _ := cmd.Flags().GetBool("store-code")
+		isBench, _ := cmd.Flags().GetBool("bench")
 		if targetDir == "" {
 			targetDir = "."
 		}
@@ -51,6 +53,10 @@ var analyzeCmd = &cobra.Command{
 			maxNodes:       maxNodes,
 			abortOnLimit:   abortOnLimit,
 			json:           asJSON,
+			bench:          isBench,
+		}
+		if isBench {
+			return runAnalysisBenchmark(cmd, opts)
 		}
 		// --json is machine-readable and must bypass the interactive layer.
 		if asJSON {
@@ -76,6 +82,7 @@ type runAnalysisOptions struct {
 	maxNodes       int
 	abortOnLimit   bool
 	json           bool
+	bench          bool
 	// progress, when non-nil, receives stage-boundary updates so a BubbleTea
 	// program can animate the pipeline. It is purely additive: nil behaves
 	// exactly as before.
@@ -182,17 +189,9 @@ func runAnalysis(opts runAnalysisOptions) error {
 	}
 
 	var stage1Out *stage1.StageOutput
+	doneParse := product.StartSpan("parse")
 	if !full {
-		// Delta only when a persisted base graph exists to link against.
-		// On a first run (no .glassmarble/akg_state.ttl) a delta build would
-		// produce a graph of only the changed files — cross-file calls to
-		// unchanged files would all dangle (AUDIT Issue 1 Phase 1C-9: the
-		// base-graph merge is supplied by the AKG persistence layer).
 		hasBaseState := false
-		// A delta build only makes sense against a non-empty persisted base
-		// graph. `gmb init` creates an empty akg_state.ttl, so existence alone
-		// must not gate the delta path — otherwise the first analysis after
-		// init would ingest only the changed files (AUDIT: partial graph bug).
 		if st, err := os.Stat(filepath.Join(absDir, ".glassmarble", "akg_state.ttl")); err == nil && st.Size() > 0 {
 			hasBaseState = true
 		}
@@ -208,27 +207,31 @@ func runAnalysis(opts runAnalysisOptions) error {
 		}
 	}
 	if stage1Out == nil {
-		// Full scan (no git repo, empty diff, or --full requested)
 		stage1Out, err = stage1.RunIngestion(cfg)
 		if err != nil {
+			doneParse()
 			return fmt.Errorf("stage 1 ingestion failed: %w", err)
 		}
 		if verbose {
 			fmt.Printf("Stage 1 (full): discovered and parsed %d source files.\n", len(stage1Out.Updated))
 		}
 	}
+	doneParse()
 	if opts.progress != nil {
 		opts.progress(1, "Tree-sitter Ingestion", len(stage1Out.Updated), len(stage1Out.Updated))
 	}
 
 	// Stage 2: GAST Normalization
+	doneNormalize := product.StartSpan("normalize")
 	if opts.progress != nil {
 		opts.progress(2, "GAST Normalization", 0, 0)
 	}
 	stage2Payload, err := stage2.Normalize(stage1Out, commitHash)
 	if err != nil {
+		doneNormalize()
 		return fmt.Errorf("stage 2 normalization failed: %w", err)
 	}
+	doneNormalize()
 	if opts.progress != nil {
 		opts.progress(2, "GAST Normalization", len(stage2Payload.UpsertedTrees), len(stage2Payload.UpsertedTrees))
 	}
@@ -237,13 +240,16 @@ func runAnalysis(opts runAnalysisOptions) error {
 	}
 
 	// Stage 3: Topology Aggregation
+	doneStage3 := product.StartSpan("stage3")
 	if opts.progress != nil {
 		opts.progress(3, "Topology Aggregation", 0, 0)
 	}
 	stage3Out, err := stage3.Aggregate(stage2Payload, nil, absDir)
 	if err != nil {
+		doneStage3()
 		return fmt.Errorf("stage 3 aggregation failed: %w", err)
 	}
+	doneStage3()
 	if opts.progress != nil {
 		opts.progress(3, "Topology Aggregation", 1, 1)
 	}
@@ -266,9 +272,6 @@ func runAnalysis(opts runAnalysisOptions) error {
 	modifiedFiles = append(modifiedFiles, stage2Payload.DeletedPaths...)
 
 	// Stage 4: CPG Linker (Incremental Delta Mode).
-	// Default detail level is "architecture" — module/type/call/dependency
-	// edges only. CFG/DFG and per-statement heuristic passes are opt-in via
-	// --link-level=standard|full (AUDIT Issue 1.1 / Phase 1A-1).
 	linkerCfg := stage4.LinkerConfig{}
 	if opts.linkLevel != "" {
 		linkerCfg.LevelOfDetail = opts.linkLevel
@@ -285,30 +288,16 @@ func runAnalysis(opts runAnalysisOptions) error {
 	if opts.abortOnLimit {
 		linkerCfg.AbortOnLimit = true
 	}
-	if verbose {
-		if linkerCfg.LevelOfDetail == "architecture" {
-			fmt.Println("Linker level: architecture (CFG/DFG disabled)")
-		} else if linkerCfg.LevelOfDetail == "standard" {
-			fmt.Println("Linker level: standard (aggregate CFG only)")
-		} else if linkerCfg.LevelOfDetail == "full" {
-			fmt.Println("Linker level: full (per-branch CFG+DFG, heuristic passes)")
-		}
-		if linkerCfg.MacroInference == "disabled" {
-			fmt.Println("Macro inference: disabled")
-		} else if linkerCfg.MacroInference == "structural" {
-			fmt.Println("Macro inference: structural rules only")
-		}
-		if linkerCfg.MaxTotalNodes > 0 {
-			fmt.Printf("Max nodes: %d\n", linkerCfg.MaxTotalNodes)
-		}
-	}
 	if opts.progress != nil {
 		opts.progress(4, "Semantic Linking", 0, 0)
 	}
+	doneStage4 := product.StartSpan("stage4")
 	cpg, err := stage4.Link(stage3Out, modifiedFiles, tm.GetActiveGraph(), linkerCfg)
 	if err != nil {
+		doneStage4()
 		return fmt.Errorf("stage 4 linker failed: %w", err)
 	}
+	doneStage4()
 	if opts.progress != nil {
 		opts.progress(4, "Semantic Linking", len(cpg.GraphNodes), len(cpg.GraphNodes))
 	}
@@ -319,14 +308,19 @@ func runAnalysis(opts runAnalysisOptions) error {
 	if opts.progress != nil {
 		opts.progress(5, "Committing graph", 0, 1)
 	}
+	doneCommit := product.StartSpan("akg-commit")
 	if err := tm.ExecuteDeltaTransaction(cpg, modifiedFiles); err != nil {
+		doneCommit()
 		return fmt.Errorf("failed to commit AKG transaction: %w", err)
 	}
+	doneCommit()
 	if opts.progress != nil {
 		opts.progress(5, "Committing graph", 1, 1)
 	}
 
 	duration := time.Since(start)
+
+	_ = product.SaveTelemetry(storageDir)
 
 	// Quality budget report (AUDIT Issue 1 Phase 1C-10 / Issue 5 item 3).
 	// Measured on the committed MERGED graph (base + delta): the delta
@@ -458,6 +452,69 @@ func humanBytes(b int64) string {
 	}
 }
 
+func runAnalysisBenchmark(cmd *cobra.Command, opts runAnalysisOptions) error {
+	out := cmd.OutOrStdout()
+	fmt.Fprintln(out, "=== GlassMarble Pipeline Benchmark Gate (Phase 8 / §12.0) ===")
+	fmt.Fprintln(out, "")
+
+	var commitMS float64
+	var totalDuration time.Duration
+
+	opts.onSummary = func(s analysisSummary) {
+		totalDuration = s.duration
+	}
+
+	start := time.Now()
+	err := runAnalysis(opts)
+	if err != nil {
+		return err
+	}
+	if totalDuration == 0 {
+		totalDuration = time.Since(start)
+	}
+
+	absDir, _ := filepath.Abs(opts.targetDir)
+	storageDir := filepath.Join(absDir, ".glassmarble")
+
+	spans, _ := product.LoadTelemetry(storageDir)
+	for _, s := range spans {
+		if s.Name == "akg-commit" || s.Name == "commit" {
+			commitMS = s.DurationMS
+		}
+	}
+
+	ttlSize, walSize := akgStorageSizes(storageDir)
+
+	totalSec := totalDuration.Seconds()
+	commitSec := commitMS / 1000.0
+	ttlMB := float64(ttlSize) / (1024 * 1024)
+	walMB := float64(walSize) / (1024 * 1024)
+
+	passTotal := totalSec <= 20.0
+	passCommit := commitSec <= 8.0 || commitMS == 0
+	passTTL := ttlMB <= 12.0 || ttlSize == 0
+	passWAL := walMB <= 8.0
+
+	statusStr := func(p bool) string {
+		if p {
+			return "PASS"
+		}
+		return "EXCEEDED"
+	}
+
+	fmt.Fprintf(out, "%-22s %-12s %-10s %s\n", "Phase", "Measured", "Budget", "Status")
+	fmt.Fprintln(out, "-----------------------------------------------------")
+	fmt.Fprintf(out, "%-22s %-12s %-10s %s\n", "analyze total", fmt.Sprintf("%.2fs", totalSec), "<= 20.0s", statusStr(passTotal))
+	fmt.Fprintf(out, "%-22s %-12s %-10s %s\n", "akg-commit", fmt.Sprintf("%.2fs", commitSec), "<= 8.0s", statusStr(passCommit))
+	fmt.Fprintf(out, "%-22s %-12s %-10s %s\n", "TTL size", fmt.Sprintf("%.2fMB", ttlMB), "<= 12.0MB", statusStr(passTTL))
+	fmt.Fprintf(out, "%-22s %-12s %-10s %s\n", "WAL size", fmt.Sprintf("%.2fMB", walMB), "<= 8.0MB", statusStr(passWAL))
+
+	if !passTotal || !passCommit || !passTTL || !passWAL {
+		return producterrs.Tagged("benchmark gate exceeded performance budget", producterrs.ErrRenderLimit)
+	}
+	return nil
+}
+
 func init() {
 	analyzeCmd.Flags().String("dir", ".", "Target repository directory to analyze")
 	analyzeCmd.Flags().String("commit", "", "Git commit hash to tag the analysis. Empty (default) diffs the working tree against HEAD (incremental delta); a hash diffs that commit against its parent")
@@ -470,5 +527,6 @@ func init() {
 	analyzeCmd.Flags().Bool("verbose", false, "Enable verbose output")
 	analyzeCmd.Flags().Bool("store-code", false, "Store source code content snippets in AKG nodes (default: false)")
 	analyzeCmd.Flags().Bool("json", false, "Emit machine-readable JSON instead of the human summary")
+	analyzeCmd.Flags().Bool("bench", false, "Run analysis benchmark battery and verify performance against budget gates")
 	rootCmd.AddCommand(analyzeCmd)
 }

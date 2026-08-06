@@ -39,6 +39,9 @@ func (t *RustTranslator) CoerceToken(tok stage1.RichToken, parent *stage1.RichTo
 			if match := rustImplRegex.FindStringSubmatch(tok.Content); len(match) > 2 {
 				node.ReceiverType = match[2]
 				node.Properties["receiver_type"] = match[2]
+				if match[1] != "" {
+					node.Implemented = append(node.Implemented, match[1])
+				}
 			}
 		case "field_declaration":
 			node.Type = GASTField

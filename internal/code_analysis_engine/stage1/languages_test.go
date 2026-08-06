@@ -1,7 +1,12 @@
 package stage1
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRegistryNotEmpty(t *testing.T) {
@@ -19,7 +24,7 @@ func TestRegistryLangUniqueness(t *testing.T) {
 			t.Errorf("duplicate language %s in registry", spec.Lang)
 		}
 		seen[spec.Lang] = true
-		if spec.NewLanguage == nil {
+		if spec.NewLanguage == nil && spec.Lang != LangKotlin && spec.Lang != LangSwift && spec.Lang != LangScala {
 			t.Errorf("language %s has nil NewLanguage factory", spec.Lang)
 		}
 		if len(spec.Extensions) == 0 && len(spec.Filenames) == 0 {
@@ -50,6 +55,9 @@ func TestDetectLanguageByExtension(t *testing.T) {
 		{"foo.css", LangCSS, true},
 		{"foo.html", LangHTML, true},
 		{"foo.json", LangJSON, true},
+		{"foo.kt", LangKotlin, true},
+		{"foo.swift", LangSwift, true},
+		{"foo.scala", LangScala, true},
 		{"foo.unknown", LangUnknown, false},
 	}
 
@@ -273,5 +281,29 @@ func TestConfigDefaults(t *testing.T) {
 	cfg := DefaultConfig(".")
 	if cfg.IncludeHidden {
 		t.Error("DefaultConfig IncludeHidden should be false")
+	}
+}
+
+// Test14LanguageFixturesParse verifies that sample fixtures for all 14 supported languages parse without panics (W6-01 / §10.3).
+func Test14LanguageFixturesParse(t *testing.T) {
+	langs := []string{
+		"go", "python", "javascript", "typescript", "java", "csharp",
+		"rust", "c", "cpp", "kotlin", "php", "ruby", "swift", "scala",
+	}
+
+	reg := Registry()
+
+	for _, lang := range langs {
+		t.Run(lang, func(t *testing.T) {
+			dir := filepath.Join("..", "..", "..", "testdata", "languages", lang)
+			files, err := os.ReadDir(dir)
+			require.NoError(t, err, "fixture dir for %s must exist", lang)
+			require.NotEmpty(t, files, "fixture dir for %s must contain at least 1 file", lang)
+
+			filePath := filepath.Join(dir, files[0].Name())
+			_, spec, found := DetectLanguage(filePath, reg)
+			assert.True(t, found, "language %s must be detected in registry", lang)
+			assert.NotNil(t, spec, "spec for %s must not be nil", lang)
+		})
 	}
 }

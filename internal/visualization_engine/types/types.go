@@ -41,6 +41,19 @@ const (
 	Infrastructure         DiagramType = "INFRASTRUCTURE"
 )
 
+// AllDiagramTypes returns a slice of all 31 supported diagram types.
+func AllDiagramTypes() []DiagramType {
+	return []DiagramType{
+		UMLClass, UMLObject, UMLComponent, UMLDeployment, UMLPackage,
+		UMLComposite, UMLProfile, UMLUsecase, UMLActivity, UMLState,
+		UMLSequence, UMLCommunication, UMLInteractionOverview, UMLTiming,
+		C4Context, C4Container, C4Component, C4Code, C4Landscape,
+		C4Dynamic, C4Deployment, DataFlow, ERDiagram, Mindmap,
+		Flowchart, DependencyGraph, HotspotComplexity, CallGraph,
+		LayeredArchitecture, ChangeImpact, Infrastructure,
+	}
+}
+
 type QueryOptions struct {
 	EntryPointID  string
 	MaxDepth      int

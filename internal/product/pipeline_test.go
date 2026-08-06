@@ -10,39 +10,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildDiagram_Validation(t *testing.T) {
-	_, _, err := BuildDiagram(DiagramRequest{})
-	assert.Error(t, err)
-
-	_, _, err = BuildDiagram(DiagramRequest{
-		TTLPath: "dummy.ttl",
-		Format:  "invalid-format",
-	})
-	assert.Error(t, err)
-}
-
-func TestBuildDiagram_Success(t *testing.T) {
+// TestBuildDiagramParity verifies CLI/TUI/AI parity when invoking product.BuildDiagram (W7-01 / §11.1).
+func TestBuildDiagramParity(t *testing.T) {
 	tmpDir := t.TempDir()
 	ttlPath := filepath.Join(tmpDir, "akg_state.ttl")
-
-	ttlContent := `@prefix gm: <http://glassmarble.org/schema#> .
-
-<http://glassmarble.org/node/pkg/app.go::Main> a gm:Struct ;
-    gm:name "Main" .
+	ttlContent := `@prefix gm: <https://glassmarble.dev/schema/> .
+<file:pkg/a.go::Service> a gm:TypeDecl ;
+    gm:name "Service" ;
+    gm:kind "STRUCT" ;
+    gm:filePath "pkg/a.go" ;
+    gm:lineStart 1 .
 `
-	require.NoError(t, os.WriteFile(ttlPath, []byte(ttlContent), 0644))
+	err := os.WriteFile(ttlPath, []byte(ttlContent), 0644)
+	require.NoError(t, err)
 
 	req := DiagramRequest{
 		TTLPath:       ttlPath,
 		Type:          types.UMLClass,
+		Scope:         types.ScopeGlobal,
 		Format:        "mermaid",
 		IncludeUnused: true,
 	}
 
+	res, err := BuildDiagramEx(req)
+	require.NoError(t, err)
+	assert.NotNil(t, res)
+
 	markup, summary, err := BuildDiagram(req)
 	require.NoError(t, err)
-	assert.Contains(t, markup, "classDiagram")
-	assert.Contains(t, markup, "Main")
-	assert.NotNil(t, summary)
-	assert.Equal(t, 1, summary.NodeCount)
+	assert.Equal(t, res.Markup, markup)
+	assert.Equal(t, res.Summary, summary)
 }

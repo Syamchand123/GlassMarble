@@ -29,7 +29,10 @@ func (t *PythonTranslator) CoerceToken(tok stage1.RichToken, parent *stage1.Rich
 		if tok.Type == "class_definition" {
 			node.Type = GASTTypeDeclaration
 			node.Kind = "class"
-		} else if strings.Contains(tok.Type, "field") || strings.Contains(tok.Type, "property") || strings.Contains(tok.Type, "attribute") {
+			if strings.Contains(tok.Content, "@dataclass") || strings.Contains(tok.Content, "@attr") {
+				node.Properties["is_dataclass"] = "true"
+			}
+		} else if strings.Contains(tok.Type, "field") || strings.Contains(tok.Type, "property") || strings.Contains(tok.Type, "attribute") || tok.Type == "typed_parameter" {
 			node.Type = GASTField
 			node.Kind = "field"
 		} else if strings.Contains(tok.Type, "parameter") || strings.Contains(tok.Type, "argument") {

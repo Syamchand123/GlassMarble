@@ -17,6 +17,8 @@ import (
 //   - EdgeExtends/EdgeImplements from BaseTypes (target kind decides)
 //   - EdgeImplements  from Implemented
 //   - EdgeExtends with gm:embedding "true" for Go embedding (EmbeddedOf)
+//   - EdgeMixes for Ruby/C++ mixin / friend / trait composition
+//   - EdgeImports for C/C++ #include imports
 //
 // and for every function/method:
 //
@@ -71,6 +73,8 @@ func linkMembersInGAST(node *stage2.GASTNode, relPath string, globalIndex map[st
 		linkTypeMembers(node, relPath, globalIndex, cpg)
 	case stage2.GASTFunction:
 		linkFunctionMembers(node, relPath, globalIndex, cpg)
+	case stage2.GASTImport:
+		linkImportMembers(node, relPath, globalIndex, cpg)
 	}
 
 	for _, child := range node.Children {
@@ -78,19 +82,19 @@ func linkMembersInGAST(node *stage2.GASTNode, relPath string, globalIndex map[st
 	}
 }
 
-	func linkTypeMembers(node *stage2.GASTNode, relPath string, globalIndex map[string][]*stage2.GASTNode, cpg *Stage4Output) {
-		sourceID := BuildUniversalID(relPath, "", node.Name)
-		if sourceID == "" {
-			return
+func linkTypeMembers(node *stage2.GASTNode, relPath string, globalIndex map[string][]*stage2.GASTNode, cpg *Stage4Output) {
+	sourceID := BuildUniversalID(relPath, "", node.Name)
+	if sourceID == "" {
+		return
+	}
+
+	for _, child := range node.Children {
+		if child == nil {
+			continue
 		}
 
-		for _, child := range node.Children {
-			if child == nil {
-				continue
-			}
-
-			switch {
-case child.Type == stage2.GASTField && child.Kind == "embedding":
+		switch {
+		case child.Type == stage2.GASTField && child.Kind == "embedding":
 			// Go embedding (W1-11, §5.4.1): EdgeExtends @ 1.0 with the
 			// gm:embedding marker (Bubble Tea tea.Model gap).
 			// The embedded type is the field's name (or FieldType), not EmbeddedOf.
@@ -106,60 +110,57 @@ case child.Type == stage2.GASTField && child.Kind == "embedding":
 					})
 			}
 
-			case child.Type == stage2.GASTField:
-				fieldID := BuildUniversalID(relPath, node.Name, child.Name)
-				ensureMemberNode(cpg, fieldID, "FIELD", child.Name, relPath, int(child.StartLine))
-				cpg.AddEdgeProperties(sourceID, fieldID, EdgeHasField, int(child.StartLine), 1.0,
-					map[string]string{ont.PredProvenance: "ast"})
-
-			case child.Type == stage2.GASTFunction && child.Kind == "method":
-				// Explicit receiver methods (re-parented by the normalizer) and
-				// interface method specs (empty receiver, §5.2.2) both get the
-				// explicit ownership edge (A-16).
-				isInterfaceMethod := child.ReceiverType == "" && node.Kind == "interface"
-				if child.ReceiverType != node.Name && !isInterfaceMethod {
-					continue
-				}
-				methodID := BuildUniversalID(relPath, node.Name, stripDottedName(child.Name))
-				cpg.AddEdgeProperties(methodID, sourceID, EdgeHasReceiver, int(child.StartLine), 1.0,
-					map[string]string{ont.PredProvenance: "ast"})
-			}
-		}
-
-		// EdgeMixes producer: placeholder for mixin/trait composition.
-		// This producer will fire if a stage2 translator sets Properties["mixin"] == "true"
-		// on a type node (e.g., for Ruby include/prepend/extend or similar constructs).
-		if node.Properties["mixin"] == "true" && node.Type == stage2.GASTTypeDeclaration {
-			targetID := BuildUniversalID(relPath, "", "mixin::"+node.Name)
-			ensureMemberNode(cpg, targetID, "TYPE", "mixin::"+node.Name, relPath, int(node.StartLine))
-			cpg.AddEdgeProperties(sourceID, targetID, EdgeMixes, int(node.StartLine), 1.0,
+		case child.Type == stage2.GASTField:
+			fieldID := BuildUniversalID(relPath, node.Name, child.Name)
+			ensureMemberNode(cpg, fieldID, "FIELD", child.Name, relPath, int(child.StartLine))
+			cpg.AddEdgeProperties(sourceID, fieldID, EdgeHasField, int(child.StartLine), 1.0,
 				map[string]string{ont.PredProvenance: "ast"})
-		}
 
-		// BaseTypes → EdgeExtends/EdgeImplements depending on target kind (A-02).
-		for _, bt := range node.BaseTypes {
-			targetID := resolveTypeToFQN(bt, relPath, globalIndex, cpg)
-			if targetID == "" || targetID == sourceID {
+		case child.Type == stage2.GASTFunction && (child.Kind == "method" || child.Kind == "method_declaration" || child.Kind == "method_spec"):
+			// Explicit receiver methods, Rust impl method specs, and interface method specs
+			// both get explicit ownership edge (A-16 / Rust impl).
+			isInterfaceMethod := child.ReceiverType == "" && (node.Kind == "interface" || node.Kind == "trait")
+			if child.ReceiverType != node.Name && child.ReceiverType != "Self" && !isInterfaceMethod {
 				continue
 			}
-			edgeType := EdgeExtends
-			if n, ok := cpg.GetNode(targetID); ok && n.Kind == "INTERFACE" {
-				edgeType = EdgeImplements
-			}
-			cpg.AddEdgeProperties(sourceID, targetID, edgeType, int(node.StartLine), 1.0,
-				map[string]string{ont.PredProvenance: "ast"})
-		}
-
-		// Implemented → EdgeImplements.
-		for _, impl := range node.Implemented {
-			targetID := resolveTypeToFQN(impl, relPath, globalIndex, cpg)
-			if targetID == "" || targetID == sourceID {
-				continue
-			}
-			cpg.AddEdgeProperties(sourceID, targetID, EdgeImplements, int(node.StartLine), 1.0,
+			methodID := BuildUniversalID(relPath, node.Name, stripDottedName(child.Name))
+			cpg.AddEdgeProperties(methodID, sourceID, EdgeHasReceiver, int(child.StartLine), 1.0,
 				map[string]string{ont.PredProvenance: "ast"})
 		}
 	}
+
+	// EdgeMixes producer: for mixin/trait composition (Ruby include/prepend/extend, C++ friend).
+	if (node.Properties["mixin"] == "true" || node.Properties["trait"] == "true") && node.Type == stage2.GASTTypeDeclaration {
+		targetID := BuildUniversalID(relPath, "", "mixin::"+node.Name)
+		ensureMemberNode(cpg, targetID, "TYPE", "mixin::"+node.Name, relPath, int(node.StartLine))
+		cpg.AddEdgeProperties(sourceID, targetID, EdgeMixes, int(node.StartLine), 1.0,
+			map[string]string{ont.PredProvenance: "ast"})
+	}
+
+	// BaseTypes → EdgeExtends/EdgeImplements depending on target kind (A-02).
+	for _, bt := range node.BaseTypes {
+		targetID := resolveTypeToFQN(bt, relPath, globalIndex, cpg)
+		if targetID == "" || targetID == sourceID {
+			continue
+		}
+		edgeType := EdgeExtends
+		if n, ok := cpg.GetNode(targetID); ok && (n.Kind == "INTERFACE" || n.Kind == "PROTOCOL" || n.Kind == "TRAIT") {
+			edgeType = EdgeImplements
+		}
+		cpg.AddEdgeProperties(sourceID, targetID, edgeType, int(node.StartLine), 1.0,
+			map[string]string{ont.PredProvenance: "ast"})
+	}
+
+	// Implemented → EdgeImplements.
+	for _, impl := range node.Implemented {
+		targetID := resolveTypeToFQN(impl, relPath, globalIndex, cpg)
+		if targetID == "" || targetID == sourceID {
+			continue
+		}
+		cpg.AddEdgeProperties(sourceID, targetID, EdgeImplements, int(node.StartLine), 1.0,
+			map[string]string{ont.PredProvenance: "ast"})
+	}
+}
 
 func linkFunctionMembers(node *stage2.GASTNode, relPath string, globalIndex map[string][]*stage2.GASTNode, cpg *Stage4Output) {
 	funcID := BuildUniversalID(relPath, node.ReceiverType, stripDottedName(node.Name))
@@ -191,6 +192,19 @@ func linkFunctionMembers(node *stage2.GASTNode, relPath string, globalIndex map[
 		paramID := funcID + "::param:" + child.Name
 		ensureMemberNode(cpg, paramID, "PARAM", child.Name, relPath, int(child.StartLine))
 		cpg.AddEdgeProperties(funcID, paramID, EdgeHasParam, int(child.StartLine), 1.0,
+			map[string]string{ont.PredProvenance: "ast"})
+	}
+}
+
+// linkImportMembers connects C/C++ #include imports and module imports to file nodes.
+func linkImportMembers(node *stage2.GASTNode, relPath string, globalIndex map[string][]*stage2.GASTNode, cpg *Stage4Output) {
+	if node == nil || node.Name == "" {
+		return
+	}
+	fileID := "file:" + stage3.NormalizeRelativePath(relPath)
+	targetID := "file:" + stage3.NormalizeRelativePath(node.Name)
+	if cpg.NodeExists(targetID) {
+		cpg.AddEdgeProperties(fileID, targetID, EdgeDependsOn, int(node.StartLine), 1.0,
 			map[string]string{ont.PredProvenance: "ast"})
 	}
 }

@@ -319,6 +319,27 @@ func Registry() []LanguageSpec {
 			Calls:   []string{},
 		},
 		{
+			Lang:       LangKotlin,
+			Extensions: []string{".kt", ".kts"},
+			Declarations: []string{
+				"class_declaration", "function_declaration", "object_declaration",
+			},
+		},
+		{
+			Lang:       LangSwift,
+			Extensions: []string{".swift"},
+			Declarations: []string{
+				"class_declaration", "function_declaration", "protocol_declaration",
+			},
+		},
+		{
+			Lang:       LangScala,
+			Extensions: []string{".scala", ".sc"},
+			Declarations: []string{
+				"class_definition", "function_definition", "object_definition",
+			},
+		},
+		{
 			Lang:           LangJSON,
 			Extensions:     []string{".json", ".jsonc"},
 			IsConfigFormat: true,

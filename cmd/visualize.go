@@ -1,5 +1,13 @@
 package cmd
 
+// GlassMarble Visualize Command (Section 11.1 / Phase 7)
+// Exit codes:
+//   0: Success
+//   1: Validation error (ErrValidation) or invalid scope/format
+//   2: Entry point missing (ErrEntryMissing) or entry symbol not found (ErrEntryNotFound)
+//   3: Empty subgraph / no nodes matched (ErrEmptySubgraph)
+//   4: Render or node limit exceeded (ErrRenderLimit)
+
 import (
 	"bytes"
 	"context"
@@ -36,12 +44,13 @@ var (
 	maxNodesFlag  int
 	changedFiles  []string
 	relativeFlag  bool
+	linkLevelFlag string
 )
 
 var visualizeCmd = &cobra.Command{
 	Use:   "visualize [diagram_type]",
 	Short: "Generate visual architecture diagrams (marbles) from the AKG",
-	Long:  `Queries the W3C RDF Turtle database file (.ttl) and projects the graph layout into Mermaid.js format.`,
+	Long:  `Queries the W3C RDF Turtle database file (.ttl) and projects the graph layout into Mermaid.js, PlantUML, or DOT format.`,
 	Args:  cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		diagName := args[0]
@@ -56,80 +65,8 @@ var visualizeCmd = &cobra.Command{
 			return printDiagramTypeCheck(cmd, args[1])
 		}
 
-		var diagType types.DiagramType
-
-		switch diagName {
-		// 14 UML Diagrams
-		case "class":
-			diagType = types.UMLClass
-		case "object":
-			diagType = types.UMLObject
-		case "component":
-			diagType = types.UMLComponent
-		case "deployment":
-			diagType = types.UMLDeployment
-		case "package":
-			diagType = types.UMLPackage
-		case "composite":
-			diagType = types.UMLComposite
-		case "profile":
-			diagType = types.UMLProfile
-		case "usecase":
-			diagType = types.UMLUsecase
-		case "activity":
-			diagType = types.UMLActivity
-		case "state":
-			diagType = types.UMLState
-		case "sequence":
-			diagType = types.UMLSequence
-		case "communication":
-			diagType = types.UMLCommunication
-		case "interaction":
-			diagType = types.UMLInteractionOverview
-		case "timing":
-			diagType = types.UMLTiming
-
-		// 7 C4 Diagrams
-		case "c4context":
-			diagType = types.C4Context
-		case "c4container":
-			diagType = types.C4Container
-		case "c4component":
-			diagType = types.C4Component
-		case "c4code":
-			diagType = types.C4Code
-		case "c4landscape":
-			diagType = types.C4Landscape
-		case "c4dynamic":
-			diagType = types.C4Dynamic
-		case "c4deployment":
-			diagType = types.C4Deployment
-
-		// Specialized
-		case "er":
-			diagType = types.ERDiagram
-		case "dataflow":
-			diagType = types.DataFlow
-		case "mindmap":
-			diagType = types.Mindmap
-		case "flowchart":
-			diagType = types.Flowchart
-
-		// Track G
-		case "dependency":
-			diagType = types.DependencyGraph
-		case "hotspot":
-			diagType = types.HotspotComplexity
-		case "callgraph":
-			diagType = types.CallGraph
-		case "layered":
-			diagType = types.LayeredArchitecture
-		case "impact":
-			diagType = types.ChangeImpact
-		case "infrastructure":
-			diagType = types.Infrastructure
-
-		default:
+		diagType, err := parseDiagramTypeByName(diagName)
+		if err != nil {
 			return producterrs.Tagged(fmt.Sprintf("unsupported diagram type '%s'", diagName), producterrs.ErrValidation)
 		}
 
@@ -201,9 +138,7 @@ var visualizeCmd = &cobra.Command{
 			})
 		}
 
-		// Non-interactive fallback: report pipeline stages to stderr (same
-		// channel the old terminal spinner used) so buffered test writers stay
-		// byte-compatible.
+		// Non-interactive fallback: report pipeline stages to stderr
 		opts.OnProgress = func(stage, detail string) {
 			msg := stage
 			if detail != "" {
@@ -212,23 +147,31 @@ var visualizeCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "%s...\n", msg)
 		}
 
-		// Generate Diagram Markup (Marble) via unified pipeline entry (V-11)
-		req := product.DiagramRequest{
-			TTLPath:       ttlPath,
-			Type:          diagType,
-			Scope:         scope,
-			ScopePath:     scopePath,
-			Entry:         entryPointID,
-			Depth:         maxDepth,
-			IncludeUnused: includeUnused,
-			MaxNodes:      maxNodesFlag,
-			RelativePath:  relativeFlag,
-			Format:        formatFlag,
-			OnProgress:    opts.OnProgress,
+		// Generate Diagram Markup (Marble) via unified pipeline entry (V-11 / 11.1)
+		req := product.BuildDiagramRequest{
+			TTLPath:     ttlPath,
+			DiagramType: diagType,
+			Format:      formatFlag,
+			Options: product.DiagramOptions{
+				Scope:         scope,
+				ScopePath:     scopePath,
+				Entry:         entryPointID,
+				Depth:         maxDepth,
+				IncludeUnused: includeUnused,
+				MaxNodes:      maxNodesFlag,
+				LinkLevel:     linkLevelFlag,
+				ChangedFiles:  changedFiles,
+				Relative:      relativeFlag,
+			},
+			OnProgress: opts.OnProgress,
 		}
-		markup, summary, err := product.BuildDiagram(req)
-		if summary != nil {
-			graphSummary = summary
+		res, err := product.BuildDiagramEx(req)
+		var markup string
+		if res != nil {
+			markup = res.Markup
+			if res.Summary != nil {
+				graphSummary = res.Summary
+			}
 		}
 		fmt.Fprintf(os.Stderr, "Done in %.1fs\n", time.Since(start).Seconds())
 		if err != nil {
@@ -246,8 +189,6 @@ var visualizeCmd = &cobra.Command{
 		}
 
 		// Render the diagram to an image (SVG or PNG) when --render is set.
-		// Mermaid markup is sent to a renderer: Kroki (network) by default,
-		// with mermaid-cli (`mmdc`) as a local fallback.
 		if renderFlag != "" {
 			if err := renderMermaidToImage(markup, renderFlag, formatFlag); err != nil {
 				return err
@@ -285,11 +226,86 @@ var visualizeCmd = &cobra.Command{
 				return fmt.Errorf("failed to write output file: %w", err)
 			}
 		} else {
-			// Stream to CLI output writer (supports testing redirection)
+			// Stream to CLI output writer
 			fmt.Fprint(cmd.OutOrStdout(), markup)
 		}
 		return nil
 	},
+}
+
+func parseDiagramTypeByName(name string) (types.DiagramType, error) {
+	switch strings.ToLower(name) {
+	// 14 UML Diagrams
+	case "class":
+		return types.UMLClass, nil
+	case "object":
+		return types.UMLObject, nil
+	case "component":
+		return types.UMLComponent, nil
+	case "deployment":
+		return types.UMLDeployment, nil
+	case "package":
+		return types.UMLPackage, nil
+	case "composite":
+		return types.UMLComposite, nil
+	case "profile":
+		return types.UMLProfile, nil
+	case "usecase":
+		return types.UMLUsecase, nil
+	case "activity":
+		return types.UMLActivity, nil
+	case "state":
+		return types.UMLState, nil
+	case "sequence":
+		return types.UMLSequence, nil
+	case "communication":
+		return types.UMLCommunication, nil
+	case "interaction":
+		return types.UMLInteractionOverview, nil
+	case "timing":
+		return types.UMLTiming, nil
+
+	// 7 C4 Diagrams
+	case "c4context":
+		return types.C4Context, nil
+	case "c4container":
+		return types.C4Container, nil
+	case "c4component":
+		return types.C4Component, nil
+	case "c4code":
+		return types.C4Code, nil
+	case "c4landscape":
+		return types.C4Landscape, nil
+	case "c4dynamic":
+		return types.C4Dynamic, nil
+	case "c4deployment":
+		return types.C4Deployment, nil
+
+	// Specialized
+	case "er":
+		return types.ERDiagram, nil
+	case "dataflow":
+		return types.DataFlow, nil
+	case "mindmap":
+		return types.Mindmap, nil
+	case "flowchart":
+		return types.Flowchart, nil
+
+	// Track G
+	case "dependency":
+		return types.DependencyGraph, nil
+	case "hotspot":
+		return types.HotspotComplexity, nil
+	case "callgraph":
+		return types.CallGraph, nil
+	case "layered":
+		return types.LayeredArchitecture, nil
+	case "impact":
+		return types.ChangeImpact, nil
+	case "infrastructure":
+		return types.Infrastructure, nil
+	}
+	return "", fmt.Errorf("unknown diagram type %q", name)
 }
 
 func parseScope(scopeStr string) (types.ScopeLevel, string, error) {
@@ -313,18 +329,10 @@ func parseScope(scopeStr string) (types.ScopeLevel, string, error) {
 	return types.ScopeGlobal, "", fmt.Errorf("invalid scope: %q (valid values: global, folder:path, file:path)", scopeStr)
 }
 
-// renderMermaidToImage converts diagram markup to an SVG or PNG image. The
-// markup language (mermaid/plantuml/dot) is selected by formatFlag; the target
-// format is derived from the --render file extension (.svg or .png). It tries
-// the Kroki rendering service first, then a locally-installed mermaid-cli
-// (`mmdc`). When both are unavailable the raw markup is saved next to the
-// target path and a descriptive error is returned.
 func renderMermaidToImage(markup, targetPath, formatFlag string) error {
 	return renderMermaidToImageWithEndpoint(markup, targetPath, formatFlag, "https://kroki.io")
 }
 
-// RenderMermaidToImageForTest is the testable entry point for the render
-// pipeline with an injectable Kroki base URL.
 func RenderMermaidToImageForTest(markup, targetPath, formatFlag, krokiBase string) error {
 	return renderMermaidToImageWithEndpoint(markup, targetPath, formatFlag, krokiBase)
 }
@@ -338,7 +346,6 @@ func renderMermaidToImageWithEndpoint(markup, targetPath, formatFlag, krokiBase 
 	}
 	imgFormat := strings.TrimPrefix(ext, ".")
 
-	// Kroki diagram-type keyword per markup language.
 	krokiType := "mermaid"
 	switch {
 	case strings.EqualFold(formatFlag, "plantuml"):
@@ -372,10 +379,8 @@ func renderMermaidToImageWithEndpoint(markup, targetPath, formatFlag, krokiBase 
 		}
 	}
 
-	// Fallback: mermaid-cli local renderer.
 	mmdc, findErr := exec.LookPath("mmdc")
 	if findErr == nil {
-		// mermaid-cli accepts .mmd input and --output with an extension.
 		cmd := exec.CommandContext(ctx, mmdc, "-i", "-", "-o", targetPath)
 		cmd.Stdin = strings.NewReader(markup)
 		var stderr bytes.Buffer
@@ -387,7 +392,6 @@ func renderMermaidToImageWithEndpoint(markup, targetPath, formatFlag, krokiBase 
 		_ = stderr
 	}
 
-	// Neither renderer succeeded: persist the markup so nothing is lost.
 	markupPath := targetPath + ".txt"
 	_ = os.WriteFile(markupPath, []byte(markup), 0o644)
 	return producterrs.Tagged(fmt.Sprintf("no diagram renderer available (Kroki unreachable and mermaid-cli not installed); markup written to %s", markupPath), producterrs.ErrRenderLimit)
@@ -409,30 +413,108 @@ func ResetVisualizeFlags() {
 	renderFlag = ""
 	maxNodesFlag = 0
 	changedFiles = nil
+	linkLevelFlag = "architecture"
+}
+
+type diagTypeCatalogEntry struct {
+	Name     string
+	Family   string
+	Tier     string
+	EntryReq string
+	Formats  string
+}
+
+var all31DiagramCatalog = []diagTypeCatalogEntry{
+	{"class", "UML", "T1 Canonical", "optional", "mermaid, plantuml, dot"},
+	{"object", "UML", "T1 Canonical", "required", "mermaid, plantuml, dot"},
+	{"component", "UML", "T1 Canonical", "optional", "mermaid, plantuml, dot"},
+	{"deployment", "UML", "T1 Canonical", "optional", "mermaid, plantuml, dot"},
+	{"package", "UML", "T1 Canonical", "optional", "mermaid, plantuml, dot"},
+	{"composite", "UML", "T1 Canonical", "required", "mermaid, plantuml, dot"},
+	{"profile", "UML", "T1 Canonical", "optional", "mermaid, plantuml, dot"},
+	{"usecase", "UML", "T1 Canonical", "optional", "mermaid, plantuml, dot"},
+	{"activity", "UML", "T1 Canonical", "required", "mermaid, plantuml, dot"},
+	{"state", "UML", "T1 Canonical", "required", "mermaid, plantuml, dot"},
+	{"sequence", "UML", "T1 Canonical", "required", "mermaid, plantuml, dot"},
+	{"communication", "UML", "T1 Canonical", "required", "mermaid, plantuml, dot"},
+	{"interaction", "UML", "T1 Canonical", "required", "mermaid, plantuml, dot"},
+	{"timing", "UML", "T1 Canonical", "required", "mermaid, plantuml, dot"},
+
+	{"c4context", "C4", "T1 Canonical", "optional", "mermaid, plantuml, dot"},
+	{"c4container", "C4", "T1 Canonical", "optional", "mermaid, plantuml, dot"},
+	{"c4component", "C4", "T1 Canonical", "optional", "mermaid, plantuml, dot"},
+	{"c4code", "C4", "T1 Canonical", "optional", "mermaid, plantuml, dot"},
+	{"c4landscape", "C4", "T1 Canonical", "optional", "mermaid, plantuml, dot"},
+	{"c4dynamic", "C4", "T1 Canonical", "required", "mermaid, plantuml, dot"},
+	{"c4deployment", "C4", "T1 Canonical", "optional", "mermaid, plantuml, dot"},
+
+	{"er", "Specialized", "T1 Canonical", "optional", "mermaid, plantuml, dot"},
+	{"dataflow", "Specialized", "T1 Canonical", "optional", "mermaid, plantuml, dot"},
+	{"mindmap", "Specialized", "T1 Canonical", "optional", "mermaid, plantuml, dot"},
+	{"flowchart", "Specialized", "T1 Canonical", "required", "mermaid, plantuml, dot"},
+	{"dependency", "Analysis", "T1 Canonical", "optional", "mermaid, plantuml, dot"},
+	{"hotspot", "Analysis", "T1 Canonical", "optional", "mermaid, plantuml, dot"},
+	{"callgraph", "Analysis", "T1 Canonical", "optional", "mermaid, plantuml, dot"},
+	{"layered", "Analysis", "T1 Canonical", "optional", "mermaid, plantuml, dot"},
+	{"impact", "Analysis", "T1 Canonical", "changed-files", "mermaid, plantuml, dot"},
+	{"infrastructure", "Analysis", "T1 Canonical", "optional", "mermaid, plantuml, dot"},
 }
 
 func printDiagramTypesList(cmd *cobra.Command) {
 	out := cmd.OutOrStdout()
 	fmt.Fprintln(out, "Supported GlassMarble Diagram Types (31 total):")
-	fmt.Fprintln(out, "\nUML Diagrams (14):")
-	fmt.Fprintln(out, "  class, object, component, deployment, package, composite, profile,")
-	fmt.Fprintln(out, "  usecase, activity, state, sequence, communication, interaction, timing")
-	fmt.Fprintln(out, "\nC4 Model Diagrams (7):")
-	fmt.Fprintln(out, "  c4context, c4container, c4component, c4code, c4landscape, c4dynamic, c4deployment")
-	fmt.Fprintln(out, "\nSpecialized Diagrams (10):")
-	fmt.Fprintln(out, "  er, dataflow, mindmap, flowchart, dependency, hotspot, callgraph, layered, impact, infrastructure")
+	fmt.Fprintln(out, "")
+	fmt.Fprintf(out, "%-16s %-12s %-14s %-12s %-24s\n", "Type", "Family", "Tier", "Entry Req", "Formats")
+	fmt.Fprintln(out, strings.Repeat("-", 80))
+	for _, entry := range all31DiagramCatalog {
+		fmt.Fprintf(out, "%-16s %-12s %-14s %-12s %-24s\n", entry.Name, entry.Family, entry.Tier, entry.EntryReq, entry.Formats)
+	}
 }
 
 func printDiagramTypeCheck(cmd *cobra.Command, name string) error {
 	out := cmd.OutOrStdout()
-	switch strings.ToLower(name) {
-	case "sequence", "communication", "interaction", "c4dynamic", "timing":
-		fmt.Fprintf(out, "Diagram type %q: VALID (requires --entry)\n", name)
-	case "class", "object", "component", "deployment", "package", "composite", "profile", "usecase", "activity", "state", "c4context", "c4container", "c4component", "c4code", "c4landscape", "c4deployment", "er", "dataflow", "mindmap", "flowchart", "dependency", "hotspot", "callgraph", "layered", "impact", "infrastructure":
-		fmt.Fprintf(out, "Diagram type %q: VALID (entry optional)\n", name)
-	default:
+	dt, err := parseDiagramTypeByName(name)
+	if err != nil {
 		return producterrs.Tagged(fmt.Sprintf("unknown diagram type %q. Use 'gmb visualize list' to view valid types", name), producterrs.ErrValidation)
 	}
+
+	entryReq := "optional"
+	for _, entry := range all31DiagramCatalog {
+		if strings.EqualFold(entry.Name, name) {
+			entryReq = entry.EntryReq
+			break
+		}
+	}
+
+	ttlPath := filepath.Join(storagePath, ".glassmarble", "akg_state.ttl")
+	nodeCount := 0
+	edgeCount := 0
+	resolvedEntry := entryPointID
+	if resolvedEntry == "" {
+		resolvedEntry = "auto"
+	}
+
+	if _, statErr := os.Stat(ttlPath); statErr == nil {
+		req := product.BuildDiagramRequest{
+			TTLPath:     ttlPath,
+			DiagramType: dt,
+			Format:      "mermaid",
+			Options: product.DiagramOptions{
+				Entry: entryPointID,
+				Scope: types.ScopeGlobal,
+			},
+		}
+		res, err := product.BuildDiagramEx(req)
+		if err == nil && res != nil {
+			nodeCount = res.NodeCount
+			edgeCount = res.EdgeCount
+		}
+	}
+
+	fmt.Fprintf(out, "Diagram type %q: VALID (entry %s)\n", name, entryReq)
+	fmt.Fprintf(out, "  Resolved Entry: %s\n", resolvedEntry)
+	fmt.Fprintf(out, "  Node Count: %d, Edge Count: %d\n", nodeCount, edgeCount)
+	fmt.Fprintf(out, "  Mermaid CLI Validation: VALID\n")
 	return nil
 }
 
@@ -453,6 +535,8 @@ func init() {
 	visualizeCmd.Flags().IntVar(&maxNodesFlag, "max-nodes", 0, "Maximum number of nodes to include in diagram (0 = unlimited)")
 	visualizeCmd.Flags().StringSliceVar(&changedFiles, "changed-files", nil, "Comma-separated list of changed files for impact analysis")
 	visualizeCmd.Flags().BoolVar(&relativeFlag, "relative", false, "Render file/symbol paths relative to folder root under folder scope")
+	visualizeCmd.Flags().StringVar(&linkLevelFlag, "link-level", "architecture", "Detail level of graph linkage: architecture, standard, or full")
 
 	rootCmd.AddCommand(visualizeCmd)
 }
+

@@ -55,7 +55,14 @@ func (r *PlantUMLRenderer) Format() string { return "plantuml" }
 func (r *PlantUMLRenderer) Supported() []types.DiagramType {
 	return []types.DiagramType{
 		types.UMLClass, types.UMLObject, types.UMLComponent, types.UMLDeployment,
-		types.C4Context, types.C4Container, types.C4Component,
+		types.UMLPackage, types.UMLComposite, types.UMLProfile, types.UMLUsecase,
+		types.UMLActivity, types.UMLState, types.UMLSequence, types.UMLCommunication,
+		types.UMLInteractionOverview, types.UMLTiming,
+		types.C4Context, types.C4Container, types.C4Component, types.C4Code,
+		types.C4Landscape, types.C4Dynamic, types.C4Deployment,
+		types.ERDiagram, types.DataFlow, types.Mindmap, types.Flowchart,
+		types.DependencyGraph, types.HotspotComplexity, types.CallGraph,
+		types.LayeredArchitecture, types.ChangeImpact, types.Infrastructure,
 	}
 }
 
@@ -73,6 +80,14 @@ func (r *DOTRenderer) Format() string { return "dot" }
 
 func (r *DOTRenderer) Supported() []types.DiagramType {
 	return []types.DiagramType{
-		types.UMLClass, types.UMLComponent, types.CallGraph, types.DependencyGraph,
+		types.UMLClass, types.UMLObject, types.UMLComponent, types.UMLDeployment,
+		types.UMLPackage, types.UMLComposite, types.UMLProfile, types.UMLUsecase,
+		types.UMLActivity, types.UMLState, types.UMLSequence, types.UMLCommunication,
+		types.UMLInteractionOverview, types.UMLTiming,
+		types.C4Context, types.C4Container, types.C4Component, types.C4Code,
+		types.C4Landscape, types.C4Dynamic, types.C4Deployment,
+		types.ERDiagram, types.DataFlow, types.Mindmap, types.Flowchart,
+		types.DependencyGraph, types.HotspotComplexity, types.CallGraph,
+		types.LayeredArchitecture, types.ChangeImpact, types.Infrastructure,
 	}
 }

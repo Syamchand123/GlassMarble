@@ -1,6 +1,7 @@
 package product
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -10,9 +11,30 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
-// DiagramRequest holds all configuration parameters for generating an architecture diagram (V-11 / §7.4).
-type DiagramRequest struct {
-	TTLPath       string
+// DiagramOptions holds option parameters for diagram queries (11.1).
+type DiagramOptions struct {
+	Scope         types.ScopeLevel
+	ScopePath     string
+	Entry         string
+	Depth         int
+	MaxNodes      int
+	LinkLevel     string // "architecture" | "standard" | "full"
+	IncludeUnused bool
+	ChangedFiles  []string
+	Relative      bool
+}
+
+// BuildDiagramRequest holds all configuration parameters for generating an architecture diagram (11.1 / §11.1).
+type BuildDiagramRequest struct {
+	TTLPath     string
+	DiagramType types.DiagramType
+	Format      string // "mermaid" | "plantuml" | "dot"
+	Options     DiagramOptions
+	OnProgress  func(stage, detail string)
+	OnWarning   func(msg string)
+	OnSummary   func(s *types.GraphSummary)
+
+	// Legacy flat fields for backward compatibility
 	Type          types.DiagramType
 	Scope         types.ScopeLevel
 	ScopePath     string
@@ -21,41 +43,99 @@ type DiagramRequest struct {
 	IncludeUnused bool
 	MaxNodes      int
 	RelativePath  bool
-	Format        string // "mermaid" | "plantuml" | "dot"
-	OnProgress    func(stage, detail string)
-	OnWarning     func(msg string)
-	OnSummary     func(s *types.GraphSummary)
+}
+
+// DiagramRequest is an alias for BuildDiagramRequest (back-compat).
+type DiagramRequest = BuildDiagramRequest
+
+// BuildDiagramResult holds the output markup, graph summary, layout graph, and renderer metadata (11.1 / §11.1).
+type BuildDiagramResult struct {
+	Markup    string
+	Summary   *types.GraphSummary
+	Graph     *types.LayoutTree
+	Renderer  visualization_engine.Renderer
+	NodeCount int
+	EdgeCount int
 }
 
 // BuildDiagram is the single unified entry point for generating architecture diagrams
-// across CLI (`gmb visualize`), TUI, and AI engine tools (V-11 / W3-09).
-func BuildDiagram(req DiagramRequest) (string, *types.GraphSummary, error) {
-	if req.TTLPath == "" {
-		return "", nil, producterrs.Annotate(fmt.Errorf("TTLPath is required"), producterrs.ErrValidation)
+// across CLI (`gmb visualize`), TUI, and AI engine tools (V-11 / W3-09 / W7-01).
+func BuildDiagram(req BuildDiagramRequest) (string, *types.GraphSummary, error) {
+	res, err := BuildDiagramEx(req)
+	if res == nil {
+		return "", nil, err
 	}
+	return res.Markup, res.Summary, err
+}
+
+// BuildDiagramEx returns a structured BuildDiagramResult containing markup, graph, summary, and renderer.
+func BuildDiagramEx(req BuildDiagramRequest) (*BuildDiagramResult, error) {
+	return BuildDiagramWithContext(context.Background(), req)
+}
+
+// BuildDiagramWithContext accepts a Context for context cancellation and telemetry span tracking.
+func BuildDiagramWithContext(ctx context.Context, req BuildDiagramRequest) (*BuildDiagramResult, error) {
+	if req.TTLPath == "" {
+		return nil, producterrs.Annotate(fmt.Errorf("TTLPath is required"), producterrs.ErrValidation)
+	}
+
+	// Normalize flat legacy fields into Options if Options is empty
+	diagType := req.DiagramType
+	if diagType == "" {
+		diagType = req.Type
+	}
+
+	scope := req.Options.Scope
+	if scope == types.ScopeGlobal && req.Scope != types.ScopeGlobal {
+		scope = req.Scope
+	}
+	scopePath := req.Options.ScopePath
+	if scopePath == "" {
+		scopePath = req.ScopePath
+	}
+	entry := req.Options.Entry
+	if entry == "" {
+		entry = req.Entry
+	}
+	depth := req.Options.Depth
+	if depth <= 0 {
+		depth = req.Depth
+	}
+	maxNodes := req.Options.MaxNodes
+	if maxNodes <= 0 {
+		maxNodes = req.MaxNodes
+	}
+	includeUnused := req.Options.IncludeUnused || req.IncludeUnused
+	relative := req.Options.Relative || req.RelativePath
+	changedFiles := req.Options.ChangedFiles
+	linkLevel := req.Options.LinkLevel
+	if linkLevel == "" {
+		linkLevel = "architecture"
+	}
+
 	if req.Format == "" {
 		req.Format = "mermaid"
 	}
-	switch strings.ToLower(req.Format) {
-	case "mermaid", "plantuml", "dot":
+	format := strings.ToLower(req.Format)
+	switch format {
+	case "mermaid", "plantuml", "dot", "graphviz":
 		// valid
 	default:
-		return "", nil, producterrs.Annotate(fmt.Errorf("unsupported diagram format %q (valid: mermaid, plantuml, dot)", req.Format), producterrs.ErrValidation)
+		return nil, producterrs.Annotate(fmt.Errorf("unsupported diagram format %q (valid: mermaid, plantuml, dot)", req.Format), producterrs.ErrValidation)
 	}
 
-	if req.Scope == types.ScopeFolder || req.Scope == types.ScopeFile {
-		if req.ScopePath != "" {
-			if _, err := os.Stat(req.ScopePath); err != nil && !strings.Contains(req.ScopePath, "::") {
+	if scope == types.ScopeFolder || scope == types.ScopeFile {
+		if scopePath != "" {
+			if _, err := os.Stat(scopePath); err != nil && !strings.Contains(scopePath, "::") {
 				if req.OnWarning != nil {
-					req.OnWarning(fmt.Sprintf("scope path %q not found on disk", req.ScopePath))
+					req.OnWarning(fmt.Sprintf("scope path %q not found on disk", scopePath))
 				}
 			}
 		}
 	}
 
-	depth := req.Depth
 	if depth <= 0 {
-		switch req.Type {
+		switch diagType {
 		case types.UMLComposite, types.UMLObject:
 			depth = 3
 		case types.C4Dynamic, types.ChangeImpact:
@@ -70,28 +150,123 @@ func BuildDiagram(req DiagramRequest) (string, *types.GraphSummary, error) {
 	}
 
 	opts := types.QueryOptions{
-		EntryPointID:  req.Entry,
-		Scope:         req.Scope,
-		ScopePath:     req.ScopePath,
-		RelativePath:  req.RelativePath,
+		EntryPointID:  entry,
+		Scope:         scope,
+		ScopePath:     scopePath,
+		RelativePath:  relative,
 		MaxDepth:      depth,
-		IncludeUnused: req.IncludeUnused,
-		MaxNodes:      req.MaxNodes,
-		Format:        strings.ToLower(req.Format),
+		IncludeUnused: includeUnused,
+		MaxNodes:      maxNodes,
+		Format:        format,
+		ChangedFiles:  changedFiles,
 		OnProgress:    req.OnProgress,
 		OnSummary:     req.OnSummary,
 	}
 
+	// Record Telemetry Spans (11.4 / W7-02)
+	doneExtract := StartSpan("extract")
 	ec := visualization_engine.NewEngineCoordinator(req.TTLPath)
-	markup, err := ec.ProjectDiagram(req.Type, opts)
-	if err != nil {
-		return "", nil, err
+	doneExtract()
+
+	doneProject := StartSpan("project")
+	tree, err := ec.BuildLayoutTree(diagType, opts)
+	doneProject()
+
+	doneRender := StartSpan("render")
+	var renderer visualization_engine.Renderer
+	switch format {
+	case "plantuml":
+		renderer = &visualization_engine.PlantUMLRenderer{}
+	case "dot", "graphviz":
+		renderer = &visualization_engine.DOTRenderer{}
+	default:
+		renderer = &visualization_engine.MermaidRenderer{}
 	}
 
-	summary, err := ec.ComputeGraphSummary(req.Type, opts)
+	var markup string
+	if err == nil && tree != nil {
+		markup, err = renderer.Render(tree, diagType)
+	}
 	if err != nil {
-		return markup, nil, nil
+		// Fallback to direct ProjectDiagram if tree build failed
+		markup, err = ec.ProjectDiagram(diagType, opts)
+		if err != nil {
+			doneRender()
+			return nil, err
+		}
 	}
 
-	return markup, summary, nil
+	summary, err := ec.ComputeGraphSummary(diagType, opts)
+	if err != nil {
+		summary = &types.GraphSummary{}
+	}
+	if req.OnSummary != nil && summary != nil {
+		req.OnSummary(summary)
+	}
+	doneRender()
+
+	nodeCount := 0
+	edgeCount := 0
+	if summary != nil {
+		nodeCount = summary.NodeCount
+		edgeCount = summary.EdgeCount
+	}
+
+	// Prepend header comment if missing (11.5)
+	markup = injectHeaderComment(markup, diagType, scope, entry, nodeCount, edgeCount, format)
+
+	// Print debug output if GMB_DEBUG=1 (11.4)
+	if os.Getenv("GMB_DEBUG") == "1" {
+		fmt.Fprintf(os.Stderr, "[GMB_DEBUG] Pipeline: type=%s scope=%s entry=%s format=%s nodes=%d edges=%d linkLevel=%s\n",
+			diagType, scopeString(scope), entry, format, nodeCount, edgeCount, linkLevel)
+	}
+
+	return &BuildDiagramResult{
+		Markup:    markup,
+		Summary:   summary,
+		Graph:     tree,
+		Renderer:  renderer,
+		NodeCount: nodeCount,
+		EdgeCount: edgeCount,
+	}, nil
 }
+
+func scopeString(s types.ScopeLevel) string {
+	switch s {
+	case types.ScopeFolder:
+		return "folder"
+	case types.ScopeFile:
+		return "file"
+	default:
+		return "global"
+	}
+}
+
+// injectHeaderComment adds a standardized header comment if not already present (11.5).
+// Header format: % <type> · <scope> · entry=<resolved> · nodes=N edges=M · generated by gmb v1.0
+func injectHeaderComment(markup string, diagType types.DiagramType, scope types.ScopeLevel, entry string, nodes, edges int, format string) string {
+	resolvedEntry := entry
+	if resolvedEntry == "" {
+		resolvedEntry = "auto"
+	}
+	scopeStr := scopeString(scope)
+
+	var commentLeader string
+	switch format {
+	case "plantuml":
+		commentLeader = "'"
+	case "dot", "graphviz":
+		commentLeader = "//"
+	default:
+		commentLeader = "%"
+	}
+
+	header := fmt.Sprintf("%s %s · %s · entry=%s · nodes=%d edges=%d · generated by gmb v1.0\n",
+		commentLeader, diagType, scopeStr, resolvedEntry, nodes, edges)
+
+	if strings.HasPrefix(markup, commentLeader) {
+		return markup
+	}
+	return header + markup
+}
+

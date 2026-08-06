@@ -167,6 +167,59 @@ func ProjectDiagramFromGraph(full *types.NativeGraph, t types.DiagramType, opts 
 	return markup, nil
 }
 
+// BuildLayoutTree parses, scopes, extracts, metrics, clusters, and constructs the layout tree for a diagram type.
+func (ec *EngineCoordinator) BuildLayoutTree(t types.DiagramType, opts types.QueryOptions) (*types.LayoutTree, error) {
+	opts.DiagramType = t
+	full, err := ec.parseGraph(opts)
+	if err != nil {
+		return nil, fmt.Errorf("parse failed: %w", err)
+	}
+	return BuildLayoutTreeFromGraph(full, t, opts)
+}
+
+// BuildLayoutTreeFromGraph runs the pipeline through layout tree construction over an existing graph.
+func BuildLayoutTreeFromGraph(full *types.NativeGraph, t types.DiagramType, opts types.QueryOptions) (*types.LayoutTree, error) {
+	opts.DiagramType = t
+
+	enableMetrics := true
+	enableCommunities := true
+	enableSCC := true
+	if opts.PipelineCfg != nil {
+		enableMetrics = opts.PipelineCfg.EnableMetrics
+		enableCommunities = opts.PipelineCfg.EnableCommunities
+		enableSCC = opts.PipelineCfg.EnableSCC
+	}
+
+	full = full.Clone()
+	if opts.Scope != types.ScopeGlobal {
+		stage1.ApplyScope(full, opts)
+	}
+
+	cfg := stage1.GetExtractionConfig(t, opts)
+	subgraph, effectiveOpts, err := stage1.ExtractFromSubgraph(full, cfg, opts)
+	if err != nil {
+		return nil, fmt.Errorf("extract failed: %w", err)
+	}
+	if len(subgraph.Nodes) == 0 {
+		return nil, producterrs.Annotate(fmt.Errorf("diagram %s produced an empty subgraph", string(t)), producterrs.ErrEmptySubgraph)
+	}
+
+	var metrics *stage2.DiagramMetrics
+	if enableMetrics {
+		metrics = stage2.ComputeAllMetricsWithOptions(subgraph, enableSCC)
+	}
+
+	var clustering map[string]string
+	if enableCommunities {
+		clustering = stage2.DetectCommunities(subgraph)
+	} else if metrics != nil {
+		clustering = metrics.Communities
+	}
+
+	layout := stage2.BuildLayoutTreeEx(subgraph, metrics, clustering, effectiveOpts, t)
+	return layout, nil
+}
+
 // ComputeGraphSummary parses, scopes, and extracts the graph, then returns a summary without rendering.
 func (ec *EngineCoordinator) ComputeGraphSummary(t types.DiagramType, opts types.QueryOptions) (*types.GraphSummary, error) {
 	opts.DiagramType = t

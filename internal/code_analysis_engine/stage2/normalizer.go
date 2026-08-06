@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage1"
+	"github.com/Syamchand123/GlassMarble/internal/product"
 )
 
 func Normalize(stage1Out *stage1.StageOutput, commitHash string) (*Stage2Payload, error) {
@@ -136,24 +137,30 @@ func stampPath(node *GASTNode, relPath string) {
 func processFileResult(res *stage1.IngestionResult) (*GASTNode, *FileSymbolTable) {
 	translator := Dispatcher(res.Language)
 
+	relPath := product.InternString(res.RelPath)
 	root := &GASTNode{
-		ID:         res.RelPath,
+		ID:         relPath,
 		Type:       GASTFileRoot,
-		Name:       filepath.Base(res.RelPath),
-		Kind:       "file",
+		Name:       product.InternString(filepath.Base(relPath)),
+		Kind:       product.InternString("file"),
 		StartLine:  1,
-		Properties: map[string]string{"language": string(res.Language), "file_path": res.RelPath},
+		Properties: map[string]string{"language": string(res.Language), "file_path": relPath},
 	}
 
 	symTable := &FileSymbolTable{
 		FilePath: res.FilePath,
-		RelPath:  res.RelPath,
+		RelPath:  relPath,
 		Language: res.Language,
 	}
 
 	nodes := make([]*GASTNode, len(res.RichTokens))
 	for i, tok := range res.RichTokens {
-		nodes[i] = translator.CoerceToken(tok, parentToken(tok, res.RichTokens), res.RelPath)
+		n := translator.CoerceToken(tok, parentToken(tok, res.RichTokens), relPath)
+		if n != nil {
+			n.Kind = product.InternString(n.Kind)
+			n.Name = product.InternString(n.Name)
+		}
+		nodes[i] = n
 	}
 
 	pkgName := detectPackageName(res, nodes)

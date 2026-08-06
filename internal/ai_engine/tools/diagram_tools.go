@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/product"
-	"github.com/Syamchand123/GlassMarble/internal/visualization_engine"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
@@ -28,6 +27,17 @@ func canonicalDiagramType(v string) string {
 	v = strings.ToUpper(strings.TrimSpace(v))
 	v = strings.ReplaceAll(v, "-", "_")
 	return strings.ReplaceAll(v, " ", "_")
+}
+
+// ToolDiagramResult holds LLM-facing diagram execution results (11.3 / §11.3).
+type ToolDiagramResult struct {
+	Markup    string              `json:"markup,omitempty"`
+	Saved     string              `json:"saved,omitempty"`
+	Type      string              `json:"type"`
+	Format    string              `json:"format"`
+	NodeCount int                 `json:"node_count"`
+	EdgeCount int                 `json:"edge_count"`
+	Summary   *types.GraphSummary `json:"summary,omitempty"`
 }
 
 // diagramTools builds the visualization-engine tools: diagram generation,
@@ -56,7 +66,7 @@ func diagramTools() []Tool {
 					return nil, fmt.Errorf("unknown diagram type %q — see diagram_types for the 31 supported types", strArg(args, "type", ""))
 				}
 				if dt == types.UMLSequence && strArg(args, "entry", "") == "" {
-					return nil, fmt.Errorf("entry point (--entry) is mandatory for UML_SEQUENCE diagrams")
+					return nil, fmt.Errorf("entry required: try --entry symbol:main.go::main")
 				}
 				ttlPath := filepath.Join(env.RootDir, ".glassmarble", "akg_state.ttl")
 				if _, err := os.Stat(ttlPath); err != nil {
@@ -84,15 +94,18 @@ func diagramTools() []Tool {
 						EnableSCC:         boolArg(args, "scc", true),
 					}
 				}
-				// Single-source in-memory read: when the bridge already holds
-				// the AKG snapshot, render from it instead of re-parsing the
-				// TTL (AUDIT Issue 4 Phase 4A-1). The TTL-parsing engine
-				// coordinator remains the fallback for sessions without a
-				// bridge.
-				markup, err := renderFromSnapshotOrTTL(env, ttlPath, dt, opts)
+
+				markup, summary, err := renderWithSummary(env, ttlPath, dt, opts)
 				if err != nil {
 					return nil, fmt.Errorf("diagram generation failed: %w", err)
 				}
+				nodeCount := 0
+				edgeCount := 0
+				if summary != nil {
+					nodeCount = summary.NodeCount
+					edgeCount = summary.EdgeCount
+				}
+
 				if !boolArg(args, "save", false) {
 					return Raw(markup), nil
 				}
@@ -101,10 +114,13 @@ func diagramTools() []Tool {
 					return nil, err
 				}
 				return map[string]any{
-					"saved":  path,
-					"type":   string(dt),
-					"bytes":  len(markup),
-					"format": strArg(args, "format", "mermaid"),
+					"saved":      path,
+					"type":       string(dt),
+					"bytes":      len(markup),
+					"format":     strArg(args, "format", "mermaid"),
+					"node_count": nodeCount,
+					"edge_count": edgeCount,
+					"summary":    summary,
 				}, nil
 			},
 		},
@@ -139,7 +155,7 @@ func diagramTools() []Tool {
 					Scope:         scope,
 					ScopePath:     scopePath,
 				}
-				summary, err := summarizeFromSnapshotOrTTL(env, ttlPath, dt, opts)
+				_, summary, err := renderWithSummary(env, ttlPath, dt, opts)
 				if err != nil {
 					return nil, fmt.Errorf("diagram summary failed: %w", err)
 				}
@@ -204,56 +220,29 @@ func saveDiagramMarkup(rootDir string, dt types.DiagramType, markup string) (str
 	return filePath, nil
 }
 
-// renderFromSnapshotOrTTL renders a diagram from the bridge's in-memory AKG
-// snapshot when available (single canonical parser, no second TTL parse —
-// AUDIT Issue 4 Phase 4A-1), falling back to the TTL-parsing engine
-// coordinator otherwise.
-func renderFromSnapshotOrTTL(env *Env, ttlPath string, dt types.DiagramType, opts types.QueryOptions) (string, error) {
-	if env != nil && env.Bridge != nil {
-		if snap, err := env.Bridge.Snapshot(); err == nil {
-			if markup, err := visualization_engine.ProjectDiagramFromGraph(snap.ToNativeGraph(), dt, opts); err == nil {
-				return markup, nil
-			}
-		}
+func renderWithSummary(env *Env, ttlPath string, dt types.DiagramType, opts types.QueryOptions) (string, *types.GraphSummary, error) {
+	req := product.BuildDiagramRequest{
+		TTLPath:     ttlPath,
+		DiagramType: dt,
+		Format:      opts.Format,
+		Options: product.DiagramOptions{
+			Scope:         opts.Scope,
+			ScopePath:     opts.ScopePath,
+			Entry:         opts.EntryPointID,
+			Depth:         opts.MaxDepth,
+			IncludeUnused: opts.IncludeUnused,
+			MaxNodes:      opts.MaxNodes,
+		},
+		OnProgress: opts.OnProgress,
+		OnSummary:  opts.OnSummary,
 	}
-	req := product.DiagramRequest{
-		TTLPath:       ttlPath,
-		Type:          dt,
-		Scope:         opts.Scope,
-		ScopePath:     opts.ScopePath,
-		Entry:         opts.EntryPointID,
-		Depth:         opts.MaxDepth,
-		IncludeUnused: opts.IncludeUnused,
-		MaxNodes:      opts.MaxNodes,
-		Format:        opts.Format,
-		OnProgress:    opts.OnProgress,
-		OnSummary:     opts.OnSummary,
+	res, err := product.BuildDiagramEx(req)
+	if err != nil {
+		return "", nil, err
 	}
-	markup, _, err := product.BuildDiagram(req)
-	return markup, err
+	if res == nil {
+		return "", nil, fmt.Errorf("nil BuildDiagramResult")
+	}
+	return res.Markup, res.Summary, nil
 }
 
-// summarizeFromSnapshotOrTTL is the summary counterpart of
-// renderFromSnapshotOrTTL.
-func summarizeFromSnapshotOrTTL(env *Env, ttlPath string, dt types.DiagramType, opts types.QueryOptions) (*types.GraphSummary, error) {
-	if env != nil && env.Bridge != nil {
-		if snap, err := env.Bridge.Snapshot(); err == nil {
-			if summary, err := visualization_engine.ComputeGraphSummaryFromGraph(snap.ToNativeGraph(), dt, opts); err == nil {
-				return summary, nil
-			}
-		}
-	}
-	req := product.DiagramRequest{
-		TTLPath:       ttlPath,
-		Type:          dt,
-		Scope:         opts.Scope,
-		ScopePath:     opts.ScopePath,
-		Entry:         opts.EntryPointID,
-		Depth:         opts.MaxDepth,
-		IncludeUnused: opts.IncludeUnused,
-		MaxNodes:      opts.MaxNodes,
-		Format:        opts.Format,
-	}
-	_, summary, err := product.BuildDiagram(req)
-	return summary, err
-}

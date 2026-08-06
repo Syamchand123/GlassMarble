@@ -106,43 +106,48 @@ func validateArtifactName(filename string) error {
 
 // diagramTypeInfo is one entry of the diagram vocabulary.
 type diagramTypeInfo struct {
-	Type        string `json:"type"`
-	Family      string `json:"family"`
-	Description string `json:"description"`
+	Type        string   `json:"type"`
+	Family      string   `json:"family"`
+	Description string   `json:"description"`
+	Args        []string `json:"args"`
+	Formats     []string `json:"formats"`
 }
+
+var defaultArgs = []string{"scope", "entry", "depth", "maxNodes"}
+var defaultFormats = []string{"mermaid", "plantuml", "dot"}
 
 // diagramTypeCatalog mirrors the diagram types supported by the
 // visualization engine (internal/visualization_engine/types).
 var diagramTypeCatalog = []diagramTypeInfo{
-	{Type: "UML_CLASS", Family: "UML", Description: "Class structure: types, fields, methods, relationships"},
-	{Type: "UML_OBJECT", Family: "UML", Description: "Object instances at a point in time"},
-	{Type: "UML_COMPONENT", Family: "UML", Description: "Software components and their interfaces"},
-	{Type: "UML_DEPLOYMENT", Family: "UML", Description: "Physical deployment of artifacts on nodes"},
-	{Type: "UML_PACKAGE", Family: "UML", Description: "Package organization and dependencies"},
-	{Type: "UML_COMPOSITE", Family: "UML", Description: "Composite structure of a classifier"},
-	{Type: "UML_PROFILE", Family: "UML", Description: "Profiles, stereotypes, and tagged values"},
-	{Type: "UML_USECASE", Family: "UML", Description: "Actors, use cases, and system boundaries"},
-	{Type: "UML_ACTIVITY", Family: "UML", Description: "Control flow of activities and actions"},
-	{Type: "UML_STATE", Family: "UML", Description: "State machine: states and transitions"},
-	{Type: "UML_SEQUENCE", Family: "UML", Description: "Message sequence between participants over time"},
-	{Type: "UML_COMMUNICATION", Family: "UML", Description: "Collaboration between objects with numbered messages"},
-	{Type: "UML_INTERACTION_OVERVIEW", Family: "UML", Description: "Overview of interaction fragments"},
-	{Type: "UML_TIMING", Family: "UML", Description: "Timing constraints of state changes"},
-	{Type: "C4_CONTEXT", Family: "C4", Description: "System context: the system and its external actors"},
-	{Type: "C4_CONTAINER", Family: "C4", Description: "Containers (apps, services, databases) inside the system"},
-	{Type: "C4_COMPONENT", Family: "C4", Description: "Components inside a container"},
-	{Type: "C4_CODE", Family: "C4", Description: "Code-level classes and relationships"},
-	{Type: "C4_LANDSCAPE", Family: "C4", Description: "Multiple systems in a landscape view"},
-	{Type: "C4_DYNAMIC", Family: "C4", Description: "Runtime behavior between elements"},
-	{Type: "C4_DEPLOYMENT", Family: "C4", Description: "Deployment environment of the system"},
-	{Type: "DATA_FLOW", Family: "specialized", Description: "Data flow between producers, processors, and sinks"},
-	{Type: "ER_DIAGRAM", Family: "specialized", Description: "Entities, attributes, and relationships (database schema)"},
-	{Type: "MINDMAP", Family: "specialized", Description: "Hierarchical brainstorm view of modules and symbols"},
-	{Type: "FLOWCHART", Family: "specialized", Description: "Control-flow chart of a function or process"},
-	{Type: "DEPENDENCY_GRAPH", Family: "analysis", Description: "Dependencies between modules/packages"},
-	{Type: "HOTSPOT_COMPLEXITY", Family: "analysis", Description: "Complexity hotspots ranked by metrics"},
-	{Type: "CALL_GRAPH", Family: "analysis", Description: "Call graph from an entry point"},
-	{Type: "LAYERED_ARCHITECTURE", Family: "analysis", Description: "Layered architecture with inter-layer dependencies"},
-	{Type: "CHANGE_IMPACT", Family: "analysis", Description: "Blast radius of a change to a symbol"},
-	{Type: "INFRASTRUCTURE", Family: "analysis", Description: "Infrastructure nodes: databases, queues, endpoints"},
+	{Type: "UML_CLASS", Family: "UML", Description: "Class structure: types, fields, methods, relationships", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "UML_OBJECT", Family: "UML", Description: "Object instances at a point in time", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "UML_COMPONENT", Family: "UML", Description: "Software components and their interfaces", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "UML_DEPLOYMENT", Family: "UML", Description: "Physical deployment of artifacts on nodes", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "UML_PACKAGE", Family: "UML", Description: "Package organization and dependencies", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "UML_COMPOSITE", Family: "UML", Description: "Composite structure of a classifier", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "UML_PROFILE", Family: "UML", Description: "Profiles, stereotypes, and tagged values", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "UML_USECASE", Family: "UML", Description: "Actors, use cases, and system boundaries", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "UML_ACTIVITY", Family: "UML", Description: "Control flow of activities and actions", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "UML_STATE", Family: "UML", Description: "State machine: states and transitions", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "UML_SEQUENCE", Family: "UML", Description: "Message sequence between participants over time", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "UML_COMMUNICATION", Family: "UML", Description: "Collaboration between objects with numbered messages", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "UML_INTERACTION_OVERVIEW", Family: "UML", Description: "Overview of interaction fragments", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "UML_TIMING", Family: "UML", Description: "Timing constraints of state changes", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "C4_CONTEXT", Family: "C4", Description: "System context: the system and its external actors", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "C4_CONTAINER", Family: "C4", Description: "Containers (apps, services, databases) inside the system", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "C4_COMPONENT", Family: "C4", Description: "Components inside a container", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "C4_CODE", Family: "C4", Description: "Code-level classes and relationships", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "C4_LANDSCAPE", Family: "C4", Description: "Multiple systems in a landscape view", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "C4_DYNAMIC", Family: "C4", Description: "Runtime behavior between elements", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "C4_DEPLOYMENT", Family: "C4", Description: "Deployment environment of the system", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "DATA_FLOW", Family: "specialized", Description: "Data flow between producers, processors, and sinks", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "ER_DIAGRAM", Family: "specialized", Description: "Entities, attributes, and relationships (database schema)", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "MINDMAP", Family: "specialized", Description: "Hierarchical brainstorm view of modules and symbols", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "FLOWCHART", Family: "specialized", Description: "Control-flow chart of a function or process", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "DEPENDENCY_GRAPH", Family: "analysis", Description: "Dependencies between modules/packages", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "HOTSPOT_COMPLEXITY", Family: "analysis", Description: "Complexity hotspots ranked by metrics", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "CALL_GRAPH", Family: "analysis", Description: "Call graph from an entry point", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "LAYERED_ARCHITECTURE", Family: "analysis", Description: "Layered architecture with inter-layer dependencies", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "CHANGE_IMPACT", Family: "analysis", Description: "Blast radius of a change to a symbol", Args: defaultArgs, Formats: defaultFormats},
+	{Type: "INFRASTRUCTURE", Family: "analysis", Description: "Infrastructure nodes: databases, queues, endpoints", Args: defaultArgs, Formats: defaultFormats},
 }

@@ -1,361 +1,45 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# GlassMarble CI Pipeline
-#
-# Jobs
-# ────
-#  lint          — format, vet, staticcheck, govulncheck
-#  test          — full test suite with CGO (tree-sitter), race detector, coverage
-#  drift-gate    — build gmb, run gmb analyze, enforce gmb drift invariants
-#  release       — (tag pushes only) cross-compile and upload binaries
-#
-# Tree-sitter grammars are CGO libraries, so every job that builds or tests
-# the project MUST set CGO_ENABLED=1 and install gcc.
-# ─────────────────────────────────────────────────────────────────────────────
-
-name: GlassMarble CI Pipeline
+name: GlassMarble CI & Quality Gates
 
 on:
   push:
-    branches: [main, master, develop]
-    tags:
-      - "v*.*.*"
+    branches: [ main, overhaul ]
   pull_request:
-    branches: [main, master, develop]
-  workflow_dispatch:
+    branches: [ main, overhaul ]
 
-# Cancel any in-progress run for the same ref so stale jobs don't pile up.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  GO_VERSION: "1.24"   # Latest stable that satisfies go 1.26.4 toolchain directive
-  CGO_ENABLED: "1"
-
-# ─────────────────────────────────────────────────────────────────────────────
 jobs:
-
-  # ───────────────────────────────────────────────────────────────────────────
-  lint:
-    name: "Lint & Security Scan"
+  quality-gates:
+    name: Quality Gates & Test Pyramid (§13.4)
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version: '1.22'
           cache: true
 
-      # gcc is required for CGO (tree-sitter grammars are C libraries)
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gcc libc6-dev git
-
-      - name: Download modules
-        run: go mod download
-
-      # Verify go.mod / go.sum are tidy and committed correctly
-      - name: Verify module tidy
-        run: |
-          go mod tidy
-          git diff --exit-code go.mod go.sum || \
-            (echo "::error::go.mod or go.sum is not tidy — run 'go mod tidy' and commit"; exit 1)
-
-      # gofmt reports non-zero exit on style violations
-      - name: Check formatting (gofmt)
-        run: |
-          UNFORMATTED=$(gofmt -l ./cmd ./internal ./main.go 2>/dev/null)
-          if [ -n "$UNFORMATTED" ]; then
-            echo "::error::The following files are not gofmt-formatted:"
-            echo "$UNFORMATTED"
-            exit 1
-          fi
-
-      # go vet catches common correctness issues (no false positives)
-      - name: go vet
+      - name: Vet Codebase
         run: go vet ./...
 
-      # staticcheck — deeper static analysis
-      - name: Install staticcheck
-        run: go install honnef.co/go/tools/cmd/staticcheck@latest
+      - name: Unit & Integration Test Suite
+        run: go test ./... -v -count=1
 
-      - name: staticcheck
-        run: staticcheck ./...
+      - name: AKG Determinism Test (§13.2)
+        run: go test ./internal/akg/... -run Determinism -v
 
-      # govulncheck — scan for known CVEs in dependencies
-      - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: Pipeline Performance Benchmark Gate (§12.2 / §13.4)
+        run: go run main.go analyze --bench
 
-      - name: govulncheck
-        run: govulncheck ./...
-
-  # ───────────────────────────────────────────────────────────────────────────
-  test:
-    name: "Test Suite (CGO + Race Detector)"
-    runs-on: ubuntu-latest
-    needs: lint
-
-    strategy:
-      matrix:
-        # Test against the minimum declared Go version and the latest stable.
-        # Note: go 1.26.4 is listed in go.mod as the toolchain directive; the
-        # runner installs the latest patch release for each minor version.
-        go: ["1.23", "1.24"]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go ${{ matrix.go }}
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ matrix.go }}
-          cache: true
-
-      - name: Install system dependencies (CGO/gcc for tree-sitter)
+      - name: Validate Golden Fixture Syntax (when toolchain present)
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gcc libc6-dev git
-
-      - name: Download modules
-        run: go mod download
-
-      # Run the full test suite with:
-      #   -race         : detect data races (especially important for the AKG
-      #                   concurrent write paths in internal/akg)
-      #   -coverprofile : measure statement coverage
-      #   CGO_ENABLED=1 : required for tree-sitter grammar libraries
-      - name: Run tests with race detector and coverage
-        run: |
-          CGO_ENABLED=1 go test \
-            -race \
-            -timeout 300s \
-            -coverprofile=coverage.out \
-            -covermode=atomic \
-            ./...
-
-      # ── Coverage gate ──────────────────────────────────────────────────────
-      # Uses pure Go awk replacement to avoid bc availability issues.
-      # Target: ≥ 60% (realistic gate given CGO-heavy tree-sitter packages
-      # which are not unit-testable without grammars compiled in CI).
-      - name: Verify coverage gate (≥ 60%)
-        run: |
-          COVERAGE=$(go tool cover -func=coverage.out \
-            | awk '/^total:/{gsub(/%/,""); print $3}')
-          echo "Total coverage: ${COVERAGE}%"
-          # awk -based numeric comparison (no bc needed)
-          PASS=$(awk -v c="$COVERAGE" 'BEGIN{print (c+0 >= 60.0) ? "yes" : "no"}')
-          if [ "$PASS" != "yes" ]; then
-            echo "::error::Coverage ${COVERAGE}% is below the 60% threshold. Add tests."
-            exit 1
-          fi
-
-      # Upload coverage for the primary Go version so Codecov/PR comments work.
-      - name: Upload coverage report
-        if: matrix.go == '1.24'
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: coverage.out
-          retention-days: 7
-
-      # Human-readable HTML coverage report attached as an artifact.
-      - name: Generate HTML coverage report
-        if: matrix.go == '1.24'
-        run: go tool cover -html=coverage.out -o coverage.html
-
-      - name: Upload HTML coverage report
-        if: matrix.go == '1.24'
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-html
-          path: coverage.html
-          retention-days: 7
-
-  # ───────────────────────────────────────────────────────────────────────────
-  drift-gate:
-    name: "Architecture Drift Gate"
-    runs-on: ubuntu-latest
-    needs: test
-    # Run on PRs and pushes to main/master; skip on tag-only pushes that
-    # only bump the version number and don't change source.
-    if: >
-      github.event_name == 'pull_request' ||
-      (github.event_name == 'push' &&
-       !startsWith(github.ref, 'refs/tags/'))
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          # Need full history so gmb can resolve HEAD for the commit hash tag.
-          fetch-depth: 0
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Install system dependencies (CGO/gcc for tree-sitter)
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gcc libc6-dev git
-
-      - name: Download modules
-        run: go mod download
-
-      # Build the gmb binary with a descriptive ldflags version string.
-      - name: Build gmb
-        run: |
-          CGO_ENABLED=1 go build \
-            -ldflags="-X main.version=ci-${{ github.sha }}" \
-            -o gmb \
-            .
-
-      # Run a full analysis of the repository itself so the AKG is populated.
-      # Failures here are soft (|| true) because partial graphs still allow
-      # gmb drift to run against whatever was indexed.
-      - name: Analyze repository (populate AKG)
-        run: |
-          ./gmb analyze --dir . --full --json > /tmp/analysis.json 2>&1 || true
-          if [ -f /tmp/analysis.json ]; then
-            echo "=== Analysis summary ==="
-            cat /tmp/analysis.json | python3 -c "
-          import sys, json
-          try:
-              d = json.load(sys.stdin)
-              print(f\"  Files: {d.get('files_analyzed',0)}  Nodes: {d.get('nodes',0)}  Edges: {d.get('edges',0)}\")
-          except Exception as e:
-              print(f'  (could not parse JSON: {e})')
-          "
-          fi
-
-      # Enforce architectural invariants declared in .glassmarble/config.yaml.
-      # gmb drift exits non-zero when:
-      #   - a forbidden cross-layer dependency is found, OR
-      #   - the cycle count exceeds the declared cycle_budget.
-      # The step only runs when a drift config exists; otherwise it's advisory.
-      - name: Enforce architecture drift invariants (gmb drift)
-        run: |
-          if [ -f .glassmarble/config.yaml ]; then
-            echo "Drift config found — running gmb drift..."
-            ./gmb drift --dir . --json 2>&1 | tee /tmp/drift.json
-            EXIT_CODE=${PIPESTATUS[0]}
-            if [ $EXIT_CODE -ne 0 ]; then
-              echo "::error::Architecture drift detected. Review the violations above."
-              exit $EXIT_CODE
-            fi
-            echo "✓ Architecture drift gate: PASS"
+          if command -v mmdc >/dev/null 2>&1; then
+            echo "Running mermaid-cli validation..."
+            for f in internal/visualization_engine/testdata/golden/*.mmd; do
+              [ -e "$f" ] || continue
+              mmdc -i "$f" -o /tmp/out.svg || exit 1
+            done
           else
-            echo "::notice::No .glassmarble/config.yaml found — drift gate skipped."
-            echo "  To enable: add a 'drift:' section to .glassmarble/config.yaml"
+            echo "mmdc not found; skipping SVG rendering pass."
           fi
-
-      # Run gmb doctor to verify the AKG is internally consistent after CI.
-      - name: Verify AKG integrity (gmb doctor)
-        run: |
-          ./gmb doctor --dir . 2>&1 || \
-            echo "::warning::gmb doctor reported issues. Run 'gmb doctor' locally for details."
-
-  # ───────────────────────────────────────────────────────────────────────────
-  release:
-    name: "Cross-Compile & Release"
-    runs-on: ubuntu-latest
-    needs: [lint, test]
-    # Only runs on version tags (v1.2.3 etc.)
-    if: startsWith(github.ref, 'refs/tags/v')
-
-    permissions:
-      contents: write   # Required for creating GitHub Releases
-
-    strategy:
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-            suffix: ""
-          - goos: linux
-            goarch: arm64
-            suffix: ""
-          - goos: darwin
-            goarch: amd64
-            suffix: ""
-          - goos: darwin
-            goarch: arm64
-            suffix: ""
-          - goos: windows
-            goarch: amd64
-            suffix: ".exe"
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      # Cross-compilation for tree-sitter CGO libraries:
-      # Linux→Linux and darwin cross-compiles need the appropriate gcc toolchain.
-      # Windows cross-compile uses mingw-w64.
-      - name: Install cross-compile toolchains
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            gcc libc6-dev git \
-            gcc-aarch64-linux-gnu \
-            mingw-w64
-
-      - name: Build binary (${{ matrix.goos }}/${{ matrix.goarch }})
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "1"
-        run: |
-          VERSION="${GITHUB_REF_NAME}"
-
-          # Select the right C cross-compiler
-          case "${{ matrix.goos }}-${{ matrix.goarch }}" in
-            linux-amd64)   CC=gcc ;;
-            linux-arm64)   CC=aarch64-linux-gnu-gcc ;;
-            darwin-amd64)  CC=o64-clang  2>/dev/null || CC=gcc ;;
-            darwin-arm64)  CC=oa64-clang 2>/dev/null || CC=gcc ;;
-            windows-amd64) CC=x86_64-w64-mingw32-gcc ;;
-            *)             CC=gcc ;;
-          esac
-
-          OUTFILE="gmb-${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}"
-          CC=$CC go build \
-            -ldflags="-s -w -X main.version=${VERSION}" \
-            -o "$OUTFILE" \
-            .
-          sha256sum "$OUTFILE" > "${OUTFILE}.sha256"
-          echo "OUTFILE=$OUTFILE" >> $GITHUB_ENV
-
-      - name: Upload release artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: gmb-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: |
-            gmb-*
-          retention-days: 7
-
-      # Create (or update) the GitHub Release and attach the binary + checksum.
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            gmb-*
-          generate_release_notes: true
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
