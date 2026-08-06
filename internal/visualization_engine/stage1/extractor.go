@@ -346,37 +346,37 @@ func bothPassSubgraph(startIDs []string, allNodes map[string]*types.TTLNode, all
 //     auto-discovered entry point (gm:isEntrypoint flag, main, handler/
 //     controller/api naming).
 var extractionConfigs = map[types.DiagramType]types.ExtractionConfig{
-	types.UMLClass:               {Name: "UMLClass", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredMember, ont.PredFunction, ont.PredMethod, ont.PredExecutable, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupTypeHierarchy, types.GroupComposition, types.GroupCallGraph}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 7, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
-	types.UMLObject:              {Name: "UMLObject", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupTypeHierarchy, types.GroupComposition, types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 3, Direction: types.EdgeDirectionBoth},
-	types.UMLComponent:           {Name: "UMLComponent", NodeKindFilter: []string{ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredModule, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupComposition, types.GroupStructural}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 7, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
-	types.UMLDeployment:          {Name: "UMLDeployment", NodeKindFilter: []string{ont.PredNamespace, ont.PredModule, ont.PredFile, ont.PredVirtualDatabase, ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupInfrastructure, types.GroupCallGraph, types.GroupStructural}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 7, Direction: types.EdgeDirectionForward, IncludeUnused: true},
-	types.UMLPackage:             {Name: "UMLPackage", NodeKindFilter: []string{ont.PredNamespace, ont.PredFile, ont.PredModule, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupStructural}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 99, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
-	types.UMLComposite:           {Name: "UMLComposite", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredMember, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupComposition, types.GroupTypeHierarchy, types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 5, Direction: types.EdgeDirectionBoth},
-	types.UMLProfile:             {Name: "UMLProfile", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredAnnotation, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupTypeHierarchy, types.GroupComposition, types.GroupBinding}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 5, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
-	types.UMLUsecase:             {Name: "UMLUsecase", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupStructural}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 5, Direction: types.EdgeDirectionForward},
-	types.UMLActivity:            {Name: "UMLActivity", NodeKindFilter: []string{ont.PredControlStructure, ont.PredBlock, ont.PredCFGFlow, ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupControlFlow}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 10, Direction: types.EdgeDirectionForward},
-	types.Flowchart:              {Name: "Flowchart", PredicateGroup: []types.PredicateGroup{types.GroupControlFlow, types.GroupDataFlow, types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 10, Direction: types.EdgeDirectionForward},
-	types.UMLState:               {Name: "UMLState", NodeKindFilter: []string{ont.PredControlStructure, ont.PredCFGFlow, ont.PredExceptionalBranch, ont.PredBlock}, PredicateGroup: []types.PredicateGroup{types.GroupControlFlow, types.GroupDataFlow}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 99, Direction: types.EdgeDirectionForward},
-	types.UMLSequence:            {Name: "UMLSequence", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, Direction: types.EdgeDirectionForward},
-	types.UMLCommunication:       {Name: "UMLCommunication", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, Direction: types.EdgeDirectionForward},
-	types.UMLInteractionOverview: {Name: "UMLInteractionOverview", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, Direction: types.EdgeDirectionForward},
-	types.UMLTiming:              {Name: "UMLTiming", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredVariable, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 5, Direction: types.EdgeDirectionForward, IncludeUnused: true},
-	types.C4Context:              {Name: "C4Context", NodeKindFilter: []string{ont.PredExternalSDK, ont.PredExternalAPI, ont.PredExternalFFI, ont.PredExternal, ont.PredVirtualDatabase, ont.PredVirtualContext, ont.PredVirtualEndpoint}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupStructural, types.GroupInfrastructure}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
-	types.C4Container:            {Name: "C4Container", NodeKindFilter: []string{ont.PredModule, ont.PredNamespace, ont.PredFile, ont.PredVirtualDatabase, ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupStructural, types.GroupInfrastructure, types.GroupMessaging}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
-	types.C4Component:            {Name: "C4Component", NodeKindFilter: []string{ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredFunction, ont.PredMethod, ont.PredVirtualDatabase, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupComposition, types.GroupStructural, types.GroupInfrastructure}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 5, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
-	types.C4Code:                 {Name: "C4Code", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredMember, ont.PredFunction, ont.PredMethod, ont.PredExecutable, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupTypeHierarchy, types.GroupComposition, types.GroupCallGraph}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
-	types.C4Landscape:            {Name: "C4Landscape", NodeKindFilter: []string{ont.PredNamespace, ont.PredModule, ont.PredFile, ont.PredExternalSDK, ont.PredExternalAPI, ont.PredExternalFFI, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupStructural, types.GroupInfrastructure}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 99, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
-	types.C4Dynamic:              {Name: "C4Dynamic", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, Direction: types.EdgeDirectionForward},
-	types.C4Deployment:           {Name: "C4Deployment", NodeKindFilter: []string{ont.PredNamespace, ont.PredModule, ont.PredFile, ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredVirtualDatabase, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupStructural, types.GroupInfrastructure, types.GroupCallGraph}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionForward, IncludeUnused: true},
-	types.ERDiagram:              {Name: "ERDiagram", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredMember}, PredicateGroup: []types.PredicateGroup{types.GroupComposition, types.GroupBinding, types.GroupTypeHierarchy}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
-	types.DataFlow:               {Name: "DataFlow", NodeKindFilter: []string{ont.PredVariable, ont.PredParameter, ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal, ont.PredVirtualTaintSource, ont.PredVirtualSecuritySink}, PredicateGroup: []types.PredicateGroup{types.GroupDataFlow, types.GroupSecurity, types.GroupBinding}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 10, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
-	types.Mindmap:                {Name: "Mindmap", NodeKindFilter: []string{ont.PredNamespace, ont.PredModule, ont.PredFile}, PredicateGroup: []types.PredicateGroup{types.GroupStructural}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 99, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
-	types.DependencyGraph:        {Name: "DependencyGraph", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredFile, ont.PredNamespace, ont.PredModule, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupStructural, types.GroupBinding}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
-	types.HotspotComplexity:      {Name: "HotspotComplexity", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionForward, IncludeUnused: true},
-	types.CallGraph:              {Name: "CallGraph", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupMessaging, types.GroupInfrastructure}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 99, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
-	types.LayeredArchitecture:    {Name: "LayeredArchitecture", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupComposition, types.GroupTypeHierarchy}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 99, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
-	types.ChangeImpact:           {Name: "ChangeImpact", PredicateGroup: []types.PredicateGroup{types.GroupAny}, EntryStrategy: types.EntryStrategyChangedFiles, MaxDepth: 5, Direction: types.EdgeDirectionReverse},
-	types.Infrastructure:         {Name: "Infrastructure", NodeKindFilter: []string{ont.PredExternalSDK, ont.PredExternalAPI, ont.PredExternalFFI, ont.PredVirtualDatabase, ont.PredVirtualContext, ont.PredVirtualEndpoint, ont.PredVirtualQueue, ont.PredVirtualSecuritySink, ont.PredVirtualCloudAPI, ont.PredModule, ont.PredNamespace, ont.PredFile, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupInfrastructure, types.GroupStructural, types.GroupMessaging, types.GroupSecurity}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionReverse, IncludeUnused: true},
+	types.UMLClass:               {Name: "UMLClass", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredMember, ont.PredFunction, ont.PredMethod, ont.PredExecutable, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupTypeHierarchy, types.GroupComposition, types.GroupCallGraph}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 7, Direction: types.EdgeDirectionBoth, IncludeUnused: true, Views: []types.ViewTag{types.ViewStructural}},
+	types.UMLObject:              {Name: "UMLObject", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupTypeHierarchy, types.GroupComposition, types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 3, Direction: types.EdgeDirectionBoth, Views: []types.ViewTag{types.ViewStructural}},
+	types.UMLComponent:           {Name: "UMLComponent", NodeKindFilter: []string{ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredModule, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupComposition, types.GroupStructural}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 7, Direction: types.EdgeDirectionBoth, IncludeUnused: true, Views: []types.ViewTag{types.ViewStructural}},
+	types.UMLDeployment:          {Name: "UMLDeployment", NodeKindFilter: []string{ont.PredNamespace, ont.PredModule, ont.PredFile, ont.PredVirtualDatabase, ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupInfrastructure, types.GroupCallGraph, types.GroupStructural}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 7, Direction: types.EdgeDirectionForward, IncludeUnused: true, Views: []types.ViewTag{types.ViewStructural}},
+	types.UMLPackage:             {Name: "UMLPackage", NodeKindFilter: []string{ont.PredNamespace, ont.PredFile, ont.PredModule, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupStructural}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 99, Direction: types.EdgeDirectionBoth, IncludeUnused: true, Views: []types.ViewTag{types.ViewStructural}},
+	types.UMLComposite:           {Name: "UMLComposite", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredMember, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupComposition, types.GroupTypeHierarchy, types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 5, Direction: types.EdgeDirectionBoth, Views: []types.ViewTag{types.ViewStructural}},
+	types.UMLProfile:             {Name: "UMLProfile", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredAnnotation, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupTypeHierarchy, types.GroupComposition, types.GroupBinding}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 5, Direction: types.EdgeDirectionBoth, IncludeUnused: true, Views: []types.ViewTag{types.ViewStructural}},
+	types.UMLUsecase:             {Name: "UMLUsecase", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupStructural}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 5, Direction: types.EdgeDirectionForward, Views: []types.ViewTag{types.ViewStructural}},
+	types.UMLActivity:            {Name: "UMLActivity", NodeKindFilter: []string{ont.PredControlStructure, ont.PredBlock, ont.PredCFGFlow, ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupControlFlow}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 10, Direction: types.EdgeDirectionForward, Views: []types.ViewTag{types.ViewDynamic}},
+	types.Flowchart:              {Name: "Flowchart", PredicateGroup: []types.PredicateGroup{types.GroupControlFlow, types.GroupDataFlow, types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 10, Direction: types.EdgeDirectionForward, Views: []types.ViewTag{types.ViewDynamic}},
+	types.UMLState:               {Name: "UMLState", NodeKindFilter: []string{ont.PredControlStructure, ont.PredCFGFlow, ont.PredExceptionalBranch, ont.PredBlock}, PredicateGroup: []types.PredicateGroup{types.GroupControlFlow, types.GroupDataFlow}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 99, Direction: types.EdgeDirectionForward, Views: []types.ViewTag{types.ViewDynamic}},
+	types.UMLSequence:            {Name: "UMLSequence", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, Direction: types.EdgeDirectionForward, Views: []types.ViewTag{types.ViewStructural, types.ViewDynamic}},
+	types.UMLCommunication:       {Name: "UMLCommunication", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, Direction: types.EdgeDirectionForward, Views: []types.ViewTag{types.ViewStructural, types.ViewDynamic}},
+	types.UMLInteractionOverview: {Name: "UMLInteractionOverview", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, Direction: types.EdgeDirectionForward, Views: []types.ViewTag{types.ViewStructural, types.ViewDynamic}},
+	types.UMLTiming:              {Name: "UMLTiming", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredVariable, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 5, Direction: types.EdgeDirectionForward, IncludeUnused: true, Views: []types.ViewTag{types.ViewStructural, types.ViewDynamic}},
+	types.C4Context:              {Name: "C4Context", NodeKindFilter: []string{ont.PredExternalSDK, ont.PredExternalAPI, ont.PredExternalFFI, ont.PredExternal, ont.PredVirtualDatabase, ont.PredVirtualContext, ont.PredVirtualEndpoint}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupStructural, types.GroupInfrastructure}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionBoth, IncludeUnused: true, Views: []types.ViewTag{types.ViewStructural}},
+	types.C4Container:            {Name: "C4Container", NodeKindFilter: []string{ont.PredModule, ont.PredNamespace, ont.PredFile, ont.PredVirtualDatabase, ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupStructural, types.GroupInfrastructure, types.GroupMessaging}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionBoth, IncludeUnused: true, Views: []types.ViewTag{types.ViewStructural}},
+	types.C4Component:            {Name: "C4Component", NodeKindFilter: []string{ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredFunction, ont.PredMethod, ont.PredVirtualDatabase, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupComposition, types.GroupStructural, types.GroupInfrastructure}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 5, Direction: types.EdgeDirectionBoth, IncludeUnused: true, Views: []types.ViewTag{types.ViewStructural}},
+	types.C4Code:                 {Name: "C4Code", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredMember, ont.PredFunction, ont.PredMethod, ont.PredExecutable, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupTypeHierarchy, types.GroupComposition, types.GroupCallGraph}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionBoth, IncludeUnused: true, Views: []types.ViewTag{types.ViewStructural}},
+	types.C4Landscape:            {Name: "C4Landscape", NodeKindFilter: []string{ont.PredNamespace, ont.PredModule, ont.PredFile, ont.PredExternalSDK, ont.PredExternalAPI, ont.PredExternalFFI, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupStructural, types.GroupInfrastructure}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 99, Direction: types.EdgeDirectionBoth, IncludeUnused: true, Views: []types.ViewTag{types.ViewStructural}},
+	types.C4Dynamic:              {Name: "C4Dynamic", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, Direction: types.EdgeDirectionForward, Views: []types.ViewTag{types.ViewStructural, types.ViewDynamic}},
+	types.C4Deployment:           {Name: "C4Deployment", NodeKindFilter: []string{ont.PredNamespace, ont.PredModule, ont.PredFile, ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredVirtualDatabase, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupStructural, types.GroupInfrastructure, types.GroupCallGraph}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionForward, IncludeUnused: true, Views: []types.ViewTag{types.ViewStructural}},
+	types.ERDiagram:              {Name: "ERDiagram", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredMember}, PredicateGroup: []types.PredicateGroup{types.GroupComposition, types.GroupBinding, types.GroupTypeHierarchy}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionBoth, IncludeUnused: true, Views: []types.ViewTag{types.ViewStructural}},
+	types.DataFlow:               {Name: "DataFlow", NodeKindFilter: []string{ont.PredVariable, ont.PredParameter, ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal, ont.PredVirtualTaintSource, ont.PredVirtualSecuritySink}, PredicateGroup: []types.PredicateGroup{types.GroupDataFlow, types.GroupSecurity, types.GroupBinding}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 10, Direction: types.EdgeDirectionBoth, IncludeUnused: true, Views: []types.ViewTag{types.ViewDynamic, types.ViewSecurity}},
+	types.Mindmap:                {Name: "Mindmap", NodeKindFilter: []string{ont.PredNamespace, ont.PredModule, ont.PredFile}, PredicateGroup: []types.PredicateGroup{types.GroupStructural}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 99, Direction: types.EdgeDirectionBoth, IncludeUnused: true, Views: []types.ViewTag{types.ViewStructural}},
+	types.DependencyGraph:        {Name: "DependencyGraph", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredFile, ont.PredNamespace, ont.PredModule, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupStructural, types.GroupBinding}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionBoth, IncludeUnused: true, Views: []types.ViewTag{types.ViewStructural}},
+	types.HotspotComplexity:      {Name: "HotspotComplexity", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionForward, IncludeUnused: true, Views: []types.ViewTag{types.ViewStructural}},
+	types.CallGraph:              {Name: "CallGraph", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupMessaging, types.GroupInfrastructure}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 99, Direction: types.EdgeDirectionBoth, IncludeUnused: true, Views: []types.ViewTag{types.ViewStructural, types.ViewDynamic}},
+	types.LayeredArchitecture:    {Name: "LayeredArchitecture", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupComposition, types.GroupTypeHierarchy}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 99, Direction: types.EdgeDirectionBoth, IncludeUnused: true, Views: []types.ViewTag{types.ViewStructural}},
+	types.ChangeImpact:           {Name: "ChangeImpact", PredicateGroup: []types.PredicateGroup{types.GroupAny}, EntryStrategy: types.EntryStrategyChangedFiles, MaxDepth: 5, Direction: types.EdgeDirectionReverse, Views: []types.ViewTag{types.ViewStructural}},
+	types.Infrastructure:         {Name: "Infrastructure", NodeKindFilter: []string{ont.PredExternalSDK, ont.PredExternalAPI, ont.PredExternalFFI, ont.PredVirtualDatabase, ont.PredVirtualContext, ont.PredVirtualEndpoint, ont.PredVirtualQueue, ont.PredVirtualSecuritySink, ont.PredVirtualCloudAPI, ont.PredModule, ont.PredNamespace, ont.PredFile, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupInfrastructure, types.GroupStructural, types.GroupMessaging, types.GroupSecurity}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionReverse, IncludeUnused: true, Views: []types.ViewTag{types.ViewStructural, types.ViewSecurity}},
 }
 
 // GetExtractionConfig returns the per-diagram extraction configuration,
@@ -633,12 +633,24 @@ func bindEdgeProperty(block string, edgeMap map[string]*types.TTLEdge) error {
 		edgeMap[key] = edge
 	}
 
-	if strings.HasPrefix(propsPart, ont.PredLineNumber) {
-		numStr := strings.TrimSpace(strings.TrimPrefix(propsPart, ont.PredLineNumber))
-		if n, err := strconv.Atoi(numStr); err == nil {
-			edge.LineNumber = n
-		} else {
-			return fmt.Errorf("bad %s value %q for edge %s: %v", ont.PredLineNumber, numStr, key, err)
+	if propsPart != "" {
+		attrs := strings.Split(propsPart, ";")
+		for _, attr := range attrs {
+			attr = strings.TrimSpace(attr)
+			if attr == "" {
+				continue
+			}
+			fields := strings.Fields(attr)
+			if len(fields) < 2 {
+				continue
+			}
+			pName := fields[0]
+			pValue := strings.TrimSpace(strings.Join(fields[1:], " "))
+			if pName == ont.PredLineNumber {
+				if n, err := strconv.Atoi(pValue); err == nil {
+					edge.LineNumber = n
+				}
+			}
 		}
 	}
 	return nil
@@ -695,7 +707,7 @@ func parseNodeBlock(block string, nodes map[string]*types.TTLNode) {
 			if n, err := strconv.Atoi(val); err == nil {
 				node.LineEnd = n
 			}
-		case ont.PredCode:
+		case ont.PredContent, ont.PredCode:
 			node.Code = parseLiteral(val)
 		case ont.PredIsEntrypoint:
 			if val == "true" {
@@ -1034,7 +1046,7 @@ func ParseTTLNodeByID(ttlPath, nodeID string) (*types.TTLNode, []types.TTLEdge, 
 	err := scanTTLStream(ttlPath, func(block string) error {
 		trimmed := strings.TrimSpace(block)
 		if strings.HasPrefix(trimmed, "<<") {
-			// Bind a line number to a kept incident edge.
+			// Bind an incident edge and line number from RDF-star statement
 			block = strings.TrimSuffix(trimmed, ".")
 			startIdx := strings.Index(block, "<<")
 			endIdx := strings.LastIndex(block, ">>")
@@ -1048,10 +1060,25 @@ func ParseTTLNodeByID(ttlPath, nodeID string) (*types.TTLNode, []types.TTLEdge, 
 			}
 			src := types.ParseNodeURI(fields[0])
 			tgt := types.ParseNodeURI(fields[2])
-			key := fmt.Sprintf("%s|%s|%s", src, fields[1], tgt)
-			if e, ok := edgeMap[key]; ok {
-				if n, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(block[endIdx+2:]), ont.PredLineNumber))); err == nil {
-					e.LineNumber = n
+			if src == nodeID || tgt == nodeID {
+				key := fmt.Sprintf("%s|%s|%s", src, fields[1], tgt)
+				edge, ok := edgeMap[key]
+				if !ok {
+					edge = &types.TTLEdge{SourceID: src, Predicate: fields[1], TargetID: tgt}
+					edgeMap[key] = edge
+				}
+				propsPart := strings.TrimSpace(block[endIdx+2:])
+				if propsPart != "" {
+					attrs := strings.Split(propsPart, ";")
+					for _, attr := range attrs {
+						attr = strings.TrimSpace(attr)
+						attrFields := strings.Fields(attr)
+						if len(attrFields) >= 2 && attrFields[0] == ont.PredLineNumber {
+							if n, err := strconv.Atoi(attrFields[1]); err == nil {
+								edge.LineNumber = n
+							}
+						}
+					}
 				}
 			}
 			return nil
@@ -1121,7 +1148,7 @@ func StopStreaming(err error) bool {
 	return errors.Is(err, errStopStreaming)
 }
 
-// ApplyScope filters a VirtualSubgraph in-place to include only nodes matching the scope level and path.
+// ApplyScope filters a VirtualSubgraph in-place to include only nodes matching the scope level and path (W5-01 / §9.1).
 func ApplyScope(sub *types.VirtualSubgraph, opts types.QueryOptions) {
 	switch opts.Scope {
 	case types.ScopeGlobal:
@@ -1131,7 +1158,7 @@ func ApplyScope(sub *types.VirtualSubgraph, opts types.QueryOptions) {
 		}
 		filteredNodes := make(map[string]*types.TTLNode)
 		for id, n := range sub.Nodes {
-			if strings.HasPrefix(n.FileURI, opts.ScopePath) || strings.HasPrefix(id, opts.ScopePath) {
+			if strings.HasPrefix(n.FileURI, opts.ScopePath) || strings.HasPrefix(id, opts.ScopePath) || strings.Contains(n.FileURI, opts.ScopePath) {
 				filteredNodes[id] = n
 			}
 		}
@@ -1155,7 +1182,7 @@ func ApplyScope(sub *types.VirtualSubgraph, opts types.QueryOptions) {
 			scopePath = "/" + scopePath
 		}
 		for id, n := range sub.Nodes {
-			if n.FileURI == scopePath || strings.HasSuffix(n.FileURI, scopePath) || strings.HasPrefix(id, scopePath) || strings.HasPrefix(id, opts.ScopePath) {
+			if n.FileURI == scopePath || strings.HasSuffix(n.FileURI, scopePath) || strings.HasPrefix(id, scopePath) || strings.HasPrefix(id, opts.ScopePath) || strings.Contains(n.FileURI, opts.ScopePath) {
 				filteredNodes[id] = n
 			}
 		}

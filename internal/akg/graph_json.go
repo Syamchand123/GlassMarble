@@ -155,6 +155,13 @@ func ImportGraphJSON(r io.Reader) (*CodePropertyGraph, error) {
 		return nil, fmt.Errorf("failed to parse graph JSON: %w", err)
 	}
 
+	if doc.SchemaVersion < 2 && doc.SchemaVersion != 0 {
+		return nil, fmt.Errorf("cannot import schema v1 graph document (schema v1 predates overhaul; minimum supported schema is v2)")
+	}
+	if doc.SchemaVersion > CurrentSchemaVersion {
+		return nil, fmt.Errorf("cannot import schema v%d graph document (exceeds maximum supported schema version v%d)", doc.SchemaVersion, CurrentSchemaVersion)
+	}
+
 	graph := NewCodePropertyGraph(doc.CommitHash)
 	graph.SchemaVersion = doc.SchemaVersion
 	graph.Version = doc.Version
@@ -203,6 +210,10 @@ func ImportGraphJSON(r io.Reader) (*CodePropertyGraph, error) {
 
 	for k, v := range doc.FolderZones {
 		graph.FolderZones = graph.FolderZones.Set(k, v)
+	}
+
+	if graph.SchemaVersion < CurrentSchemaVersion {
+		_ = MigrateToSchemaV3(graph)
 	}
 
 	return graph, nil

@@ -290,7 +290,7 @@ func TestPipelineParseExtractRender(t *testing.T) {
 		t.Fatalf("ParseTTLFileToNative failed: %v", err)
 	}
 	cfg := stage1.GetExtractionConfig(types.UMLClass, types.QueryOptions{EntryPointID: "main.go::Main"})
-	sub, err := stage1.ExtractFromSubgraph(native, cfg, types.QueryOptions{EntryPointID: "main.go::Main"})
+	sub, _, err := stage1.ExtractFromSubgraph(native, cfg, types.QueryOptions{EntryPointID: "main.go::Main"})
 	if err != nil {
 		t.Fatalf("ExtractFromSubgraph failed: %v", err)
 	}

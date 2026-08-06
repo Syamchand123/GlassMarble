@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Syamchand123/GlassMarble/internal/product"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/components"
-	"github.com/Syamchand123/GlassMarble/internal/visualization_engine"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -111,8 +111,18 @@ func (m *model) generate() tea.Cmd {
 			m.mu.Unlock()
 		}
 		start := time.Now()
-		coordinator := visualization_engine.NewEngineCoordinator(m.cfg.TTLPath)
-		markup, err := coordinator.ProjectDiagram(m.cfg.DiagType, opts)
+		req := product.DiagramRequest{
+			TTLPath:       m.cfg.TTLPath,
+			Type:          m.cfg.DiagType,
+			Scope:         opts.Scope,
+			ScopePath:     opts.ScopePath,
+			Entry:         opts.EntryPointID,
+			Depth:         opts.MaxDepth,
+			IncludeUnused: opts.IncludeUnused,
+			Format:        opts.Format,
+			OnProgress:    opts.OnProgress,
+		}
+		markup, summary, err := product.BuildDiagram(req)
 		if err != nil {
 			return generateErrMsg{err: err}
 		}

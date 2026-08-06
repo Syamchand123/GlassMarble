@@ -126,23 +126,45 @@ func StreamGraphStats(storageDir string) (*LazyStats, error) {
 	}
 	st.IndexedFiles = len(files)
 
+	seenEdges := make(map[string]bool)
 	err = stage1.StreamTTLBlocks(ttlPath, func(block string) error {
 		trimmed := strings.TrimSuffix(strings.TrimSpace(block), ".")
 		if strings.HasPrefix(trimmed, "<<") {
-			return nil // reified property triple: its edge is counted via the base block
+			startIdx := strings.Index(trimmed, "<<")
+			endIdx := strings.Index(trimmed, ">>")
+			if startIdx != -1 && endIdx != -1 && startIdx < endIdx {
+				triplePart := strings.TrimSpace(trimmed[startIdx+2 : endIdx])
+				parts := strings.Fields(triplePart)
+				if len(parts) == 3 {
+					src := types.ParseNodeURI(parts[0])
+					pred := parts[1]
+					tgt := types.ParseNodeURI(parts[2])
+					edgeKey := src + "|" + pred + "|" + tgt
+					if !seenEdges[edgeKey] {
+						seenEdges[edgeKey] = true
+						st.Edges++
+						if !ids[src] || !ids[tgt] {
+							st.Dangling++
+						}
+					}
+				}
+			}
+			return nil
 		}
 		parts := strings.Fields(trimmed)
-		if len(parts) != 3 || parts[1] == "a" {
+		if len(parts) != 3 || parts[1] == "a" || parts[1] == ont.PredStatus {
 			return nil // node/metadata blocks are not edges
 		}
-		if parts[1] == ont.PredStatus {
-			return nil // tombstone marker, not an edge
-		}
-		st.Edges++
 		src := types.ParseNodeURI(parts[0])
+		pred := parts[1]
 		tgt := types.ParseNodeURI(parts[2])
-		if !ids[src] || !ids[tgt] {
-			st.Dangling++
+		edgeKey := src + "|" + pred + "|" + tgt
+		if !seenEdges[edgeKey] {
+			seenEdges[edgeKey] = true
+			st.Edges++
+			if !ids[src] || !ids[tgt] {
+				st.Dangling++
+			}
 		}
 		return nil
 	})

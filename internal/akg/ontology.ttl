@@ -568,6 +568,26 @@ gm:commitHash a rdf:Property ;
     rdfs:range xsd:string ;
     rdfs:label "commitHash" .
 
+gm:analyzerVersion a rdf:Property ;
+    rdfs:domain gm:MetaData ;
+    rdfs:range xsd:string ;
+    rdfs:label "analyzerVersion" .
+
+gm:generatedAt a rdf:Property ;
+    rdfs:domain gm:MetaData ;
+    rdfs:range xsd:string ;
+    rdfs:label "generatedAt" .
+
+gm:linkLevel a rdf:Property ;
+    rdfs:domain gm:MetaData ;
+    rdfs:range xsd:string ;
+    rdfs:label "linkLevel" .
+
+gm:hasContent a rdf:Property ;
+    rdfs:domain rdfs:Resource ;
+    rdfs:range xsd:string ;
+    rdfs:label "hasContent" .
+
 gm:schemaVersion a rdf:Property ;
     rdfs:domain gm:MetaData ;
     rdfs:range xsd:integer ;

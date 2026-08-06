@@ -9,7 +9,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
 )
 
-const CurrentSchemaVersion = 2
+const CurrentSchemaVersion = 3
 
 type ArchitecturalSummary struct {
 	PrimaryPatterns   []string       `json:"primary_patterns"`

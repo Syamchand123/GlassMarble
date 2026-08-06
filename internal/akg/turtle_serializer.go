@@ -5,6 +5,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
 	"github.com/Syamchand123/GlassMarble/internal/product/ont"
@@ -40,6 +41,10 @@ func writeTTLMetadata(w io.Writer, graph *CodePropertyGraph) {
 	fmt.Fprintf(w, "    %s \"%s\" ;\n", ont.PredCommitHash, escapeLiteral(graph.CommitHash))
 	fmt.Fprintf(w, "    %s %d ;\n", ont.PredSchemaVersion, graph.SchemaVersion)
 	fmt.Fprintf(w, "    %s %d ;\n", ont.PredVersion, graph.Version)
+	fmt.Fprintf(w, "    %s \"1.0.0-overhaul\" ;\n", ont.PredAnalyzerVersion)
+	fmt.Fprintf(w, "    %s \"%s\" ;\n", ont.PredGeneratedAt, time.Now().UTC().Format(time.RFC3339))
+	fmt.Fprintf(w, "    %s \"structural\" ;\n", ont.PredViews)
+	fmt.Fprintf(w, "    %s \"architecture\" ;\n", ont.PredLinkLevel)
 	fmt.Fprintf(w, "    %s \"GlassMarble Project MetaData\" .\n\n", ont.PredName)
 }
 
@@ -54,12 +59,13 @@ func SerializeDeltaToTurtle(graph *stage4.Stage4Output, deletedNodes map[string]
 
 	fmt.Fprintf(w, "\n# --- INCREMENTAL DELTA APPEND --- \n\n")
 
-	// Write deleted nodes as tombstone node blocks.
-	// A node block of the form `<uri> a gm:Deleted ; gm:status "DELETED" .`
-	// removes the node and its incident edges on restore (AUDIT Issue 3
-	// Phase 3B-6). The parser treats a node block whose gm:status is DELETED
-	// as a deletion (and skips emitting the block as a node).
+	// Write deleted nodes as tombstone node blocks in deterministic key order.
+	deletedKeys := make([]string, 0, len(deletedNodes))
 	for nodeID := range deletedNodes {
+		deletedKeys = append(deletedKeys, nodeID)
+	}
+	sort.Strings(deletedKeys)
+	for _, nodeID := range deletedKeys {
 		nodeURI := types.FormatNodeURI(nodeID)
 		fmt.Fprintf(w, "%s a %s ;\n", nodeURI, ont.PredDeleted)
 		fmt.Fprintf(w, "    %s \"DELETED\" .\n", ont.PredStatus)
@@ -96,16 +102,26 @@ func SerializeDeltaToTurtle(graph *stage4.Stage4Output, deletedNodes map[string]
 }
 
 func writeGraphToWriter(w io.Writer, graph *CodePropertyGraph) error {
-
 	entrypointSet := make(map[string]bool)
 	for _, ep := range graph.Entrypoints {
 		entrypointSet[ep] = true
 	}
 
-	// 3. Write Graph Nodes
+	// 3. Write Graph Nodes in lexicographical key order for determinism (K-01 / §18.3)
+	var nodeIDs []string
 	graph.Nodes.Iterate(func(nodeID string, node *stage4.ResolvedNode) {
+		if node != nil {
+			nodeIDs = append(nodeIDs, nodeID)
+		}
+	})
+	sort.Strings(nodeIDs)
+
+	storeCode := GetStoreCode()
+
+	for _, nodeID := range nodeIDs {
+		node, _ := graph.Nodes.Get(nodeID)
 		if node == nil {
-			return
+			continue
 		}
 
 		nodeURI := types.FormatNodeURI(nodeID)
@@ -130,26 +146,39 @@ func writeGraphToWriter(w io.Writer, graph *CodePropertyGraph) error {
 			fmt.Fprintf(w, "    %s %d ;\n", ont.PredLineEnd, node.FileSpec.LineEnd)
 		}
 
-		// Write dynamic properties (metrics, macro rules, blast radius, etc.)
+		// Write dynamic properties without in-place map mutation (K-05 / thread safety)
+		hasContentVal := "false"
 		if node.Properties != nil {
-			// Sort keys for deterministic output
 			keys := make([]string, 0, len(node.Properties))
 			for k := range node.Properties {
+				if k == "macro_rules" || k == "code" || k == "hasContent" {
+					continue
+				}
+				if k == "content" {
+					if !storeCode {
+						continue
+					}
+					switch node.Kind {
+					case "STRUCT", "CLASS", "INTERFACE", "TYPE_DECL", "FUNCTION", "METHOD":
+						hasContentVal = "true"
+					default:
+						continue
+					}
+				}
 				keys = append(keys, k)
 			}
 			sort.Strings(keys)
 			for _, k := range keys {
-				if k == "macro_rules" {
-					// Derived data only: macro inference output is recomputed on
-					// restore and is intentionally NOT persisted (AUDIT Phase 3C-12).
-					continue
-				}
 				val := node.Properties[k]
+				if k == "content" && len(val) > MaxContentLength {
+					val = val[:MaxContentLength]
+				}
 				cleanKey := strings.ReplaceAll(k, " ", "_")
 				cleanKey = strings.ReplaceAll(cleanKey, "-", "_")
 				fmt.Fprintf(w, "    %s%s \"%s\" ;\n", ont.PrefixGM, cleanKey, escapeLiteral(val))
 			}
 		}
+		fmt.Fprintf(w, "    %s \"%s\" ;\n", ont.PredHasContent, hasContentVal)
 		if entrypointSet[nodeID] {
 			fmt.Fprintf(w, "    %s true ;\n", ont.PredIsEntrypoint)
 		}
@@ -162,15 +191,18 @@ func writeGraphToWriter(w io.Writer, graph *CodePropertyGraph) error {
 
 		// Close statement
 		fmt.Fprintf(w, "    .\n\n")
-	})
+	}
 
-	// 4. Write Outbound Edges with RDF-star line numbering. The TTL is
-	// triple-oriented and the canonical parser keeps one edge per
-	// (source, predicate, target) key, so parallel edges between the same
-	// pair must be deduplicated here (keeping the highest line number) or
-	// post-write verification fails on edge-count parity (AUDIT Issue 3
-	// §3.2 / Issue 5 Phase 5A-1).
-	graph.OutboundEdges.Iterate(func(sourceID string, edges []stage4.ResolvedEdge) {
+	// 4. Write Outbound Edges as SINGLE RDF-star statements (K-01 / W2-01).
+	// Eliminate base triple double-writes. Sort lexicographically by source and target for determinism.
+	var sourceIDs []string
+	graph.OutboundEdges.Iterate(func(sourceID string, _ []stage4.ResolvedEdge) {
+		sourceIDs = append(sourceIDs, sourceID)
+	})
+	sort.Strings(sourceIDs)
+
+	for _, sourceID := range sourceIDs {
+		edges, _ := graph.OutboundEdges.Get(sourceID)
 		type dedupEdge struct {
 			edge stage4.ResolvedEdge
 			pred string
@@ -180,9 +212,6 @@ func writeGraphToWriter(w io.Writer, graph *CodePropertyGraph) error {
 		for _, edge := range edges {
 			predicate := mapEdgeTypeToPredicate(edge.Type)
 			if predicate == "" {
-				// Unknown edge type: never emit rdfs:seeAlso as a stand-in.
-				// The graph must not fabricate vocabulary the ontology does
-				// not declare (AUDIT Issue 3 Phase 3A-2).
 				continue
 			}
 			key := predicate + "\x00" + edge.TargetID
@@ -195,19 +224,47 @@ func writeGraphToWriter(w io.Writer, graph *CodePropertyGraph) error {
 			index[key] = len(ordered)
 			ordered = append(ordered, dedupEdge{edge: edge, pred: predicate})
 		}
+		// Sort edges by predicate and target ID for determinism
+		sort.Slice(ordered, func(i, j int) bool {
+			if ordered[i].pred != ordered[j].pred {
+				return ordered[i].pred < ordered[j].pred
+			}
+			return ordered[i].edge.TargetID < ordered[j].edge.TargetID
+		})
+
 		sourceURI := types.FormatNodeURI(sourceID)
 		for _, de := range ordered {
 			targetURI := types.FormatNodeURI(de.edge.TargetID)
 
-			// Write base triple
-			fmt.Fprintf(w, "%s %s %s .\n", sourceURI, de.pred, targetURI)
-
-			// Write RDF-star edge attribute
+			// Single RDF-star statement with attributes (K-01)
+			fmt.Fprintf(w, "<< %s %s %s >>", sourceURI, de.pred, targetURI)
+			var attrs []string
 			if de.edge.LineNumber > 0 {
-				fmt.Fprintf(w, "<< %s %s %s >> %s %d .\n", sourceURI, de.pred, targetURI, ont.PredLineNumber, de.edge.LineNumber)
+				attrs = append(attrs, fmt.Sprintf("%s %d", ont.PredLineNumber, de.edge.LineNumber))
+			}
+			if de.edge.Confidence > 0 {
+				attrs = append(attrs, fmt.Sprintf("%s %g", ont.PredConfidence, de.edge.Confidence))
+			}
+			attrs = append(attrs, fmt.Sprintf("%s \"structural\"", ont.PredView))
+			if len(de.edge.Properties) > 0 {
+				propKeys := make([]string, 0, len(de.edge.Properties))
+				for k := range de.edge.Properties {
+					propKeys = append(propKeys, k)
+				}
+				sort.Strings(propKeys)
+				for _, k := range propKeys {
+					v := de.edge.Properties[k]
+					attrs = append(attrs, fmt.Sprintf("%s%s \"%s\"", ont.PrefixGM, k, escapeLiteral(v)))
+				}
+			}
+
+			if len(attrs) > 0 {
+				fmt.Fprintf(w, " %s .\n", strings.Join(attrs, " ; "))
+			} else {
+				fmt.Fprintf(w, " .\n")
 			}
 		}
-	})
+	}
 
 	return nil
 }
@@ -248,11 +305,11 @@ func mapKindToClass(kind string) string {
 		return ont.PredPackage
 	case "META_DATA":
 		return ont.PredMetaData
-	// Fallback classes for legacy engine kinds
-	case "TYPE_DECL":
-		return ont.PredTypeDecl
+	// Fallback classes for legacy engine kinds mapped to standard ontology classes (K-06)
+	case "TYPE_DECL", "TYPE":
+		return ont.PredStruct
 	case "EXECUTABLE":
-		return ont.PredExecutable
+		return ont.PredFunction
 	case "IF_BRANCH", "LOOP_BRANCH", "SWITCH_BRANCH":
 		return ont.PredControlStructure
 	case "CFG_SUMMARY":

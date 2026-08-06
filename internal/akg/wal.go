@@ -1,6 +1,8 @@
 package akg
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -59,9 +61,32 @@ func (w *WriteAheadLog) AppendEntry(entry *WALEntry) error {
 	}
 	defer f.Close()
 
-	encoder := json.NewEncoder(f)
-	if err := encoder.Encode(entry); err != nil {
+	if entry != nil && entry.Payload != nil && !GetStoreCode() {
+		for _, n := range entry.Payload.GraphNodes {
+			if n != nil && n.Properties != nil {
+				delete(n.Properties, "content")
+				delete(n.Properties, "code")
+			}
+		}
+	}
+
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	if err := json.NewEncoder(gw).Encode(entry); err != nil {
+		gw.Close()
 		return fmt.Errorf("failed to encode WAL entry: %w", err)
+	}
+	if err := gw.Close(); err != nil {
+		return fmt.Errorf("failed to flush gzip WAL entry: %w", err)
+	}
+
+	raw := buf.Bytes()
+	lenBuf := []byte(fmt.Sprintf("%010d\n", len(raw)))
+	if _, err := f.Write(lenBuf); err != nil {
+		return fmt.Errorf("failed to write WAL entry header: %w", err)
+	}
+	if _, err := f.Write(raw); err != nil {
+		return fmt.Errorf("failed to write WAL entry body: %w", err)
 	}
 
 	return f.Sync()
@@ -136,24 +161,55 @@ func (w *WriteAheadLog) ForEachEntry(fn func(*WALEntry) error) error {
 
 	filesToRead := []string{w.LogFilePath + ".2", w.LogFilePath + ".1", w.LogFilePath}
 	for _, fp := range filesToRead {
-		f, err := os.Open(fp)
+		data, err := os.ReadFile(fp)
 		if err != nil {
-			continue // Skip if missing
+			continue
+		}
+		if len(data) == 0 {
+			continue
 		}
 
-		decoder := json.NewDecoder(f)
-		for {
-			var entry WALEntry
-			if err := decoder.Decode(&entry); err != nil {
-				break
+		offset := 0
+		for offset < len(data) {
+			if offset+11 <= len(data) && data[offset+10] == '\n' {
+				var size int
+				if n, _ := fmt.Sscanf(string(data[offset:offset+10]), "%d", &size); n == 1 && size > 0 && offset+11+size <= len(data) {
+					comp := data[offset+11 : offset+11+size]
+					offset += 11 + size
+					gr, err := gzip.NewReader(bytes.NewReader(comp))
+					if err == nil {
+						var entry WALEntry
+						if decErr := json.NewDecoder(gr).Decode(&entry); decErr == nil {
+							gr.Close()
+							e := entry
+							if err := fn(&e); err != nil {
+								return err
+							}
+							continue
+						}
+						gr.Close()
+					}
+				}
 			}
-			e := entry
-			if err := fn(&e); err != nil {
-				f.Close()
-				return err
+
+			// Fallback: try standard uncompressed line decode
+			rem := data[offset:]
+			idx := bytes.IndexByte(rem, '\n')
+			if idx < 0 {
+				idx = len(rem)
 			}
+			line := rem[:idx]
+			if len(line) > 0 {
+				var entry WALEntry
+				if decErr := json.Unmarshal(line, &entry); decErr == nil {
+					e := entry
+					if err := fn(&e); err != nil {
+						return err
+					}
+				}
+			}
+			offset += idx + 1
 		}
-		f.Close()
 	}
 
 	return nil
@@ -161,32 +217,10 @@ func (w *WriteAheadLog) ForEachEntry(fn func(*WALEntry) error) error {
 
 // ReadAllEntries reads all entries from the WAL file for crash recovery replay.
 func (w *WriteAheadLog) ReadAllEntries() ([]*WALEntry, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	if _, err := os.Stat(w.LogFilePath); os.IsNotExist(err) {
-		return nil, nil
-	}
 	var entries []*WALEntry
-
-	filesToRead := []string{w.LogFilePath + ".2", w.LogFilePath + ".1", w.LogFilePath}
-	for _, fp := range filesToRead {
-		f, err := os.Open(fp)
-		if err != nil {
-			continue // Skip if missing
-		}
-
-		decoder := json.NewDecoder(f)
-		for {
-			var entry WALEntry
-			if err := decoder.Decode(&entry); err != nil {
-				break
-			}
-			e := entry
-			entries = append(entries, &e)
-		}
-		f.Close()
-	}
-
-	return entries, nil
+	err := w.ForEachEntry(func(e *WALEntry) error {
+		entries = append(entries, e)
+		return nil
+	})
+	return entries, err
 }

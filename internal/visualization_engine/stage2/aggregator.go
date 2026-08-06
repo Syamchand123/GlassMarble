@@ -1,6 +1,7 @@
 package stage2
 
 import (
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -44,10 +45,83 @@ func BuildLayoutTreeEx(sub *types.VirtualSubgraph, metrics *DiagramMetrics, clus
 
 	filteredNodes := pruneDeadComponents(sub, opts)
 
+	if opts.MaxDepth > 0 && opts.EntryPointID != "" {
+		depthMap := make(map[string]int)
+		queue := []string{opts.EntryPointID}
+		depthMap[opts.EntryPointID] = 0
+
+		adj := make(map[string][]string)
+		for _, e := range sub.Edges {
+			adj[e.SourceID] = append(adj[e.SourceID], e.TargetID)
+		}
+
+		for len(queue) > 0 {
+			curr := queue[0]
+			queue = queue[1:]
+			currDepth := depthMap[curr]
+
+			if currDepth < opts.MaxDepth {
+				for _, next := range adj[curr] {
+					if _, visited := depthMap[next]; !visited {
+						depthMap[next] = currDepth + 1
+						queue = append(queue, next)
+					}
+				}
+			}
+		}
+
+		kept := make(map[string]*types.TTLNode)
+		boundaryCount := 0
+		for id, node := range filteredNodes {
+			if d, ok := depthMap[id]; ok && d <= opts.MaxDepth {
+				kept[id] = node
+			} else {
+				boundaryCount++
+			}
+		}
+
+		if boundaryCount > 0 {
+			boundaryID := "boundary_ports_depth"
+			kept[boundaryID] = &types.TTLNode{
+				ID:   boundaryID,
+				Name: fmt.Sprintf("[+%d more callees]", boundaryCount),
+				Kind: "External",
+			}
+		}
+		filteredNodes = kept
+	}
+
 	summary := metrics.Summary
 	if summary == nil {
 		summary = ComputeGraphSummary(sub)
 	}
+
+	if opts.MaxNodes > 0 && len(filteredNodes) > opts.MaxNodes {
+		type nodeDegree struct {
+			id     string
+			degree int
+		}
+		var list []nodeDegree
+		for id := range filteredNodes {
+			deg := inDeg[id] + outDeg[id]
+			list = append(list, nodeDegree{id: id, degree: deg})
+		}
+		sort.Slice(list, func(i, j int) bool {
+			if list[i].degree != list[j].degree {
+				return list[i].degree > list[j].degree
+			}
+			return list[i].id < list[j].id
+		})
+
+		kept := make(map[string]*types.TTLNode)
+		for i := 0; i < opts.MaxNodes && i < len(list); i++ {
+			id := list[i].id
+			kept[id] = filteredNodes[id]
+		}
+		filteredNodes = kept
+		summary.Truncated = true
+	}
+
 	root := &types.LayoutTree{BoundaryName: "Root", Summary: summary}
 	treeMap := make(map[string]*types.LayoutTree)
 	treeMap[""] = root
@@ -145,8 +219,15 @@ func pruneDeadComponents(sub *types.VirtualSubgraph, opts types.QueryOptions) ma
 
 	filtered := make(map[string]*types.TTLNode)
 	for id, node := range sub.Nodes {
-		if referenced[id] || node.Kind == ont.PredNamespace || node.Kind == ont.PredFile {
+		k := strings.TrimPrefix(node.Kind, ont.PrefixGM)
+		switch k {
+		case "Struct", "Class", "Interface", "TypeDecl", "Module", "Namespace", "File",
+			"STRUCT", "CLASS", "INTERFACE", "TYPE_DECL", "MODULE", "NAMESPACE", "FILE":
 			filtered[id] = node
+		default:
+			if referenced[id] {
+				filtered[id] = node
+			}
 		}
 	}
 	return filtered

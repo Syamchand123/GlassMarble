@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/stage1"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/stage2"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/stage3"
@@ -131,12 +132,12 @@ func ProjectDiagramFromGraph(full *types.NativeGraph, t types.DiagramType, opts 
 
 	cfg := stage1.GetExtractionConfig(t, opts)
 	reportProgress(opts.OnProgress, "StageExtract", fmt.Sprintf("config=%s", cfg.Name))
-	subgraph, err := stage1.ExtractFromSubgraph(full, cfg, opts)
+	subgraph, effectiveOpts, err := stage1.ExtractFromSubgraph(full, cfg, opts)
 	if err != nil {
 		return "", fmt.Errorf("extract failed: %w", err)
 	}
 	if len(subgraph.Nodes) == 0 {
-		return "", fmt.Errorf("diagram %s produced an empty subgraph (no nodes match the configured node kinds)", string(t))
+		return "", producterrs.Annotate(fmt.Errorf("diagram %s produced an empty subgraph (no nodes match the configured node kinds; try specifying --entry or --scope)", string(t)), producterrs.ErrEmptySubgraph)
 	}
 
 	reportProgress(opts.OnProgress, "StageMetrics", fmt.Sprintf("(SCC=%v, %d nodes)", enableSCC, len(subgraph.Nodes)))
@@ -154,7 +155,7 @@ func ProjectDiagramFromGraph(full *types.NativeGraph, t types.DiagramType, opts 
 	}
 
 	reportProgress(opts.OnProgress, "StageLayout", "")
-	layout := stage2.BuildLayoutTreeEx(subgraph, metrics, clustering, opts, t)
+	layout := stage2.BuildLayoutTreeEx(subgraph, metrics, clustering, effectiveOpts, t)
 
 	reportProgress(opts.OnProgress, "StageRender", fmt.Sprintf("rendering %s...", string(t)))
 	markup := stage3.RenderDiagramFormat(layout, t, opts.Format)
@@ -190,7 +191,7 @@ func ComputeGraphSummaryFromGraph(full *types.NativeGraph, t types.DiagramType, 
 	}
 
 	cfg := stage1.GetExtractionConfig(t, opts)
-	subgraph, err := stage1.ExtractFromSubgraph(full, cfg, opts)
+	subgraph, _, err := stage1.ExtractFromSubgraph(full, cfg, opts)
 	if err != nil {
 		return nil, fmt.Errorf("extract failed: %w", err)
 	}

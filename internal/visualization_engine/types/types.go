@@ -55,6 +55,7 @@ type QueryOptions struct {
 	OnSummary     func(summary *GraphSummary)
 	Scope         ScopeLevel
 	ScopePath     string
+	RelativePath  bool
 	PipelineCfg   *PipelineConfig
 }
 
@@ -263,16 +264,19 @@ const (
 )
 
 type GraphSummary struct {
-	NodeCount           int
-	EdgeCount           int
-	Density             float64
-	Diameter            int
-	AvgPathLength       float64
-	ClusterCount        int
-	LargestSCCSize      int
-	GodObjectCount      int
-	BipartiteScore      float64
-	ConnectedComponents int
+	NodeCount           int     `json:"node_count"`
+	EdgeCount           int     `json:"edge_count"`
+	Density             float64 `json:"density"`
+	Diameter            int     `json:"diameter"`
+	AvgPathLength       float64 `json:"avg_path_length"`
+	ClusterCount        int     `json:"cluster_count"`
+	SCCCount            int     `json:"scc_count,omitempty"`
+	LargestSCCSize      int     `json:"largest_scc_size"`
+	GodObjectCount      int     `json:"god_object_count"`
+	BipartiteScore      float64 `json:"bipartite_score"`
+	ConnectedComponents int     `json:"connected_components"`
+	WeakComponents      int     `json:"weak_components,omitempty"`
+	Truncated           bool    `json:"truncated,omitempty"`
 }
 
 // FormatNodeURI converts a bare node ID into a fully-qualified GlassMarble IRI string,

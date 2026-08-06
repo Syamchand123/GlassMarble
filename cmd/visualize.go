@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Syamchand123/GlassMarble/internal/product"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 	visualizeprog "github.com/Syamchand123/GlassMarble/internal/tui/programs/visualize"
-	"github.com/Syamchand123/GlassMarble/internal/visualization_engine"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 	"github.com/spf13/cobra"
 )
@@ -33,15 +33,29 @@ var (
 	communityFlag bool
 	sccFlag       bool
 	renderFlag    string
+	maxNodesFlag  int
+	changedFiles  []string
+	relativeFlag  bool
 )
 
 var visualizeCmd = &cobra.Command{
 	Use:   "visualize [diagram_type]",
 	Short: "Generate visual architecture diagrams (marbles) from the AKG",
 	Long:  `Queries the W3C RDF Turtle database file (.ttl) and projects the graph layout into Mermaid.js format.`,
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		diagName := args[0]
+		if diagName == "list" {
+			printDiagramTypesList(cmd)
+			return nil
+		}
+		if diagName == "check" {
+			if len(args) < 2 {
+				return producterrs.Tagged("usage: gmb visualize check <diagram_type>", producterrs.ErrValidation)
+			}
+			return printDiagramTypeCheck(cmd, args[1])
+		}
+
 		var diagType types.DiagramType
 
 		switch diagName {
@@ -130,8 +144,6 @@ var visualizeCmd = &cobra.Command{
 			return fmt.Errorf("active AKG database not found at %s. Please run analysis first", ttlPath)
 		}
 
-		// Initialize 3-Tier Visualizer
-		coordinator := visualization_engine.NewEngineCoordinator(ttlPath)
 		start := time.Now()
 
 		scope, scopePath, err := parseScope(scopeFlag)
@@ -146,6 +158,8 @@ var visualizeCmd = &cobra.Command{
 			Format:        formatFlag,
 			Scope:         scope,
 			ScopePath:     scopePath,
+			MaxNodes:      maxNodesFlag,
+			ChangedFiles:  changedFiles,
 		}
 
 		if cmd.Flags().Changed("pagerank") || cmd.Flags().Changed("community") || cmd.Flags().Changed("scc") {
@@ -198,8 +212,24 @@ var visualizeCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "%s...\n", msg)
 		}
 
-		// Generate Diagram Markup (Marble)
-		markup, err := coordinator.ProjectDiagram(diagType, opts)
+		// Generate Diagram Markup (Marble) via unified pipeline entry (V-11)
+		req := product.DiagramRequest{
+			TTLPath:       ttlPath,
+			Type:          diagType,
+			Scope:         scope,
+			ScopePath:     scopePath,
+			Entry:         entryPointID,
+			Depth:         maxDepth,
+			IncludeUnused: includeUnused,
+			MaxNodes:      maxNodesFlag,
+			RelativePath:  relativeFlag,
+			Format:        formatFlag,
+			OnProgress:    opts.OnProgress,
+		}
+		markup, summary, err := product.BuildDiagram(req)
+		if summary != nil {
+			graphSummary = summary
+		}
 		fmt.Fprintf(os.Stderr, "Done in %.1fs\n", time.Since(start).Seconds())
 		if err != nil {
 			return producterrs.Annotate(fmt.Errorf("failed to generate diagram: %w", err), producterrs.ErrRenderLimit)
@@ -377,6 +407,33 @@ func ResetVisualizeFlags() {
 	communityFlag = false
 	sccFlag = false
 	renderFlag = ""
+	maxNodesFlag = 0
+	changedFiles = nil
+}
+
+func printDiagramTypesList(cmd *cobra.Command) {
+	out := cmd.OutOrStdout()
+	fmt.Fprintln(out, "Supported GlassMarble Diagram Types (31 total):")
+	fmt.Fprintln(out, "\nUML Diagrams (14):")
+	fmt.Fprintln(out, "  class, object, component, deployment, package, composite, profile,")
+	fmt.Fprintln(out, "  usecase, activity, state, sequence, communication, interaction, timing")
+	fmt.Fprintln(out, "\nC4 Model Diagrams (7):")
+	fmt.Fprintln(out, "  c4context, c4container, c4component, c4code, c4landscape, c4dynamic, c4deployment")
+	fmt.Fprintln(out, "\nSpecialized Diagrams (10):")
+	fmt.Fprintln(out, "  er, dataflow, mindmap, flowchart, dependency, hotspot, callgraph, layered, impact, infrastructure")
+}
+
+func printDiagramTypeCheck(cmd *cobra.Command, name string) error {
+	out := cmd.OutOrStdout()
+	switch strings.ToLower(name) {
+	case "sequence", "communication", "interaction", "c4dynamic", "timing":
+		fmt.Fprintf(out, "Diagram type %q: VALID (requires --entry)\n", name)
+	case "class", "object", "component", "deployment", "package", "composite", "profile", "usecase", "activity", "state", "c4context", "c4container", "c4component", "c4code", "c4landscape", "c4deployment", "er", "dataflow", "mindmap", "flowchart", "dependency", "hotspot", "callgraph", "layered", "impact", "infrastructure":
+		fmt.Fprintf(out, "Diagram type %q: VALID (entry optional)\n", name)
+	default:
+		return producterrs.Tagged(fmt.Sprintf("unknown diagram type %q. Use 'gmb visualize list' to view valid types", name), producterrs.ErrValidation)
+	}
+	return nil
 }
 
 func init() {
@@ -393,6 +450,9 @@ func init() {
 	visualizeCmd.Flags().BoolVar(&communityFlag, "community", false, "Enable community detection")
 	visualizeCmd.Flags().BoolVar(&sccFlag, "scc", false, "Enable strongly connected components analysis")
 	visualizeCmd.Flags().StringVar(&renderFlag, "render", "", "Render the diagram to an image file (.svg or .png) via Kroki or mermaid-cli")
+	visualizeCmd.Flags().IntVar(&maxNodesFlag, "max-nodes", 0, "Maximum number of nodes to include in diagram (0 = unlimited)")
+	visualizeCmd.Flags().StringSliceVar(&changedFiles, "changed-files", nil, "Comma-separated list of changed files for impact analysis")
+	visualizeCmd.Flags().BoolVar(&relativeFlag, "relative", false, "Render file/symbol paths relative to folder root under folder scope")
 
 	rootCmd.AddCommand(visualizeCmd)
 }

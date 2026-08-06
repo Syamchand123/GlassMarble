@@ -13,6 +13,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage3"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
 	"github.com/Syamchand123/GlassMarble/internal/config"
+	"github.com/Syamchand123/GlassMarble/internal/git"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/programs/analyze"
@@ -34,6 +35,7 @@ var analyzeCmd = &cobra.Command{
 		maxNodes, _ := cmd.Flags().GetInt("max-nodes")
 		abortOnLimit, _ := cmd.Flags().GetBool("abort-on-limit")
 		asJSON, _ := cmd.Flags().GetBool("json")
+		storeCode, _ := cmd.Flags().GetBool("store-code")
 		if targetDir == "" {
 			targetDir = "."
 		}
@@ -41,6 +43,7 @@ var analyzeCmd = &cobra.Command{
 			targetDir:      targetDir,
 			commitHash:     commitHash,
 			full:           full,
+			storeCode:      storeCode,
 			workers:        workers,
 			verbose:        verbose,
 			linkLevel:      linkLevel,
@@ -65,6 +68,7 @@ type runAnalysisOptions struct {
 	targetDir      string
 	commitHash     string
 	full           bool
+	storeCode      bool
 	workers        int
 	verbose        bool
 	linkLevel      string
@@ -126,6 +130,13 @@ func runAnalysis(opts runAnalysisOptions) error {
 	absDir, err := filepath.Abs(targetDir)
 	if err != nil {
 		return producterrs.Annotate(fmt.Errorf("failed to resolve path: %w", err), producterrs.ErrValidation)
+	}
+
+	akg.SetStoreCode(opts.storeCode)
+	if commitHash == "" {
+		if h, err := git.GetHEADCommitHash(absDir); err == nil && h != "" {
+			commitHash = h
+		}
 	}
 
 	fmt.Printf("Starting GlassMarble Analysis on %s...\n", absDir)
@@ -457,6 +468,7 @@ func init() {
 	analyzeCmd.Flags().Int("max-nodes", 0, "Max total CPG nodes before warning/abort (0 = unlimited)")
 	analyzeCmd.Flags().Bool("abort-on-limit", false, "Abort analysis if --max-nodes is exceeded (otherwise warn)")
 	analyzeCmd.Flags().Bool("verbose", false, "Enable verbose output")
+	analyzeCmd.Flags().Bool("store-code", false, "Store source code content snippets in AKG nodes (default: false)")
 	analyzeCmd.Flags().Bool("json", false, "Emit machine-readable JSON instead of the human summary")
 	rootCmd.AddCommand(analyzeCmd)
 }

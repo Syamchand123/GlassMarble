@@ -746,7 +746,7 @@ func (tm *AKGTransactionManager) saveToDisk(graph *CodePropertyGraph, payload *s
 // stays in place (AUDIT Issue 5 Phase 5A-1: zero dangling edges at write
 // time; the engine-side producers were fixed in the Issue 1 batches).
 func (tm *AKGTransactionManager) verifyTTLFile(ttlPath string, graph *CodePropertyGraph) error {
-	restored, err := reconstructFromTTLFile(ttlPath)
+	restored, err := reconstructFromTTLFileEx(ttlPath, false)
 	if err != nil {
 		return fmt.Errorf("post-write verification failed: file did not parse back cleanly: %w", err)
 	}
@@ -822,11 +822,10 @@ func (tm *AKGTransactionManager) enforceTTLBudget(path string) error {
 }
 
 // loadFromDisk restores the active graph from the primary Turtle state
-// database (akg_state.ttl). The JSON snapshot cache was removed: the TTL is
-// the single source of truth and the WAL the only replay log (AUDIT Issue 3
-// Phase 3B-5 / Issue 4 Phase 4B-5).
+// database (akg_state.ttl). It automatically handles schema migration (v1/v2 -> v3) with a .bak backup.
 func (tm *AKGTransactionManager) loadFromDisk() error {
-	if err := tm.enforceTTLBudget(filepath.Join(tm.storageDir, "akg_state.ttl")); err != nil {
+	ttlPath := filepath.Join(tm.storageDir, "akg_state.ttl")
+	if err := tm.enforceTTLBudget(ttlPath); err != nil {
 		return err
 	}
 	graph, err := tm.reconstructFromTurtle()
@@ -836,10 +835,24 @@ func (tm *AKGTransactionManager) loadFromDisk() error {
 			// committed-but-unpersisted transactions from a previous run.
 			graph = NewCodePropertyGraph("initial")
 			graph.Version = 0
+			graph.SchemaVersion = CurrentSchemaVersion
 			tm.container.ActiveGraph = graph
 			return nil
 		}
 		return err
+	}
+
+	// Schema v3 migration handling (K-07 / W2-08)
+	if graph.SchemaVersion < CurrentSchemaVersion {
+		oldVer := graph.SchemaVersion
+		bakPath, _ := CreateSchemaBackup(tm.storageDir, oldVer)
+		if err := MigrateToSchemaV3(graph); err != nil {
+			return fmt.Errorf("schema migration failed: %w", err)
+		}
+		if err := tm.saveToDisk(graph, nil, nil, 0); err != nil {
+			return fmt.Errorf("persisting schema migration failed: %w", err)
+		}
+		graph.VerificationMsg = fmt.Sprintf("Migrated AKG schema from v%d to v%d (backup created at %s)", oldVer, CurrentSchemaVersion, bakPath)
 	}
 
 	// Rebuild LineIndex since it is not serialized
@@ -850,25 +863,21 @@ func (tm *AKGTransactionManager) loadFromDisk() error {
 }
 
 func (tm *AKGTransactionManager) reconstructFromTurtle() (*CodePropertyGraph, error) {
-	return reconstructFromTTLFile(filepath.Join(tm.storageDir, "akg_state.ttl"))
+	return reconstructFromTTLFileEx(filepath.Join(tm.storageDir, "akg_state.ttl"), true)
 }
 
-// reconstructFromTTLFile rebuilds a CodePropertyGraph from a TTL file,
-// applying tombstones (deletions remove the node AND its incident edges, so
-// deleted nodes never resurrect across restarts — AUDIT Issue 3 Phase 3B-6),
-// restoring metadata (commit hash, schema version, WAL replay bound), and
-// rebuilding every index that is not serialized (AUDIT Issue 3 Phase 3D-13).
 func reconstructFromTTLFile(ttlPath string) (*CodePropertyGraph, error) {
+	return reconstructFromTTLFileEx(ttlPath, true)
+}
+
+// reconstructFromTTLFileEx rebuilds a CodePropertyGraph from a TTL file.
+// If runMacros is false, topological macro inference is skipped (used by verifyTTLFile, K-03 / W2-04).
+func reconstructFromTTLFileEx(ttlPath string, runMacros bool) (*CodePropertyGraph, error) {
 	if _, err := os.Stat(ttlPath); os.IsNotExist(err) {
 		return nil, err
 	}
 
-	// Tombstones first: both the node-block form (`<uri> a gm:Deleted ;
-	// gm:status "DELETED" .`) and the legacy bare-triple form (`<uri>
-	// gm:status "DELETED" .`) mark deletions. The canonical parser discards
-	// tombstone node blocks but keeps the deleted node's OLD block from the
-	// base state of an appended file — without this pre-scan the node would
-	// resurrect on restore.
+	// Tombstones first
 	deletedIDs, err := scanDeletedNodeIDs(ttlPath)
 	if err != nil {
 		return nil, err
@@ -911,12 +920,15 @@ func reconstructFromTTLFile(ttlPath string) (*CodePropertyGraph, error) {
 		for k, v := range tNode.Properties {
 			resNode.Properties[k] = v
 		}
+		// K-08 write/read key symmetry: store in "content" property key only
 		if tNode.Code != "" {
-			resNode.Properties["code"] = tNode.Code
+			if _, hasContent := resNode.Properties["content"]; !hasContent {
+				resNode.Properties["content"] = tNode.Code
+			}
 		}
 		mutNodes[id] = resNode
 
-		// Restore Entrypoints / FolderZones / Code / CommitHash
+		// Restore Entrypoints / FolderZones
 		if tNode.IsEntrypoint {
 			mutEntrypoints = append(mutEntrypoints, id)
 		}
@@ -948,14 +960,12 @@ func reconstructFromTTLFile(ttlPath string) (*CodePropertyGraph, error) {
 	mutOutboundEdges := make(map[string][]stage4.ResolvedEdge)
 	mutInboundEdges := make(map[string][]stage4.ResolvedEdge)
 
-	// Rebuild Outbound and Inbound Edges with canonical edge types; skip
-	// tombstone incident edges and legacy gm:status triples.
+	// Rebuild Outbound and Inbound Edges with canonical edge types
 	for _, tEdge := range edges {
 		if deletedIDs[tEdge.SourceID] || deletedIDs[tEdge.TargetID] {
 			continue
 		}
 		if strings.HasPrefix(tEdge.Predicate, ont.PredStatus) {
-			// Legacy tombstone triple parsed as an edge: never reconstruct it.
 			continue
 		}
 
@@ -993,9 +1003,7 @@ func reconstructFromTTLFile(ttlPath string) (*CodePropertyGraph, error) {
 		graph.InboundEdges = graph.InboundEdges.Set(k, v)
 	}
 
-	// Restore metadata node: commit hash, WAL replay bound, schema version.
-	// The metadata block is scanned from the raw TTL because stage1's parser
-	// drops it from its node map (AUDIT Issue 3 Phase 3B-7).
+	// Restore metadata node
 	commitHash, schemaVersion, ttlVersion, err := scanTTLMetadata(ttlPath)
 	if err != nil {
 		return nil, fmt.Errorf("metadata scan failed: %w", err)
@@ -1006,14 +1014,17 @@ func reconstructFromTTLFile(ttlPath string) (*CodePropertyGraph, error) {
 	if commitHash != "" {
 		graph.CommitHash = commitHash
 	}
+	if schemaVersion > 0 {
+		graph.SchemaVersion = schemaVersion
+	}
 	if schemaVersion > CurrentSchemaVersion {
-		// Reject newer schemas loudly (AUDIT Issue 3 Phase 3A-3).
 		return nil, fmt.Errorf("%w: file schema version %d exceeds supported %d", akgerrs.ErrSchemaVersion, schemaVersion, CurrentSchemaVersion)
 	}
 
-	// Run macro inference on the restored graph (in-memory derived data only;
-	// macro_rules are intentionally not persisted to the TTL).
-	RunTopologicalMacroInference(graph)
+	// Run macro inference if requested (skipped during verifyTTLFile - K-03 / W2-04)
+	if runMacros {
+		RunTopologicalMacroInference(graph)
+	}
 
 	return graph, nil
 }

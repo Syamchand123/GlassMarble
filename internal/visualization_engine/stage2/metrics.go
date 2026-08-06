@@ -238,13 +238,25 @@ func ComputeGraphSummary(sub *types.VirtualSubgraph) *types.GraphSummary {
 		summary.BipartiteScore = ComputeBipartiteScore(sub)
 	}
 	sccs, largestSize := CountSCCs(sub)
-	summary.ClusterCount = len(sccs)
+	summary.SCCCount = len(sccs)
 	summary.LargestSCCSize = largestSize
+
+	communities := ComputeWeightedModularity(sub)
+	communitySet := make(map[string]bool)
+	for _, c := range communities {
+		communitySet[c] = true
+	}
+	summary.ClusterCount = len(communitySet)
+	if summary.ClusterCount == 0 {
+		summary.ClusterCount = len(sccs)
+	}
 
 	inDeg, outDeg := ComputeDegrees(sub)
 	godObjects := DetectGodObjects(sub, inDeg, outDeg)
 	summary.GodObjectCount = len(godObjects)
-	summary.ConnectedComponents = CountConnectedComponents(sub)
+	cc := CountConnectedComponents(sub)
+	summary.ConnectedComponents = cc
+	summary.WeakComponents = cc
 
 	return summary
 }

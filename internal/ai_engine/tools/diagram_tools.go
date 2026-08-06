@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Syamchand123/GlassMarble/internal/product"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
@@ -215,7 +216,21 @@ func renderFromSnapshotOrTTL(env *Env, ttlPath string, dt types.DiagramType, opt
 			}
 		}
 	}
-	return visualization_engine.NewEngineCoordinator(ttlPath).ProjectDiagram(dt, opts)
+	req := product.DiagramRequest{
+		TTLPath:       ttlPath,
+		Type:          dt,
+		Scope:         opts.Scope,
+		ScopePath:     opts.ScopePath,
+		Entry:         opts.EntryPointID,
+		Depth:         opts.MaxDepth,
+		IncludeUnused: opts.IncludeUnused,
+		MaxNodes:      opts.MaxNodes,
+		Format:        opts.Format,
+		OnProgress:    opts.OnProgress,
+		OnSummary:     opts.OnSummary,
+	}
+	markup, _, err := product.BuildDiagram(req)
+	return markup, err
 }
 
 // summarizeFromSnapshotOrTTL is the summary counterpart of
@@ -228,5 +243,17 @@ func summarizeFromSnapshotOrTTL(env *Env, ttlPath string, dt types.DiagramType, 
 			}
 		}
 	}
-	return visualization_engine.NewEngineCoordinator(ttlPath).ComputeGraphSummary(dt, opts)
+	req := product.DiagramRequest{
+		TTLPath:       ttlPath,
+		Type:          dt,
+		Scope:         opts.Scope,
+		ScopePath:     opts.ScopePath,
+		Entry:         opts.EntryPointID,
+		Depth:         opts.MaxDepth,
+		IncludeUnused: opts.IncludeUnused,
+		MaxNodes:      opts.MaxNodes,
+		Format:        opts.Format,
+	}
+	_, summary, err := product.BuildDiagram(req)
+	return summary, err
 }

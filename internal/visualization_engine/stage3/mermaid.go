@@ -148,21 +148,28 @@ func renderClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 
 	for id, class := range classes {
 		classAlias := reg.alias(id)
-		sb.WriteString(fmt.Sprintf("    class %s {\n", classAlias))
+		dispName := sanitizeMermaidLabel(class.Name)
+		if dispName != "" {
+			sb.WriteString(fmt.Sprintf("    class %s[\"%s\"] {\n", classAlias, dispName))
+		} else {
+			sb.WriteString(fmt.Sprintf("    class %s {\n", classAlias))
+		}
 		kind := strings.TrimPrefix(class.Kind, ont.PrefixGM)
 		switch kind {
-		case "Struct", "Class", "Interface":
+		case "Struct", "Class", "Interface", "TypeDecl", "STRUCT", "CLASS", "INTERFACE", "TYPE_DECL":
 			sb.WriteString(fmt.Sprintf("        <<%s>>\n", strings.ToLower(kind)))
 		default:
 			sb.WriteString("        <<type>>\n")
 		}
-		lbl := sanitizeMermaidLabel(class.Name)
-		if lbl != "" {
-			sb.WriteString(fmt.Sprintf("        %s\n", lbl))
-		}
 		if mList, exists := methods[id]; exists {
+			sort.Strings(mList)
 			for _, m := range mList {
-				sb.WriteString(fmt.Sprintf("        +%s()\n", sanitizeMermaidLabel(m)))
+				mLabel := sanitizeMermaidLabel(m)
+				prefix := "-"
+				if len(mLabel) > 0 && mLabel[0] >= 'A' && mLabel[0] <= 'Z' {
+					prefix = "+"
+				}
+				sb.WriteString(fmt.Sprintf("        %s%s()\n", prefix, mLabel))
 			}
 		}
 		if class.PrimitiveType != "" {
@@ -178,7 +185,7 @@ func renderClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 		for _, src := range srcClasses {
 			for _, tgt := range tgtClasses {
 				if src != tgt {
-					relationKey := fmt.Sprintf("%s->%s", src, tgt)
+					relationKey := fmt.Sprintf("%s|%s|%s", src, edge.Predicate, tgt)
 					if drawnRelations[relationKey] {
 						continue
 					}

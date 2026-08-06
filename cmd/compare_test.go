@@ -23,7 +23,7 @@ func TestCompareCommandTwoFiles(t *testing.T) {
 	// GraphJSON document derived from the fixture.
 	headPath := filepath.Join(tempDir, "head.json")
 	headDoc := `{
-  "schema_version": 1,
+  "schema_version": 3,
   "commit_hash": "headhash",
   "version": 8,
   "nodes": [
@@ -61,7 +61,7 @@ func TestCompareCommandJSON(t *testing.T) {
 		t.Fatalf("base export failed: %v", err)
 	}
 	headPath := filepath.Join(tempDir, "head.json")
-	if err := os.WriteFile(headPath, []byte(`{"schema_version":1,"commit_hash":"h","version":1,"nodes":[],"edges":[]}`), 0o644); err != nil {
+	if err := os.WriteFile(headPath, []byte(`{"schema_version":3,"commit_hash":"h","version":1,"nodes":[],"edges":[]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

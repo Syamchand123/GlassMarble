@@ -2,6 +2,7 @@ package visualization_engine
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -14,6 +15,9 @@ import (
 
 func TestDiagAllTypes(t *testing.T) {
 	ttl := "G:/GlassMarble/.glassmarble/akg_state.ttl"
+	if _, err := os.Stat(ttl); err != nil {
+		t.Skip("skipping integration test: .glassmarble/akg_state.ttl not present on disk")
+	}
 	nodes, edges, err := stage1.ParseTTLFile(ttl)
 	if err != nil {
 		t.Fatal(err)
@@ -32,7 +36,7 @@ func TestDiagAllTypes(t *testing.T) {
 	}
 	for _, dt := range all {
 		cfg := stage1.GetExtractionConfig(dt, types.QueryOptions{})
-		sub, err := stage1.ExtractFromSubgraph(full, cfg, types.QueryOptions{})
+		sub, _, err := stage1.ExtractFromSubgraph(full, cfg, types.QueryOptions{})
 		if err != nil {
 			fmt.Printf("%-22s ERROR: %v\n", dt, err)
 			continue
@@ -51,6 +55,9 @@ func TestDiagAllTypes(t *testing.T) {
 
 func TestDiagEndpoints(t *testing.T) {
 	ttl := "G:/GlassMarble/.glassmarble/akg_state.ttl"
+	if _, err := os.Stat(ttl); err != nil {
+		t.Skip("skipping integration test: .glassmarble/akg_state.ttl not present on disk")
+	}
 	nodes, edges, err := stage1.ParseTTLFile(ttl)
 	if err != nil {
 		t.Fatal(err)
@@ -100,6 +107,9 @@ func TestDiagEndpoints(t *testing.T) {
 
 func TestDiagEntry(t *testing.T) {
 	ttl := "G:/GlassMarble/.glassmarble/akg_state.ttl"
+	if _, err := os.Stat(ttl); err != nil {
+		t.Skip("skipping integration test: .glassmarble/akg_state.ttl not present on disk")
+	}
 	nodes, _, err := stage1.ParseTTLFile(ttl)
 	if err != nil {
 		t.Fatal(err)
@@ -139,6 +149,9 @@ func TestDiagEntry(t *testing.T) {
 
 func TestDiagComponent(t *testing.T) {
 	ttl := "G:/GlassMarble/.glassmarble/akg_state.ttl"
+	if _, err := os.Stat(ttl); err != nil {
+		t.Skip("skipping integration test: .glassmarble/akg_state.ttl not present on disk")
+	}
 	t0 := nowMs()
 	nodes, edges, err := stage1.ParseTTLFile(ttl)
 	if err != nil {
@@ -147,7 +160,7 @@ func TestDiagComponent(t *testing.T) {
 	t1 := nowMs()
 	fmt.Printf("PARSE: %d ms\n", t1-t0)
 	cfg := stage1.GetExtractionConfig(types.UMLComponent, types.QueryOptions{})
-	sub, err := stage1.ExtractFromSubgraph(&types.NativeGraph{Nodes: nodes, Edges: edges}, cfg, types.QueryOptions{})
+	sub, _, err := stage1.ExtractFromSubgraph(&types.NativeGraph{Nodes: nodes, Edges: edges}, cfg, types.QueryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,6 +179,9 @@ func TestDiagComponent(t *testing.T) {
 
 func TestDiagTiming(t *testing.T) {
 	ttl := "G:/GlassMarble/.glassmarble/akg_state.ttl"
+	if _, err := os.Stat(ttl); err != nil {
+		t.Skip("skipping integration test: .glassmarble/akg_state.ttl not present on disk")
+	}
 	t0 := nowMs()
 	nodes, edges, err := stage1.ParseTTLFile(ttl)
 	if err != nil {
@@ -174,7 +190,7 @@ func TestDiagTiming(t *testing.T) {
 	t1 := nowMs()
 	fmt.Printf("PARSE: %d ms\n", t1-t0)
 	cfg := stage1.GetExtractionConfig(types.UMLClass, types.QueryOptions{})
-	sub, err := stage1.ExtractFromSubgraph(&types.NativeGraph{Nodes: nodes, Edges: edges}, cfg, types.QueryOptions{})
+	sub, _, err := stage1.ExtractFromSubgraph(&types.NativeGraph{Nodes: nodes, Edges: edges}, cfg, types.QueryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,6 +215,9 @@ func nowMs() int64 {
 
 func TestDiagParse(t *testing.T) {
 	ttl := "G:/GlassMarble/.glassmarble/akg_state.ttl"
+	if _, err := os.Stat(ttl); err != nil {
+		t.Skip("skipping integration test: .glassmarble/akg_state.ttl not present on disk")
+	}
 	nodes, edges, err := stage1.ParseTTLFile(ttl)
 	if err != nil {
 		t.Fatal("PARSE ERROR:", err)
@@ -244,7 +263,7 @@ func TestDiagParse(t *testing.T) {
 	cfg := stage1.GetExtractionConfig(types.UMLClass, types.QueryOptions{})
 	fmt.Printf("UMLClass cfg: kinds=%v groups=%v strategy=%v maxDepth=%d dir=%v includeUnused=%v\n",
 		cfg.NodeKindFilter, cfg.PredicateGroup, cfg.EntryStrategy, cfg.MaxDepth, cfg.Direction, cfg.IncludeUnused)
-	sub, err := stage1.ExtractFromSubgraph(&types.NativeGraph{Nodes: nodes, Edges: edges}, cfg, types.QueryOptions{})
+	sub, _, err := stage1.ExtractFromSubgraph(&types.NativeGraph{Nodes: nodes, Edges: edges}, cfg, types.QueryOptions{})
 	if err != nil {
 		t.Fatal("UMLExtract error:", err)
 	}
