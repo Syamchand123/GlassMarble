@@ -33,11 +33,10 @@ func Link(stage3Out *stage3.Stage3Output, modifiedFiles []string, db GraphDB, co
 		disabled[name] = true
 	}
 
-	// "architecture" level implicitly disables CFG and DFG
-	if cfg.LevelOfDetail == "architecture" {
-		disabled["cfg"] = true
-		disabled["dfg"] = true
-	}
+	// W1-15 (§5.4.3/A-13): level-of-detail policy — architecture = structural
+	// spine + calls + hierarchy only; standard = + aggregate CFG/DFG summaries;
+	// full = per-branch CFG/DFG, heuristics, security.
+	applyLevelPolicy(cfg.LevelOfDetail, disabled)
 
 	// 1. Build initial GraphNodes for only the modified files
 	cpg := BuildInitialNodes(stage3Out, modifiedFiles)
@@ -50,13 +49,14 @@ func Link(stage3Out *stage3.Stage3Output, modifiedFiles []string, db GraphDB, co
 	// Dispatch table for all linker passes (in execution order)
 	passes := []passDef{
 		{name: "type", buffer: 0, fn: LinkTypesAndComposition},
-		{name: "interface", buffer: 1, fn: LinkInterfacesAndRealizations},
-		{name: "cfg", buffer: 2, fn: LinkIntraProceduralControlFlow},
-		{name: "dfg", buffer: 3, fn: LinkDataFlowGraph},
-		{name: "callgraph", buffer: 4, fn: LinkCallGraph},
-		{name: "concurrency", buffer: 5, fn: LinkConcurrencyAndAsyncControlFlow},
-		{name: "filedeps", buffer: 6, fn: LinkFileDependencies},
-		{name: "semantics", buffer: 7, fn: LinkEnterpriseSemantics},
+		{name: "member", buffer: 1, fn: LinkMembersAndReturns},
+		{name: "interface", buffer: 2, fn: LinkInterfacesAndRealizations},
+		{name: "cfg", buffer: 3, fn: LinkIntraProceduralControlFlow},
+		{name: "dfg", buffer: 4, fn: LinkDataFlowGraph},
+		{name: "callgraph", buffer: 5, fn: LinkCallGraph},
+		{name: "concurrency", buffer: 6, fn: LinkConcurrencyAndAsyncControlFlow},
+		{name: "filedeps", buffer: 7, fn: LinkFileDependencies},
+		{name: "semantics", buffer: 8, fn: LinkEnterpriseSemantics},
 		{name: "rpc", buffer: 9, fn: LinkCrossLanguageRPC},
 		{name: "constraints", buffer: 10, fn: LinkConstraints},
 		{name: "ffi", buffer: 11, fn: LinkFFI},
@@ -200,6 +200,18 @@ func Link(stage3Out *stage3.Stage3Output, modifiedFiles []string, db GraphDB, co
 	if !disabled["security"] {
 		LinkSecurityVulnerabilities(cpg)
 	}
+
+	// W1-14 (§5.4.6/A-11): ext: ID mangling self-heal + gm:provenance
+	// defaults. Runs after the security pass so every edge (incl. security
+	// artifacts) carries evidence (§5.4.7).
+	CleanupCPG(stage3Out, cpg)
+
+	// W1-17 (§5.4.4/A-14): synthetic-node hygiene — FileSpec derivation,
+	// gm:synthetic markers, orphan CFG-node removal.
+	ApplySyntheticHygiene(cpg)
+
+	// W1-16 (V-05): deterministic ordering of all emitted edge lists.
+	SortDeterministic(cpg)
 
 	return cpg, nil
 }

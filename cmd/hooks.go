@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
@@ -26,7 +27,7 @@ var hooksCmd = &cobra.Command{
 
 		gitDir := filepath.Join(absDir, ".git", "hooks")
 		if _, err := os.Stat(gitDir); os.IsNotExist(err) {
-			return fmt.Errorf("not a git repository or .git/hooks missing at %s", gitDir)
+			return producterrs.Tagged(fmt.Sprintf("not a git repository or .git/hooks missing at %s", gitDir), producterrs.ErrValidation)
 		}
 
 		hookPath := filepath.Join(gitDir, "post-commit")
@@ -57,7 +58,7 @@ var hooksCmd = &cobra.Command{
 			}
 
 		default:
-			return fmt.Errorf("unknown hooks subcommand %q (expected install or uninstall)", args[0])
+			return producterrs.Tagged(fmt.Sprintf("unknown hooks subcommand %q (expected install or uninstall)", args[0]), producterrs.ErrValidation)
 		}
 
 		return nil

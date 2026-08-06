@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage3"
+	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 )
 
 // fileEntry holds a file's relative path and its declared imports.
@@ -62,6 +63,26 @@ func LinkFileDependencies(stage3Out *stage3.Stage3Output, cpg *Stage4Output) {
 
 			if targetPath != "" && targetPath != fe.relPath {
 				cpg.AddEdge(srcID, "file:"+targetPath, EdgeDependsOn, 0)
+				continue
+			}
+
+			// v2 (W1-14, §5.3.3/A-11): external imports get file → ext
+			// DEPENDS_ON edges (replacing the removed ext CONTAINS spine),
+			// when the index knows the dependency.
+			if stage3Out != nil && !stage3.IsStdlibImport(imp, fe.relPath) {
+				if extNode, ok := stage3Out.ExternalDependencies[stage3.ResolveExternalKey(imp)]; ok {
+					extID := stage3.ResolveExternalKey(imp)
+					cpg.AddEdgeProperties(srcID, extID, EdgeDependsOn, 0, 1.0,
+						map[string]string{ont.PredProvenance: "ast"})
+					if extNode != nil && extNode.Properties["alias"] != "" {
+						cpg.GraphNodes[extID] = &ResolvedNode{
+							ID:         extID,
+							Kind:       "EXTERNAL_SDK",
+							Name:       imp,
+							Properties: extNode.Properties,
+						}
+					}
+				}
 			}
 		}
 	}

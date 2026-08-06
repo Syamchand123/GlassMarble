@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
@@ -49,7 +50,7 @@ var dependencyCmd = &cobra.Command{
 
 		snapshot := tm.GetActiveSnapshot()
 		if snapshot == nil || snapshot.Nodes.Len() == 0 {
-			return fmt.Errorf("AKG database is empty -- run 'glassmarble analyze' first")
+			return producterrs.Tagged(fmt.Sprintf("AKG database is empty -- run 'glassmarble analyze' first"), producterrs.ErrEmptySubgraph)
 		}
 
 		if target == "" {
@@ -99,7 +100,7 @@ var dependencyCmd = &cobra.Command{
 		})
 
 		if len(matchingNodes) == 0 {
-			return fmt.Errorf("no matching node or file found for '%s'", target)
+			return producterrs.Tagged(fmt.Sprintf("no matching node or file found for '%s'", target), producterrs.ErrEntryNotFound)
 		}
 
 		var jsonNodes []dependencyNodeJSON

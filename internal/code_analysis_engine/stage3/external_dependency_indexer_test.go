@@ -1,6 +1,7 @@
 package stage3
 
 import (
+	"net/url"
 	"testing"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage2"
@@ -31,17 +32,22 @@ func TestIndexExternalDependencies(t *testing.T) {
 
 	IndexExternalDependencies(output)
 
-	require.Contains(t, output.ExternalDependencies, "github.com/acme/thirdparty/awesome")
-	node := output.ExternalDependencies["github.com/acme/thirdparty/awesome"]
+	// v2 (W1-09): keys are ext:<url-escaped path>, not raw import strings.
+	key := ExternalKey("github.com/acme/thirdparty/awesome")
+	require.Contains(t, output.ExternalDependencies, key)
+	node := output.ExternalDependencies[key]
 	assert.Equal(t, stage2.GASTTypeDeclaration, node.Type)
 	assert.Equal(t, "External", node.Visibility)
 	assert.Equal(t, "true", node.Properties["is_external"])
 	assert.Equal(t, "EXTERNAL_SDK", node.Properties["primitive"])
+	assert.Equal(t, "github.com/acme/thirdparty/awesome", node.Properties["import_path"])
+	assert.Equal(t, key, node.Properties["ext_id"])
 
 	assert.Len(t, output.ExternalDependencies, 1)
 	assert.NotContains(t, output.ExternalDependencies, "fmt")
 	assert.NotContains(t, output.ExternalDependencies, "net/http")
 	assert.NotContains(t, output.ExternalDependencies, "github.com/acme/widget/internal/pkg")
+	assert.NotContains(t, output.ExternalDependencies, "github.com/acme/thirdparty/awesome")
 }
 
 func TestIndexExternalDependenciesDeduplicates(t *testing.T) {
@@ -55,7 +61,44 @@ func TestIndexExternalDependenciesDeduplicates(t *testing.T) {
 	IndexExternalDependencies(output)
 
 	require.Len(t, output.ExternalDependencies, 1)
-	assert.Contains(t, output.ExternalDependencies, "github.com/acme/lib")
+	assert.Contains(t, output.ExternalDependencies, ExternalKey("github.com/acme/lib"))
+}
+
+func TestResolveExternalKeySelfHealsV1ToV2(t *testing.T) {
+	// W1-09: v1 raw import paths read old caches/deps.json; lookups must
+	// self-heal to the v2 ext:<escaped> spelling without mutating input.
+	imp := "github.com/acme/lib"
+	want := "ext:" + url.PathEscape(imp)
+	assert.Equal(t, want, ResolveExternalKey(imp))
+	assert.Equal(t, want, ResolveExternalKey(want))
+	assert.Equal(t, "ext:github.com%2Facme%2Flib", want)
+}
+
+func TestIndexExternalDependenciesSelfHealsV1Keys(t *testing.T) {
+	// Simulate an old cache keyed by raw import path: v2 reader must
+	// still find the node via the raw spelling (self-healing read).
+	output := &Stage3Output{
+		LocalTables: map[string]*stage2.FileSymbolTable{
+			"a/main.go": {Imports: []string{"github.com/acme/lib"}},
+		},
+		ExternalDependencies: map[string]*stage2.GASTNode{
+			"github.com/acme/lib": {
+				Name:       "github.com/acme/lib",
+				Visibility: "External",
+				Properties: map[string]string{"primitive": "EXTERNAL_SDK"},
+			},
+		},
+	}
+
+	// The indexer dedupes on the v2 key: legacy nodes are preserved but
+	// a v2-spelled node is created for new writes.
+	IndexExternalDependencies(output)
+
+	node, ok := output.ExternalDependencies[ExternalKey("github.com/acme/lib")]
+	require.True(t, ok)
+	assert.Equal(t, "true", node.Properties["is_external"])
+	// v1 raw spelling remains readable for old consumers.
+	assert.NotNil(t, output.ExternalDependencies["github.com/acme/lib"])
 }
 
 func TestIndexExternalDependenciesEmpty(t *testing.T) {

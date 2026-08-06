@@ -595,11 +595,6 @@ func (c *CodePropertyGraph) CalculateBetweennessCentrality(includeAll ...bool) m
 		dist := make(map[string]int)
 		pred := make(map[string][]string)
 
-		for _, w := range majorNodes {
-			sigma[w] = 0
-			dist[w] = -1
-		}
-
 		sigma[s] = 1
 		dist[s] = 0
 		queue = append(queue, s)
@@ -611,26 +606,27 @@ func (c *CodePropertyGraph) CalculateBetweennessCentrality(includeAll ...bool) m
 
 			for _, edge := range c.GetOutboundEdges(v) {
 				w := edge.TargetID
-				if _, ok := sigma[w]; !ok {
+				// bc is keyed by exactly the major nodes (see the init loop
+				// above); edges to non-major targets are excluded from the
+				// BFS, matching the original pre-populated-sigma filter.
+				if _, isMajor := bc[w]; !isMajor {
 					continue
 				}
-
-				if dist[w] < 0 {
-					dist[w] = dist[v] + 1
-					queue = append(queue, w)
+				if _, ok := dist[w]; ok {
+					if dist[w] == dist[v]+1 {
+						sigma[w] += sigma[v]
+						pred[w] = append(pred[w], v)
+					}
+					continue
 				}
-				if dist[w] == dist[v]+1 {
-					sigma[w] += sigma[v]
-					pred[w] = append(pred[w], v)
-				}
+				dist[w] = dist[v] + 1
+				sigma[w] = sigma[v]
+				pred[w] = append(pred[w], v)
+				queue = append(queue, w)
 			}
 		}
 
 		delta := make(map[string]float64)
-		for _, w := range majorNodes {
-			delta[w] = 0
-		}
-
 		for i := len(stack) - 1; i >= 0; i-- {
 			w := stack[i]
 			for _, v := range pred[w] {

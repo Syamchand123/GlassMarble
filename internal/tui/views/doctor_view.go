@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
+	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 )
 
@@ -31,12 +32,12 @@ func RenderDoctor(rep *akg.DoctorReport) string {
 	}
 
 	if len(rep.UnknownTerms) > 0 {
-		rows = append(rows, tui.BadgeError.Render(" FAIL ")+fmt.Sprintf("  Unknown gm: terms: %d", len(rep.UnknownTerms)))
+		rows = append(rows, tui.BadgeError.Render(" FAIL ")+fmt.Sprintf("  Unknown schema terms: %d", len(rep.UnknownTerms)))
 		for _, term := range rep.UnknownTerms {
-			rows = append(rows, "                    gm:"+term)
+			rows = append(rows, "                    "+ont.PrefixGM+term)
 		}
 	} else {
-		rows = append(rows, tui.BadgeOK.Render(" PASS ")+"  Unknown gm: terms: 0 (ontology conformant)")
+		rows = append(rows, tui.BadgeOK.Render(" PASS ")+"  Unknown schema terms: 0 (ontology conformant)")
 	}
 
 	if rep.Dangling > 0 {

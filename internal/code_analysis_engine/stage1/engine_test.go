@@ -28,8 +28,8 @@ func TestRunIngestionFull(t *testing.T) {
 		if r.HasErrors {
 			t.Errorf("Updated[%s].HasErrors = true for valid Go code", r.FilePath)
 		}
-		if len(r.RawTokens) == 0 {
-			t.Errorf("Updated[%s].RawTokens is empty, want > 0", r.FilePath)
+		if len(r.RichTokens) == 0 {
+			t.Errorf("Updated[%s].RichTokens is empty, want > 0", r.FilePath)
 		}
 	}
 }
@@ -83,8 +83,8 @@ func TestRunIngestionForDelta(t *testing.T) {
 	if out.Updated[0].Change != ChangeModified {
 		t.Errorf("Updated[0].Change = %s, want %s", out.Updated[0].Change, ChangeModified)
 	}
-	if len(out.Updated[0].RawTokens) == 0 {
-		t.Errorf("RawTokens empty, want > 0")
+	if len(out.Updated[0].RichTokens) == 0 {
+		t.Errorf("RichTokens empty, want > 0")
 	}
 
 	deleted := FileTask{

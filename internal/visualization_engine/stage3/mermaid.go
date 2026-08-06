@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
@@ -101,9 +102,24 @@ func renderClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 		}
 		for _, node := range t.Nodes {
 			switch node.Kind {
-			case "gm:TypeDecl", "gm:Struct", "gm:Class", "gm:Interface":
+			case ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface:
 				classes[node.ID] = node
-			case "gm:Executable", "gm:Function", "gm:Method":
+			}
+		}
+		for _, child := range t.Children {
+			collectNodes(child)
+		}
+	}
+	collectNodes(tree)
+
+	var collectMethods func(t *types.LayoutTree)
+	collectMethods = func(t *types.LayoutTree) {
+		if t == nil {
+			return
+		}
+		for _, node := range t.Nodes {
+			switch node.Kind {
+			case ont.PredExecutable, ont.PredFunction, ont.PredMethod:
 				_, rec, sym := parseFQN(node.ID)
 				if rec != "" {
 					parentID := findParentClassID(node.ID, classes)
@@ -111,7 +127,7 @@ func renderClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 						methods[parentID] = append(methods[parentID], sym)
 					}
 				}
-			case "gm:Member":
+			case ont.PredMember:
 				_, rec, sym := parseFQN(node.ID)
 				if rec != "" {
 					parentID := findParentClassID(node.ID, classes)
@@ -125,17 +141,24 @@ func renderClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 			}
 		}
 		for _, child := range t.Children {
-			collectNodes(child)
+			collectMethods(child)
 		}
 	}
-	collectNodes(tree)
+	collectMethods(tree)
 
 	for id, class := range classes {
 		classAlias := reg.alias(id)
 		sb.WriteString(fmt.Sprintf("    class %s {\n", classAlias))
+		kind := strings.TrimPrefix(class.Kind, ont.PrefixGM)
+		switch kind {
+		case "Struct", "Class", "Interface":
+			sb.WriteString(fmt.Sprintf("        <<%s>>\n", strings.ToLower(kind)))
+		default:
+			sb.WriteString("        <<type>>\n")
+		}
 		lbl := sanitizeMermaidLabel(class.Name)
 		if lbl != "" {
-			sb.WriteString(fmt.Sprintf("        <<%s>>\n", lbl))
+			sb.WriteString(fmt.Sprintf("        %s\n", lbl))
 		}
 		if mList, exists := methods[id]; exists {
 			for _, m := range mList {
@@ -163,19 +186,19 @@ func renderClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 					srcAlias := reg.alias(src)
 					tgtAlias := reg.alias(tgt)
 					switch edge.Predicate {
-					case "gm:inheritsFrom":
+					case ont.PredInheritsFrom:
 						sb.WriteString(fmt.Sprintf("    %s --|> %s : inherits\n", srcAlias, tgtAlias))
-					case "gm:extends":
+					case ont.PredExtends:
 						sb.WriteString(fmt.Sprintf("    %s --|> %s : extends\n", srcAlias, tgtAlias))
-					case "gm:implements":
+					case ont.PredImplements:
 						sb.WriteString(fmt.Sprintf("    %s ..|> %s : implements\n", srcAlias, tgtAlias))
-					case "gm:mixes":
+					case ont.PredMixes:
 						sb.WriteString(fmt.Sprintf("    %s ..|> %s : mixes\n", srcAlias, tgtAlias))
-					case "gm:composes":
+					case ont.PredComposes:
 						sb.WriteString(fmt.Sprintf("    %s --* %s : composes\n", srcAlias, tgtAlias))
-					case "gm:aggregates":
+					case ont.PredAggregates:
 						sb.WriteString(fmt.Sprintf("    %s --o %s : aggregates\n", srcAlias, tgtAlias))
-					case "gm:hasMember", "gm:hasField":
+					case ont.PredHasMember, ont.PredHasField:
 						sb.WriteString(fmt.Sprintf("    %s --* %s : has\n", srcAlias, tgtAlias))
 					default:
 						sb.WriteString(fmt.Sprintf("    %s ..> %s : uses\n", srcAlias, tgtAlias))
@@ -197,7 +220,7 @@ func renderObjectDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 		}
 		for _, node := range t.Nodes {
 			switch node.Kind {
-			case "gm:TypeDecl", "gm:Struct", "gm:Class", "gm:Interface":
+			case ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface:
 				alias := reg.alias(node.ID)
 				sb.WriteString(fmt.Sprintf("    class %s {\n", alias))
 				sb.WriteString(fmt.Sprintf("        %s : Instance\n", sanitizeMermaidLabel(node.Name)))
@@ -339,7 +362,7 @@ func renderUMLCompositeDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 		for _, node := range t.Nodes {
 			alias := reg.alias(node.ID)
 			name := sanitizeMermaidLabel(node.Name)
-			if node.Kind == "gm:Interface" || node.Kind == "gm:Port" {
+			if node.Kind == ont.PredInterface || node.Kind == ont.PredPort {
 				sb.WriteString(fmt.Sprintf("%s%s([\"Port: %s\"])\n", indent, alias, name))
 			} else {
 				sb.WriteString(fmt.Sprintf("%s%s[\"Part: %s\"]\n", indent, alias, name))
@@ -400,7 +423,7 @@ func renderUsecaseDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 		for _, node := range t.Nodes {
 			alias := reg.alias(node.ID)
 			name := sanitizeMermaidLabel(node.Name)
-			if node.Kind == "gm:Annotation" {
+			if node.Kind == ont.PredAnnotation {
 				sb.WriteString(fmt.Sprintf("    %s((\"Use Case: %s\"))\n", alias, name))
 				sb.WriteString(fmt.Sprintf("    Actor --> %s\n", alias))
 			} else {
@@ -441,7 +464,7 @@ func renderActivityDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 			if name == "" {
 				name = sanitizeMermaidLabel(node.ID)
 			}
-			if node.Kind == "gm:ControlStructure" {
+			if node.Kind == ont.PredControlStructure {
 				sb.WriteString(fmt.Sprintf("    %s{\"%s\"}\n", alias, name))
 			} else {
 				sb.WriteString(fmt.Sprintf("    %s[\"%s\"]\n", alias, name))
@@ -458,11 +481,11 @@ func renderActivityDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	for _, edge := range tree.Edges {
 		srcAlias := reg.alias(edge.SourceID)
 		tgtAlias := reg.alias(edge.TargetID)
-		if edge.Predicate == "gm:spawnsConcurrent" {
+		if edge.Predicate == ont.PredSpawnsConcurrent {
 			sb.WriteString(fmt.Sprintf("    %s -->|fork| %s\n", srcAlias, tgtAlias))
-		} else if edge.Predicate == "gm:controlFlowToTrue" {
+		} else if edge.Predicate == ont.PredControlFlowToTrue {
 			sb.WriteString(fmt.Sprintf("    %s -->|true| %s\n", srcAlias, tgtAlias))
-		} else if edge.Predicate == "gm:controlFlowToFalse" {
+		} else if edge.Predicate == ont.PredControlFlowToFalse {
 			sb.WriteString(fmt.Sprintf("    %s -->|false| %s\n", srcAlias, tgtAlias))
 		} else {
 			sb.WriteString(fmt.Sprintf("    %s --> %s\n", srcAlias, tgtAlias))
@@ -523,7 +546,7 @@ func renderStateDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 			srcAlias := reg.alias(edge.SourceID)
 			tgtAlias := reg.alias(edge.TargetID)
 			if states[srcAlias] && states[tgtAlias] && srcAlias != tgtAlias {
-				label := sanitizeMermaidLabel(strings.TrimPrefix(edge.Predicate, "gm:"))
+				label := sanitizeMermaidLabel(strings.TrimPrefix(edge.Predicate, ont.PrefixGM))
 				sb.WriteString(fmt.Sprintf("    %s --> %s : %s\n", srcAlias, tgtAlias, label))
 			}
 		}
@@ -580,9 +603,9 @@ func renderSequenceDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 			symbolLabel = sanitizeMermaidLabel(edge.TargetID)
 		}
 		arrow := "->>+"
-		if edge.Predicate == "gm:spawnsConcurrent" {
+		if edge.Predicate == ont.PredSpawnsConcurrent {
 			arrow = "-)+"
-		} else if edge.Predicate == "gm:dispatchesEvent" {
+		} else if edge.Predicate == ont.PredDispatchesEvent {
 			arrow = "--)+"
 		}
 		cycleSuffix := ""
@@ -727,7 +750,7 @@ func renderDataFlowDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 		for _, node := range t.Nodes {
 			alias := reg.alias(node.ID)
 			name := sanitizeMermaidLabel(node.Name)
-			if node.Kind == "gm:Variable" || node.Kind == "gm:Parameter" {
+			if node.Kind == ont.PredVariable || node.Kind == ont.PredParameter {
 				sb.WriteString(fmt.Sprintf("    %s((\"%s\"))\n", alias, name))
 			} else {
 				sb.WriteString(fmt.Sprintf("    %s[\"%s\"]\n", alias, name))
@@ -745,7 +768,7 @@ func renderDataFlowDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 		// Valid arrow grammar: link text markers must be closed (AUDIT Issue
 		// 2 Phase 2A-1). `==>|label|` is only valid on the first of a pair,
 		// so taint/mutation edges emit the doubled form.
-		if edge.Predicate == "gm:mutatesGlobal" || edge.Predicate == "gm:vulnerableTaint" {
+		if edge.Predicate == ont.PredMutatesGlobal || edge.Predicate == ont.PredVulnerableTaint {
 			sb.WriteString(fmt.Sprintf("    %s ==>|%s| %s\n", srcAlias, label, tgtAlias))
 		} else {
 			sb.WriteString(fmt.Sprintf("    %s -.->|%s| %s\n", srcAlias, label, tgtAlias))
@@ -1013,15 +1036,15 @@ func renderEdgeStyles(edge types.LayoutEdge, src, tgt string, sb *strings.Builde
 		eventEdgeStyle(edge, src, tgt, sb)
 		return
 	}
-	if edge.Predicate == "gm:aliasesType" || edge.Predicate == "gm:instantiatesGeneric" || edge.Predicate == "gm:pointsTo" {
+	if edge.Predicate == ont.PredAliasesType || edge.Predicate == ont.PredInstantiatesGeneric || edge.Predicate == ont.PredPointsTo {
 		aliasEdgeStyle(edge, src, tgt, sb)
 		return
 	}
-	if strings.HasPrefix(edge.Predicate, "gm:ffi") || strings.HasPrefix(edge.Predicate, "gm:cgo") {
+	if strings.HasPrefix(edge.Predicate, ont.PredFfi) || strings.HasPrefix(edge.Predicate, ont.PredCgo) {
 		sb.WriteString(fmt.Sprintf("    %s =====|FFI: %s| %s\n", src, shortPredicate(edge.Predicate), tgt))
 		return
 	}
-	if edge.Predicate == "gm:diInjects" {
+	if edge.Predicate == ont.PredDiInjects {
 		sb.WriteString(fmt.Sprintf("    %s --o %s\n", src, tgt))
 		sb.WriteString(fmt.Sprintf("    %s -.->[injects] %s\n", src, tgt))
 		return

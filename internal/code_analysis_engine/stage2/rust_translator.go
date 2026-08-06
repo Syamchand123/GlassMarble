@@ -11,7 +11,7 @@ var rustImplRegex = regexp.MustCompile(`impl(?:\s*<[^>]+>)?\s+(?:(\w+)\s+for\s+)
 
 type RustTranslator struct{}
 
-func (t *RustTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) *GASTNode {
+func (t *RustTranslator) CoerceToken(tok stage1.RichToken, parent *stage1.RichToken, fileRelPath string) *GASTNode {
 	node := baseNode(tok, fileRelPath)
 	extractGenericTypesAndDecorators(node, tok.Content)
 	switch tok.Kind {

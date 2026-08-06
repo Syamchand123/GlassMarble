@@ -61,7 +61,7 @@ func (p *parser) bind(spec *LanguageSpec) (*sitter.Language, error) {
 }
 
 // processFile is the per-task entry point: read source, parse it through
-// tree-sitter, extract a RawToken slice, and free the C-allocated tree
+// tree-sitter, extract a RichToken slice, and free the C-allocated tree
 // before returning. Tree-sitter is fault-tolerant so the worst case for a
 // malformed file is HasErrors=true, never a panic.
 func processFile(p *parser, task FileTask, spec *LanguageSpec) *IngestionResult {
@@ -98,7 +98,7 @@ func processFile(p *parser, task FileTask, spec *LanguageSpec) *IngestionResult 
 	defer tree.Close()
 
 	tokens, hasError := extractTokens(tree.RootNode(), src, spec)
-	res.RawTokens = tokens
+	res.RichTokens = tokens
 	res.HasErrors = hasError
 	return res
 }
@@ -106,11 +106,11 @@ func processFile(p *parser, task FileTask, spec *LanguageSpec) *IngestionResult 
 // extractTokens walks the tree-sitter CST once, classifying each node into
 // the universal declaration / import / call taxonomy. The walker is iterative
 // (no Go recursion) so even huge trees do not blow the goroutine stack.
-func extractTokens(root *sitter.Node, source []byte, spec *LanguageSpec) ([]RawToken, bool) {
+func extractTokens(root *sitter.Node, source []byte, spec *LanguageSpec) ([]RichToken, bool) {
 	if root == nil {
 		return nil, false
 	}
-	tokens := make([]RawToken, 0, 64)
+	tokens := make([]RichToken, 0, 64)
 	var hasError bool
 
 	cursor := root.Walk()
@@ -135,7 +135,11 @@ func extractTokens(root *sitter.Node, source []byte, spec *LanguageSpec) ([]RawT
 		var createdTokenIdx = -1
 		if kind := classifyKind(node.Kind(), spec); kind != "" {
 			createdTokenIdx = len(tokens)
-			tokens = append(tokens, makeToken(node, source, kind, currentParent, depth))
+			tok := makeToken(node, source, kind, currentParent, depth)
+			if kind == TokenDeclaration {
+				enrichDeclaration(&tok, node, source, spec)
+			}
+			tokens = append(tokens, tok)
 		}
 
 		if cursor.GotoFirstChild() {
@@ -162,7 +166,7 @@ func extractTokens(root *sitter.Node, source []byte, spec *LanguageSpec) ([]RawT
 	return tokens, hasError
 }
 
-// classifyKind maps a tree-sitter node kind string to the universal RawToken
+// classifyKind maps a tree-sitter node kind string to the universal RichToken
 // taxonomy. Imports take precedence over declarations because some
 // grammars (Python, Java) declare both module and import nodes as
 // "declarations" internally.
@@ -196,10 +200,10 @@ func classifyKind(kind string, spec *LanguageSpec) TokenKind {
 	return ""
 }
 
-// makeToken snapshots a node's structural fingerprint into a RawToken.
+// makeToken snapshots a node's structural fingerprint into a RichToken.
 // EndByte / EndLine are clamped to source bounds so downstream stages can
 // slice the source buffer without bounds-checking.
-func makeToken(node *sitter.Node, source []byte, kind TokenKind, parentIdx int, depth int) RawToken {
+func makeToken(node *sitter.Node, source []byte, kind TokenKind, parentIdx int, depth int) RichToken {
 	srcLen := uint(len(source))
 	start := node.StartByte()
 	end := node.EndByte()
@@ -228,7 +232,7 @@ func makeToken(node *sitter.Node, source []byte, kind TokenKind, parentIdx int, 
 		}
 	}
 
-	return RawToken{
+	return RichToken{
 		Kind:       kind,
 		Type:       node.Kind(),
 		Content:    content,
@@ -242,6 +246,66 @@ func makeToken(node *sitter.Node, source []byte, kind TokenKind, parentIdx int, 
 		EndByte:    uint32(end),
 		HasError:   node.HasError(),
 	}
+}
+
+// enrichDeclaration fills the RichToken superset fields for declaration
+// nodes: tree-sitter field roles (field name → child text), declaration-
+// relevant named children, annotation text, and the IsFieldDecl /
+// IsMethodSpec / IsEmbedded flags (master_overhaul_plan.md §5.1.1). Stage 2
+// translators can then read members, parameters, receivers, base types and
+// annotations structurally instead of content-regex parsing (fixes A-07,
+// A-08, A-18 at the source).
+func enrichDeclaration(tok *RichToken, node *sitter.Node, source []byte, spec *LanguageSpec) {
+	kind := node.Kind()
+	tok.IsFieldDecl = spec.isFieldDeclKind(kind)
+	tok.IsMethodSpec = spec.isMethodSpecKind(kind)
+	tok.IsEmbedded = spec.isEmbeddedKind(kind) ||
+		// Go (tree-sitter-go@v0.25.0): anonymous embedding is a
+		// field_declaration without a name field. Go-only: other grammars
+		// (e.g. Java) also lack a direct name child on field_declaration
+		// because the name lives in a variable_declarator.
+		(spec.Lang == LangGo && kind == "field_declaration" && node.ChildByFieldName("name") == nil)
+
+	cursor := node.Walk()
+	defer cursor.Close()
+	children := node.NamedChildren(cursor)
+
+	var annotations []string
+	for i, child := range children {
+		field := node.FieldNameForNamedChild(uint32(i))
+		text := strings.TrimSpace(child.Utf8Text(source))
+		if field != "" && text != "" {
+			if tok.FieldRoles == nil {
+				tok.FieldRoles = make(map[string]string)
+			}
+			tok.FieldRoles[field] = text
+		}
+		childKind := child.Kind()
+		if isAnnotationKind(childKind) || strings.HasPrefix(text, "@") || strings.HasPrefix(text, "#[") {
+			annotations = append(annotations, text)
+		}
+		if classifyKind(childKind, spec) != "" {
+			c := makeToken(&child, source, classifyKind(childKind, spec), -1, -1)
+			tok.NamedChildren = append(tok.NamedChildren, &c)
+		}
+	}
+	if len(annotations) > 0 {
+		if tok.FieldRoles == nil {
+			tok.FieldRoles = make(map[string]string)
+		}
+		tok.FieldRoles["annotations"] = strings.Join(annotations, " ")
+	}
+}
+
+// isAnnotationKind matches annotation-bearing child node kinds across the
+// supported grammars (Python decorators, Java/C# attributes, etc.).
+func isAnnotationKind(kind string) bool {
+	switch kind {
+	case "attribute_decorator", "decorator", "annotation", "annotation_declaration",
+		"attribute", "attribute_list", "decorator_list":
+		return true
+	}
+	return false
 }
 
 // nodeName pulls a human-readable identifier (function name, type name,

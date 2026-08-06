@@ -37,6 +37,42 @@ type LanguageSpec struct {
 	Declarations     []string
 	Imports          []string
 	Calls            []string
+	// FieldDeclKinds marks field-bearing declaration kinds so Stage 1 can
+	// set RichToken.IsFieldDecl (master_overhaul_plan.md §5.1.1/§5.1.2).
+	FieldDeclKinds []string
+	// MethodSpecKinds marks interface method declaration kinds so Stage 1
+	// can set RichToken.IsMethodSpec (fixes A-04 at the source).
+	MethodSpecKinds []string
+	// EmbeddedKinds marks anonymous-embedding / base-class kinds so Stage 1
+	// can set RichToken.IsEmbedded (Go embedded_field, C++ base_class_specifier).
+	EmbeddedKinds []string
+}
+
+func (s *LanguageSpec) isFieldDeclKind(kind string) bool {
+	for _, k := range s.FieldDeclKinds {
+		if kind == k {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *LanguageSpec) isMethodSpecKind(kind string) bool {
+	for _, k := range s.MethodSpecKinds {
+		if kind == k {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *LanguageSpec) isEmbeddedKind(kind string) bool {
+	for _, k := range s.EmbeddedKinds {
+		if kind == k {
+			return true
+		}
+	}
+	return false
 }
 
 // asLang wraps a grammar package's Language() unsafe.Pointer factory into
@@ -58,9 +94,11 @@ func Registry() []LanguageSpec {
 				"function_item", "impl_item", "struct_item",
 				"enum_item", "trait_item", "type_item",
 				"mod_item", "static_item", "const_item",
+				"field_declaration", "where_clause",
 			},
-			Imports: []string{"use_declaration", "extern_crate_declaration"},
-			Calls:   []string{"call_expression", "macro_invocation"},
+			FieldDeclKinds: []string{"field_declaration"},
+			Imports:        []string{"use_declaration", "extern_crate_declaration"},
+			Calls:          []string{"call_expression", "macro_invocation"},
 		},
 		{
 			Lang:        LangGo,
@@ -69,7 +107,20 @@ func Registry() []LanguageSpec {
 			Declarations: []string{
 				"function_declaration", "method_declaration",
 				"type_spec", "function_type",
+				// §5.1.2: structural members of declarations surface as
+				// declaration tokens so GAST v2 can model fields, parameters,
+				// interface methods and embedded types (fixes A-03/A-04/A-17).
+				// NB: tree-sitter-go@v0.25.0 names interface methods method_elem
+				// (NOT method_spec) and models anonymous embedding as a
+				// field_declaration without a name field (no embedded_field
+				// kind in this grammar). type_elem = embedded interface inside
+				// interface_type.
+				"field_declaration", "method_elem",
+				"parameter_declaration", "type_elem",
 			},
+			FieldDeclKinds:  []string{"field_declaration"},
+			MethodSpecKinds: []string{"method_elem"},
+			EmbeddedKinds:   []string{"type_elem"},
 			// type_declaration is a container node (`type Foo struct{...}` wraps a
 			// type_spec, `type ( ... )` wraps several) that carries no name of its
 			// own — classifying it produced an empty-ID GASTTypeDeclaration node
@@ -90,6 +141,12 @@ func Registry() []LanguageSpec {
 			Declarations: []string{
 				"function_definition", "class_definition",
 				"decorated_definition",
+				// §5.1.2: typed parameters carry name + type structurally.
+				// expression_statement is deliberately NOT declared: every
+				// class-body attribute assignment would become a declaration
+				// node, flooding the graph; class attributes surface through
+				// the class_definition FieldRoles instead.
+				"typed_parameter",
 			},
 			Imports: []string{
 				"import_statement", "import_from_statement",
@@ -106,9 +163,14 @@ func Registry() []LanguageSpec {
 				"enum_declaration", "method_declaration",
 				"constructor_declaration", "record_declaration",
 				"annotation_type_declaration",
+				// §5.1.2. superclass / super_interfaces are grammar FIELD
+				// names, not node kinds — inheritance surfaces through the
+				// class_declaration FieldRoles instead of Declarations.
+				"field_declaration", "formal_parameter",
 			},
-			Imports: []string{"import_declaration", "package_declaration"},
-			Calls:   []string{"method_invocation", "object_creation_expression"},
+			FieldDeclKinds: []string{"field_declaration"},
+			Imports:        []string{"import_declaration", "package_declaration"},
+			Calls:          []string{"method_invocation", "object_creation_expression"},
 		},
 		{
 			Lang:        LangJS,
@@ -119,9 +181,13 @@ func Registry() []LanguageSpec {
 				"generator_function_declaration", "method_definition",
 				"class_declaration", "lexical_declaration",
 				"variable_declaration",
+				// §5.1.2: class members (incl. public-field shorthand) become
+				// declaration tokens for GAST v2 field modeling.
+				"property_definition", "field_definition",
 			},
-			Imports: []string{"import_statement"},
-			Calls:   []string{"call_expression", "new_expression"},
+			FieldDeclKinds: []string{"property_definition", "field_definition"},
+			Imports:        []string{"import_statement"},
+			Calls:          []string{"call_expression", "new_expression"},
 		},
 		{
 			Lang:        LangTS,
@@ -132,9 +198,16 @@ func Registry() []LanguageSpec {
 				"class_declaration", "interface_declaration",
 				"type_alias_declaration", "enum_declaration",
 				"lexical_declaration", "abstract_class_declaration",
+				// §5.1.2: interface members (property_signature,
+				// method_signature) and heritage clause carry name/type/base
+				// structurally (fixes A-03/A-04/A-07/A-17).
+				"property_signature", "method_signature",
+				"heritage_clause",
 			},
-			Imports: []string{"import_statement"},
-			Calls:   []string{"call_expression", "new_expression"},
+			FieldDeclKinds:  []string{"property_signature"},
+			MethodSpecKinds: []string{"method_signature"},
+			Imports:         []string{"import_statement"},
+			Calls:           []string{"call_expression", "new_expression"},
 		},
 		{
 			Lang:             LangCpp,
@@ -146,9 +219,15 @@ func Registry() []LanguageSpec {
 				"struct_specifier", "union_specifier",
 				"namespace_definition", "template_declaration",
 				"declaration",
+				// §5.1.2: fields, parameters and base classes become
+				// declaration tokens (base_class_specifier marks IsEmbedded).
+				"field_declaration", "parameter_declaration",
+				"base_class_clause", "base_class_specifier",
 			},
-			Imports: []string{"preproc_include"},
-			Calls:   []string{"call_expression"},
+			FieldDeclKinds: []string{"field_declaration"},
+			EmbeddedKinds:  []string{"base_class_specifier"},
+			Imports:        []string{"preproc_include"},
+			Calls:          []string{"call_expression"},
 		},
 		{
 			Lang:             LangC,
@@ -158,9 +237,12 @@ func Registry() []LanguageSpec {
 			Declarations: []string{
 				"function_definition", "struct_specifier",
 				"union_specifier", "enum_specifier", "declaration",
+				// §5.1.2: fields and parameters become declaration tokens.
+				"field_declaration", "parameter_declaration",
 			},
-			Imports: []string{"preproc_include"},
-			Calls:   []string{"call_expression"},
+			FieldDeclKinds: []string{"field_declaration"},
+			Imports:        []string{"preproc_include"},
+			Calls:          []string{"call_expression"},
 		},
 		{
 			Lang:        LangCSharp,
@@ -171,9 +253,13 @@ func Registry() []LanguageSpec {
 				"struct_declaration", "enum_declaration",
 				"record_declaration", "method_declaration",
 				"namespace_declaration",
+				// §5.1.2: fields and base_list carry members/base types
+				// structurally (fixes A-03/A-07/A-17).
+				"field_declaration", "base_list", "parameter",
 			},
-			Imports: []string{"using_directive", "namespace_declaration"},
-			Calls:   []string{"invocation_expression", "object_creation_expression"},
+			FieldDeclKinds: []string{"field_declaration"},
+			Imports:        []string{"using_directive", "namespace_declaration"},
+			Calls:          []string{"invocation_expression", "object_creation_expression"},
 		},
 		{
 			Lang:        LangRuby,
@@ -183,9 +269,13 @@ func Registry() []LanguageSpec {
 			Declarations: []string{
 				"function", "method", "class", "module",
 				"singleton_method", "singleton_class",
+				// §5.1.2: instance variables become declaration tokens so
+				// Ruby fields surface structurally instead of by regex.
+				"ivar", "module_function",
 			},
-			Imports: []string{"call"},
-			Calls:   []string{"call", "method_call"},
+			FieldDeclKinds: []string{"ivar"},
+			Imports:        []string{"call"},
+			Calls:          []string{"call", "method_call"},
 		},
 		{
 			Lang:        LangPHP,
@@ -195,8 +285,13 @@ func Registry() []LanguageSpec {
 				"function_definition", "method_declaration",
 				"class_declaration", "interface_declaration",
 				"trait_declaration", "enum_declaration",
+				// §5.1.2: properties, parameters and inheritance clauses become
+				// declaration tokens (fixes A-03/A-07/A-17).
+				"property_declaration", "formal_parameters",
+				"extends_clause", "implements_clause",
 			},
-			Imports: []string{"namespace_use_declaration", "namespace_use_clause"},
+			FieldDeclKinds: []string{"property_declaration"},
+			Imports:        []string{"namespace_use_declaration", "namespace_use_clause"},
 			Calls: []string{
 				"function_call_expression", "member_call_expression",
 				"scoped_call_expression", "object_creation_expression",

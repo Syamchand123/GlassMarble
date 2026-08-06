@@ -5,6 +5,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage2"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage3"
+	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 )
 
 // LinkTypesAndComposition resolves cross-file type references and field compositions.
@@ -14,6 +15,85 @@ func LinkTypesAndComposition(stage3Out *stage3.Stage3Output, cpg *Stage4Output) 
 	}
 
 	traverseForTypeLinking(stage3Out.RootNode, stage3Out.GlobalDefinitionIndex, cpg)
+
+	// v2 (W1-12): transitive hierarchy closure — extends (direct EXTENDS)
+	// and inheritsFrom (direct IMPLEMENTS) chains, depth-capped (A-02).
+	emitTransitiveHierarchy(cpg)
+}
+
+// maxInheritanceDepth caps the transitive closure to keep wide enterprise
+// hierarchies bounded (§5.4.1 W1-12, A-02).
+const maxInheritanceDepth = 5
+
+// emitTransitiveHierarchy walks the direct EXTENDS and IMPLEMENTS edges and
+// emits depth-capped transitive closures under the same predicates
+// (gm:extends / gm:inheritsFrom, W1-12/A-02). Only ancestors at depth ≥ 2
+// are re-emitted (direct edges already exist). Cycles are bounded by the
+// per-root visited set.
+func emitTransitiveHierarchy(cpg *Stage4Output) {
+	if cpg == nil {
+		return
+	}
+
+	extParents := make(map[string][]string)
+	implParents := make(map[string][]string)
+	for src, edges := range cpg.OutboundEdges {
+		for _, e := range edges {
+			switch e.Type {
+			case EdgeExtends:
+				extParents[src] = append(extParents[src], e.TargetID)
+			case EdgeImplements:
+				implParents[src] = append(implParents[src], e.TargetID)
+			}
+		}
+	}
+
+	// Only type nodes participate (skip synthetic/virtual nodes).
+	isType := func(id string) bool {
+		n, ok := cpg.GetNode(id)
+		return ok && (n.Kind == "STRUCT" || n.Kind == "CLASS" || n.Kind == "INTERFACE")
+	}
+
+	// ancestors returns the transitive targets at depth 2..max, skipping the
+	// direct parents already linked.
+	ancestors := func(root string, parents map[string][]string) []string {
+		visited := map[string]bool{}
+		var acc []string
+		prev := parents[root]
+		for depth := 2; depth <= maxInheritanceDepth && len(prev) > 0; depth++ {
+			var next []string
+			for _, p := range prev {
+				for _, ancestor := range parents[p] {
+					if visited[ancestor] {
+						continue
+					}
+					visited[ancestor] = true
+					next = append(next, ancestor)
+					acc = append(acc, ancestor)
+				}
+			}
+			prev = next
+		}
+		return acc
+	}
+
+	for id := range cpg.GraphNodes {
+		if !isType(id) {
+			continue
+		}
+		for _, anc := range ancestors(id, extParents) {
+			if isType(anc) {
+				cpg.AddEdgeProperties(id, anc, EdgeExtends, 0, 0.9,
+					map[string]string{ont.PredProvenance: "heuristic"})
+			}
+		}
+		for _, anc := range ancestors(id, implParents) {
+			if isType(anc) {
+				cpg.AddEdgeProperties(id, anc, EdgeImplements, 0, 0.9,
+					map[string]string{ont.PredProvenance: "heuristic"})
+			}
+		}
+	}
 }
 
 func traverseForTypeLinking(dir *stage3.DirectoryNode, globalIndex map[string][]*stage2.GASTNode, cpg *Stage4Output) {
@@ -45,19 +125,26 @@ func linkNodesInGAST(node *stage2.GASTNode, relPath string, globalIndex map[stri
 	if node.Type == stage2.GASTTypeDeclaration {
 		sourceFQN := BuildUniversalID(relPath, "", node.Name)
 
-		// Check both "extends" and "inherits" properties (Python uses inherits)
-		baseClass := node.Properties["extends"]
-		if baseClass == "" {
-			baseClass = node.Properties["inherits"]
-		}
-		if baseClass != "" {
-			targetFQN := resolveTypeToFQN(baseClass, relPath, globalIndex, cpg)
-			if targetFQN == "" {
-				// Try direct node ID lookup
-				targetFQN = BuildUniversalID(relPath, "", baseClass)
+		// v2 (W1-12): structural languages feed inheritance exclusively via
+		// GASTNode.BaseTypes (member_linker emits the direct edges); the
+		// legacy content-property fallback survives only for grammars
+		// without a base-class role (CSS/HTML/JSON/unknown).
+		if len(node.BaseTypes) == 0 {
+			// Check both "extends" and "inherits" properties (Python uses inherits)
+			baseClass := node.Properties["extends"]
+			if baseClass == "" {
+				baseClass = node.Properties["inherits"]
 			}
-			if targetFQN != "" && sourceFQN != "" && sourceFQN != targetFQN {
-				cpg.AddEdge(sourceFQN, targetFQN, EdgeExtends, int(node.StartLine))
+			if baseClass != "" {
+				targetFQN := resolveTypeToFQN(baseClass, relPath, globalIndex, cpg)
+				if targetFQN == "" {
+					// Try direct node ID lookup
+					targetFQN = BuildUniversalID(relPath, "", baseClass)
+				}
+				if targetFQN != "" && sourceFQN != "" && sourceFQN != targetFQN {
+					cpg.AddEdgeProperties(sourceFQN, targetFQN, EdgeExtends, int(node.StartLine), 0.8,
+						map[string]string{ont.PredProvenance: "content-regex"})
+				}
 			}
 		}
 
@@ -128,11 +215,9 @@ func resolveTypeToFQN(rawType, currentFilePath string, globalIndex map[string][]
 		return BuildUniversalID(targetNode.Properties["file_path"], targetNode.ReceiverType, targetNode.Name)
 	}
 
-	// 3. Search cpg.GraphNodes by trailing symbol name match
-	for nodeID, node := range cpg.GraphNodes {
-		if node.Name == clean && (node.Kind == "STRUCT" || node.Kind == "CLASS" || node.Kind == "INTERFACE") {
-			return nodeID
-		}
+	// 3. v2 (W1-12 / A-15): exact-map type-name lookup, no linear scan.
+	if id, ok := cpg.nameToNodeID()[clean]; ok {
+		return id
 	}
 
 	return ""

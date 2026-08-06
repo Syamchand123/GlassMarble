@@ -9,6 +9,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
@@ -32,7 +33,7 @@ in akg_state.ttl).`,
 
 		ttlPath := filepath.Join(storageDir, "akg_state.ttl")
 		if _, err := os.Stat(ttlPath); err != nil {
-			return fmt.Errorf("no AKG database at %s -- run 'glassmarble analyze' first", ttlPath)
+			return producterrs.Tagged(fmt.Sprintf("no AKG database at %s -- run 'glassmarble analyze' first", ttlPath), producterrs.ErrValidation)
 		}
 
 		commitHash, schemaVersion, version, err := akg.TTLMetadata(storageDir)

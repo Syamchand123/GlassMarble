@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 	visualizeprog "github.com/Syamchand123/GlassMarble/internal/tui/programs/visualize"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine"
@@ -115,12 +116,12 @@ var visualizeCmd = &cobra.Command{
 			diagType = types.Infrastructure
 
 		default:
-			return fmt.Errorf("unsupported diagram type '%s'", diagName)
+			return producterrs.Tagged(fmt.Sprintf("unsupported diagram type '%s'", diagName), producterrs.ErrValidation)
 		}
 
 		// Ensure we require entry point for sequence diagrams
 		if diagType == types.UMLSequence && entryPointID == "" {
-			return fmt.Errorf("entry point ID (--entry) is mandatory for UML Sequence diagrams")
+			return producterrs.Tagged(fmt.Sprintf("entry point ID (--entry) is mandatory for UML Sequence diagrams"), producterrs.ErrEntryMissing)
 		}
 
 		// Resolve .ttl path
@@ -201,7 +202,7 @@ var visualizeCmd = &cobra.Command{
 		markup, err := coordinator.ProjectDiagram(diagType, opts)
 		fmt.Fprintf(os.Stderr, "Done in %.1fs\n", time.Since(start).Seconds())
 		if err != nil {
-			return fmt.Errorf("failed to generate diagram: %w", err)
+			return producterrs.Annotate(fmt.Errorf("failed to generate diagram: %w", err), producterrs.ErrRenderLimit)
 		}
 
 		// Print summary before diagram if requested
@@ -303,7 +304,7 @@ func renderMermaidToImageWithEndpoint(markup, targetPath, formatFlag, krokiBase 
 	switch ext {
 	case ".svg", ".png":
 	default:
-		return fmt.Errorf("unsupported render format %q (use .svg or .png)", ext)
+		return producterrs.Tagged(fmt.Sprintf("unsupported render format %q (use .svg or .png)", ext), producterrs.ErrValidation)
 	}
 	imgFormat := strings.TrimPrefix(ext, ".")
 
@@ -359,7 +360,7 @@ func renderMermaidToImageWithEndpoint(markup, targetPath, formatFlag, krokiBase 
 	// Neither renderer succeeded: persist the markup so nothing is lost.
 	markupPath := targetPath + ".txt"
 	_ = os.WriteFile(markupPath, []byte(markup), 0o644)
-	return fmt.Errorf("no diagram renderer available (Kroki unreachable and mermaid-cli not installed); markup written to %s", markupPath)
+	return producterrs.Tagged(fmt.Sprintf("no diagram renderer available (Kroki unreachable and mermaid-cli not installed); markup written to %s", markupPath), producterrs.ErrRenderLimit)
 }
 
 func ResetVisualizeFlags() {

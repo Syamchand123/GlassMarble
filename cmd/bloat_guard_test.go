@@ -14,9 +14,12 @@ import (
 // TestBloatRegressionGuard runs the REAL ingestion pipeline over this
 // repository and fails when the node/edge counts exceed the budget
 // (AUDIT Issue 5 Phase 5C-8: the bloat scoreboard must only go down, never
-// up across refactors). Budgets were calibrated on the healthy baseline
-// (2,308 nodes / 5,479 edges) with generous headroom, so a regression that
-// adds a noisy node-producing pass trips this test.
+// up across refactors). Budgets were recalibrated after Phase 1 §5.4.1 /
+// W1-11 (member_linker structural spine: FIELD/PARAM nodes, hasField/
+// hasParam/hasReceiver/returns edges) raised the healthy baseline from
+// (2,308 nodes / 5,479 edges) to (7,865 nodes / 13,967 edges) — an
+// intentional graph-shape change, not noise. The ~1.8× headroom above the
+// new baseline still trips on any future noisy node-producing pass.
 func TestBloatRegressionGuard(t *testing.T) {
 	repoRoot, err := findRepoRoot()
 	if err != nil {
@@ -71,8 +74,8 @@ func TestBloatRegressionGuard(t *testing.T) {
 	edges := len(seen)
 
 	const (
-		nodeBudget = 4500
-		edgeBudget = 10000
+		nodeBudget = 14000
+		edgeBudget = 25000
 	)
 	if nodes < 1000 {
 		t.Errorf("sanity: expected the pipeline to produce a substantial graph, got %d nodes (pipeline may be broken)", nodes)

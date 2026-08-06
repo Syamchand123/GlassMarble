@@ -95,3 +95,89 @@ func TestBuildOwnershipMapNilProperties(t *testing.T) {
 	require.Len(t, om.ByHierarchy["root"]["pkg"][""], 1)
 	require.Len(t, om.ByImport["pkg"], 1)
 }
+
+func TestBuildOwnershipMapNilSafeGetters(t *testing.T) {
+	var om *OwnershipMap
+	assert.Equal(t, "", om.GetOwner("pkg.Thing"))
+	assert.Nil(t, om.GetMembers("pkg.Thing"))
+	assert.Equal(t, "", (&OwnershipMap{}).GetOwner("pkg.Thing"))
+	assert.Nil(t, (&OwnershipMap{}).GetMembers("pkg.Thing"))
+}
+
+func TestBuildOwnershipMapBackbone(t *testing.T) {
+	// v2 (§5.3.1, A-16): types own their field/method children.
+	// Methods are re-parented under their owner type by the stage2
+	// normalizer, so the ownership backbone is derived from the
+	// GAST parent-child structure.
+	globalIndex := map[string][]*stage2.GASTNode{
+		"pkg.Service": {
+			{
+				Name: "Service",
+				Kind: "struct",
+				Type: stage2.GASTTypeDeclaration,
+				Properties: map[string]string{
+					"fully_qualified_name": "pkg.Service",
+				},
+				Children: []*stage2.GASTNode{
+					{
+						Name: "Port",
+						Type: stage2.GASTField,
+						Properties: map[string]string{
+							"fully_qualified_name": "pkg.Service.Port",
+						},
+					},
+					{
+						Name: "Start",
+						Type: stage2.GASTFunction,
+						Kind: "method",
+						Properties: map[string]string{
+							"fully_qualified_name": "pkg.Service.Start",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	om := BuildOwnershipMap(globalIndex, NewWorkspaceContext())
+
+	require.Contains(t, om.MembersOf["pkg.Service"], "pkg.Service.Port")
+	require.Contains(t, om.MembersOf["pkg.Service"], "pkg.Service.Start")
+	require.Len(t, om.MembersOf["pkg.Service"], 2)
+	assert.Equal(t, "pkg.Service", om.GetOwner("pkg.Service.Port"))
+	assert.Equal(t, "pkg.Service", om.GetOwner("pkg.Service.Start"))
+	assert.Empty(t, om.GetOwner("pkg.Unrelated"))
+	assert.Nil(t, om.GetMembers("pkg.Unrelated"))
+}
+
+func TestBuildOwnershipMapCanonicalKey(t *testing.T) {
+	// §5.3.1: canonical IDs are the primary ownership key when present.
+	globalIndex := map[string][]*stage2.GASTNode{
+		"pkg.Service": {
+			{
+				Name: "Service",
+				Kind: "struct",
+				Type: stage2.GASTTypeDeclaration,
+				Properties: map[string]string{
+					"canonical_id":         "type:src%2Fpkg:service.go::Service",
+					"fully_qualified_name": "pkg.Service",
+				},
+				Children: []*stage2.GASTNode{
+					{
+						Name: "Start",
+						Type: stage2.GASTFunction,
+						Kind: "method",
+						Properties: map[string]string{
+							"canonical_id": "func:src%2Fpkg:service.go:Service:Start",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	om := BuildOwnershipMap(globalIndex, NewWorkspaceContext())
+
+	require.Contains(t, om.MembersOf["type:src%2Fpkg:service.go::Service"], "func:src%2Fpkg:service.go:Service:Start")
+	assert.Equal(t, "type:src%2Fpkg:service.go::Service", om.GetOwner("func:src%2Fpkg:service.go:Service:Start"))
+}

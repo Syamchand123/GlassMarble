@@ -22,6 +22,7 @@ func TestOntologyEmbedded(t *testing.T) {
 	}
 	for _, required := range []string{
 		"gm:Ontology", "gm:MetaData", "gm:calls", "gm:schemaVersion", "gm:status", "gm:Deleted",
+		"gm:view", "gm:views",
 	} {
 		if !isOntologyTermDeclared(required) {
 			t.Errorf("ontology missing required term %s", required)
@@ -62,7 +63,25 @@ func allEmittedEdgeTypes() []stage4.RelationshipType {
 		stage4.EdgeCallsCloudAPI, stage4.EdgeContextCall, stage4.EdgePointsTo,
 		stage4.EdgeHeapAlias, stage4.EdgeConstraint, stage4.EdgeFFICall,
 		stage4.EdgePublishes, stage4.EdgeSubscribes, stage4.EdgeInjects,
-		stage4.EdgeEscapesToHeap, stage4.EdgeBelongsTo,
+		stage4.EdgeEscapesToHeap, stage4.EdgeBelongsTo, stage4.EdgeHasReceiver,
+	}
+}
+
+// TestOntologyDeclaresEdgeViews implements §4.2.1: every edge-type constant
+// maps to a declared predicate (TestOntologyDeclaresAllEmittedPredicates) and
+// a declared view. Views must be one of the gm:view vocabulary values
+// ("structural" | "dynamic" | "security") declared in ontology.ttl.
+func TestOntologyDeclaresEdgeViews(t *testing.T) {
+	valid := map[string]bool{"structural": true, "dynamic": true, "security": true}
+	for _, et := range allEmittedEdgeTypes() {
+		view := stage4.ViewOfEdgeType(et)
+		if view == "" {
+			t.Errorf("edge type %s has no declared view", et)
+			continue
+		}
+		if !valid[view] {
+			t.Errorf("edge type %s maps to view %q which is not a declared gm:view value", et, view)
+		}
 	}
 }
 

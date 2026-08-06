@@ -1,11 +1,46 @@
 package stage3
 
 import (
+	"net/url"
 	"path/filepath"
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage2"
+	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 )
+
+// ExternalKey returns the v2 external system ID for an import path:
+// "ext:" + URL-escaped path (master_overhaul_plan.md §5.3.1 W1-09).
+// URL escaping keeps slashes/colons out of the ID space so keys are
+// safe to embed in CPG node IDs and JSON lookups.
+func ExternalKey(imp string) string {
+	return ont.PrefixExt + url.PathEscape(imp)
+}
+
+// ResolveExternalKey self-heals between the v1 spelling (raw import
+// path, e.g. "github.com/acme/lib") and the v2 spelling ("ext:github.com%2Facme%2Flib"):
+// v1 keys are accepted for reads (old caches/deps.json), v2 for writes.
+// Read-only: never mutates the caller's map.
+func ResolveExternalKey(key string) string {
+	if strings.HasPrefix(key, ont.PrefixExt) {
+		return key
+	}
+	return ExternalKey(key)
+}
+
+// moduleNameOf derives the gm:module_name property for an external
+// dependency: the workspace module for self-module crossings, otherwise
+// the import's first path segment (§5.3.3 — module path belongs in
+// properties, never in the ext: URI, §4.1).
+func moduleNameOf(imp, modulePrefix string) string {
+	if modulePrefix != "" && strings.HasPrefix(imp, modulePrefix) {
+		return modulePrefix
+	}
+	if idx := strings.Index(imp, "/"); idx != -1 {
+		return imp[:idx]
+	}
+	return imp
+}
 
 // IndexExternalDependencies scans all file symbol tables, extracts their imports,
 // and if an import is not within the workspace modules, logs it as an ExternalSystem node.
@@ -29,17 +64,61 @@ func IndexExternalDependencies(output *Stage3Output) {
 				continue
 			}
 			if !isLocalImport(imp, relPath, output) {
-				if _, exists := output.ExternalDependencies[imp]; !exists {
+				key := ExternalKey(imp)
+				if _, exists := output.ExternalDependencies[key]; !exists {
+					modulePrefix := ""
+					if output.WorkspaceCtx != nil {
+						modulePrefix = output.WorkspaceCtx.ModulePrefix
+					}
 					node := &stage2.GASTNode{
 						Type:       stage2.GASTTypeDeclaration,
 						Name:       imp,
 						Visibility: "External",
 						Properties: map[string]string{
-							"is_external": "true",
-							"primitive":   "EXTERNAL_SDK",
+							"is_external":          "true",
+							ont.PredIsExternalMark: "true",
+							"primitive":            "EXTERNAL_SDK",
+							ont.PredPrimitive:      "EXTERNAL_SDK",
+							ont.PredImportPath:     imp,
+							ont.PredModuleName:     moduleNameOf(imp, modulePrefix),
+							"import_path":          imp,
+							"ext_id":               key,
 						},
 					}
-					output.ExternalDependencies[imp] = node
+					if alias, ok := symTable.ImportAliases[imp]; ok {
+						node.Properties["alias"] = alias
+						node.Properties[ont.PredImportAlias] = alias
+					}
+					output.ExternalDependencies[key] = node
+				}
+			} else if output.WorkspaceCtx != nil && output.WorkspaceCtx.ModulePrefix != "" {
+				// v2 (W1-09, §5.3.5 TestExternalIDs): an ALIASED import of
+				// this module's own path crosses the module boundary; index
+				// it as ext:<module-relative path> with the alias recorded.
+				prefix := output.WorkspaceCtx.ModulePrefix + "/"
+				alias, hasAlias := symTable.ImportAliases[imp]
+				if hasAlias && strings.HasPrefix(imp, prefix) {
+					rel := strings.TrimPrefix(imp, prefix)
+					key := ExternalKey(rel)
+					if _, exists := output.ExternalDependencies[key]; !exists {
+						output.ExternalDependencies[key] = &stage2.GASTNode{
+							Type:       stage2.GASTTypeDeclaration,
+							Name:       rel,
+							Visibility: "External",
+							Properties: map[string]string{
+								"is_external":          "true",
+								ont.PredIsExternalMark: "true",
+								"primitive":            "EXTERNAL_SDK",
+								ont.PredPrimitive:      "EXTERNAL_SDK",
+								ont.PredImportPath:     imp,
+								ont.PredModuleName:     output.WorkspaceCtx.ModulePrefix,
+								ont.PredImportAlias:    alias,
+								"import_path":          imp,
+								"ext_id":               key,
+								"alias":                alias,
+							},
+						}
+					}
 				}
 			}
 		}

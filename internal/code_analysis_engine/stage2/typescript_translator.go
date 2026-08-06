@@ -8,7 +8,7 @@ import (
 
 type TSTranslator struct{}
 
-func (t *TSTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) *GASTNode {
+func (t *TSTranslator) CoerceToken(tok stage1.RichToken, parent *stage1.RichToken, fileRelPath string) *GASTNode {
 	node := baseNode(tok, fileRelPath)
 	extractGenericTypesAndDecorators(node, tok.Content)
 

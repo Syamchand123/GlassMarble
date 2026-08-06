@@ -14,6 +14,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
 	akgerrs "github.com/Syamchand123/GlassMarble/internal/errors"
+	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/stage1"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
@@ -688,8 +689,13 @@ func (tm *AKGTransactionManager) saveToDisk(graph *CodePropertyGraph, payload *s
 				return fmt.Errorf("failed to stage existing TTL for incremental append: %w", copyErr)
 			}
 			src.Close()
-			if err := SerializeDeltaToTurtle(payload, deletedNodeIDs, graph.Version, tmp); err != nil {
+
+			bw := bufio.NewWriter(tmp)
+			if err := SerializeDeltaToTurtle(payload, deletedNodeIDs, graph.Version, bw); err != nil {
 				return fmt.Errorf("delta serialization failed: %w", err)
+			}
+			if err := bw.Flush(); err != nil {
+				return fmt.Errorf("failed to flush buffer: %w", err)
 			}
 			incremental = true
 		}
@@ -697,8 +703,12 @@ func (tm *AKGTransactionManager) saveToDisk(graph *CodePropertyGraph, payload *s
 
 	// Full rewrite (compaction) path
 	if !incremental {
-		if err := SerializeToTurtle(graph, tmp); err != nil {
+		bw := bufio.NewWriter(tmp)
+		if err := SerializeToTurtle(graph, bw); err != nil {
 			return fmt.Errorf("TTL serialization failed: %w", err)
+		}
+		if err := bw.Flush(); err != nil {
+			return fmt.Errorf("failed to flush buffer: %w", err)
 		}
 	}
 
@@ -871,13 +881,20 @@ func reconstructFromTTLFile(ttlPath string) (*CodePropertyGraph, error) {
 
 	graph := NewCodePropertyGraph("restored_from_ttl")
 
+	mutNodes := make(map[string]*stage4.ResolvedNode, len(nodes))
+	mutEntrypoints := make([]string, 0)
+	mutFolderZones := make(map[string]string)
+	mutKindIndex := make(map[string]map[string]bool)
+	mutHashIndex := make(map[string][]string)
+	mutFileNodeIndex := make(map[string]map[string]bool)
+
 	// Convert TTLNode to stage4.ResolvedNode
 	for id, tNode := range nodes {
 		if id == metadataNodeURI || deletedIDs[id] {
 			continue
 		}
 		kind := mapClassToKind(tNode.Kind)
-		prim := strings.TrimPrefix(tNode.PrimitiveType, "gm:")
+		prim := strings.TrimPrefix(tNode.PrimitiveType, ont.PrefixGM)
 
 		resNode := &stage4.ResolvedNode{
 			ID:        id,
@@ -897,47 +914,39 @@ func reconstructFromTTLFile(ttlPath string) (*CodePropertyGraph, error) {
 		if tNode.Code != "" {
 			resNode.Properties["code"] = tNode.Code
 		}
-		graph.Nodes = graph.Nodes.Set(id, resNode)
+		mutNodes[id] = resNode
 
-		// Restore Entrypoints / FolderZones / Code / CommitHash (they are
-		// parsed but were previously discarded — AUDIT Issue 3 Phase 3B-8).
+		// Restore Entrypoints / FolderZones / Code / CommitHash
 		if tNode.IsEntrypoint {
-			graph.Entrypoints = append(graph.Entrypoints, id)
+			mutEntrypoints = append(mutEntrypoints, id)
 		}
 		if kind == "MODULE" && tNode.PrimitiveZone != "" {
-			graph.FolderZones = graph.FolderZones.Set(id, tNode.PrimitiveZone)
+			mutFolderZones[id] = tNode.PrimitiveZone
 		}
 
 		// Rebuild KindIndex
-		kindSet, _ := graph.KindIndex.Get(kind)
-		newKindSet := make(map[string]bool, len(kindSet)+1)
-		for k, v := range kindSet {
-			newKindSet[k] = v
+		if mutKindIndex[kind] == nil {
+			mutKindIndex[kind] = make(map[string]bool)
 		}
-		newKindSet[id] = true
-		graph.KindIndex = graph.KindIndex.Set(kind, newKindSet)
+		mutKindIndex[kind][id] = true
 
 		// Rebuild HashIndex
 		if h, ok := resNode.Properties["hash"]; ok && h != "" {
-			hashList, _ := graph.HashIndex.Get(h)
-			newHashList := make([]string, len(hashList)+1)
-			copy(newHashList, hashList)
-			newHashList[len(newHashList)-1] = id
-			graph.HashIndex = graph.HashIndex.Set(h, newHashList)
+			mutHashIndex[h] = append(mutHashIndex[h], id)
 		}
 
 		// Rebuild FileNodeIndex
 		normPath := normalizePath(resNode.FileSpec.Path)
 		if normPath != "" {
-			fileSet, _ := graph.FileNodeIndex.Get(normPath)
-			newFileSet := make(map[string]bool, len(fileSet))
-			for k, v := range fileSet {
-				newFileSet[k] = v
+			if mutFileNodeIndex[normPath] == nil {
+				mutFileNodeIndex[normPath] = make(map[string]bool)
 			}
-			newFileSet[id] = true
-			graph.FileNodeIndex = graph.FileNodeIndex.Set(normPath, newFileSet)
+			mutFileNodeIndex[normPath][id] = true
 		}
 	}
+
+	mutOutboundEdges := make(map[string][]stage4.ResolvedEdge)
+	mutInboundEdges := make(map[string][]stage4.ResolvedEdge)
 
 	// Rebuild Outbound and Inbound Edges with canonical edge types; skip
 	// tombstone incident edges and legacy gm:status triples.
@@ -945,7 +954,7 @@ func reconstructFromTTLFile(ttlPath string) (*CodePropertyGraph, error) {
 		if deletedIDs[tEdge.SourceID] || deletedIDs[tEdge.TargetID] {
 			continue
 		}
-		if strings.HasPrefix(tEdge.Predicate, "gm:status") {
+		if strings.HasPrefix(tEdge.Predicate, ont.PredStatus) {
 			// Legacy tombstone triple parsed as an edge: never reconstruct it.
 			continue
 		}
@@ -957,17 +966,31 @@ func reconstructFromTTLFile(ttlPath string) (*CodePropertyGraph, error) {
 			LineNumber: tEdge.LineNumber,
 		}
 
-		outEdges, _ := graph.OutboundEdges.Get(tEdge.SourceID)
-		newOutEdges := make([]stage4.ResolvedEdge, len(outEdges)+1)
-		copy(newOutEdges, outEdges)
-		newOutEdges[len(newOutEdges)-1] = resolvedEdge
-		graph.OutboundEdges = graph.OutboundEdges.Set(tEdge.SourceID, newOutEdges)
+		mutOutboundEdges[tEdge.SourceID] = append(mutOutboundEdges[tEdge.SourceID], resolvedEdge)
+		mutInboundEdges[tEdge.TargetID] = append(mutInboundEdges[tEdge.TargetID], resolvedEdge)
+	}
 
-		inEdges, _ := graph.InboundEdges.Get(tEdge.TargetID)
-		newInEdges := make([]stage4.ResolvedEdge, len(inEdges)+1)
-		copy(newInEdges, inEdges)
-		newInEdges[len(newInEdges)-1] = resolvedEdge
-		graph.InboundEdges = graph.InboundEdges.Set(tEdge.TargetID, newInEdges)
+	for k, v := range mutNodes {
+		graph.Nodes = graph.Nodes.Set(k, v)
+	}
+	graph.Entrypoints = mutEntrypoints
+	for k, v := range mutFolderZones {
+		graph.FolderZones = graph.FolderZones.Set(k, v)
+	}
+	for k, v := range mutKindIndex {
+		graph.KindIndex = graph.KindIndex.Set(k, v)
+	}
+	for k, v := range mutHashIndex {
+		graph.HashIndex = graph.HashIndex.Set(k, v)
+	}
+	for k, v := range mutFileNodeIndex {
+		graph.FileNodeIndex = graph.FileNodeIndex.Set(k, v)
+	}
+	for k, v := range mutOutboundEdges {
+		graph.OutboundEdges = graph.OutboundEdges.Set(k, v)
+	}
+	for k, v := range mutInboundEdges {
+		graph.InboundEdges = graph.InboundEdges.Set(k, v)
 	}
 
 	// Restore metadata node: commit hash, WAL replay bound, schema version.
@@ -1030,7 +1053,7 @@ func scanDeletedNodeIDs(ttlPath string) (map[string]bool, error) {
 			fields := strings.Fields(blockStr)
 			if len(fields) > 0 {
 				id := types.ParseNodeURI(fields[0])
-				if strings.Contains(blockStr, `gm:status "DELETED"`) {
+				if strings.Contains(blockStr, ont.PredStatus+` "DELETED"`) {
 					deleted[id] = true
 				} else {
 					// A later non-tombstone block for the same ID resurrects it.
@@ -1072,14 +1095,14 @@ func scanTTLMetadata(ttlPath string) (commitHash string, schemaVersion int, vers
 	}
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "gm:commitHash") {
+		if strings.HasPrefix(line, ont.PredCommitHash) {
 			fields := strings.Fields(line)
 			if len(fields) >= 2 {
 				commitHash = strings.Trim(fields[1], `"`)
 			}
 			continue
 		}
-		if strings.HasPrefix(line, "gm:schemaVersion") {
+		if strings.HasPrefix(line, ont.PredSchemaVersion) {
 			fields := strings.Fields(line)
 			if len(fields) >= 2 {
 				if n := parseInt(fields[1]); n > schemaVersion {
@@ -1088,7 +1111,7 @@ func scanTTLMetadata(ttlPath string) (commitHash string, schemaVersion int, vers
 			}
 			continue
 		}
-		if strings.HasPrefix(line, "gm:version") {
+		if strings.HasPrefix(line, ont.PredVersion) {
 			fields := strings.Fields(line)
 			if len(fields) >= 2 {
 				if n := uint64(parseInt(fields[1])); n > version {

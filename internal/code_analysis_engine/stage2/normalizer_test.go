@@ -84,7 +84,7 @@ func TestCleanImportPath(t *testing.T) {
 }
 
 func TestBaseNode(t *testing.T) {
-	tok := stage1.RawToken{
+	tok := stage1.RichToken{
 		Kind:      stage1.TokenDeclaration,
 		Type:      "function_declaration",
 		Name:      "myFunc",
@@ -101,7 +101,7 @@ func TestBaseNode(t *testing.T) {
 	if node.Name != "myFunc" {
 		t.Errorf("Name = %q, want %q", node.Name, "myFunc")
 	}
-	// baseNode doesn't set Type — that's the translator's job
+	// baseNode doesn't set Type â€” that's the translator's job
 	if node.Kind != "function_declaration" {
 		t.Errorf("Kind = %q, want %q", node.Kind, "function_declaration")
 	}

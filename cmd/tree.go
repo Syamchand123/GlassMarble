@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 	treeprog "github.com/Syamchand123/GlassMarble/internal/tui/programs/tree"
 	"github.com/spf13/cobra"
@@ -32,7 +33,7 @@ var treeCmd = &cobra.Command{
 
 		snapshot := tm.GetActiveSnapshot()
 		if snapshot == nil || snapshot.Nodes.Len() == 0 {
-			return fmt.Errorf("AKG database is empty -- run 'glassmarble analyze' first")
+			return producterrs.Tagged(fmt.Sprintf("AKG database is empty -- run 'glassmarble analyze' first"), producterrs.ErrEmptySubgraph)
 		}
 
 		lines := []string{"=== Architecture Workspace Tree ==="}

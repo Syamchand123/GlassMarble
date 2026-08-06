@@ -8,7 +8,7 @@ import (
 
 type JavaTranslator struct{}
 
-func (t *JavaTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) *GASTNode {
+func (t *JavaTranslator) CoerceToken(tok stage1.RichToken, parent *stage1.RichToken, fileRelPath string) *GASTNode {
 	node := baseNode(tok, fileRelPath)
 	extractGenericTypesAndDecorators(node, tok.Content)
 
@@ -25,9 +25,29 @@ func (t *JavaTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) *G
 		case "class_declaration":
 			node.Type = GASTTypeDeclaration
 			node.Kind = "class"
+			// §5.1.2/§5.2.2: inheritance and interface lists come from the
+			// superclass / interfaces field roles, e.g. "extends A" and
+			// "implements I1, I2" (fixes A-02/A-05).
+			if base := stripClauseKeyword(tok.FieldRoles["superclass"]); base != "" {
+				node.BaseTypes = []string{base}
+			}
+			if ifaces := splitTopLevelCommas(stripClauseKeyword(tok.FieldRoles["interfaces"])); len(ifaces) > 0 {
+				for _, iface := range ifaces {
+					if i := strings.TrimSpace(iface); i != "" {
+						node.Implemented = append(node.Implemented, i)
+					}
+				}
+			}
 		case "interface_declaration":
 			node.Type = GASTTypeDeclaration
 			node.Kind = "interface"
+			if bases := splitTopLevelCommas(stripClauseKeyword(tok.FieldRoles["interfaces"])); len(bases) > 0 {
+				for _, base := range bases {
+					if b := strings.TrimSpace(base); b != "" {
+						node.BaseTypes = append(node.BaseTypes, b)
+					}
+				}
+			}
 		case "enum_declaration":
 			node.Type = GASTTypeDeclaration
 			node.Kind = "enum"
@@ -37,12 +57,32 @@ func (t *JavaTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) *G
 		case "field_declaration":
 			node.Type = GASTField
 			node.Kind = "field"
+			// v2 DataType population rule (fixes A-01): declared type from the
+			// "type" role, parameterized types resolved from the declarator.
+			node.FieldType = cleanTypeText(tok.FieldRoles["type"])
+			if node.FieldType == "" {
+				node.FieldType = lastTypeToken(tok.Content, tok.Name)
+			}
+			node.DataType = node.FieldType
 		case "formal_parameter":
 			node.Type = GASTParameter
 			node.Kind = "parameter"
+			node.DataType = cleanTypeText(tok.FieldRoles["type"])
+			if node.DataType == "" {
+				node.DataType = lastTypeToken(tok.Content, tok.Name)
+			}
 		case "constructor_declaration":
 			node.Type = GASTFunction
 			node.Kind = "constructor"
+		case "method_declaration":
+			node.Type = GASTFunction
+			node.Kind = "method"
+			sig := BuildSignatureWithRoles(tok.FieldRoles["name"], tok.FieldRoles["parameters"], tok.FieldRoles["type"], tok.Name, tok.Content)
+			node.Signature = sig.Text
+			if sig.ReturnType != "" {
+				node.ReturnType = sig.ReturnType
+				node.Properties["return_type"] = sig.ReturnType
+			}
 		default:
 			if isControlFlowType(tok.Type) {
 				node.Type = GASTControlFlow
@@ -61,6 +101,18 @@ func (t *JavaTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) *G
 		node.Kind = "call"
 	}
 	return node
+}
+
+// stripClauseKeyword removes the inheritance/implementation keyword prefix
+// from a field-role clause text ("extends A" → "A", "implements I1, I2" → "I1, I2").
+func stripClauseKeyword(clause string) string {
+	clause = strings.TrimSpace(clause)
+	for _, kw := range []string{"extends", "implements", "with"} {
+		if strings.HasPrefix(clause, kw+" ") {
+			return strings.TrimSpace(clause[len(kw):])
+		}
+	}
+	return clause
 }
 
 func resolveJavaVisibility(content string) string {

@@ -21,6 +21,13 @@ type OwnershipMap struct {
 	ByHierarchy map[string]map[string]map[string][]SymbolEntry `json:"by_hierarchy"`
 	ByName      map[string][]SymbolEntry                       `json:"by_name"`
 	ByImport    map[string][]SymbolEntry                       `json:"by_import"`
+
+	// v2 (master_overhaul_plan.md §5.3.1, fixes A-16): explicit ownership
+	// backbone derived from the stage2 GAST parent-child structure
+	// (types → field/method children). Keyed by the member's primary
+	// resolution key (canonical ID when present, else legacy FQN).
+	OwnerOf   map[string]string   `json:"owner_of,omitempty"`   // member key → owning type key
+	MembersOf map[string][]string `json:"members_of,omitempty"` // type key → member keys
 }
 
 func BuildOwnershipMap(globalIndex map[string][]*stage2.GASTNode, wc *WorkspaceContext) *OwnershipMap {
@@ -28,6 +35,8 @@ func BuildOwnershipMap(globalIndex map[string][]*stage2.GASTNode, wc *WorkspaceC
 		ByHierarchy: make(map[string]map[string]map[string][]SymbolEntry),
 		ByName:      make(map[string][]SymbolEntry),
 		ByImport:    make(map[string][]SymbolEntry),
+		OwnerOf:     make(map[string]string),
+		MembersOf:   make(map[string][]string),
 	}
 
 	if globalIndex == nil {
@@ -80,8 +89,72 @@ func BuildOwnershipMap(globalIndex map[string][]*stage2.GASTNode, wc *WorkspaceC
 			if node.Namespace != "" {
 				om.ByImport[node.Namespace] = append(om.ByImport[node.Namespace], entry)
 			}
+
+			// v2 ownership backbone (§5.3.1, A-16): type nodes own their
+			// field and method children (method re-parenting happens in the
+			// stage2 normalizer). Same-file lookup via primary key.
+			if node.Type == stage2.GASTTypeDeclaration {
+				typeKey := resolutionKey(node)
+				for _, child := range node.Children {
+					if child == nil {
+						continue
+					}
+					if child.Type != stage2.GASTField && !(child.Type == stage2.GASTFunction && child.Kind == "method") {
+						continue
+					}
+					memberKey := resolutionKey(child)
+					if memberKey == "" {
+						continue
+					}
+					if _, exists := om.OwnerOf[memberKey]; !exists {
+						om.OwnerOf[memberKey] = typeKey
+					}
+					om.MembersOf[typeKey] = appendUnique(om.MembersOf[typeKey], memberKey)
+				}
+			}
 		}
 	}
 
 	return om
+}
+
+// GetOwner returns the owning type key for a member key ("" when unknown).
+func (om *OwnershipMap) GetOwner(id string) string {
+	if om == nil || om.OwnerOf == nil {
+		return ""
+	}
+	return om.OwnerOf[id]
+}
+
+// GetMembers returns the member keys owned by a type key (nil when unknown).
+func (om *OwnershipMap) GetMembers(typeID string) []string {
+	if om == nil || om.MembersOf == nil {
+		return nil
+	}
+	return om.MembersOf[typeID]
+}
+
+// resolutionKey returns the primary key of a GAST node for ownership /
+// definition-index lookups: the canonical ID (Phase 0 ids package) when
+// present, else the legacy dotted FQN (§5.3.1).
+func resolutionKey(node *stage2.GASTNode) string {
+	if node == nil || node.Properties == nil {
+		return ""
+	}
+	if cid := node.Properties["canonical_id"]; cid != "" {
+		return cid
+	}
+	if fqn := node.Properties["fully_qualified_name"]; fqn != "" {
+		return fqn
+	}
+	return node.Name
+}
+
+func appendUnique(xs []string, s string) []string {
+	for _, x := range xs {
+		if x == s {
+			return xs
+		}
+	}
+	return append(xs, s)
 }

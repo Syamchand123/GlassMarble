@@ -157,18 +157,46 @@ func FindCriticalPath(sub *types.VirtualSubgraph) []string {
 	return path
 }
 
+// pathMetricSourceCap caps the number of BFS sources used by the all-pairs
+// metrics (diameter, average path length) on very large graphs. Exact
+// all-pairs work is O(V·(V+E)) with a fresh distance map per source, which
+// made `gmb visualize` take 20+ seconds on subgraphs of a few thousand nodes.
+// Below the cap the values are exact; above it they are computed from a
+// deterministically spread sample of sources (a lower bound for the diameter,
+// a sampled average for the path length) so interactive diagrams stay fast.
+const pathMetricSourceCap = 1200
+
+// sampleSources returns up to cap node IDs spread evenly across nodes in
+// deterministic order, or all of them when the graph is small enough.
+func sampleSources(nodes []string, cap int) []string {
+	if len(nodes) <= cap {
+		return nodes
+	}
+	res := make([]string, 0, cap)
+	for i := 0; i < cap; i++ {
+		res = append(res, nodes[int(float64(i)*float64(len(nodes))/float64(cap))])
+	}
+	return res
+}
+
 // ComputeDiameter returns the longest shortest-path distance between any two
 // reachable nodes, computed on the DIRECTED graph (matching the semantics of
 // the architecture graph, AUDIT Issue 2 §2.4). Disconnectedness is reported
-// via GraphSummary.ConnectedComponents.
+// via GraphSummary.ConnectedComponents. On graphs larger than
+// pathMetricSourceCap nodes the BFS sources are sampled (see sampleSources).
 func ComputeDiameter(sub *types.VirtualSubgraph) int {
 	adj := make(map[string][]string)
 	for _, e := range sub.Edges {
 		adj[e.SourceID] = append(adj[e.SourceID], e.TargetID)
 	}
 
+	nodes := make([]string, 0, len(sub.Nodes))
+	for id := range sub.Nodes {
+		nodes = append(nodes, id)
+	}
+
 	maxDist := 0
-	for s := range sub.Nodes {
+	for _, s := range sampleSources(nodes, pathMetricSourceCap) {
 		dist := make(map[string]int)
 		queue := []string{s}
 		dist[s] = 0
@@ -191,7 +219,9 @@ func ComputeDiameter(sub *types.VirtualSubgraph) int {
 }
 
 // ComputeAvgPathLength returns the average shortest-path distance between all
-// ordered pairs of reachable nodes on the DIRECTED graph.
+// ordered pairs of reachable nodes on the DIRECTED graph. On graphs larger
+// than pathMetricSourceCap nodes the BFS sources are sampled (see
+// sampleSources), making the result a sampled average.
 func ComputeAvgPathLength(sub *types.VirtualSubgraph) float64 {
 	adj := make(map[string][]string)
 	for _, e := range sub.Edges {
@@ -205,7 +235,7 @@ func ComputeAvgPathLength(sub *types.VirtualSubgraph) float64 {
 		nodes = append(nodes, id)
 	}
 
-	for _, s := range nodes {
+	for _, s := range sampleSources(nodes, pathMetricSourceCap) {
 		dist := make(map[string]int)
 		queue := []string{s}
 		dist[s] = 0

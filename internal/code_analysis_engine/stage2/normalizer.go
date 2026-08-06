@@ -100,7 +100,36 @@ func Normalize(stage1Out *stage1.StageOutput, commitHash string) (*Stage2Payload
 		payload.LocalSymbolTables[r.relPath] = r.symTable
 	}
 
+	// W1-17 (A-14): every GAST node carries its file path — defensive
+	// sweep for any node the translators/normalizer created without it.
+	ensureFilePaths(payload)
+
 	return payload, nil
+}
+
+// ensureFilePaths stamps Properties["file_path"] on every GAST node in the
+// payload that lacks it (master_overhaul_plan.md W1-17/A-14: file path on
+// all nodes). Scope filtering, interface membership and ownership all rely
+// on the path being present.
+func ensureFilePaths(payload *Stage2Payload) {
+	for relPath, root := range payload.UpsertedTrees {
+		stampPath(root, relPath)
+	}
+}
+
+func stampPath(node *GASTNode, relPath string) {
+	if node == nil {
+		return
+	}
+	if node.Properties == nil {
+		node.Properties = make(map[string]string)
+	}
+	if node.Properties["file_path"] == "" {
+		node.Properties["file_path"] = relPath
+	}
+	for _, child := range node.Children {
+		stampPath(child, relPath)
+	}
 }
 
 // processFileResult builds the GAST tree and FileSymbolTable for a single file.
@@ -122,16 +151,16 @@ func processFileResult(res *stage1.IngestionResult) (*GASTNode, *FileSymbolTable
 		Language: res.Language,
 	}
 
-	nodes := make([]*GASTNode, len(res.RawTokens))
-	for i, tok := range res.RawTokens {
-		nodes[i] = translator.CoerceToken(tok, res.RelPath)
+	nodes := make([]*GASTNode, len(res.RichTokens))
+	for i, tok := range res.RichTokens {
+		nodes[i] = translator.CoerceToken(tok, parentToken(tok, res.RichTokens), res.RelPath)
 	}
 
 	pkgName := detectPackageName(res, nodes)
 	symTable.PackageName = pkgName
 
 	// Build parent-child tree structure based on ParentIdx
-	for i, tok := range res.RawTokens {
+	for i, tok := range res.RichTokens {
 		node := nodes[i]
 		if node.Properties == nil {
 			node.Properties = make(map[string]string)
@@ -169,11 +198,19 @@ func processFileResult(res *stage1.IngestionResult) (*GASTNode, *FileSymbolTable
 
 			// Only generate FQN if translator didn't already set it
 			if node.Properties["fully_qualified_name"] == "" {
-				fqn := ns + "." + node.Name
-				if node.ReceiverType != "" {
-					fqn = ns + "." + node.ReceiverType + "." + node.Name
+				// v2 (§5.2.2): canonical IDs (Phase 0 ids package) win when a
+				// translator/stage populated them; legacy dotted FQNs remain
+				// the fallback for back-compat.
+				if cid := node.Properties["canonical_id"]; cid != "" {
+					node.Properties["fully_qualified_name"] = cid
+					node.ID = cid
+				} else {
+					fqn := ns + "." + node.Name
+					if node.ReceiverType != "" {
+						fqn = ns + "." + node.ReceiverType + "." + node.Name
+					}
+					node.Properties["fully_qualified_name"] = fqn
 				}
-				node.Properties["fully_qualified_name"] = fqn
 			}
 
 			if node.Visibility == "public" || node.Visibility == "exported" {
@@ -191,6 +228,12 @@ func processFileResult(res *stage1.IngestionResult) (*GASTNode, *FileSymbolTable
 				node.Visibility = "internal"
 				node.Properties["namespace_scope"] = "internal"
 			}
+			// v2 structured inheritance channel (fixes A-02/A-07): embedded
+			// field tokens (Go struct/interface embedding, §5.2.2) contribute
+			// BaseTypes to the owning type node.
+			if node.Type == GASTField && tok.IsEmbedded && parent.Type == GASTTypeDeclaration {
+				parent.BaseTypes = appendUniqueString(parent.BaseTypes, node.Name)
+			}
 		} else {
 			root.Children = append(root.Children, node)
 		}
@@ -198,6 +241,14 @@ func processFileResult(res *stage1.IngestionResult) (*GASTNode, *FileSymbolTable
 		// Symbol table extraction
 		if node.Type == GASTImport {
 			symTable.Imports = append(symTable.Imports, node.Name)
+			// v2 (W1-09, §5.3.5): carry explicit import aliases for the
+			// external dependency indexer.
+			if alias := node.Properties["import_alias"]; alias != "" {
+				if symTable.ImportAliases == nil {
+					symTable.ImportAliases = make(map[string]string)
+				}
+				symTable.ImportAliases[node.Name] = alias
+			}
 		} else if node.Type == GASTTypeDeclaration || node.Type == GASTFunction || node.Type == GASTField {
 			// Extract all definitions (public, private, internal, fields, methods, classes)
 			ns := pkgName
@@ -213,7 +264,7 @@ func processFileResult(res *stage1.IngestionResult) (*GASTNode, *FileSymbolTable
 				Annotations:  node.Annotations,
 			})
 		} else if node.Type == GASTCallExpression {
-			callerID := findEnclosingFunctionID(nodes, res.RawTokens, tok.ParentIdx, res.RelPath)
+			callerID := findEnclosingFunctionID(nodes, res.RichTokens, tok.ParentIdx, res.RelPath)
 			recv, method := parseReceiverAndMethod(node.Name, tok.Content)
 			symTable.LocalCalls = append(symTable.LocalCalls, CallSite{
 				CallerNodeID: callerID,
@@ -227,20 +278,101 @@ func processFileResult(res *stage1.IngestionResult) (*GASTNode, *FileSymbolTable
 		}
 
 		// Advanced Semantic Extraction (Step 2.3+)
-		extractAdvancedSemantics(node, tok, symTable)
+		extractAdvancedSemantics(node, tok, symTable, res.Language)
 	}
+
+	// v2 (Rule 5.2.1.1 / §5.2.2): after the tree is wired, mirror BaseTypes
+	// into the legacy Properties["extends"]/["inherits"] channels for legacy
+	// readers (kept for one release; BaseTypes is the primary channel).
+	for _, node := range nodes {
+		if node.Type == GASTTypeDeclaration && len(node.BaseTypes) > 0 {
+			joined := strings.Join(node.BaseTypes, ", ")
+			node.Properties["extends"] = joined
+			node.Properties["inherits"] = joined
+		}
+	}
+
+	// v2 (§5.2.4/§5.3.1, fixes A-16): methods whose receiver type is declared
+	// in the same file are re-parented under that type node so the GAST tree
+	// is the ownership backbone (Go methods are CST siblings of the type, not
+	// children). Cross-file members are resolved by stage 3 ownership.
+	reparentMethods(root)
 
 	// Propagate behavioral primitives up the GAST tree
 	PropagatePrimitives(root)
 
 	// Apply 8-Pillar Enterprise Intelligence
-	ApplyEnterpriseIntelligence(root, symTable, res.RawTokens, nodes)
+	ApplyEnterpriseIntelligence(root, symTable, res.RichTokens, nodes)
 
 	return root, symTable
 }
 
+// parentToken resolves the parent RichToken of a stream token by ParentIdx
+// (v2 translator contract — field roles and owner context, §5.2.2).
+func parentToken(tok stage1.RichToken, tokens []stage1.RichToken) *stage1.RichToken {
+	if tok.ParentIdx >= 0 && tok.ParentIdx < len(tokens) {
+		return &tokens[tok.ParentIdx]
+	}
+	return nil
+}
+
+// appendUniqueString appends s to xs unless already present.
+func appendUniqueString(xs []string, s string) []string {
+	if s == "" {
+		return xs
+	}
+	for _, x := range xs {
+		if x == s {
+			return xs
+		}
+	}
+	return append(xs, s)
+}
+
+// reparentMethods moves method nodes under their receiver type when the
+// type is declared in the same file (ownership backbone, §5.3.1/A-16).
+func reparentMethods(root *GASTNode) {
+	types := make(map[string]*GASTNode)
+	var indexTypes func(n *GASTNode)
+	indexTypes = func(n *GASTNode) {
+		if n.Type == GASTTypeDeclaration {
+			if _, dup := types[n.Name]; !dup {
+				types[n.Name] = n
+			}
+		}
+		for _, c := range n.Children {
+			indexTypes(c)
+		}
+	}
+	indexTypes(root)
+
+	var methods []*GASTNode
+	var detach func(n *GASTNode)
+	detach = func(n *GASTNode) {
+		keep := n.Children[:0]
+		for _, c := range n.Children {
+			if c.Type == GASTFunction && c.Kind == "method" && c.ReceiverType != "" {
+				if _, ok := types[c.ReceiverType]; ok {
+					methods = append(methods, c)
+					continue
+				}
+			}
+			keep = append(keep, c)
+			detach(c)
+		}
+		n.Children = keep
+	}
+	detach(root)
+
+	for _, m := range methods {
+		if owner, ok := types[m.ReceiverType]; ok {
+			owner.Children = append(owner.Children, m)
+		}
+	}
+}
+
 func detectPackageName(res *stage1.IngestionResult, nodes []*GASTNode) string {
-	for i, tok := range res.RawTokens {
+	for i, tok := range res.RichTokens {
 		node := nodes[i]
 		if node.Type == GASTNamespace {
 			return node.Name
@@ -260,13 +392,13 @@ func detectPackageName(res *stage1.IngestionResult, nodes []*GASTNode) string {
 	return strings.ReplaceAll(dir, "/", ".")
 }
 
-func findEnclosingFunctionID(nodes []*GASTNode, rawTokens []stage1.RawToken, parentIdx int, defaultID string) string {
+func findEnclosingFunctionID(nodes []*GASTNode, RichTokens []stage1.RichToken, parentIdx int, defaultID string) string {
 	curr := parentIdx
-	for curr >= 0 && curr < len(rawTokens) && curr < len(nodes) {
+	for curr >= 0 && curr < len(RichTokens) && curr < len(nodes) {
 		if nodes[curr] != nil && nodes[curr].Type == GASTFunction {
 			return nodes[curr].ID
 		}
-		curr = rawTokens[curr].ParentIdx
+		curr = RichTokens[curr].ParentIdx
 	}
 	return defaultID
 }
@@ -298,7 +430,7 @@ func parseReceiverAndMethod(name, content string) (string, string) {
 	return "", name
 }
 
-func extractAdvancedSemantics(node *GASTNode, tok stage1.RawToken, symTable *FileSymbolTable) {
+func extractAdvancedSemantics(node *GASTNode, tok stage1.RichToken, symTable *FileSymbolTable, lang stage1.SupportedLang) {
 	content := strings.TrimSpace(tok.Content)
 	line := int(node.StartLine)
 
@@ -311,8 +443,13 @@ func extractAdvancedSemantics(node *GASTNode, tok stage1.RawToken, symTable *Fil
 		})
 	}
 
-	// 2. Inheritances — multi-language detection
-	if node.Type == GASTTypeDeclaration {
+	// 2. Inheritances — v2 (fixes A-07): the content-regex detector is
+	// demoted to a fallback for languages whose grammar has no base-class
+	// field role (CSS/HTML/JSON/unknown). The 10+ structural languages feed
+	// inheritance exclusively through GASTNode.BaseTypes (wired into
+	// Properties["extends"]/["inherits"] mirrors and consumed by the
+	// member_linker in stage 4).
+	if node.Type == GASTTypeDeclaration && !hasBaseClassRole(lang) {
 		detectInheritance(content, node.Name, line, symTable)
 	}
 
@@ -411,9 +548,22 @@ func extractAdvancedSemantics(node *GASTNode, tok stage1.RawToken, symTable *Fil
 	}
 }
 
+// hasBaseClassRole reports whether the language grammar exposes base-class /
+// interface field roles (superclass, base_list, base_class_specifier,
+// heritage_clause, ...). For these languages detectInheritance is demoted
+// (§5.2.2, fixes A-07); the config-ish grammars keep the regex fallback.
+func hasBaseClassRole(lang stage1.SupportedLang) bool {
+	switch lang {
+	case stage1.LangCSS, stage1.LangHTML, stage1.LangJSON, stage1.LangUnknown:
+		return false
+	default:
+		return true
+	}
+}
+
 func detectInheritance(content, childName string, line int, symTable *FileSymbolTable) {
 	content = strings.TrimSpace(content)
-	// " extends " — Java, TypeScript, PHP
+	// " extends " â€” Java, TypeScript, PHP
 	if idx := strings.Index(content, " extends "); idx != -1 {
 		parts := strings.Fields(content[idx+9:])
 		if len(parts) > 0 {
@@ -425,7 +575,7 @@ func detectInheritance(content, childName string, line int, symTable *FileSymbol
 			})
 		}
 	}
-	// " implements " — Java, TypeScript
+	// " implements " â€” Java, TypeScript
 	if idx := strings.Index(content, " implements "); idx != -1 {
 		parts := strings.Fields(content[idx+12:])
 		if len(parts) > 0 {
@@ -437,7 +587,7 @@ func detectInheritance(content, childName string, line int, symTable *FileSymbol
 			})
 		}
 	}
-	// Colon-based inheritance " : Base" or " : public Base" — C++, C#
+	// Colon-based inheritance " : Base" or " : public Base" â€” C++, C#
 	// But NOT Rust/Python type annotations "var: Type" or "field: Type"
 	if colonIdx := strings.Index(content, " : "); colonIdx != -1 {
 		afterColon := strings.TrimSpace(content[colonIdx+3:])
@@ -459,7 +609,7 @@ func detectInheritance(content, childName string, line int, symTable *FileSymbol
 }
 
 func isLikelyInheritance(content, parentCandidate string) bool {
-	// " : public " — C++ inheritance
+	// " : public " â€” C++ inheritance
 	if strings.Contains(content, " : public ") || strings.Contains(content, " : private ") || strings.Contains(content, " : protected ") {
 		return true
 	}

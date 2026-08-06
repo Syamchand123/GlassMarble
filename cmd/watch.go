@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage1"
+	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/programs/watch"
 	"github.com/fsnotify/fsnotify"
@@ -38,10 +39,10 @@ changes made outside the watcher's scope are also picked up.`,
 
 		absDir, err := filepath.Abs(targetDir)
 		if err != nil {
-			return fmt.Errorf("failed to resolve path: %w", err)
+			return producterrs.Annotate(fmt.Errorf("failed to resolve path: %w", err), producterrs.ErrValidation)
 		}
 		if _, err := os.Stat(filepath.Join(absDir, ".git")); err != nil {
-			return fmt.Errorf("watch requires a git repository (no .git found at %s)", absDir)
+			return producterrs.Tagged(fmt.Sprintf("watch requires a git repository (no .git found at %s)", absDir), producterrs.ErrValidation)
 		}
 
 		opts := runAnalysisOptions{

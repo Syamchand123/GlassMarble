@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 )
 
 // DoctorReport is the health dashboard for the persisted AKG artifact
@@ -42,8 +43,8 @@ type DoctorReport struct {
 }
 
 var (
-	nodeBlockHeader = regexp.MustCompile(`(?m)^<http://glassmarble\.org/node/([^>]+)> a gm:[A-Za-z0-9_]+ ?[;.]`)
-	gmTerm          = regexp.MustCompile(`\bgm:([A-Za-z0-9_]+)`)
+	nodeBlockHeader = regexp.MustCompile(`(?m)^<http://glassmarble\.org/node/([^>]+)> a ` + ont.PrefixGM + `[A-Za-z0-9_]+ ?[;.]`)
+	gmTerm          = regexp.MustCompile(`\b` + ont.PrefixGM + `([A-Za-z0-9_]+)`)
 	// ttlStringLiteral matches a quoted TTL literal, honoring backslash
 	// escapes, so that gm: terms inside source-code content strings are not
 	// mistaken for live vocabulary (Issue 3 Phase 3A-2 conformance scan).
@@ -125,7 +126,7 @@ func RunDoctor(storageDir string) (*DoctorReport, error) {
 		terms[m[1]] = true
 	}
 	for term := range terms {
-		if !isOntologyTermDeclared("gm:" + term) {
+		if !isOntologyTermDeclared(ont.PrefixGM + term) {
 			rep.UnknownTerms = append(rep.UnknownTerms, term)
 		}
 	}

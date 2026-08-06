@@ -8,6 +8,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 	inspectprog "github.com/Syamchand123/GlassMarble/internal/tui/programs/inspect"
 	"github.com/spf13/cobra"
@@ -33,7 +34,7 @@ var inspectCmd = &cobra.Command{
 
 		storageDir := filepath.Join(dir, ".glassmarble")
 		if _, err := os.Stat(filepath.Join(storageDir, "akg_state.ttl")); os.IsNotExist(err) {
-			return fmt.Errorf("AKG database is empty -- run 'glassmarble analyze' first")
+			return producterrs.Tagged(fmt.Sprintf("AKG database is empty -- run 'glassmarble analyze' first"), producterrs.ErrEmptySubgraph)
 		}
 
 		// Lazy Query-based reads: inspect never restores the whole graph from
@@ -207,7 +208,7 @@ func showNodeDetails(storageDir, targetID string) error {
 		return fmt.Errorf("failed to open AKG database: %w", err)
 	}
 	if node == nil {
-		return fmt.Errorf("node ID '%s' not found in AKG", targetID)
+		return producterrs.Tagged(fmt.Sprintf("node ID '%s' not found in AKG", targetID), producterrs.ErrEntryNotFound)
 	}
 
 	fmt.Printf("=== Node Details: %s ===\n", node.ID)

@@ -46,6 +46,14 @@ func ComputePageRank(sub *types.VirtualSubgraph, damping float64, iterations int
 	return pr
 }
 
+// betweennessSourceCap caps the number of Brandes BFS sources for graphs
+// larger than the cap. Betweenness is O(V·(V+E)) with several map allocations
+// per source, which dominated the pipeline (20+ s on ~6.7k nodes). Below the
+// cap the result is exact; above it, sources are sampled deterministically and
+// the centrality values are scaled by V/sampled, which preserves relative
+// ordering well enough for bottleneck/hotspot detection.
+const betweennessSourceCap = 1500
+
 // ComputeBetweenness computes betweenness centrality for all nodes using Brandes' algorithm.
 func ComputeBetweenness(sub *types.VirtualSubgraph) map[string]float64 {
 	bc := make(map[string]float64)
@@ -56,7 +64,18 @@ func ComputeBetweenness(sub *types.VirtualSubgraph) map[string]float64 {
 	for _, e := range sub.Edges {
 		adj[e.SourceID] = append(adj[e.SourceID], e.TargetID)
 	}
-	for s := range sub.Nodes {
+
+	nodes := make([]string, 0, len(sub.Nodes))
+	for id := range sub.Nodes {
+		nodes = append(nodes, id)
+	}
+	scale := 1.0
+	sources := sampleSources(nodes, betweennessSourceCap)
+	if len(sources) < len(nodes) {
+		scale = float64(len(nodes)) / float64(len(sources))
+	}
+
+	for _, s := range sources {
 		stack := make([]string, 0)
 		pred := make(map[string][]string)
 		sigma := make(map[string]float64)
@@ -100,7 +119,7 @@ func ComputeBetweenness(sub *types.VirtualSubgraph) map[string]float64 {
 				}
 			}
 			if w != s {
-				bc[w] += delta[w]
+				bc[w] += delta[w] * scale
 			}
 		}
 	}

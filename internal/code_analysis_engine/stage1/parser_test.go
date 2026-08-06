@@ -17,7 +17,7 @@ func specFor(t *testing.T, lang SupportedLang) *LanguageSpec {
 
 // tokenContains reports whether any token of the given kind has Content (or
 // Name) containing the needle substring.
-func tokenContains(tokens []RawToken, kind TokenKind, needle string) bool {
+func tokenContains(tokens []RichToken, kind TokenKind, needle string) bool {
 	for _, tok := range tokens {
 		if tok.Kind != kind {
 			continue
@@ -66,20 +66,20 @@ func main() {
 	if res.HasErrors {
 		t.Errorf("HasErrors = true for valid Go source")
 	}
-	if len(res.RawTokens) == 0 {
-		t.Fatal("RawTokens empty, want > 0")
+	if len(res.RichTokens) == 0 {
+		t.Fatal("RichTokens empty, want > 0")
 	}
 
-	if !tokenContains(res.RawTokens, TokenDeclaration, "greet") {
-		t.Errorf("no declaration token mentioning 'greet'; tokens=%v", res.RawTokens)
+	if !tokenContains(res.RichTokens, TokenDeclaration, "greet") {
+		t.Errorf("no declaration token mentioning 'greet'; tokens=%v", res.RichTokens)
 	}
-	if !tokenContains(res.RawTokens, TokenDeclaration, "main") {
+	if !tokenContains(res.RichTokens, TokenDeclaration, "main") {
 		t.Errorf("no declaration token mentioning 'main'")
 	}
-	if !tokenContains(res.RawTokens, TokenImport, "fmt") {
+	if !tokenContains(res.RichTokens, TokenImport, "fmt") {
 		t.Errorf("no import token mentioning 'fmt'")
 	}
-	if !tokenContains(res.RawTokens, TokenCall, "Println") {
+	if !tokenContains(res.RichTokens, TokenCall, "Println") {
 		t.Errorf("no call token mentioning 'Println'")
 	}
 }
@@ -104,8 +104,8 @@ func TestProcessFileReadError(t *testing.T) {
 	if res.Error == nil {
 		t.Fatal("expected read error, got nil")
 	}
-	if len(res.RawTokens) != 0 {
-		t.Errorf("RawTokens = %v, want empty on read failure", res.RawTokens)
+	if len(res.RichTokens) != 0 {
+		t.Errorf("RichTokens = %v, want empty on read failure", res.RichTokens)
 	}
 }
 
@@ -154,13 +154,13 @@ def main():
 	if res.Error != nil {
 		t.Skipf("python grammar unavailable in this build: %v", res.Error)
 	}
-	if len(res.RawTokens) == 0 {
-		t.Fatal("RawTokens empty, want > 0")
+	if len(res.RichTokens) == 0 {
+		t.Fatal("RichTokens empty, want > 0")
 	}
-	if !tokenContains(res.RawTokens, TokenDeclaration, "greet") {
-		t.Errorf("no declaration token mentioning 'greet'; tokens=%v", res.RawTokens)
+	if !tokenContains(res.RichTokens, TokenDeclaration, "greet") {
+		t.Errorf("no declaration token mentioning 'greet'; tokens=%v", res.RichTokens)
 	}
-	if !tokenContains(res.RawTokens, TokenCall, "print") {
+	if !tokenContains(res.RichTokens, TokenCall, "print") {
 		t.Errorf("no call token mentioning 'print'")
 	}
 }
@@ -187,13 +187,13 @@ func TestExtractTokensJava(t *testing.T) {
 	if res.Error != nil {
 		t.Skipf("java grammar unavailable in this build: %v", res.Error)
 	}
-	if len(res.RawTokens) == 0 {
-		t.Fatal("RawTokens empty, want > 0")
+	if len(res.RichTokens) == 0 {
+		t.Fatal("RichTokens empty, want > 0")
 	}
-	if !tokenContains(res.RawTokens, TokenDeclaration, "Hello") {
-		t.Errorf("no declaration token mentioning 'Hello'; tokens=%v", res.RawTokens)
+	if !tokenContains(res.RichTokens, TokenDeclaration, "Hello") {
+		t.Errorf("no declaration token mentioning 'Hello'; tokens=%v", res.RichTokens)
 	}
-	if !tokenContains(res.RawTokens, TokenCall, "println") {
+	if !tokenContains(res.RichTokens, TokenCall, "println") {
 		t.Errorf("no call token mentioning 'println'")
 	}
 }

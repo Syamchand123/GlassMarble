@@ -384,6 +384,12 @@ gm:instantiatesGeneric a rdf:Property ;
     rdfs:label "instantiatesGeneric" ;
     rdfs:comment "Represents generic type instantiation." .
 
+gm:virtualContextLink a rdf:Property ;
+    rdfs:domain gm:Function ;
+    rdfs:range gm:Function ;
+    rdfs:label "virtualContextLink" ;
+    rdfs:comment "Links a synthetic 1-CFA virtual context node to its base function (W1-18/A-18)." .
+
 gm:sendsMessage a rdf:Property ;
     rdfs:domain gm:Executable ;
     rdfs:range rdfs:Resource ;
@@ -601,6 +607,22 @@ gm:isEntrypoint a rdf:Property ;
     rdfs:range xsd:boolean ;
     rdfs:label "isEntrypoint" ;
     rdfs:comment "Flag indicating this node is a root execution entrypoint (main, HTTP handler, etc.)." .
+
+# -- View tagging (master_overhaul_plan.md §4.3 / W0-08)
+# gm:view tags every serializer-emitted triple with the graph view it belongs
+# to; gm:views on the metadata node lists the enabled views of the file.
+# Values: "structural" | "dynamic" | "security".
+gm:view a rdf:Property ;
+    rdfs:domain rdf:Statement ;
+    rdfs:range xsd:string ;
+    rdfs:label "view" ;
+    rdfs:comment "RDF-star attribute tagging a serializer-emitted triple with its graph view: structural, dynamic, or security (single statement, not a second triple — K-01)." .
+
+gm:views a rdf:Property ;
+    rdfs:domain gm:MetaData ;
+    rdfs:range xsd:string ;
+    rdfs:label "views" ;
+    rdfs:comment "Metadata attribute listing the enabled views of the file (e.g., \"structural\")." .
 
 gm:primitiveZone a rdf:Property ;
     rdfs:domain rdfs:Resource ;

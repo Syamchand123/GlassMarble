@@ -149,6 +149,35 @@ const (
 	EdgeDirectionBoth
 )
 
+// ViewTag identifies a gm: view of the graph (master_overhaul_plan.md §4.3).
+// Every serializer-emitted triple carries one view attribute, and extraction
+// configs select predicates by view first, then predicate group.
+type ViewTag string
+
+const (
+	// ViewStructural covers type/member ownership and runtime behavior
+	// (STRUCTURAL + BEHAVIORAL edge families of §4.2).
+	ViewStructural ViewTag = "structural"
+	// ViewDynamic covers intra-function control and data movement
+	// (DYNAMIC edge family).
+	ViewDynamic ViewTag = "dynamic"
+	// ViewSecurity covers taint propagation and sinks (SECURITY edge family).
+	ViewSecurity ViewTag = "security"
+)
+
+// AllViews lists every declared view tag.
+var AllViews = []ViewTag{ViewStructural, ViewDynamic, ViewSecurity}
+
+// ContainsView reports whether views contains the given tag.
+func ContainsView(views []ViewTag, v ViewTag) bool {
+	for _, w := range views {
+		if w == v {
+			return true
+		}
+	}
+	return false
+}
+
 type EntryStrategy int
 
 const (
@@ -167,6 +196,9 @@ type ExtractionConfig struct {
 	MaxDepth       int
 	Direction      EdgeDirection
 	IncludeUnused  bool
+	// Views lists the gm: views the diagram consumes; edges are filtered by
+	// view before predicate group (§4.3). Empty means all views.
+	Views []ViewTag
 }
 
 type LayoutNode struct {

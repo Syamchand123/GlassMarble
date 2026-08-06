@@ -60,6 +60,10 @@ const (
 )
 
 // GASTNode is the language-agnostic internal representation of source code structures.
+// v2 (master_overhaul_plan.md §5.2.1): the v1 fields are preserved verbatim for
+// payload back-compat (Rule 5.2.1.1 — v1 JSON unmarshal into v2 with zero values,
+// MarshalJSON omits empty new fields); the new structural fields replace
+// content-regex parsing for fields, base types, receivers and signatures.
 type GASTNode struct {
 	ID           string                `json:"id"`
 	Type         GASTNodeType          `json:"type"`
@@ -78,6 +82,24 @@ type GASTNode struct {
 	StartByte    uint32                `json:"start_byte"`
 	EndByte      uint32                `json:"end_byte"`
 	Children     []*GASTNode           `json:"children,omitempty"`
+
+	// v2 additions — fixes A-09 (ReturnType), A-02/A-07 (BaseTypes),
+	// A-05 (Implemented), A-01 (FieldType/DataType population rule).
+	ReturnType  string      `json:"return_type,omitempty"` // functions/methods
+	BaseTypes   []string    `json:"base_types,omitempty"`  // structured inheritance
+	Implemented []string    `json:"implemented,omitempty"` // interfaces implemented
+	TypeParams  []TypeParam `json:"type_params,omitempty"` // generic parameters
+	FieldType   string      `json:"field_type,omitempty"`  // field node's declared type
+	EmbeddedOf  string      `json:"embedded_of,omitempty"` // Go embedding: owner type id
+	Signature   string      `json:"signature,omitempty"`   // normalized `name(params) ret`
+	IsVirtual   bool        `json:"is_virtual,omitempty"`  // synthetic linker node
+	View        string      `json:"view,omitempty"`        // "structural"|"dynamic"|"security"
+}
+
+// TypeParam models a generic type parameter (name + optional constraint).
+type TypeParam struct {
+	Name       string `json:"name"`
+	Constraint string `json:"constraint,omitempty"`
 }
 
 // SymbolMeta tracks exported or local declarations for namespace resolution.
@@ -170,6 +192,11 @@ type FileSymbolTable struct {
 	Definitions []SymbolMeta    `json:"definitions"`
 	LocalCalls  []CallSite      `json:"local_calls"`
 	TypeAliases []TypeAliasMeta `json:"type_aliases,omitempty"`
+
+	// ImportAliases (v2, W1-09): import path → explicit alias, e.g.
+	// "github.com/org/mod/internal/errors" → "akgerrs". Consumed by the
+	// stage3 external dependency indexer (§5.3.5 TestExternalIDs).
+	ImportAliases map[string]string `json:"import_aliases,omitempty"`
 
 	// Level 2: Architecture & Data Flow
 	Inheritances   []InheritanceMeta   `json:"inheritances,omitempty"`

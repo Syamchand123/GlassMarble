@@ -3,6 +3,7 @@ package stage2
 import (
 	"math"
 
+	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
@@ -85,13 +86,13 @@ func buildWeightedAdjacency(sub *types.VirtualSubgraph) map[string][]weightedNei
 // communityEdgeWeight assigns a heuristic weight to different semantic edge types.
 func communityEdgeWeight(predicate string) float64 {
 	switch predicate {
-	case "gm:belongsToFile", "gm:belongsToNamespace", "gm:belongsTo", "gm:dependsOn", "gm:references", "gm:imports":
+	case ont.PredBelongsToFile, ont.PredBelongsToNamespace, ont.PredBelongsTo, ont.PredDependsOn, ont.PredReferences, ont.PredImports:
 		return 3.0
-	case "gm:calls", "gm:spawnsConcurrent", "gm:dispatchesEvent", "gm:ffiCall":
+	case ont.PredCalls, ont.PredSpawnsConcurrent, ont.PredDispatchesEvent, ont.PredFfiCall:
 		return 2.0
-	case "gm:dataFlowTo", "gm:pointsTo", "gm:heapAlias", "gm:aliasesPointer", "gm:vulnerableTaint":
+	case ont.PredDataFlowTo, ont.PredPointsTo, ont.PredHeapAlias, ont.PredAliasesPointer, ont.PredVulnerableTaint:
 		return 1.0
-	case "gm:controlFlowTo", "gm:controlFlowToTrue", "gm:controlFlowToFalse", "gm:catchesException", "gm:defersExecution":
+	case ont.PredControlFlowTo, ont.PredControlFlowToTrue, ont.PredControlFlowToFalse, ont.PredCatchesException, ont.PredDefersExecution:
 		return 0.5
 	default:
 		return 1.0

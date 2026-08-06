@@ -2,69 +2,116 @@ package stage4
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage3"
+	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 )
 
 // RelationshipType defines edge kinds in the Code Property Graph (CPG = AST + CFG + DFG + Call Graph).
+// The constants are grouped into the four families of the edge taxonomy v2
+// (master_overhaul_plan.md §4.2); a single producer pass per family emits
+// them, and every family maps to a declared gm: view (structural, dynamic,
+// security) enforced by internal/akg ontology conformance tests.
 type RelationshipType string
 
 const (
-	// Call Graph Edges
+	// STRUCTURAL family — view: structural. Producer passes: builder
+	// (ownership/containment), type_linker (hierarchy), member_linker
+	// (membership). Emitted edges are type/member ownership and dependency
+	// facts, not execution facts.
+	EdgeContains   RelationshipType = "CONTAINS"
+	EdgeBelongsTo  RelationshipType = "BELONGS_TO"
+	EdgeDependsOn  RelationshipType = "DEPENDS_ON"
+	EdgeImplements RelationshipType = "IMPLEMENTS"
+	EdgeExtends    RelationshipType = "EXTENDS"
+	EdgeMixes      RelationshipType = "MIXES"
+	EdgeComposes   RelationshipType = "COMPOSES"
+	EdgeHasField   RelationshipType = "HAS_FIELD"
+	EdgeHasParam   RelationshipType = "HAS_PARAM"
+	EdgeReturns    RelationshipType = "RETURNS"
+	// EdgeHasReceiver: method -> owner type, the missing explicit ownership
+	// edge (AUDIT A-16); serialized as gm:hasReceiver.
+	EdgeHasReceiver RelationshipType = "HAS_RECEIVER"
+
+	// BEHAVIORAL family — view: structural. Producer passes: call_linker,
+	// concurrency_linker, event_linker, rpc_linker, ffi_linker, di_linker,
+	// security_linker, semantic_linker. Emitted edges describe what a node
+	// does at runtime (calls, messaging, I/O, lifecycle).
 	EdgeCalls            RelationshipType = "CALLS"
-	EdgeImplements       RelationshipType = "IMPLEMENTS"
-	EdgeExtends          RelationshipType = "EXTENDS"
-	EdgeMixes            RelationshipType = "MIXES"
-	EdgeHasField         RelationshipType = "HAS_FIELD"
-	EdgeHasParam         RelationshipType = "HAS_PARAM"
-	EdgeReturns          RelationshipType = "RETURNS"
-	EdgeThrows           RelationshipType = "THROWS"
-	EdgeDependsOn        RelationshipType = "DEPENDS_ON"
-	EdgeComposes         RelationshipType = "COMPOSES"
-	EdgeReferences       RelationshipType = "REFERENCES"
+	EdgeContextCall      RelationshipType = "1CFA_CALL"
+	// EdgeVirtualContext: VIRTUAL_CONTEXT specialization link
+	// (contextNode → base function), serialized as gm:virtualContextLink
+	// (W1-18/A-18 — previously mislabeled as INSTANTIATES_GENERIC;
+	// gm:instantiatesGeneric is reserved for real generic instantiation).
+	EdgeVirtualContext RelationshipType = "VIRTUAL_CONTEXT_LINK"
 	EdgeSpawnsConcurrent RelationshipType = "SPAWNS_CONCURRENT"
+	EdgeDefers           RelationshipType = "CFG_DEFERS"
+	EdgeCatches          RelationshipType = "CFG_CATCHES"
+	EdgeThrows           RelationshipType = "THROWS"
+	EdgeReferences       RelationshipType = "REFERENCES"
+	EdgeInstantiates     RelationshipType = "INSTANTIATES_GENERIC"
 	EdgeDispatchesEvent  RelationshipType = "DISPATCHES_EVENT"
+	EdgePublishes        RelationshipType = "PUBLISHES_EVENT"
+	EdgeSubscribes       RelationshipType = "SUBSCRIBES_EVENT"
+	EdgeSendsTo          RelationshipType = "SENDS_MSG"
+	EdgeReceivesFrom     RelationshipType = "RECEIVES_MSG"
+	EdgeQueriesDB        RelationshipType = "QUERIES_DB"
+	EdgeCallsCloudAPI    RelationshipType = "CALLS_CLOUD_API"
 	EdgeExposesEndpoint  RelationshipType = "EXPOSES_ENDPOINT"
-	EdgeSecuritySink     RelationshipType = "SECURITY_SINK"
+	EdgeFFICall          RelationshipType = "FFI_CALL"
+	EdgeInjects          RelationshipType = "DI_INJECTS"
 	EdgeConsumesResource RelationshipType = "CONSUMES_RESOURCE"
 	EdgeMutatesGlobal    RelationshipType = "MUTATES_GLOBAL"
-	EdgeAliasesType      RelationshipType = "ALIASES_TYPE"
-	EdgeContains         RelationshipType = "CONTAINS"
+	// EdgeNetworkCall is a BEHAVIORAL family member (producer: rpc_linker)
+	// that the §4.2 table does not enumerate; it is kept because rpc_linker
+	// still emits it and Phase 0 must not change behavior.
+	EdgeNetworkCall RelationshipType = "NETWORK_RPC_CALL"
 
-	// Control Flow Graph (CFG) Edges
+	// DYNAMIC family — view: dynamic. Producer passes: cfg_linker,
+	// dfg_linker, alias_linker, memory_linker, constraint_linker. Emitted
+	// edges capture intra-function control and data movement. EdgeVulnerable
+	// and EdgeQueriesDB also participate in the SECURITY family (§4.2).
 	EdgeControlFlow       RelationshipType = "CFG_FLOW"
 	EdgeConditionalBranch RelationshipType = "CFG_IF"
 	EdgeLoopBranch        RelationshipType = "CFG_LOOP"
 	EdgeSwitchBranch      RelationshipType = "CFG_SWITCH"
-	EdgeCatches           RelationshipType = "CFG_CATCHES"
-	EdgeDefers            RelationshipType = "CFG_DEFERS"
+	EdgeConstraint        RelationshipType = "BRANCH_CONSTRAINT"
+	EdgeDataFlow          RelationshipType = "DATA_FLOW"
+	EdgePointsTo          RelationshipType = "POINTS_TO"
+	EdgeHeapAlias         RelationshipType = "HEAP_ALIAS"
+	EdgeAliases           RelationshipType = "ALIASES"
+	EdgeAliasesType       RelationshipType = "ALIASES_TYPE"
+	EdgeCyclic            RelationshipType = "CYCLIC_DEPENDENCY"
+	EdgeVulnerable        RelationshipType = "VULNERABLE_TAINT"
+	EdgeEscapesToHeap     RelationshipType = "ESCAPES_TO_HEAP"
 
-	// Data Flow Graph (DFG) Edges
-	EdgeDataFlow   RelationshipType = "DATA_FLOW"
-	EdgeAliases    RelationshipType = "ALIASES"
-	EdgeVulnerable RelationshipType = "VULNERABLE_TAINT"
-
-	// Architecture & IPC
-	EdgeInstantiates  RelationshipType = "INSTANTIATES_GENERIC"
-	EdgeSendsTo       RelationshipType = "SENDS_MSG"
-	EdgeReceivesFrom  RelationshipType = "RECEIVES_MSG"
-	EdgeCyclic        RelationshipType = "CYCLIC_DEPENDENCY"
-	EdgeNetworkCall   RelationshipType = "NETWORK_RPC_CALL"
-	EdgeQueriesDB     RelationshipType = "QUERIES_DB"
-	EdgeCallsCloudAPI RelationshipType = "CALLS_CLOUD_API"
-
-	// Phase 2 Enterprise Edges
-	EdgeContextCall   RelationshipType = "1CFA_CALL"
-	EdgePointsTo      RelationshipType = "POINTS_TO"
-	EdgeHeapAlias     RelationshipType = "HEAP_ALIAS"
-	EdgeConstraint    RelationshipType = "BRANCH_CONSTRAINT"
-	EdgeFFICall       RelationshipType = "FFI_CALL"
-	EdgePublishes     RelationshipType = "PUBLISHES_EVENT"
-	EdgeSubscribes    RelationshipType = "SUBSCRIBES_EVENT"
-	EdgeInjects       RelationshipType = "DI_INJECTS"
-	EdgeEscapesToHeap RelationshipType = "ESCAPES_TO_HEAP"
-	EdgeBelongsTo     RelationshipType = "BELONGS_TO"
+	// SECURITY family — view: security. Producer pass: security_linker
+	// (taint propagation into sinks). EdgeSecuritySink is the sink marker;
+	// EdgeVulnerable (taint flow) and EdgeQueriesDB (when the query is a
+	// sink) are shared with the DYNAMIC/BEHAVIORAL families.
+	EdgeSecuritySink RelationshipType = "SECURITY_SINK"
 )
+
+// ViewOfEdgeType returns the gm: view tag an edge family belongs to
+// (master_overhaul_plan.md §4.2/§4.3): one of "structural", "dynamic", or
+// "security". Shared edges (EdgeVulnerable, EdgeQueriesDB) participate in
+// two families; the serializer emits a single gm:view attribute per triple
+// (K-01), so they keep their primary family view and security filtering is
+// applied at extraction time. The returned value must match the gm:view
+// vocabulary declared in internal/akg/ontology.ttl.
+func ViewOfEdgeType(et RelationshipType) string {
+	switch et {
+	case EdgeSecuritySink:
+		return "security"
+	case EdgeControlFlow, EdgeConditionalBranch, EdgeLoopBranch, EdgeSwitchBranch,
+		EdgeConstraint, EdgeDataFlow, EdgePointsTo, EdgeHeapAlias, EdgeAliases,
+		EdgeAliasesType, EdgeCyclic, EdgeVulnerable, EdgeEscapesToHeap:
+		return "dynamic"
+	default:
+		return "structural"
+	}
+}
 
 const (
 	LevelArchitecture = "architecture"
@@ -91,7 +138,7 @@ type QueryFilter struct {
 type LinkerConfig struct {
 	// DisabledPasses lists linker passes to skip entirely.
 	// Pass names match the buffer indices used in linker.go:
-	//   "type", "interface", "cfg", "dfg", "callgraph", "concurrency",
+	//   "type", "member", "interface", "cfg", "dfg", "callgraph", "concurrency",
 	//   "filedeps", "semantics", "rpc", "constraints", "ffi",
 	//   "eventsourcing", "di", "escape", "alias", "security"
 	DisabledPasses []string `json:"disabled_passes,omitempty"`
@@ -171,6 +218,11 @@ type Stage4Output struct {
 	// edgeSet deduplicates edges by (source, target, type, line) so AddEdge
 	// never scans the outbound slice linearly (AUDIT Issue 1.7 / Phase 1C-8).
 	edgeSet map[string]struct{} `json:"-"`
+
+	// typeNameIndex caches the name → node-ID map for STRUCT/CLASS/INTERFACE
+	// nodes, built once per pass (W1-12 / A-15: no linear GraphNodes scans
+	// in type resolution).
+	typeNameIndex map[string]string `json:"-"`
 }
 
 // isFullMode reports whether the current linker configuration runs the
@@ -233,6 +285,32 @@ func (s *Stage4Output) NodeExists(id string) bool {
 	return false
 }
 
+// nameToNodeID returns the type-name → node-ID index for
+// STRUCT/CLASS/INTERFACE nodes (W1-12 / A-15: exact-map resolution instead
+// of linear GraphNodes scans). Built lazily once per pass; the delta map
+// shadows the shared base on name collisions.
+func (s *Stage4Output) nameToNodeID() map[string]string {
+	if s.typeNameIndex != nil {
+		return s.typeNameIndex
+	}
+	idx := make(map[string]string)
+	add := func(nodes map[string]*ResolvedNode) {
+		for id, n := range nodes {
+			if n.Kind == "STRUCT" || n.Kind == "CLASS" || n.Kind == "INTERFACE" {
+				if _, dup := idx[n.Name]; !dup {
+					idx[n.Name] = id
+				}
+			}
+		}
+	}
+	add(s.GraphNodes)
+	if s.baseNodes != nil {
+		add(s.baseNodes)
+	}
+	s.typeNameIndex = idx
+	return idx
+}
+
 // GraphDB is a read-only interface providing access to the globally persisted Code Property Graph (AKG).
 // It enables the Stage 4 Incremental Delta Linker to lookup existing symbols in unmodified files.
 type GraphDB interface {
@@ -270,6 +348,9 @@ type ResolvedEdge struct {
 	LineNumber int              `json:"line_number"`          // Precise file coordinate where the relation happens
 	Confidence float32          `json:"confidence,omitempty"` // 1.0 = FQN match, 0.7 = import-resolved, 0.5 = same-package, 0.3 = heuristic
 	IsCycle    bool             `json:"is_cycle,omitempty"`   // True if this edge creates an architectural cycle
+	// Properties carries typed edge facts (v2, W1-11): gm:embedding,
+	// gm:provenance (W1-14), etc. Serialized as edge attributes.
+	Properties map[string]string `json:"properties,omitempty"`
 }
 
 // NewStage4Output instantiates a fresh Stage4Output structure.
@@ -305,10 +386,47 @@ func (s *Stage4Output) AddEdge(sourceID, targetID string, edgeType RelationshipT
 	s.InboundEdges[targetID] = append(s.InboundEdges[targetID], edge)
 }
 
+// AddEdgeProperties registers a directional edge with confidence and typed
+// edge facts (v2, W1-11): gm:embedding "true" for Go embedding,
+// gm:provenance (W1-14), etc.
+func (s *Stage4Output) AddEdgeProperties(sourceID, targetID string, edgeType RelationshipType, lineNo int, confidence float32, props map[string]string) {
+	if sourceID == "" || targetID == "" || sourceID == targetID {
+		return
+	}
+
+	edge := ResolvedEdge{
+		SourceID:   sourceID,
+		TargetID:   targetID,
+		Type:       edgeType,
+		LineNumber: lineNo,
+		Confidence: confidence,
+		Properties: props,
+	}
+
+	if !s.registerEdge(edge) {
+		return
+	}
+
+	s.OutboundEdges[sourceID] = append(s.OutboundEdges[sourceID], edge)
+	s.InboundEdges[targetID] = append(s.InboundEdges[targetID], edge)
+}
+
 // registerEdge deduplicates identical (source, target, type, line) edges via a
 // map — O(1) instead of the previous linear scan per insert.
 func (s *Stage4Output) registerEdge(edge ResolvedEdge) bool {
 	key := edge.SourceID + "\x00" + edge.TargetID + "\x00" + string(edge.Type) + "\x00" + fmt.Sprintf("%d", edge.LineNumber)
+	if len(edge.Properties) > 0 {
+		var sb strings.Builder
+		for _, k := range []string{ont.PredEmbedding, ont.PredProvenance} {
+			if v, ok := edge.Properties[k]; ok {
+				sb.WriteString("\x00")
+				sb.WriteString(k)
+				sb.WriteString("=")
+				sb.WriteString(v)
+			}
+		}
+		key += sb.String()
+	}
 	if s.edgeSet == nil {
 		s.edgeSet = make(map[string]struct{})
 	}
@@ -352,4 +470,66 @@ func (s *Stage4Output) AddEdgeWithConfidence(sourceID, targetID string, edgeType
 
 	s.OutboundEdges[sourceID] = append(s.OutboundEdges[sourceID], edge)
 	s.InboundEdges[targetID] = append(s.InboundEdges[targetID], edge)
+}
+
+// touchesFile reports whether an edge's source or target node lives in the
+// given file (master_overhaul_plan.md §9.1 file scoping, W1-10/A-12).
+// Resolution order: node FileSpec.Path, then Properties["file_path"]
+// (nodes built by heuristic linkers may only carry the property). File
+// paths are compared normalized (slash-separated). The node lookup goes
+// through GetNode so delta/base/db layers are all honored.
+func touchesFile(edge ResolvedEdge, cpg *Stage4Output, filePath string) bool {
+	norm := stage3.NormalizeRelativePath(filePath)
+
+	check := func(id string) bool {
+		if id == "" {
+			return false
+		}
+		n, ok := cpg.GetNode(id)
+		if !ok {
+			return false
+		}
+		if n.FileSpec.Path != "" && stage3.NormalizeRelativePath(n.FileSpec.Path) == norm {
+			return true
+		}
+		if fp := n.Properties["file_path"]; fp != "" && stage3.NormalizeRelativePath(fp) == norm {
+			return true
+		}
+		return false
+	}
+
+	return check(edge.SourceID) || check(edge.TargetID)
+}
+
+// RemoveNode deletes a node and every incident edge from the adjacency
+// maps (W1-17/A-14: orphan synthetic nodes are dropped when they cannot be
+// scoped to any file).
+func (s *Stage4Output) RemoveNode(id string) {
+	if s == nil {
+		return
+	}
+	delete(s.GraphNodes, id)
+
+	dropEdge := func(edges []ResolvedEdge) []ResolvedEdge {
+		out := edges[:0]
+		for _, e := range edges {
+			if e.SourceID == id || e.TargetID == id {
+				continue
+			}
+			out = append(out, e)
+		}
+		return out
+	}
+	delete(s.OutboundEdges, id)
+	for src, edges := range s.OutboundEdges {
+		if cleaned := dropEdge(edges); len(cleaned) != len(edges) {
+			s.OutboundEdges[src] = cleaned
+		}
+	}
+	delete(s.InboundEdges, id)
+	for dst, edges := range s.InboundEdges {
+		if cleaned := dropEdge(edges); len(cleaned) != len(edges) {
+			s.InboundEdges[dst] = cleaned
+		}
+	}
 }

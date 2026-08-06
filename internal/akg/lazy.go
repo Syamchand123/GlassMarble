@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/stage1"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
@@ -37,7 +38,7 @@ func QueryNode(storageDir, nodeID string) (*stage4.ResolvedNode, []stage4.Resolv
 	res := ttlNodeToResolved(node)
 	var out, in []stage4.ResolvedEdge
 	for _, e := range edges {
-		if e.Predicate == "gm:status" {
+		if e.Predicate == ont.PredStatus {
 			continue
 		}
 		re := stage4.ResolvedEdge{
@@ -134,7 +135,7 @@ func StreamGraphStats(storageDir string) (*LazyStats, error) {
 		if len(parts) != 3 || parts[1] == "a" {
 			return nil // node/metadata blocks are not edges
 		}
-		if parts[1] == "gm:status" {
+		if parts[1] == ont.PredStatus {
 			return nil // tombstone marker, not an edge
 		}
 		st.Edges++
@@ -251,7 +252,7 @@ func ttlNodeToResolved(tn *types.TTLNode) *stage4.ResolvedNode {
 		ID:        tn.ID,
 		Kind:      mapClassToKind(tn.Kind),
 		Name:      tn.Name,
-		Primitive: strings.TrimPrefix(tn.PrimitiveType, "gm:"),
+		Primitive: strings.TrimPrefix(tn.PrimitiveType, ont.PrefixGM),
 		FileSpec: stage4.LocationMeta{
 			Path:      strings.TrimPrefix(tn.FileURI, "file:"),
 			LineStart: tn.LineStart,
@@ -280,7 +281,7 @@ func nodeToTTLNode(n *stage4.ResolvedNode) *types.NativeNode {
 		ID:            n.ID,
 		Kind:          mapKindToClass(n.Kind),
 		Name:          n.Name,
-		PrimitiveType: "gm:" + n.Primitive,
+		PrimitiveType: ont.PrefixGM + n.Primitive,
 		FileURI:       "file:" + n.FileSpec.Path,
 		LineStart:     n.FileSpec.LineStart,
 		LineEnd:       n.FileSpec.LineEnd,

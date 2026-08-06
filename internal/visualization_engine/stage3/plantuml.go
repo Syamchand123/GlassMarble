@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
@@ -67,13 +68,13 @@ func renderPlantUMLClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 		}
 		alias := sanitizeName(node.ID)
 		switch node.Kind {
-		case "gm:TypeDecl":
+		case ont.PredTypeDecl:
 			if strings.Contains(strings.ToLower(node.PrimitiveType), "interface") || strings.Contains(strings.ToLower(node.Name), "iface") {
 				sb.WriteString(fmt.Sprintf("interface \"%s\" as %s\n", name, alias))
 			} else {
 				sb.WriteString(fmt.Sprintf("class \"%s\" as %s\n", name, alias))
 			}
-		case "gm:Executable":
+		case ont.PredExecutable:
 			sb.WriteString(fmt.Sprintf("class \"%s\" as %s <<method>>\n", name, alias))
 		default:
 			sb.WriteString(fmt.Sprintf("rectangle \"%s\" as %s\n", name, alias))
@@ -81,17 +82,17 @@ func renderPlantUMLClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	}
 
 	arrowMap := map[string]string{
-		"gm:inheritsFrom": " --|> ",
-		"gm:extends":      " --|> ",
-		"gm:implements":   " ..|> ",
-		"gm:composes":     " --* ",
-		"gm:aggregates":   " --o ",
-		"gm:references":   " ..> ",
-		"gm:calls":        " -> ",
-		"gm:dependsOn":    " ..> ",
-		"gm:hasMember":    " -- ",
-		"gm:hasField":     " -- ",
-		"gm:contains":     " --> ",
+		ont.PredInheritsFrom: " --|> ",
+		ont.PredExtends:      " --|> ",
+		ont.PredImplements:   " ..|> ",
+		ont.PredComposes:     " --* ",
+		ont.PredAggregates:   " --o ",
+		ont.PredReferences:   " ..> ",
+		ont.PredCalls:        " -> ",
+		ont.PredDependsOn:    " ..> ",
+		ont.PredHasMember:    " -- ",
+		ont.PredHasField:     " -- ",
+		ont.PredContains:     " --> ",
 	}
 
 	for _, edge := range tree.Edges {
@@ -163,7 +164,7 @@ func renderPlantUMLC4ContextDiagram(tree *types.LayoutTree, sb *strings.Builder)
 	title := getDiagramTitle(tree, "System Context Diagram")
 	sb.WriteString(fmt.Sprintf("title %s\n", title))
 
-	for _, node := range collectNodesByKind(tree, "gm:User") {
+	for _, node := range collectNodesByKind(tree, ont.PredUser) {
 		sb.WriteString(fmt.Sprintf("Person(%s, \"%s\", \"External Actor\")\n",
 			sanitizeName(node.ID), sanitizeMermaidLabel(node.Name)))
 	}
@@ -176,7 +177,7 @@ func renderPlantUMLC4ContextDiagram(tree *types.LayoutTree, sb *strings.Builder)
 		}
 	}
 
-	for _, node := range collectNodesByKind(tree, "gm:ExternalSystem") {
+	for _, node := range collectNodesByKind(tree, ont.PredExternalSystem) {
 		sb.WriteString(fmt.Sprintf("SystemExt(%s, \"%s\", \"External System\")\n",
 			sanitizeName(node.ID), sanitizeMermaidLabel(node.Name)))
 	}
@@ -251,7 +252,7 @@ func renderPlantUMLC4ComponentDiagram(tree *types.LayoutTree, sb *strings.Builde
 			if tech == "" {
 				tech = "Go/Core Component"
 			}
-			if node.Kind == "gm:Database" || strings.Contains(node.PrimitiveType, "DATABASE") {
+			if node.Kind == ont.PredDatabase || strings.Contains(node.PrimitiveType, "DATABASE") {
 				sb.WriteString(fmt.Sprintf("%sComponentDb(%s, \"%s\", \"%s\", \"Relational / NoSQL Data Store\")\n", indent, nodeAlias, name, tech))
 			} else if strings.Contains(node.PrimitiveType, "CACHE") {
 				sb.WriteString(fmt.Sprintf("%sComponentDb(%s, \"%s\", \"%s\", \"In-Memory Cache Store\")\n", indent, nodeAlias, name, tech))
@@ -259,7 +260,7 @@ func renderPlantUMLC4ComponentDiagram(tree *types.LayoutTree, sb *strings.Builde
 				sb.WriteString(fmt.Sprintf("%sComponentExt(%s, \"%s\", \"%s\", \"Async Message Queue / Event Bus\")\n", indent, nodeAlias, name, tech))
 			} else if strings.Contains(node.PrimitiveType, "AI_LLM") {
 				sb.WriteString(fmt.Sprintf("%sComponentExt(%s, \"%s\", \"%s\", \"AI / LLM Vector Service\")\n", indent, nodeAlias, name, tech))
-			} else if node.Kind == "gm:ExternalSystem" || strings.Contains(node.PrimitiveType, "NETWORK_IO") || strings.Contains(node.PrimitiveType, "CLOUD_SDK") || strings.Contains(node.PrimitiveType, "RPC") {
+			} else if node.Kind == ont.PredExternalSystem || strings.Contains(node.PrimitiveType, "NETWORK_IO") || strings.Contains(node.PrimitiveType, "CLOUD_SDK") || strings.Contains(node.PrimitiveType, "RPC") {
 				sb.WriteString(fmt.Sprintf("%sComponentExt(%s, \"%s\", \"%s\", \"External Cloud / Service Integration\")\n", indent, nodeAlias, name, tech))
 			} else {
 				kind := getShortKind(node.Kind)
@@ -294,7 +295,7 @@ func renderPlantUMLC4LandscapeDiagram(tree *types.LayoutTree, sb *strings.Builde
 		sb.WriteString(fmt.Sprintf("Enterprise_Boundary(%s_ent, \"%s Enterprise\") {\n", alias, name))
 		sb.WriteString(fmt.Sprintf("    System(%s, \"%s\", \"System Module\")\n", alias, name))
 		for _, node := range boundary.Nodes {
-			if node.Kind == "gm:ExternalSystem" {
+			if node.Kind == ont.PredExternalSystem {
 				sb.WriteString(fmt.Sprintf("    SystemExt(%s, \"%s\", \"External System\")\n",
 					sanitizeName(node.ID), sanitizeMermaidLabel(node.Name)))
 			} else if isDatabase(node) {

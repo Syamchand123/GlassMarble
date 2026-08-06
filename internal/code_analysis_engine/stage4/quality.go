@@ -1,6 +1,9 @@
 package stage4
 
-import "strings"
+import (
+	"github.com/Syamchand123/GlassMarble/internal/product/ont"
+	"strings"
+)
 
 // QualityMetrics summarizes graph health for the end-of-analyze report
 // (AUDIT Issue 1 Phase 1C-10 and Issue 5 plan item 3).
@@ -17,7 +20,7 @@ type QualityMetrics struct {
 var virtualIDPrefixes = []string{
 	"VIRTUAL_", "thread_or_coroutine", "TAINT:", "QUEUE::", "topic::",
 	"event:", "endpoint:", "sink:", "resource:", "global:", "memory::",
-	"alloc::", "ext:", "DATABASE::", "CLOUD_API::",
+	"alloc::", ont.PrefixExt, "DATABASE::", "CLOUD_API::",
 }
 
 // MeasureQuality audits a linked CPG. Dangling edges are edges whose source

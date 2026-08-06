@@ -8,7 +8,7 @@ import (
 
 type PHPTranslator struct{}
 
-func (t *PHPTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) *GASTNode {
+func (t *PHPTranslator) CoerceToken(tok stage1.RichToken, parent *stage1.RichToken, fileRelPath string) *GASTNode {
 	node := baseNode(tok, fileRelPath)
 	extractGenericTypesAndDecorators(node, tok.Content)
 	switch tok.Kind {

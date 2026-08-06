@@ -9,7 +9,7 @@ import (
 
 type PythonTranslator struct{}
 
-func (t *PythonTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) *GASTNode {
+func (t *PythonTranslator) CoerceToken(tok stage1.RichToken, parent *stage1.RichToken, fileRelPath string) *GASTNode {
 	node := baseNode(tok, fileRelPath)
 	extractGenericTypesAndDecorators(node, tok.Content)
 

@@ -3,6 +3,7 @@ package stage4
 import (
 	"crypto/sha256"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage2"
@@ -155,7 +156,16 @@ func (b *InitialGraphBuilder) traverseDirectory(dir *stage3.DirectoryNode) {
 			},
 		}
 
-		b.extractNodesFromGAST(file.GASTRoot, normPath, "")
+		// v2 (W1-10, §5.3.4 / A-12): real file→symbol containment edges so
+		// File nodes are never dead ends. Member IDs are the universal IDs
+		// registered while walking this file's GAST tree.
+		var fileMembers []string
+		b.extractNodesFromGAST(file.GASTRoot, normPath, "", &fileMembers)
+		for _, memberID := range fileMembers {
+			if b.output.NodeExists(memberID) {
+				b.output.AddEdge(fileID, memberID, EdgeContains, 0)
+			}
+		}
 	}
 
 	// Traverse SubFolders
@@ -164,7 +174,7 @@ func (b *InitialGraphBuilder) traverseDirectory(dir *stage3.DirectoryNode) {
 	}
 }
 
-func (b *InitialGraphBuilder) extractNodesFromGAST(node *stage2.GASTNode, relPath string, parentType string) {
+func (b *InitialGraphBuilder) extractNodesFromGAST(node *stage2.GASTNode, relPath string, parentType string, fileMembers *[]string) {
 	if node == nil {
 		return
 	}
@@ -199,13 +209,19 @@ func (b *InitialGraphBuilder) extractNodesFromGAST(node *stage2.GASTNode, relPat
 				LineStart: int(node.StartLine),
 				LineEnd:   int(node.EndLine),
 			},
-			Properties: node.Properties,
+			// Deep-copy so downstream stages can annotate Properties without
+			// mutating the shared GAST (AUDIT A-10).
+			Properties: maps.Clone(node.Properties),
 		}
 		b.registerNode(universalID, resolvedNode, node)
 
+		if fileMembers != nil {
+			*fileMembers = append(*fileMembers, universalID)
+		}
+
 		// Recurse into children passing typeName as parentType
 		for _, child := range node.Children {
-			b.extractNodesFromGAST(child, relPath, typeName)
+			b.extractNodesFromGAST(child, relPath, typeName, fileMembers)
 		}
 		return
 
@@ -245,17 +261,23 @@ func (b *InitialGraphBuilder) extractNodesFromGAST(node *stage2.GASTNode, relPat
 				LineStart: int(node.StartLine),
 				LineEnd:   int(node.EndLine),
 			},
-			Properties: node.Properties,
+			// Deep-copy so downstream stages can annotate Properties without
+			// mutating the shared GAST (AUDIT A-10).
+			Properties: maps.Clone(node.Properties),
 		}
 		b.registerNode(universalID, resolvedNode, node)
 
+		if fileMembers != nil {
+			*fileMembers = append(*fileMembers, universalID)
+		}
+
 		for _, child := range node.Children {
-			b.extractNodesFromGAST(child, relPath, receiver)
+			b.extractNodesFromGAST(child, relPath, receiver, fileMembers)
 		}
 		return
 	}
 
 	for _, child := range node.Children {
-		b.extractNodesFromGAST(child, relPath, parentType)
+		b.extractNodesFromGAST(child, relPath, parentType, fileMembers)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage3"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
 	"github.com/Syamchand123/GlassMarble/internal/config"
+	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/programs/analyze"
 	"github.com/spf13/cobra"
@@ -124,7 +125,7 @@ func runAnalysis(opts runAnalysisOptions) error {
 
 	absDir, err := filepath.Abs(targetDir)
 	if err != nil {
-		return fmt.Errorf("failed to resolve path: %w", err)
+		return producterrs.Annotate(fmt.Errorf("failed to resolve path: %w", err), producterrs.ErrValidation)
 	}
 
 	fmt.Printf("Starting GlassMarble Analysis on %s...\n", absDir)

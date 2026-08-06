@@ -6,9 +6,21 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage2"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage3"
+	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 )
 
-// LinkInterfacesAndRealizations processes explicit and implicit duck-typing interface implementations.
+// LinkInterfacesAndRealizations processes explicit and implicit duck-typing
+// interface implementations (master_overhaul_plan.md §5.4.2 / W1-13).
+//
+// v2 changes:
+//   - A-05: the both-unmodified skip is gated on a full rebuild
+//     (ModifiedFiles empty ⇒ always run); previously a full rebuild skipped
+//     every pair because the ModifiedFiles lookup always missed.
+//   - A-15: interface/struct methods come from exact global-index membership
+//     (name key + file path match), never strings.Contains FQN scans.
+//   - Signature-match primary: a method satisfies the interface method when
+//     the normalized GAST signatures agree; name-only matching is the
+//     fallback when either signature is empty (A-17).
 func LinkInterfacesAndRealizations(stage3Out *stage3.Stage3Output, cpg *Stage4Output) {
 	if stage3Out == nil || cpg == nil {
 		return
@@ -23,6 +35,10 @@ func LinkInterfacesAndRealizations(stage3Out *stage3.Stage3Output, cpg *Stage4Ou
 	// 2. Collect all STRUCT / CLASS nodes and their defined methods
 	structs := collectStructNodes(cpg)
 
+	// A-05: full rebuilds (ModifiedFiles empty) always run the pass;
+	// incremental deltas skip pairs where neither side changed.
+	isFullRebuild := len(cpg.ModifiedFiles) == 0
+
 	// 3. Compare methods to bind IMPLEMENTS edges (Explicit & Implicit Duck-Typing)
 	for _, iface := range interfaces {
 		ifaceMethods := getInterfaceRequiredMethods(iface, stage3Out.GlobalDefinitionIndex, cpg)
@@ -33,12 +49,12 @@ func LinkInterfacesAndRealizations(stage3Out *stage3.Stage3Output, cpg *Stage4Ou
 		ifaceBits := computeMethodBitset(ifaceMethods)
 
 		for _, strct := range structs {
-			// CRITICAL: We only want to generate an edge if at least one of them was modified!
-			// If both are unmodified, their edges already exist in the AKG.
+			// A-05: OLD (bug) skipped when BOTH were unmodified AND on full
+			// rebuilds (empty ModifiedFiles ⇒ always "unmodified").
 			isIfaceModified := cpg.ModifiedFiles[stage3.NormalizeRelativePath(iface.FileSpec.Path)]
 			isStructModified := cpg.ModifiedFiles[stage3.NormalizeRelativePath(strct.FileSpec.Path)]
 
-			if !isIfaceModified && !isStructModified {
+			if !isFullRebuild && !isIfaceModified && !isStructModified {
 				continue
 			}
 
@@ -48,8 +64,11 @@ func LinkInterfacesAndRealizations(stage3Out *stage3.Stage3Output, cpg *Stage4Ou
 			// Step 4.3: Bitset Signatures for Lightning-fast O(1) Rejection
 			if (structBits & ifaceBits) == ifaceBits {
 				// Bloom filter passed, do exact subset match to avoid false positives
-				if implementsAllMethods(ifaceMethods, structMethods) {
-					cpg.AddEdge(strct.ID, iface.ID, EdgeImplements, strct.FileSpec.LineStart)
+				if matched, provenance := implementsAllMethods(ifaceMethods, structMethods); matched {
+					// §5.4.7/W1-14: evidence kind rides the edge —
+					// "signature-match" (A-17) or "name-match" fallback.
+					cpg.AddEdgeProperties(strct.ID, iface.ID, EdgeImplements, strct.FileSpec.LineStart, 1.0,
+						map[string]string{ont.PredProvenance: provenance})
 				}
 			}
 		}
@@ -74,6 +93,14 @@ func collectInterfaceNodes(cpg *Stage4Output) []*ResolvedNode {
 	// Local Delta Nodes
 	for _, node := range cpg.GraphNodes {
 		if node.Kind == "INTERFACE" {
+			list = append(list, node)
+			seen[node.ID] = true
+		}
+	}
+
+	// Base Nodes (initial nodes from BuildInitialNodes)
+	for _, node := range cpg.baseNodes {
+		if node.Kind == "INTERFACE" && !seen[node.ID] {
 			list = append(list, node)
 			seen[node.ID] = true
 		}
@@ -104,6 +131,14 @@ func collectStructNodes(cpg *Stage4Output) []*ResolvedNode {
 		}
 	}
 
+	// Base Nodes (initial nodes from BuildInitialNodes)
+	for _, node := range cpg.baseNodes {
+		if (node.Kind == "STRUCT" || node.Kind == "CLASS") && !seen[node.ID] {
+			list = append(list, node)
+			seen[node.ID] = true
+		}
+	}
+
 	// Global DB Nodes
 	if cpg.db != nil {
 		globalStructs := cpg.db.GetNodesByKind("STRUCT")
@@ -123,67 +158,114 @@ func collectStructNodes(cpg *Stage4Output) []*ResolvedNode {
 	return list
 }
 
-func getInterfaceRequiredMethods(iface *ResolvedNode, globalIndex map[string][]*stage2.GASTNode, cpg *Stage4Output) map[string]string {
+// gastTypeMembers returns the GASTFunction children (Kind "method") of the
+// GAST node(s) exactly matching (name, file path) in the global index —
+// A-15: exact canonical membership, no fuzzy FQN scans. Values are the
+// normalized GAST signatures (§5.2.3) used for signature-match (A-17).
+func gastTypeMembers(name, filePath string, globalIndex map[string][]*stage2.GASTNode) map[string]string {
 	methods := make(map[string]string)
+	nodes := globalIndex[name]
+	if len(nodes) == 0 {
+		return methods
+	}
+	for _, gastNode := range nodes {
+		if gastNode == nil || gastNode.Type != stage2.GASTTypeDeclaration {
+			continue
+		}
+		if filePath != "" && stage3.NormalizeRelativePath(gastNode.Properties["file_path"]) != stage3.NormalizeRelativePath(filePath) {
+			continue
+		}
+		for _, child := range gastNode.Children {
+			if child == nil || child.Type != stage2.GASTFunction || child.Kind != "method" {
+				continue
+			}
+			if _, dup := methods[child.Name]; !dup {
+				methods[child.Name] = child.Signature
+			}
+		}
+	}
+	return methods
+}
 
+func getInterfaceRequiredMethods(iface *ResolvedNode, globalIndex map[string][]*stage2.GASTNode, cpg *Stage4Output) map[string]string {
+	// v2 (A-15): exact global-index membership first (canonical signatures).
+	if methods := gastTypeMembers(iface.Name, iface.FileSpec.Path, globalIndex); len(methods) > 0 {
+		return methods
+	}
+
+	// Fallback: CPG children of the interface node (DB nodes etc.).
+	methods := make(map[string]string)
 	prefix := iface.ID + "::"
 	for nodeID, node := range cpg.GraphNodes {
 		if strings.HasPrefix(nodeID, prefix) && (node.Kind == "METHOD" || node.Kind == "FUNCTION") {
 			methods[node.Name] = node.Primitive
 		}
 	}
-
-	// Fallback to GASTNode children
-	if len(methods) == 0 {
-		for fqn, gastNodes := range globalIndex {
-			if strings.Contains(fqn, iface.Name) || iface.ID == fqn {
-				for _, gastNode := range gastNodes {
-					for _, child := range gastNode.Children {
-						if child.Type == stage2.GASTFunction || child.Kind == "method" {
-							methods[child.Name] = child.DataType
-						}
-					}
-				}
-			}
-		}
-	}
-
 	return methods
 }
 
 func getStructDefinedMethods(strct *ResolvedNode, globalIndex map[string][]*stage2.GASTNode, cpg *Stage4Output) map[string]string {
-	methods := make(map[string]string)
+	// v2 (A-15): exact global-index membership first (canonical signatures).
+	rawMethods := gastTypeMembers(strct.Name, strct.FileSpec.Path, globalIndex)
+	if len(rawMethods) > 0 {
+		// Normalize method names by stripping receiver prefix (e.g., "Robot.Run" -> "Run")
+		methods := make(map[string]string)
+		for name, sig := range rawMethods {
+			if idx := strings.LastIndex(name, "."); idx != -1 {
+				name = name[idx+1:]
+			}
+			methods[name] = sig
+		}
+		return methods
+	}
 
+	// Fallback: CPG children of the struct node (DB nodes etc.).
+	methods := make(map[string]string)
 	prefix := strct.ID + "::"
 	for nodeID, node := range cpg.GraphNodes {
 		if strings.HasPrefix(nodeID, prefix) || node.Properties["receiver_type"] == strct.Name {
-			methods[node.Name] = node.Primitive
-		}
-	}
-
-	// Fallback to GASTNode children
-	if len(methods) == 0 {
-		for fqn, gastNodes := range globalIndex {
-			if strings.Contains(fqn, strct.Name) || strct.ID == fqn {
-				for _, gastNode := range gastNodes {
-					for _, child := range gastNode.Children {
-						if child.Type == stage2.GASTFunction || child.Kind == "method" {
-							methods[child.Name] = child.DataType
-						}
-					}
-				}
+			name := node.Name
+			if idx := strings.LastIndex(name, "."); idx != -1 {
+				name = name[idx+1:]
 			}
+			methods[name] = node.Primitive
 		}
 	}
-
 	return methods
 }
 
-func implementsAllMethods(ifaceMethods, structMethods map[string]string) bool {
-	for name := range ifaceMethods {
-		if _, exists := structMethods[name]; !exists {
-			return false
+// implementsAllMethods checks every interface method against the struct's
+// methods: signature-match primary (both normalized signatures present),
+// name-only match as fallback (A-17). The second return is the gm:provenance
+// evidence kind (§5.4.7): "signature-match" when every comparison used
+// signatures, "name-match" when any fallback fired.
+func implementsAllMethods(ifaceMethods, structMethods map[string]string) (bool, string) {
+	usedNameFallback := false
+	for name, ifaceSig := range ifaceMethods {
+		structSig, exists := structMethods[name]
+		if !exists {
+			return false, ""
+		}
+		if ifaceSig == "" || structSig == "" {
+			// Either side lacks a normalized signature: name match suffices.
+			usedNameFallback = true
+			continue
+		}
+		if !signaturesEqual(ifaceSig, structSig) {
+			return false, ""
 		}
 	}
-	return true
+	if usedNameFallback {
+		return true, "name-match"
+	}
+	return true, "signature-match"
+}
+
+// signaturesEqual compares normalized signature texts insensitive to
+// whitespace (the stage2 Signature.Text is already name(paramTypes) ret).
+func signaturesEqual(a, b string) bool {
+	norm := func(s string) string {
+		return strings.Join(strings.Fields(s), " ")
+	}
+	return norm(a) == norm(b)
 }

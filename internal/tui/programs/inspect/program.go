@@ -8,6 +8,7 @@ import (
 	"io"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
+	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/components"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
@@ -66,7 +67,7 @@ func RenderDetail(out io.Writer, storageDir, id string) error {
 		return fmt.Errorf("failed to open AKG database: %w", err)
 	}
 	if node == nil {
-		return fmt.Errorf("node ID '%s' not found in AKG", id)
+		return producterrs.Tagged(fmt.Sprintf("node ID '%s' not found in AKG", id), producterrs.ErrEntryNotFound)
 	}
 	fmt.Fprintln(out, views.RenderInspectDetail(node, outEdges, inEdges))
 	return nil

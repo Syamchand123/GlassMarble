@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
@@ -144,7 +145,7 @@ func pruneDeadComponents(sub *types.VirtualSubgraph, opts types.QueryOptions) ma
 
 	filtered := make(map[string]*types.TTLNode)
 	for id, node := range sub.Nodes {
-		if referenced[id] || node.Kind == "gm:Namespace" || node.Kind == "gm:File" {
+		if referenced[id] || node.Kind == ont.PredNamespace || node.Kind == ont.PredFile {
 			filtered[id] = node
 		}
 	}
@@ -161,7 +162,7 @@ func getDirectoryPath(nodeID string, kind string, diagramType types.DiagramType,
 	}
 
 	var dir string
-	if kind == "gm:Namespace" || kind == "gm:Module" {
+	if kind == ont.PredNamespace || kind == ont.PredModule {
 		dir = filePath
 	} else {
 		dir = filepath.Dir(filePath)
@@ -182,7 +183,7 @@ func getDirectoryPath(nodeID string, kind string, diagramType types.DiagramType,
 		}
 		return slashPath
 	case types.LayeredArchitecture:
-		if kind == "gm:TypeDecl" || kind == "gm:Executable" {
+		if kind == ont.PredTypeDecl || kind == ont.PredExecutable {
 			if strings.HasPrefix(slashPath, "internal/") {
 				subParts := strings.Split(strings.TrimPrefix(slashPath, "internal/"), "/")
 				if len(subParts) > 0 && subParts[0] != "" {
@@ -217,7 +218,7 @@ func getOrCreateBoundary(dir string, treeMap map[string]*types.LayoutTree, root 
 	}
 
 	parentDir := filepath.Dir(dir)
-	if parentDir == "." || parentDir == "/" || parentDir == "\\" {
+	if parentDir == "." || parentDir == "/" || parentDir == "\\" || parentDir == dir {
 		parentDir = ""
 	}
 

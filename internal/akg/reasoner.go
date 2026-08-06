@@ -537,20 +537,23 @@ func RunIncrementalMacroInference(graph *CodePropertyGraph, modifiedFiles []stri
 	for depth := 0; depth < affectedReasonerDepth && len(frontier) > 0; depth++ {
 		next := make(map[string]bool)
 		for id := range frontier {
-			// InboundEdges is keyed by target; the inbound dependents of `id`
-			// are the SourceIDs of edges whose TargetID == id.
-			graph.InboundEdges.Iterate(func(_ string, edges []stage4.ResolvedEdge) {
-				for _, e := range edges {
-					if e.TargetID == id && !affected[e.SourceID] {
-						if node, ok := graph.Nodes.Get(e.SourceID); ok && node != nil {
-							if isReasonerRelevantKind(node.Kind) {
-								affected[e.SourceID] = true
-								next[e.SourceID] = true
-							}
+			// InboundEdges is keyed by target, so the inbound dependents of
+			// `id` are the SourceIDs of its OWN edge list — a direct Get. The
+			// previous implementation re-iterated the ENTIRE InboundEdges
+			// index for every frontier id (O(affected × E)); on a --full
+			// commit every node is affected, making the expansion quadratic
+			// in the graph size (minutes on a 17k-node/24k-edge graph).
+			inbound, _ := graph.InboundEdges.Get(id)
+			for _, e := range inbound {
+				if !affected[e.SourceID] {
+					if node, ok := graph.Nodes.Get(e.SourceID); ok && node != nil {
+						if isReasonerRelevantKind(node.Kind) {
+							affected[e.SourceID] = true
+							next[e.SourceID] = true
 						}
 					}
 				}
-			})
+			}
 		}
 		frontier = next
 	}

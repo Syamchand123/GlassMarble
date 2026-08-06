@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
+	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
@@ -48,7 +49,7 @@ With --dir instead of two files, the base is the previously committed snapshot
 				return err
 			}
 		} else {
-			return fmt.Errorf("expected two graph files, or --dir with no args")
+			return producterrs.Tagged(fmt.Sprintf("expected two graph files, or --dir with no args"), producterrs.ErrValidation)
 		}
 
 		diff := akg.DiffGraphs(base, head)

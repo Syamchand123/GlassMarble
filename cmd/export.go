@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
+	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
@@ -28,7 +29,7 @@ requests. Turtle matches the on-disk akg_state.ttl format.`,
 			dir = "."
 		}
 		if output == "" {
-			return fmt.Errorf("--output is required (e.g. graph.json or graph.ttl)")
+			return producterrs.Tagged(fmt.Sprintf("--output is required (e.g. graph.json or graph.ttl)"), producterrs.ErrValidation)
 		}
 
 		storageDir := filepath.Join(dir, ".glassmarble")
@@ -39,7 +40,7 @@ requests. Turtle matches the on-disk akg_state.ttl format.`,
 
 		graph := tm.GetActiveSnapshot()
 		if graph == nil || graph.Nodes == nil || graph.Nodes.Len() == 0 {
-			return fmt.Errorf("AKG database is empty -- run 'glassmarble analyze' first")
+			return producterrs.Tagged(fmt.Sprintf("AKG database is empty -- run 'glassmarble analyze' first"), producterrs.ErrEmptySubgraph)
 		}
 
 		f, err := os.Create(output)
@@ -60,7 +61,7 @@ requests. Turtle matches the on-disk akg_state.ttl format.`,
 				return fmt.Errorf("failed to export Turtle: %w", err)
 			}
 		default:
-			return fmt.Errorf("unsupported output format %q (use .json or .ttl)", filepath.Ext(output))
+			return producterrs.Tagged(fmt.Sprintf("unsupported output format %q (use .json or .ttl)", filepath.Ext(output)), producterrs.ErrValidation)
 		}
 
 		st, _ := f.Stat()

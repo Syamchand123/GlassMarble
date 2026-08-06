@@ -27,6 +27,12 @@ type Stage3Output struct {
 	// Crucial for true O(1) incremental pruning.
 	FileToSymbols map[string][]string `json:"file_to_symbols"`
 
+	// FileToMembers (v2, W1-10 / §5.3.4 / A-12) maps a file path to the
+	// resolution keys (canonical IDs when present, else FQNs) of every
+	// structural member defined in that file. Stage 4 consumes this to emit
+	// real file→symbol CONTAINS edges so File nodes are never dead ends.
+	FileToMembers map[string][]string `json:"file_to_members,omitempty"`
+
 	// FileToCalls maps a file path to its external call sites.
 	// Crucial for true O(1) incremental compilation.
 	FileToCalls map[string][]LinkedCallSite `json:"file_to_calls"`

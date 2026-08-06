@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
@@ -22,13 +23,13 @@ func RenderDOTDiagram(tree *types.LayoutTree, t types.DiagramType) string {
 			name = sanitizeMermaidLabel(node.ID)
 		}
 		shape := "box"
-		if node.Kind == "gm:Database" || strings.Contains(node.PrimitiveType, "DATABASE") {
+		if node.Kind == ont.PredDatabase || strings.Contains(node.PrimitiveType, "DATABASE") {
 			shape = "cylinder"
-		} else if node.Kind == "gm:ExternalSystem" {
+		} else if node.Kind == ont.PredExternalSystem {
 			shape = "component"
-		} else if node.Kind == "gm:User" {
+		} else if node.Kind == ont.PredUser {
 			shape = "ellipse"
-		} else if node.Kind == "gm:Executable" || node.Kind == "gm:Function" || node.Kind == "gm:Method" {
+		} else if node.Kind == ont.PredExecutable || node.Kind == ont.PredFunction || node.Kind == ont.PredMethod {
 			shape = "box3d"
 		}
 		sb.WriteString(fmt.Sprintf("    %s [label=\"%s\", shape=%s];\n", id, name, shape))

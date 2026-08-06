@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
@@ -30,16 +31,16 @@ func writeTTLPrefixes(w io.Writer) {
 	fmt.Fprintf(w, "@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n")
 	fmt.Fprintf(w, "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n")
 	fmt.Fprintf(w, "@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n")
-	fmt.Fprintf(w, "@prefix gm: <http://glassmarble.org/schema#> .\n\n")
+	fmt.Fprintf(w, "@prefix %s <%s> .\n\n", ont.PrefixGM, ont.SchemaNS)
 }
 
 func writeTTLMetadata(w io.Writer, graph *CodePropertyGraph) {
 	metaURI := "<http://glassmarble.org/node/metadata>"
-	fmt.Fprintf(w, "%s a gm:MetaData ;\n", metaURI)
-	fmt.Fprintf(w, "    gm:commitHash \"%s\" ;\n", escapeLiteral(graph.CommitHash))
-	fmt.Fprintf(w, "    gm:schemaVersion %d ;\n", graph.SchemaVersion)
-	fmt.Fprintf(w, "    gm:version %d ;\n", graph.Version)
-	fmt.Fprintf(w, "    gm:name \"GlassMarble Project MetaData\" .\n\n")
+	fmt.Fprintf(w, "%s a %s ;\n", metaURI, ont.PredMetaData)
+	fmt.Fprintf(w, "    %s \"%s\" ;\n", ont.PredCommitHash, escapeLiteral(graph.CommitHash))
+	fmt.Fprintf(w, "    %s %d ;\n", ont.PredSchemaVersion, graph.SchemaVersion)
+	fmt.Fprintf(w, "    %s %d ;\n", ont.PredVersion, graph.Version)
+	fmt.Fprintf(w, "    %s \"GlassMarble Project MetaData\" .\n\n", ont.PredName)
 }
 
 // SerializeDeltaToTurtle transforms only the delta modifications and deletes into Turtle format for appending.
@@ -60,8 +61,8 @@ func SerializeDeltaToTurtle(graph *stage4.Stage4Output, deletedNodes map[string]
 	// as a deletion (and skips emitting the block as a node).
 	for nodeID := range deletedNodes {
 		nodeURI := types.FormatNodeURI(nodeID)
-		fmt.Fprintf(w, "%s a gm:Deleted ;\n", nodeURI)
-		fmt.Fprintf(w, "    gm:status \"DELETED\" .\n")
+		fmt.Fprintf(w, "%s a %s ;\n", nodeURI, ont.PredDeleted)
+		fmt.Fprintf(w, "    %s \"DELETED\" .\n", ont.PredStatus)
 	}
 	fmt.Fprintf(w, "\n")
 
@@ -111,22 +112,22 @@ func writeGraphToWriter(w io.Writer, graph *CodePropertyGraph) error {
 		classType := mapKindToClass(node.Kind)
 
 		fmt.Fprintf(w, "%s a %s ;\n", nodeURI, classType)
-		fmt.Fprintf(w, "    gm:name \"%s\" ;\n", escapeLiteral(node.Name))
+		fmt.Fprintf(w, "    %s \"%s\" ;\n", ont.PredName, escapeLiteral(node.Name))
 
 		if node.Primitive != "" {
-			fmt.Fprintf(w, "    gm:primitiveType \"%s\" ;\n", escapeLiteral(node.Primitive))
+			fmt.Fprintf(w, "    %s \"%s\" ;\n", ont.PredPrimitiveType, escapeLiteral(node.Primitive))
 		}
 
 		if node.FileSpec.Path != "" {
 			fileURI := types.FormatNodeURI("file:" + node.FileSpec.Path)
-			fmt.Fprintf(w, "    gm:belongsToFile %s ;\n", fileURI)
+			fmt.Fprintf(w, "    %s %s ;\n", ont.PredBelongsToFile, fileURI)
 		}
 
 		if node.FileSpec.LineStart > 0 {
-			fmt.Fprintf(w, "    gm:lineStart %d ;\n", node.FileSpec.LineStart)
+			fmt.Fprintf(w, "    %s %d ;\n", ont.PredLineStart, node.FileSpec.LineStart)
 		}
 		if node.FileSpec.LineEnd > 0 {
-			fmt.Fprintf(w, "    gm:lineEnd %d ;\n", node.FileSpec.LineEnd)
+			fmt.Fprintf(w, "    %s %d ;\n", ont.PredLineEnd, node.FileSpec.LineEnd)
 		}
 
 		// Write dynamic properties (metrics, macro rules, blast radius, etc.)
@@ -146,16 +147,16 @@ func writeGraphToWriter(w io.Writer, graph *CodePropertyGraph) error {
 				val := node.Properties[k]
 				cleanKey := strings.ReplaceAll(k, " ", "_")
 				cleanKey = strings.ReplaceAll(cleanKey, "-", "_")
-				fmt.Fprintf(w, "    gm:%s \"%s\" ;\n", cleanKey, escapeLiteral(val))
+				fmt.Fprintf(w, "    %s%s \"%s\" ;\n", ont.PrefixGM, cleanKey, escapeLiteral(val))
 			}
 		}
 		if entrypointSet[nodeID] {
-			fmt.Fprintf(w, "    gm:isEntrypoint true ;\n")
+			fmt.Fprintf(w, "    %s true ;\n", ont.PredIsEntrypoint)
 		}
 
 		if node.Kind == "MODULE" && graph.FolderZones != nil {
 			if zone, ok := graph.FolderZones.Get(nodeID); ok && zone != "" {
-				fmt.Fprintf(w, "    gm:primitiveZone \"%s\" ;\n", escapeLiteral(zone))
+				fmt.Fprintf(w, "    %s \"%s\" ;\n", ont.PredPrimitiveZone, escapeLiteral(zone))
 			}
 		}
 
@@ -203,7 +204,7 @@ func writeGraphToWriter(w io.Writer, graph *CodePropertyGraph) error {
 
 			// Write RDF-star edge attribute
 			if de.edge.LineNumber > 0 {
-				fmt.Fprintf(w, "<< %s %s %s >> gm:lineNumber %d .\n", sourceURI, de.pred, targetURI, de.edge.LineNumber)
+				fmt.Fprintf(w, "<< %s %s %s >> %s %d .\n", sourceURI, de.pred, targetURI, ont.PredLineNumber, de.edge.LineNumber)
 			}
 		}
 	})
@@ -222,83 +223,83 @@ func mapKindToClass(kind string) string {
 	switch kind {
 	// Core structural kinds
 	case "MODULE":
-		return "gm:Module"
+		return ont.PredModule
 	case "NAMESPACE":
-		return "gm:Namespace"
+		return ont.PredNamespace
 	case "FILE":
-		return "gm:File"
+		return ont.PredFile
 	case "STRUCT":
-		return "gm:Struct"
+		return ont.PredStruct
 	case "CLASS":
-		return "gm:Class"
+		return ont.PredClass
 	case "INTERFACE":
-		return "gm:Interface"
+		return ont.PredInterface
 	case "FUNCTION":
-		return "gm:Function"
+		return ont.PredFunction
 	case "METHOD":
-		return "gm:Method"
+		return ont.PredMethod
 	case "FIELD":
-		return "gm:Member"
+		return ont.PredMember
 	case "PARAMETER":
-		return "gm:Parameter"
+		return ont.PredParameter
 	case "VARIABLE", "DFG_VAR":
-		return "gm:Variable"
+		return ont.PredVariable
 	case "PACKAGE":
-		return "gm:Package"
+		return ont.PredPackage
 	case "META_DATA":
-		return "gm:MetaData"
+		return ont.PredMetaData
 	// Fallback classes for legacy engine kinds
 	case "TYPE_DECL":
-		return "gm:TypeDecl"
+		return ont.PredTypeDecl
 	case "EXECUTABLE":
-		return "gm:Executable"
+		return ont.PredExecutable
 	case "IF_BRANCH", "LOOP_BRANCH", "SWITCH_BRANCH":
-		return "gm:ControlStructure"
+		return ont.PredControlStructure
 	case "CFG_SUMMARY":
-		return "gm:CFGSummary"
+		return ont.PredCFGSummary
 	case "DFG_SUMMARY":
-		return "gm:DFGSummary"
+		return ont.PredDFGSummary
 	case "EVENT_TOPIC":
-		return "gm:EventTopic"
+		return ont.PredEventTopic
 	case "VIRTUAL_DATABASE":
-		return "gm:VirtualDatabase"
+		return ont.PredVirtualDatabase
 	case "VIRTUAL_ENDPOINT":
-		return "gm:VirtualEndpoint"
+		return ont.PredVirtualEndpoint
 	case "BLOCK":
-		return "gm:Block"
+		return ont.PredBlock
 	case "ANNOTATION", "DECORATOR":
-		return "gm:Annotation"
+		return ont.PredAnnotation
 	// Virtual / synthetic classes fabricated by the linker passes
 	case "VIRTUAL_CONTEXT":
-		return "gm:VirtualContext"
+		return ont.PredVirtualContext
 	case "VIRTUAL_QUEUE":
-		return "gm:VirtualQueue"
+		return ont.PredVirtualQueue
 	case "VIRTUAL_TAINT_SOURCE":
-		return "gm:VirtualTaintSource"
+		return ont.PredVirtualTaintSource
 	case "VIRTUAL_GLOBAL_STATE":
-		return "gm:VirtualGlobalState"
+		return ont.PredVirtualGlobalState
 	case "VIRTUAL_SECURITY_SINK":
-		return "gm:VirtualSecuritySink"
+		return ont.PredVirtualSecuritySink
 	case "VIRTUAL_RESOURCE":
-		return "gm:VirtualResource"
+		return ont.PredVirtualResource
 	case "VIRTUAL_CLOUD_API":
-		return "gm:VirtualCloudAPI"
+		return ont.PredVirtualCloudAPI
 	case "EXTERNAL_SDK":
-		return "gm:ExternalSDK"
+		return ont.PredExternalSDK
 	case "EXTERNAL_API":
-		return "gm:ExternalAPI"
+		return ont.PredExternalAPI
 	case "EXTERNAL_FFI":
-		return "gm:ExternalFFI"
+		return ont.PredExternalFFI
 	case "HEAP_ALLOCATION":
-		return "gm:HeapAllocation"
+		return ont.PredHeapAllocation
 	case "ABSTRACT_CONSTRAINT":
-		return "gm:AbstractConstraint"
+		return ont.PredAbstractConstraint
 	case "CFG_FLOW":
-		return "gm:CFGFlow"
+		return ont.PredCFGFlow
 	case "EXCEPTIONAL_BRANCH":
-		return "gm:ExceptionalBranch"
+		return ont.PredExceptionalBranch
 	case "DELETED":
-		return "gm:Deleted"
+		return ont.PredDeleted
 	default:
 		return "rdfs:Class"
 	}
@@ -309,175 +310,179 @@ func mapKindToClass(kind string) string {
 // restored from Turtle keep their kinds across save/restore cycles.
 func mapClassToKind(class string) string {
 	switch class {
-	case "gm:Module":
+	case ont.PredModule:
 		return "MODULE"
-	case "gm:Namespace":
+	case ont.PredNamespace:
 		return "NAMESPACE"
-	case "gm:File":
+	case ont.PredFile:
 		return "FILE"
-	case "gm:Struct":
+	case ont.PredStruct:
 		return "STRUCT"
-	case "gm:Class":
+	case ont.PredClass:
 		return "CLASS"
-	case "gm:Interface":
+	case ont.PredInterface:
 		return "INTERFACE"
-	case "gm:Function":
+	case ont.PredFunction:
 		return "FUNCTION"
-	case "gm:Method":
+	case ont.PredMethod:
 		return "METHOD"
-	case "gm:Member":
+	case ont.PredMember:
 		return "FIELD"
-	case "gm:Variable":
+	case ont.PredVariable:
 		return "VARIABLE"
-	case "gm:Parameter":
+	case ont.PredParameter:
 		return "PARAMETER"
-	case "gm:Package":
+	case ont.PredPackage:
 		return "PACKAGE"
-	case "gm:TypeDecl":
+	case ont.PredTypeDecl:
 		return "STRUCT"
-	case "gm:Executable":
+	case ont.PredExecutable:
 		return "FUNCTION"
-	case "gm:ControlStructure":
+	case ont.PredControlStructure:
 		return "IF_BRANCH"
-	case "gm:CFGSummary":
+	case ont.PredCFGSummary:
 		return "CFG_SUMMARY"
-	case "gm:DFGSummary":
+	case ont.PredDFGSummary:
 		return "DFG_SUMMARY"
-	case "gm:EventTopic":
+	case ont.PredEventTopic:
 		return "EVENT_TOPIC"
-	case "gm:VirtualDatabase":
+	case ont.PredVirtualDatabase:
 		return "VIRTUAL_DATABASE"
-	case "gm:VirtualEndpoint":
+	case ont.PredVirtualEndpoint:
 		return "VIRTUAL_ENDPOINT"
-	case "gm:Block":
+	case ont.PredBlock:
 		return "BLOCK"
-	case "gm:Annotation":
+	case ont.PredAnnotation:
 		return "ANNOTATION"
-	case "gm:MetaData":
+	case ont.PredMetaData:
 		return "META_DATA"
-	case "gm:VirtualContext":
+	case ont.PredVirtualContext:
 		return "VIRTUAL_CONTEXT"
-	case "gm:VirtualQueue":
+	case ont.PredVirtualQueue:
 		return "VIRTUAL_QUEUE"
-	case "gm:VirtualTaintSource":
+	case ont.PredVirtualTaintSource:
 		return "VIRTUAL_TAINT_SOURCE"
-	case "gm:VirtualGlobalState":
+	case ont.PredVirtualGlobalState:
 		return "VIRTUAL_GLOBAL_STATE"
-	case "gm:VirtualSecuritySink":
+	case ont.PredVirtualSecuritySink:
 		return "VIRTUAL_SECURITY_SINK"
-	case "gm:VirtualResource":
+	case ont.PredVirtualResource:
 		return "VIRTUAL_RESOURCE"
-	case "gm:VirtualCloudAPI":
+	case ont.PredVirtualCloudAPI:
 		return "VIRTUAL_CLOUD_API"
-	case "gm:ExternalSDK":
+	case ont.PredExternalSDK:
 		return "EXTERNAL_SDK"
-	case "gm:ExternalAPI":
+	case ont.PredExternalAPI:
 		return "EXTERNAL_API"
-	case "gm:ExternalFFI":
+	case ont.PredExternalFFI:
 		return "EXTERNAL_FFI"
-	case "gm:HeapAllocation":
+	case ont.PredHeapAllocation:
 		return "HEAP_ALLOCATION"
-	case "gm:AbstractConstraint":
+	case ont.PredAbstractConstraint:
 		return "ABSTRACT_CONSTRAINT"
-	case "gm:CFGFlow":
+	case ont.PredCFGFlow:
 		return "CFG_FLOW"
-	case "gm:ExceptionalBranch":
+	case ont.PredExceptionalBranch:
 		return "EXCEPTIONAL_BRANCH"
-	case "gm:Deleted":
+	case ont.PredDeleted:
 		return "DELETED"
 	default:
-		return strings.TrimPrefix(class, "gm:")
+		return strings.TrimPrefix(class, ont.PrefixGM)
 	}
 }
 
 func mapEdgeTypeToPredicate(edgeType stage4.RelationshipType) string {
 	switch edgeType {
 	case stage4.EdgeCalls:
-		return "gm:calls"
+		return ont.PredCalls
 	case stage4.EdgeImplements:
-		return "gm:inheritsFrom"
+		return ont.PredInheritsFrom
 	case stage4.EdgeExtends:
-		return "gm:extends"
+		return ont.PredExtends
 	case stage4.EdgeComposes:
-		return "gm:composes"
+		return ont.PredComposes
 	case stage4.EdgeReferences:
-		return "gm:references"
+		return ont.PredReferences
 	case stage4.EdgeThrows:
-		return "gm:throws"
+		return ont.PredThrows
 	case stage4.EdgeSpawnsConcurrent:
-		return "gm:spawnsConcurrent"
+		return ont.PredSpawnsConcurrent
 	case stage4.EdgeDispatchesEvent:
-		return "gm:dispatchesEvent"
+		return ont.PredDispatchesEvent
 	case stage4.EdgeExposesEndpoint:
-		return "gm:exposesEndpoint"
+		return ont.PredExposesEndpoint
 	case stage4.EdgeSecuritySink:
-		return "gm:securitySink"
+		return ont.PredSecuritySink
 	case stage4.EdgeConsumesResource:
-		return "gm:consumesResource"
+		return ont.PredConsumesResource
 	case stage4.EdgeMutatesGlobal:
-		return "gm:mutatesGlobal"
+		return ont.PredMutatesGlobal
 	case stage4.EdgeAliasesType:
-		return "gm:aliasesType"
+		return ont.PredAliasesType
 	case stage4.EdgeControlFlow, stage4.EdgeConditionalBranch, stage4.EdgeLoopBranch, stage4.EdgeSwitchBranch:
-		return "gm:controlFlowTo"
+		return ont.PredControlFlowTo
 	case stage4.EdgeDataFlow:
-		return "gm:dataFlowTo"
+		return ont.PredDataFlowTo
 	case stage4.EdgeAliases:
-		return "gm:aliasesPointer"
+		return ont.PredAliasesPointer
 	case stage4.EdgeVulnerable:
-		return "gm:vulnerableTaint"
+		return ont.PredVulnerableTaint
 	case stage4.EdgeInstantiates:
-		return "gm:instantiatesGeneric"
+		return ont.PredInstantiatesGeneric
+	case stage4.EdgeVirtualContext:
+		return ont.PredVirtualContextLink
 	case stage4.EdgeSendsTo:
-		return "gm:sendsMessage"
+		return ont.PredSendsMessage
 	case stage4.EdgeReceivesFrom:
-		return "gm:receivesMessage"
+		return ont.PredReceivesMessage
 	case stage4.EdgeCyclic:
-		return "gm:cyclicDependency"
+		return ont.PredCyclicDependency
 	case stage4.EdgeNetworkCall:
-		return "gm:networkCall"
+		return ont.PredNetworkCall
 	case stage4.EdgeQueriesDB:
-		return "gm:queriesDatabase"
+		return ont.PredQueriesDatabase
 	case stage4.EdgeCallsCloudAPI:
-		return "gm:callsCloudAPI"
+		return ont.PredCallsCloudAPI
 	case stage4.EdgeCatches:
-		return "gm:catchesException"
+		return ont.PredCatchesException
 	case stage4.EdgeDefers:
-		return "gm:defersExecution"
+		return ont.PredDefersExecution
 	case stage4.EdgeBelongsTo:
-		return "gm:belongsTo"
+		return ont.PredBelongsTo
 	// Structural & Membership Edges
 	case stage4.EdgeDependsOn:
-		return "gm:dependsOn"
+		return ont.PredDependsOn
 	case stage4.EdgeContains:
-		return "gm:contains"
+		return ont.PredContains
 	case stage4.EdgeMixes:
-		return "gm:mixes"
+		return ont.PredMixes
 	case stage4.EdgeHasField:
-		return "gm:hasField"
+		return ont.PredHasField
 	case stage4.EdgeHasParam:
-		return "gm:hasParam"
+		return ont.PredHasParam
 	case stage4.EdgeReturns:
-		return "gm:returns"
+		return ont.PredReturns
+	case stage4.EdgeHasReceiver:
+		return ont.PredHasReceiver
 	// Phase 2 Enterprise Edges
 	case stage4.EdgeContextCall:
-		return "gm:contextualCall"
+		return ont.PredContextualCall
 	case stage4.EdgePointsTo:
-		return "gm:pointsTo"
+		return ont.PredPointsTo
 	case stage4.EdgeHeapAlias:
-		return "gm:heapAlias"
+		return ont.PredHeapAlias
 	case stage4.EdgeConstraint:
-		return "gm:branchConstraint"
+		return ont.PredBranchConstraint
 	case stage4.EdgeFFICall:
-		return "gm:ffiCall"
+		return ont.PredFfiCall
 	case stage4.EdgePublishes:
-		return "gm:publishesEvent"
+		return ont.PredPublishesEvent
 	case stage4.EdgeSubscribes:
-		return "gm:subscribesEvent"
+		return ont.PredSubscribesEvent
 	case stage4.EdgeInjects:
-		return "gm:diInjects"
+		return ont.PredDiInjects
 	case stage4.EdgeEscapesToHeap:
-		return "gm:escapesToHeap"
+		return ont.PredEscapesToHeap
 	default:
 		// No silent stand-in vocabulary: unknown edge types are not
 		// serialized at all (see writeGraphToWriter). Every relationship
@@ -493,95 +498,99 @@ func mapEdgeTypeToPredicate(edgeType stage4.RelationshipType) string {
 // (AUDIT Issue 3 Phase 3D-13).
 func mapPredicateToEdgeType(pred string) stage4.RelationshipType {
 	switch pred {
-	case "gm:calls":
+	case ont.PredCalls:
 		return stage4.EdgeCalls
-	case "gm:inheritsFrom":
+	case ont.PredInheritsFrom:
 		return stage4.EdgeImplements
-	case "gm:extends":
+	case ont.PredExtends:
 		return stage4.EdgeExtends
-	case "gm:composes":
+	case ont.PredComposes:
 		return stage4.EdgeComposes
-	case "gm:references":
+	case ont.PredReferences:
 		return stage4.EdgeReferences
-	case "gm:throws":
+	case ont.PredThrows:
 		return stage4.EdgeThrows
-	case "gm:spawnsConcurrent":
+	case ont.PredSpawnsConcurrent:
 		return stage4.EdgeSpawnsConcurrent
-	case "gm:dispatchesEvent":
+	case ont.PredDispatchesEvent:
 		return stage4.EdgeDispatchesEvent
-	case "gm:exposesEndpoint":
+	case ont.PredExposesEndpoint:
 		return stage4.EdgeExposesEndpoint
-	case "gm:securitySink":
+	case ont.PredSecuritySink:
 		return stage4.EdgeSecuritySink
-	case "gm:consumesResource":
+	case ont.PredConsumesResource:
 		return stage4.EdgeConsumesResource
-	case "gm:mutatesGlobal":
+	case ont.PredMutatesGlobal:
 		return stage4.EdgeMutatesGlobal
-	case "gm:aliasesType":
+	case ont.PredAliasesType:
 		return stage4.EdgeAliasesType
-	case "gm:controlFlowTo":
+	case ont.PredControlFlowTo:
 		return stage4.EdgeControlFlow
-	case "gm:dataFlowTo":
+	case ont.PredDataFlowTo:
 		return stage4.EdgeDataFlow
-	case "gm:aliasesPointer":
+	case ont.PredAliasesPointer:
 		return stage4.EdgeAliases
-	case "gm:vulnerableTaint":
+	case ont.PredVulnerableTaint:
 		return stage4.EdgeVulnerable
-	case "gm:instantiatesGeneric":
+	case ont.PredInstantiatesGeneric:
 		return stage4.EdgeInstantiates
-	case "gm:sendsMessage":
+	case ont.PredVirtualContextLink:
+		return stage4.EdgeVirtualContext
+	case ont.PredSendsMessage:
 		return stage4.EdgeSendsTo
-	case "gm:receivesMessage":
+	case ont.PredReceivesMessage:
 		return stage4.EdgeReceivesFrom
-	case "gm:cyclicDependency":
+	case ont.PredCyclicDependency:
 		return stage4.EdgeCyclic
-	case "gm:networkCall":
+	case ont.PredNetworkCall:
 		return stage4.EdgeNetworkCall
-	case "gm:queriesDatabase":
+	case ont.PredQueriesDatabase:
 		return stage4.EdgeQueriesDB
-	case "gm:callsCloudAPI":
+	case ont.PredCallsCloudAPI:
 		return stage4.EdgeCallsCloudAPI
-	case "gm:catchesException":
+	case ont.PredCatchesException:
 		return stage4.EdgeCatches
-	case "gm:defersExecution":
+	case ont.PredDefersExecution:
 		return stage4.EdgeDefers
-	case "gm:belongsTo":
+	case ont.PredBelongsTo:
 		return stage4.EdgeBelongsTo
-	case "gm:dependsOn":
+	case ont.PredDependsOn:
 		return stage4.EdgeDependsOn
-	case "gm:contains":
+	case ont.PredContains:
 		return stage4.EdgeContains
-	case "gm:mixes":
+	case ont.PredMixes:
 		return stage4.EdgeMixes
-	case "gm:hasField":
+	case ont.PredHasField:
 		return stage4.EdgeHasField
-	case "gm:hasParam":
+	case ont.PredHasParam:
 		return stage4.EdgeHasParam
-	case "gm:returns":
+	case ont.PredReturns:
 		return stage4.EdgeReturns
-	case "gm:contextualCall":
+	case ont.PredHasReceiver:
+		return stage4.EdgeHasReceiver
+	case ont.PredContextualCall:
 		return stage4.EdgeContextCall
-	case "gm:pointsTo":
+	case ont.PredPointsTo:
 		return stage4.EdgePointsTo
-	case "gm:heapAlias":
+	case ont.PredHeapAlias:
 		return stage4.EdgeHeapAlias
-	case "gm:branchConstraint":
+	case ont.PredBranchConstraint:
 		return stage4.EdgeConstraint
-	case "gm:ffiCall":
+	case ont.PredFfiCall:
 		return stage4.EdgeFFICall
-	case "gm:publishesEvent":
+	case ont.PredPublishesEvent:
 		return stage4.EdgePublishes
-	case "gm:subscribesEvent":
+	case ont.PredSubscribesEvent:
 		return stage4.EdgeSubscribes
-	case "gm:diInjects":
+	case ont.PredDiInjects:
 		return stage4.EdgeInjects
-	case "gm:escapesToHeap":
+	case ont.PredEscapesToHeap:
 		return stage4.EdgeEscapesToHeap
 	default:
 		// Unknown predicates (e.g. from legacy files): preserve the
 		// predicate name as a RelationshipType string rather than dropping
 		// the edge.
-		return stage4.RelationshipType(strings.ToUpper(strings.TrimPrefix(pred, "gm:")))
+		return stage4.RelationshipType(strings.ToUpper(strings.TrimPrefix(pred, ont.PrefixGM)))
 	}
 }
 

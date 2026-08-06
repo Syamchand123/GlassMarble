@@ -36,6 +36,9 @@ func Aggregate(payload *stage2.Stage2Payload, existingState *Stage3Output, rootD
 	if output.FileToSymbols == nil {
 		output.FileToSymbols = make(map[string][]string)
 	}
+	if output.FileToMembers == nil {
+		output.FileToMembers = make(map[string][]string)
+	}
 	if output.FileToCalls == nil {
 		output.FileToCalls = make(map[string][]LinkedCallSite)
 	}
@@ -160,6 +163,10 @@ func Aggregate(payload *stage2.Stage2Payload, existingState *Stage3Output, rootD
 			output.FileToCalls[res.relPath] = extractCallsFromFile(res.relPath, res.symTable)
 		}
 		output.FileToSymbols[res.relPath] = res.localSyms
+		// v2 (W1-10, §5.3.4): per-file member list for real file→symbol
+		// containment edges (A-12). Contains the same resolution keys as
+		// the global index (canonical IDs when present, else FQNs).
+		output.FileToMembers[res.relPath] = dedupeStrings(res.localSyms)
 		for _, idxNode := range res.nodes {
 			output.GlobalDefinitionIndex[idxNode.Key] = append(output.GlobalDefinitionIndex[idxNode.Key], idxNode.Node)
 		}
@@ -189,8 +196,16 @@ func Aggregate(payload *stage2.Stage2Payload, existingState *Stage3Output, rootD
 	return output, nil
 }
 
-// normalizeCallerID prefixes a bare caller symbol with its file path and
-// normalizes dotted method-style IDs ("Store.Save") into universal ID form
+// dedupeStrings returns xs with duplicates removed, preserving order.
+func dedupeStrings(xs []string) []string {
+	out := make([]string, 0, len(xs))
+	for _, x := range xs {
+		out = appendUnique(out, x)
+	}
+	return out
+}
+
+// normalizeCallerID prefixes a bare caller symbol with its file path and// normalizes dotted method-style IDs ("Store.Save") into universal ID form
 // ("Store::Save") so they match the graph nodes produced by the stage4
 // builder (AUDIT Issue 1.6 — Go method caller IDs never matched).
 //
@@ -312,6 +327,18 @@ func collectExportedGASTNodes(node *stage2.GASTNode, fileRelPath string, out *[]
 		}
 		if node.Properties["file_path"] == "" {
 			node.Properties["file_path"] = fileRelPath
+		}
+
+		// v2 (§5.3.1): canonical IDs are the primary index key when present
+		// (Phase 0 ids package); legacy dotted FQNs remain secondary keys
+		// so existing resolvers keep working.
+		if cid := node.Properties["canonical_id"]; cid != "" {
+			if out != nil {
+				*out = append(*out, IndexedNode{Key: cid, Node: node})
+			}
+			if localSyms != nil {
+				*localSyms = append(*localSyms, cid)
+			}
 		}
 
 		if fqn, exists := node.Properties["fully_qualified_name"]; exists && fqn != "" {

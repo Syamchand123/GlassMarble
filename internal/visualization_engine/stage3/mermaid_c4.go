@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
@@ -139,7 +140,7 @@ func renderC4ComponentDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	for _, edge := range tree.Edges {
 		srcAlias := reg.alias(edge.SourceID)
 		tgtAlias := reg.alias(edge.TargetID)
-		predLabel := sanitizeMermaidLabel(strings.TrimPrefix(edge.Predicate, "gm:"))
+		predLabel := sanitizeMermaidLabel(strings.TrimPrefix(edge.Predicate, ont.PrefixGM))
 
 		relKey := srcAlias + "->" + tgtAlias
 		if drawn[relKey] {

@@ -8,7 +8,7 @@ type GenericTranslator struct {
 	Lang stage1.SupportedLang
 }
 
-func (g *GenericTranslator) CoerceToken(tok stage1.RawToken, fileRelPath string) *GASTNode {
+func (g *GenericTranslator) CoerceToken(tok stage1.RichToken, parent *stage1.RichToken, fileRelPath string) *GASTNode {
 	node := baseNode(tok, fileRelPath)
 	extractGenericTypesAndDecorators(node, tok.Content)
 	switch tok.Kind {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
@@ -144,9 +145,25 @@ func resolveNodeToClass(nodeID string, classes map[string]*types.LayoutNode) []s
 		}
 	}
 
-	// The old same-file fallback fanned out one function edge to every class
-	// in the file (AUDIT Issue 2 Phase 2C-12). Class relations must come from
-	// resolved receiver/type matches only; everything else stays unmapped.
+	// Single-type-file fallback: a free function (Go idiom: no receiver) is
+	// mapped to the class in its file only when that file declares exactly
+	// one type. This never fans one function edge out across sibling classes
+	// (AUDIT Issue 2 Phase 2C-12); files with several types stay unmapped.
+	if path != "" {
+		cleanPath := cleanPathFromID(path)
+		var match string
+		for classID := range classes {
+			if cleanPathFromID(classID) == cleanPath {
+				if match != "" {
+					return nil
+				}
+				match = classID
+			}
+		}
+		if match != "" {
+			return []string{match}
+		}
+	}
 	return nil
 }
 
@@ -164,7 +181,7 @@ func cleanPathFromID(id string) string {
 }
 
 func getShortKind(kind string) string {
-	return strings.TrimPrefix(kind, "gm:")
+	return strings.TrimPrefix(kind, ont.PrefixGM)
 }
 
 func sanitizeMermaidLabel(s string) string {
@@ -192,7 +209,7 @@ func sanitizeMermaidLabel(s string) string {
 }
 
 func shortPredicate(pred string) string {
-	return strings.TrimPrefix(pred, "gm:")
+	return strings.TrimPrefix(pred, ont.PrefixGM)
 }
 
 func collectAllNodes(tree *types.LayoutTree) []*types.LayoutNode {
@@ -232,12 +249,12 @@ func collectNodesByPrimitive(tree *types.LayoutTree, prim string) []*types.Layou
 }
 
 func isDatabase(node *types.LayoutNode) bool {
-	return node.Kind == "gm:Database" || node.Kind == "gm:VirtualDatabase" || strings.Contains(node.PrimitiveType, "DATABASE")
+	return node.Kind == ont.PredDatabase || node.Kind == ont.PredVirtualDatabase || strings.Contains(node.PrimitiveType, "DATABASE")
 }
 
 func isExternalSystem(node *types.LayoutNode) bool {
 	switch node.Kind {
-	case "gm:ExternalSystem", "gm:ExternalSDK", "gm:ExternalAPI", "gm:ExternalFFI", "gm:External":
+	case ont.PredExternalSystem, ont.PredExternalSDK, ont.PredExternalAPI, ont.PredExternalFFI, ont.PredExternal:
 		return true
 	}
 	return strings.Contains(node.PrimitiveType, "NETWORK_IO")
@@ -249,7 +266,7 @@ func collectExternalNodes(tree *types.LayoutTree) []*types.LayoutNode {
 	var result []*types.LayoutNode
 	for _, n := range collectAllNodes(tree) {
 		switch n.Kind {
-		case "gm:ExternalSystem", "gm:ExternalSDK", "gm:ExternalAPI", "gm:ExternalFFI", "gm:External":
+		case ont.PredExternalSystem, ont.PredExternalSDK, ont.PredExternalAPI, ont.PredExternalFFI, ont.PredExternal:
 			result = append(result, n)
 		}
 	}
@@ -261,7 +278,7 @@ func isSystemBoundary(boundary *types.LayoutTree) bool {
 		return false
 	}
 	for _, node := range boundary.Nodes {
-		if node.Kind == "gm:Namespace" || node.Kind == "gm:Module" || node.Kind == "gm:File" {
+		if node.Kind == ont.PredNamespace || node.Kind == ont.PredModule || node.Kind == ont.PredFile {
 			return true
 		}
 	}
@@ -320,11 +337,11 @@ func detectNodeTechnology(node *types.LayoutNode) string {
 		return "Network"
 	}
 	switch node.Kind {
-	case "gm:Executable", "gm:Function", "gm:Method":
+	case ont.PredExecutable, ont.PredFunction, ont.PredMethod:
 		return "Go/Executable"
-	case "gm:TypeDecl":
+	case ont.PredTypeDecl:
 		return "Go/Type"
-	case "gm:Namespace", "gm:Module":
+	case ont.PredNamespace, ont.PredModule:
 		return "Go/Module"
 	default:
 		return "Go/Generic"

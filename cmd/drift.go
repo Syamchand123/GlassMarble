@@ -8,6 +8,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/config"
 	"github.com/Syamchand123/GlassMarble/internal/drift"
+	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -47,7 +48,7 @@ when the declared cycle budget is exceeded.`,
 
 		graph := tm.GetActiveSnapshot()
 		if graph == nil || graph.Nodes == nil || graph.Nodes.Len() == 0 {
-			return fmt.Errorf("AKG database is empty -- run 'glassmarble analyze' first")
+			return producterrs.Tagged(fmt.Sprintf("AKG database is empty -- run 'glassmarble analyze' first"), producterrs.ErrEmptySubgraph)
 		}
 
 		// Load drift declarations from the project-local config only; use

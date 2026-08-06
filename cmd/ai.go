@@ -14,6 +14,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/aiconfig"
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/provider"
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/session"
+	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/terminal"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/programs/ai_query"
@@ -193,7 +194,7 @@ Examples:
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
-			return fmt.Errorf("no question provided — try: gmb ai \"explain this repository\", or run `gmb ai --help`")
+			return producterrs.Tagged(fmt.Sprintf("no question provided — try: gmb ai \"explain this repository\", or run `gmb ai --help`"), producterrs.ErrValidation)
 		}
 
 		engine, err := newAIEngine(cmd)
@@ -275,10 +276,10 @@ Examples:
 func saveArtifact(cmd *cobra.Command, rootDir, filename, text string) error {
 	if filename == "" || filename == "." || filename == ".." ||
 		strings.ContainsAny(filename, `/\`) || strings.Contains(filename, "..") {
-		return fmt.Errorf("invalid artifact filename %q — use a plain file name without paths", filename)
+		return producterrs.Tagged(fmt.Sprintf("invalid artifact filename %q — use a plain file name without paths", filename), producterrs.ErrValidation)
 	}
 	if text == "" {
-		return fmt.Errorf("the model produced no answer — nothing to save")
+		return producterrs.Tagged(fmt.Sprintf("the model produced no answer — nothing to save"), producterrs.ErrEmptySubgraph)
 	}
 
 	dir := filepath.Join(rootDir, ".glassmarble", "ai")
@@ -375,11 +376,11 @@ and "exit", "quit", or Ctrl+D to leave.
 		switch {
 		case aiChatSessionFlag != "":
 			if aiChatNewFlag {
-				return fmt.Errorf("--session and --new are mutually exclusive")
+				return producterrs.Tagged(fmt.Sprintf("--session and --new are mutually exclusive"), producterrs.ErrValidation)
 			}
 			sess, err = session.Open(sessDir, aiChatSessionFlag)
 			if err != nil {
-				return fmt.Errorf("cannot resume session %q: %v — run `gmb ai sessions` to list saved sessions", aiChatSessionFlag, err)
+				return producterrs.Annotate(fmt.Errorf("cannot resume session %q: %v — run `gmb ai sessions` to list saved sessions", aiChatSessionFlag, err), producterrs.ErrValidation)
 			}
 		case aiChatNewFlag:
 			sess = session.Create(sessDir, engine.Config.Provider, engine.Config.Model)
@@ -558,7 +559,7 @@ and are never logged.
 
 		scope := aiScopeFlag
 		if scope != "global" && scope != "project" {
-			return fmt.Errorf("invalid scope %q — use 'global' or 'project'", scope)
+			return producterrs.Tagged(fmt.Sprintf("invalid scope %q — use 'global' or 'project'", scope), producterrs.ErrValidation)
 		}
 
 		target := aiconfig.GlobalPath()
@@ -566,7 +567,7 @@ and are never logged.
 			target = filepath.Join(aiDirFlag, aiconfig.ProjectConfigPath)
 		}
 		if target == "" {
-			return fmt.Errorf("cannot locate the global config file (home directory unavailable)")
+			return producterrs.Tagged(fmt.Sprintf("cannot locate the global config file (home directory unavailable)"), producterrs.ErrValidation)
 		}
 
 		// Load any existing settings from the target file.
@@ -589,7 +590,7 @@ and are never logged.
 				// §12 Phase 3: the raw bufio wizard was replaced by the Huh
 				// form. Without a TTY there is no interactive path, so guide
 				// the caller to the flag-driven setup instead.
-				return fmt.Errorf("interactive configuration requires a terminal — run `gmb ai configure --provider NAME --model MODEL --key KEY`, or set GLASSMARBLE_AI_* environment variables")
+				return producterrs.Tagged(fmt.Sprintf("interactive configuration requires a terminal — run `gmb ai configure --provider NAME --model MODEL --key KEY`, or set GLASSMARBLE_AI_* environment variables"), producterrs.ErrValidation)
 			}
 		} else {
 			if cmd.Flags().Changed("provider") {
@@ -625,7 +626,7 @@ and are never logged.
 		}
 
 		if _, ok := provider.Get(cfg.Provider); !ok {
-			return fmt.Errorf("unknown provider %q — run `gmb ai models` for the supported list", cfg.Provider)
+			return producterrs.Tagged(fmt.Sprintf("unknown provider %q — run `gmb ai models` for the supported list", cfg.Provider), producterrs.ErrValidation)
 		}
 
 		if err := aiconfig.Save(target, cfg); err != nil {

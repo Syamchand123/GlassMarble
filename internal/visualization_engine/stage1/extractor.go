@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
@@ -40,25 +41,25 @@ func ExtractSubgraph(ttlPath string, t types.DiagramType, opts types.QueryOption
 func predicatesForGroup(group types.PredicateGroup) []string {
 	switch group {
 	case types.GroupCallGraph:
-		return []string{"gm:calls", "gm:spawnsConcurrent", "gm:dispatchesEvent", "gm:contextualCall", "gm:ffiCall"}
+		return []string{ont.PredCalls, ont.PredSpawnsConcurrent, ont.PredDispatchesEvent, ont.PredContextualCall, ont.PredFfiCall, ont.PredDispatchesAsync}
 	case types.GroupTypeHierarchy:
-		return []string{"gm:inheritsFrom", "gm:extends", "gm:implements", "gm:mixes"}
+		return []string{ont.PredInheritsFrom, ont.PredExtends, ont.PredImplements, ont.PredMixes}
 	case types.GroupComposition:
-		return []string{"gm:composes", "gm:hasMember", "gm:hasField", "gm:aggregates", "gm:contains"}
+		return []string{ont.PredComposes, ont.PredHasMember, ont.PredHasField, ont.PredAggregates, ont.PredContains}
 	case types.GroupDataFlow:
-		return []string{"gm:dataFlowTo", "gm:pointsTo", "gm:heapAlias", "gm:aliasesPointer", "gm:vulnerableTaint"}
+		return []string{ont.PredDataFlowTo, ont.PredPointsTo, ont.PredHeapAlias, ont.PredAliasesPointer, ont.PredVulnerableTaint}
 	case types.GroupControlFlow:
-		return []string{"gm:controlFlowTo", "gm:controlFlowToTrue", "gm:controlFlowToFalse", "gm:catchesException", "gm:defersExecution"}
+		return []string{ont.PredControlFlowTo, ont.PredControlFlowToTrue, ont.PredControlFlowToFalse, ont.PredCatchesException, ont.PredDefersExecution, ont.PredBranchConstraint}
 	case types.GroupStructural:
-		return []string{"gm:belongsToFile", "gm:belongsToNamespace", "gm:belongsTo", "gm:dependsOn", "gm:references", "gm:imports"}
+		return []string{ont.PredBelongsToFile, ont.PredBelongsToNamespace, ont.PredBelongsTo, ont.PredDependsOn, ont.PredReferences, ont.PredImports}
 	case types.GroupMessaging:
-		return []string{"gm:sendsMessage", "gm:receivesMessage", "gm:publishesEvent", "gm:subscribesEvent", "gm:dispatchesEvent"}
+		return []string{ont.PredSendsMessage, ont.PredReceivesMessage, ont.PredPublishesEvent, ont.PredSubscribesEvent, ont.PredDispatchesEvent}
 	case types.GroupInfrastructure:
-		return []string{"gm:networkCall", "gm:queriesDatabase", "gm:callsCloudAPI", "gm:consumesResource", "gm:mutatesGlobal", "gm:securitySink", "gm:exposesEndpoint"}
+		return []string{ont.PredNetworkCall, ont.PredQueriesDatabase, ont.PredCallsCloudAPI, ont.PredConsumesResource, ont.PredMutatesGlobal, ont.PredSecuritySink, ont.PredExposesEndpoint}
 	case types.GroupSecurity:
-		return []string{"gm:vulnerableTaint", "gm:securitySink", "gm:consumesResource"}
+		return []string{ont.PredVulnerableTaint, ont.PredSecuritySink, ont.PredConsumesResource}
 	case types.GroupBinding:
-		return []string{"gm:instantiatesGeneric", "gm:diInjects", "gm:escapesToHeap", "gm:branchConstraint", "gm:aliasesType"}
+		return []string{ont.PredInstantiatesGeneric, ont.PredDiInjects, ont.PredEscapesToHeap, ont.PredAliasesType}
 	case types.GroupAny:
 		return nil
 	default:
@@ -67,6 +68,9 @@ func predicatesForGroup(group types.PredicateGroup) []string {
 }
 
 func extractWithConfig(nodes map[string]*types.TTLNode, edges []types.TTLEdge, cfg types.ExtractionConfig, opts types.QueryOptions) (*types.VirtualSubgraph, error) {
+	entryCandidate := func(n *types.TTLNode) bool {
+		return matchesKind(n.Kind, cfg.NodeKindFilter) || matchesKind(n.Kind, []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod})
+	}
 	var startIDs []string
 	switch cfg.EntryStrategy {
 	case types.EntryStrategyEntryPoint:
@@ -77,35 +81,40 @@ func extractWithConfig(nodes map[string]*types.TTLNode, edges []types.TTLEdge, c
 				return matchesKind(n.Kind, cfg.NodeKindFilter)
 			})
 		} else {
-			startIDs = getEntryPoints(nodes, opts, func(n *types.TTLNode) bool {
-				return matchesKind(n.Kind, cfg.NodeKindFilter)
-			})
+			startIDs = getEntryPoints(nodes, opts, entryCandidate)
 		}
 	case types.EntryStrategyAuto:
-		startIDs = getEntryPoints(nodes, opts, func(n *types.TTLNode) bool {
-			return matchesKind(n.Kind, cfg.NodeKindFilter)
-		})
+		startIDs = getEntryPoints(nodes, opts, entryCandidate)
 	case types.EntryStrategyChangedFiles:
-		for id, n := range nodes {
-			if n.FileURI != "" {
-				for _, cf := range opts.ChangedFiles {
-					if strings.Contains(n.FileURI, cf) {
-						startIDs = append(startIDs, id)
-						break
+		if len(opts.ChangedFiles) > 0 {
+			for id, n := range nodes {
+				if n.FileURI != "" {
+					for _, cf := range opts.ChangedFiles {
+						if strings.Contains(n.FileURI, cf) {
+							startIDs = append(startIDs, id)
+							break
+						}
 					}
 				}
 			}
-		}
-		if len(startIDs) == 0 && len(opts.ChangedFiles) > 0 {
-			return nil, fmt.Errorf("no graph nodes match changed files: %v", opts.ChangedFiles)
+			if len(startIDs) == 0 {
+				return nil, fmt.Errorf("no graph nodes match changed files: %v", opts.ChangedFiles)
+			}
+		} else if opts.EntryPointID != "" {
+			startIDs = []string{opts.EntryPointID}
+		} else {
+			startIDs = getEntryPoints(nodes, opts, entryCandidate)
 		}
 	default:
-		startIDs = filterNodes(nodes, opts, func(n *types.TTLNode) bool {
-			return matchesKind(n.Kind, cfg.NodeKindFilter)
-		})
+		// EntryStrategyAll: start from an explicit entry point when given,
+		// otherwise extract the flat subgraph of every matching node and the
+		// edges between them (no traversal, no kind-pollution).
+		if opts.EntryPointID != "" {
+			startIDs = []string{opts.EntryPointID}
+		}
 	}
 
-	if opts.EntryPointID != "" && cfg.EntryStrategy == types.EntryStrategyAll {
+	if opts.EntryPointID != "" && cfg.EntryStrategy == types.EntryStrategyAll && len(startIDs) == 0 {
 		startIDs = append(startIDs, opts.EntryPointID)
 	}
 
@@ -144,15 +153,25 @@ func extractWithConfig(nodes map[string]*types.TTLNode, edges []types.TTLEdge, c
 	}
 	idx := buildAdjacencyIndex(nodes, edges)
 
+	kindFilter := func(n *types.TTLNode) bool {
+		return matchesKind(n.Kind, cfg.NodeKindFilter)
+	}
+
+	// EntryStrategyAll with no explicit entry means a flat extraction: every
+	// matching node plus the edges whose endpoints are both in that set. A
+	// forward/reverse traversal with no seeds would otherwise produce an empty
+	// diagram, so funnel those into the flat both-pass path too.
+	if len(startIDs) == 0 {
+		return bothPassSubgraph(nil, nodes, edges, idx, maxDepth, kindFilter, edgeFilter), nil
+	}
+
 	switch cfg.Direction {
 	case types.EdgeDirectionForward:
 		return bfsSubgraph(startIDs, nodes, edges, idx, maxDepth, edgeFilter), nil
 	case types.EdgeDirectionReverse:
 		return reverseBFS(startIDs, nodes, edges, idx, maxDepth, edgeFilter), nil
 	default:
-		return bothPassSubgraph(startIDs, nodes, edges, idx, maxDepth, func(n *types.TTLNode) bool {
-			return matchesKind(n.Kind, cfg.NodeKindFilter)
-		}, edgeFilter), nil
+		return bothPassSubgraph(startIDs, nodes, edges, idx, maxDepth, kindFilter, edgeFilter), nil
 	}
 }
 
@@ -303,88 +322,145 @@ func bothPassSubgraph(startIDs []string, allNodes map[string]*types.TTLNode, all
 // type. Kinds listed here are exactly the classes the serializer can emit
 // (gm:Struct/Class/Interface/Function/Method/Member/Module/File/Namespace/
 // Parameter/Variable/Package plus the legacy fallbacks gm:TypeDecl,
-// gm:Executable, gm:ControlStructure, gm:CFGSummary, gm:DFGSummary,
-// gm:EventTopic, gm:VirtualDatabase, gm:VirtualEndpoint, gm:Block,
-// gm:Annotation and the synthetic gm:ExternalSDK/API/FFI, gm:Virtual* classes)
-// — see internal/akg/turtle_serializer.go mapKindToClass.
+// gm:Executable, gm:ControlStructure, gm:CFGFlow, gm:ExceptionalBranch,
+// gm:AbstractConstraint, gm:EventTopic, gm:VirtualDatabase, gm:VirtualEndpoint,
+// gm:Block, gm:Annotation and the synthetic gm:ExternalSDK/API/FFI, gm:Virtual*
+// classes) — see internal/akg/turtle_serializer.go mapKindToClass.
+//
+// Predicate groups mirror the edges the serializer actually emits
+// (gm:calls, gm:contextualCall, gm:controlFlowTo, gm:defersExecution,
+// gm:branchConstraint, gm:contains, gm:dependsOn, gm:dataFlowTo,
+// gm:queriesDatabase, gm:callsCloudAPI, gm:instantiatesGeneric,
+// gm:escapesToHeap, gm:exposesEndpoint, gm:sendsMessage, gm:receivesMessage,
+// gm:spawnsConcurrent, gm:securitySink, ...). Predicates the AKG never emits
+// (gm:inheritsFrom/extends/implements/composes/hasMember/hasField, ...) are
+// kept on the groups so diagrams remain correct for databases that do
+// serialize them, while diagrams that previously consumed only CFG noise
+// (gm:branchConstraint) now use those groups only where they belong.
+//
+// EntryStrategy semantics:
+//   - EntryStrategyAll extracts the flat subgraph of every matching node plus
+//     edges whose endpoints are both in that set; an explicit --entry switches
+//     it to a focused traversal from that node.
+//   - EntryStrategyEntryPoint traverses from the given --entry, or from an
+//     auto-discovered entry point (gm:isEntrypoint flag, main, handler/
+//     controller/api naming).
 var extractionConfigs = map[types.DiagramType]types.ExtractionConfig{
-	types.UMLClass:               {Name: "UMLClass", NodeKindFilter: []string{"gm:TypeDecl", "gm:Struct", "gm:Class", "gm:Interface", "gm:Member", "gm:Function", "gm:Method", "gm:Executable", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupTypeHierarchy, types.GroupComposition, types.GroupBinding}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 7, Direction: types.EdgeDirectionForward, IncludeUnused: true},
-	types.UMLObject:              {Name: "UMLObject", NodeKindFilter: []string{"gm:TypeDecl", "gm:Struct", "gm:Class", "gm:Interface", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupTypeHierarchy}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 3, Direction: types.EdgeDirectionForward},
-	types.UMLComponent:           {Name: "UMLComponent", NodeKindFilter: []string{"gm:TypeDecl", "gm:Struct", "gm:Class", "gm:Interface", "gm:Executable", "gm:Function", "gm:Method", "gm:Namespace", "gm:Module", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupComposition, types.GroupStructural}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 7, Direction: types.EdgeDirectionForward},
-	types.UMLDeployment:          {Name: "UMLDeployment", NodeKindFilter: []string{"gm:Namespace", "gm:Module", "gm:File", "gm:VirtualDatabase", "gm:Executable", "gm:Function", "gm:Method", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupInfrastructure, types.GroupCallGraph, types.GroupStructural}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 7, Direction: types.EdgeDirectionForward},
-	types.UMLPackage:             {Name: "UMLPackage", NodeKindFilter: []string{"gm:Namespace", "gm:File", "gm:Module", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupStructural}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 99, Direction: types.EdgeDirectionBoth},
-	types.UMLComposite:           {Name: "UMLComposite", NodeKindFilter: []string{"gm:TypeDecl", "gm:Struct", "gm:Class", "gm:Interface", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupComposition, types.GroupTypeHierarchy}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 5, Direction: types.EdgeDirectionForward},
-	types.UMLProfile:             {Name: "UMLProfile", NodeKindFilter: []string{"gm:TypeDecl", "gm:Struct", "gm:Class", "gm:Interface", "gm:Annotation"}, PredicateGroup: []types.PredicateGroup{types.GroupTypeHierarchy, types.GroupComposition}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 5, Direction: types.EdgeDirectionForward},
-	types.UMLUsecase:             {Name: "UMLUsecase", NodeKindFilter: []string{"gm:Annotation", "gm:Executable", "gm:Function", "gm:Method", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupStructural}, EntryStrategy: types.EntryStrategyAuto, MaxDepth: 5, Direction: types.EdgeDirectionForward},
-	types.UMLActivity:            {Name: "UMLActivity", NodeKindFilter: []string{"gm:ControlStructure", "gm:Block", "gm:Executable", "gm:Function", "gm:Method", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupControlFlow}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 10, Direction: types.EdgeDirectionForward},
+	types.UMLClass:               {Name: "UMLClass", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredMember, ont.PredFunction, ont.PredMethod, ont.PredExecutable, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupTypeHierarchy, types.GroupComposition, types.GroupCallGraph}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 7, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
+	types.UMLObject:              {Name: "UMLObject", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupTypeHierarchy, types.GroupComposition, types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 3, Direction: types.EdgeDirectionBoth},
+	types.UMLComponent:           {Name: "UMLComponent", NodeKindFilter: []string{ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredModule, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupComposition, types.GroupStructural}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 7, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
+	types.UMLDeployment:          {Name: "UMLDeployment", NodeKindFilter: []string{ont.PredNamespace, ont.PredModule, ont.PredFile, ont.PredVirtualDatabase, ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupInfrastructure, types.GroupCallGraph, types.GroupStructural}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 7, Direction: types.EdgeDirectionForward, IncludeUnused: true},
+	types.UMLPackage:             {Name: "UMLPackage", NodeKindFilter: []string{ont.PredNamespace, ont.PredFile, ont.PredModule, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupStructural}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 99, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
+	types.UMLComposite:           {Name: "UMLComposite", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredMember, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupComposition, types.GroupTypeHierarchy, types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 5, Direction: types.EdgeDirectionBoth},
+	types.UMLProfile:             {Name: "UMLProfile", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredAnnotation, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupTypeHierarchy, types.GroupComposition, types.GroupBinding}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 5, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
+	types.UMLUsecase:             {Name: "UMLUsecase", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupStructural}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 5, Direction: types.EdgeDirectionForward},
+	types.UMLActivity:            {Name: "UMLActivity", NodeKindFilter: []string{ont.PredControlStructure, ont.PredBlock, ont.PredCFGFlow, ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupControlFlow}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 10, Direction: types.EdgeDirectionForward},
 	types.Flowchart:              {Name: "Flowchart", PredicateGroup: []types.PredicateGroup{types.GroupControlFlow, types.GroupDataFlow, types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 10, Direction: types.EdgeDirectionForward},
-	types.UMLState:               {Name: "UMLState", NodeKindFilter: []string{"gm:Variable", "gm:Parameter", "gm:ControlStructure", "gm:TypeDecl", "gm:Struct", "gm:Class", "gm:Executable", "gm:Function", "gm:Method"}, PredicateGroup: []types.PredicateGroup{types.GroupDataFlow, types.GroupControlFlow}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 5, Direction: types.EdgeDirectionForward},
-	types.UMLSequence:            {Name: "UMLSequence", NodeKindFilter: []string{"gm:Executable", "gm:Function", "gm:Method", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, Direction: types.EdgeDirectionForward},
-	types.UMLCommunication:       {Name: "UMLCommunication", NodeKindFilter: []string{"gm:Executable", "gm:Function", "gm:Method", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, Direction: types.EdgeDirectionForward},
-	types.UMLInteractionOverview: {Name: "UMLInteractionOverview", NodeKindFilter: []string{"gm:Executable", "gm:Function", "gm:Method", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, Direction: types.EdgeDirectionForward},
-	types.UMLTiming:              {Name: "UMLTiming", NodeKindFilter: []string{"gm:Executable", "gm:Function", "gm:Method", "gm:Variable", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 5, Direction: types.EdgeDirectionForward},
-	types.C4Context:              {Name: "C4Context", NodeKindFilter: []string{"gm:ExternalSDK", "gm:ExternalAPI", "gm:ExternalFFI", "gm:External", "gm:Namespace", "gm:Module"}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupStructural, types.GroupInfrastructure}, EntryStrategy: types.EntryStrategyAuto, MaxDepth: 3, Direction: types.EdgeDirectionForward},
-	types.C4Container:            {Name: "C4Container", NodeKindFilter: []string{"gm:Module", "gm:Namespace", "gm:VirtualDatabase", "gm:Executable", "gm:Function", "gm:Method", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupStructural, types.GroupInfrastructure, types.GroupMessaging}, EntryStrategy: types.EntryStrategyAuto, MaxDepth: 3, Direction: types.EdgeDirectionForward},
-	types.C4Component:            {Name: "C4Component", NodeKindFilter: []string{"gm:TypeDecl", "gm:Struct", "gm:Class", "gm:Interface", "gm:Executable", "gm:Function", "gm:Method", "gm:VirtualDatabase", "gm:ExternalSDK", "gm:ExternalAPI", "gm:ExternalFFI", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupComposition, types.GroupStructural, types.GroupInfrastructure}, EntryStrategy: types.EntryStrategyAuto, MaxDepth: 5, Direction: types.EdgeDirectionForward},
-	types.C4Code:                 {Name: "C4Code", NodeKindFilter: []string{"gm:TypeDecl", "gm:Struct", "gm:Class", "gm:Interface", "gm:Member", "gm:Function", "gm:Method", "gm:Executable", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupTypeHierarchy, types.GroupComposition}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 3, Direction: types.EdgeDirectionForward},
-	types.C4Landscape:            {Name: "C4Landscape", NodeKindFilter: []string{"gm:Namespace", "gm:Module", "gm:File", "gm:ExternalSDK", "gm:ExternalAPI", "gm:ExternalFFI", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupStructural, types.GroupInfrastructure}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 99, Direction: types.EdgeDirectionBoth},
-	types.C4Dynamic:              {Name: "C4Dynamic", NodeKindFilter: []string{"gm:Executable", "gm:Function", "gm:Method", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, Direction: types.EdgeDirectionForward},
-	types.C4Deployment:           {Name: "C4Deployment", NodeKindFilter: []string{"gm:Namespace", "gm:Module", "gm:File", "gm:Executable", "gm:Function", "gm:Method", "gm:VirtualDatabase", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupStructural, types.GroupInfrastructure, types.GroupCallGraph}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionForward},
-	types.ERDiagram:              {Name: "ERDiagram", NodeKindFilter: []string{"gm:TypeDecl", "gm:Struct", "gm:Class", "gm:Member", "gm:Executable", "gm:Function", "gm:Method"}, PredicateGroup: []types.PredicateGroup{types.GroupComposition, types.GroupBinding}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionBoth},
-	types.DataFlow:               {Name: "DataFlow", NodeKindFilter: []string{"gm:Variable", "gm:Parameter", "gm:Executable", "gm:Function", "gm:Method", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupDataFlow, types.GroupSecurity, types.GroupBinding}, EntryStrategy: types.EntryStrategyAuto, MaxDepth: 10, Direction: types.EdgeDirectionBoth},
-	types.Mindmap:                {Name: "Mindmap", NodeKindFilter: []string{"gm:Namespace", "gm:Module", "gm:File"}, PredicateGroup: []types.PredicateGroup{types.GroupStructural}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 99, Direction: types.EdgeDirectionBoth},
-	types.DependencyGraph:        {Name: "DependencyGraph", NodeKindFilter: []string{"gm:TypeDecl", "gm:Struct", "gm:Class", "gm:Interface", "gm:File", "gm:Namespace", "gm:Module", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupStructural}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionBoth},
-	types.HotspotComplexity:      {Name: "HotspotComplexity", NodeKindFilter: []string{"gm:Executable", "gm:Function", "gm:Method", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionForward},
-	types.CallGraph:              {Name: "CallGraph", NodeKindFilter: []string{"gm:Executable", "gm:Function", "gm:Method", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupMessaging, types.GroupInfrastructure}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 99, Direction: types.EdgeDirectionForward},
-	types.LayeredArchitecture:    {Name: "LayeredArchitecture", NodeKindFilter: []string{"gm:TypeDecl", "gm:Struct", "gm:Class", "gm:Interface", "gm:Executable", "gm:Function", "gm:Method", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupComposition, types.GroupTypeHierarchy}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 99, Direction: types.EdgeDirectionBoth},
+	types.UMLState:               {Name: "UMLState", NodeKindFilter: []string{ont.PredControlStructure, ont.PredCFGFlow, ont.PredExceptionalBranch, ont.PredBlock}, PredicateGroup: []types.PredicateGroup{types.GroupControlFlow, types.GroupDataFlow}, EntryStrategy: types.EntryStrategyEntryPoint, MaxDepth: 99, Direction: types.EdgeDirectionForward},
+	types.UMLSequence:            {Name: "UMLSequence", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, Direction: types.EdgeDirectionForward},
+	types.UMLCommunication:       {Name: "UMLCommunication", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, Direction: types.EdgeDirectionForward},
+	types.UMLInteractionOverview: {Name: "UMLInteractionOverview", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, Direction: types.EdgeDirectionForward},
+	types.UMLTiming:              {Name: "UMLTiming", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredVariable, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 5, Direction: types.EdgeDirectionForward, IncludeUnused: true},
+	types.C4Context:              {Name: "C4Context", NodeKindFilter: []string{ont.PredExternalSDK, ont.PredExternalAPI, ont.PredExternalFFI, ont.PredExternal, ont.PredVirtualDatabase, ont.PredVirtualContext, ont.PredVirtualEndpoint}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupStructural, types.GroupInfrastructure}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
+	types.C4Container:            {Name: "C4Container", NodeKindFilter: []string{ont.PredModule, ont.PredNamespace, ont.PredFile, ont.PredVirtualDatabase, ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupStructural, types.GroupInfrastructure, types.GroupMessaging}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
+	types.C4Component:            {Name: "C4Component", NodeKindFilter: []string{ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredFunction, ont.PredMethod, ont.PredVirtualDatabase, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupComposition, types.GroupStructural, types.GroupInfrastructure}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 5, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
+	types.C4Code:                 {Name: "C4Code", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredMember, ont.PredFunction, ont.PredMethod, ont.PredExecutable, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupTypeHierarchy, types.GroupComposition, types.GroupCallGraph}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
+	types.C4Landscape:            {Name: "C4Landscape", NodeKindFilter: []string{ont.PredNamespace, ont.PredModule, ont.PredFile, ont.PredExternalSDK, ont.PredExternalAPI, ont.PredExternalFFI, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupStructural, types.GroupInfrastructure}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 99, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
+	types.C4Dynamic:              {Name: "C4Dynamic", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyEntryPoint, Direction: types.EdgeDirectionForward},
+	types.C4Deployment:           {Name: "C4Deployment", NodeKindFilter: []string{ont.PredNamespace, ont.PredModule, ont.PredFile, ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredVirtualDatabase, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupStructural, types.GroupInfrastructure, types.GroupCallGraph}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionForward, IncludeUnused: true},
+	types.ERDiagram:              {Name: "ERDiagram", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredMember}, PredicateGroup: []types.PredicateGroup{types.GroupComposition, types.GroupBinding, types.GroupTypeHierarchy}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
+	types.DataFlow:               {Name: "DataFlow", NodeKindFilter: []string{ont.PredVariable, ont.PredParameter, ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal, ont.PredVirtualTaintSource, ont.PredVirtualSecuritySink}, PredicateGroup: []types.PredicateGroup{types.GroupDataFlow, types.GroupSecurity, types.GroupBinding}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 10, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
+	types.Mindmap:                {Name: "Mindmap", NodeKindFilter: []string{ont.PredNamespace, ont.PredModule, ont.PredFile}, PredicateGroup: []types.PredicateGroup{types.GroupStructural}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 99, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
+	types.DependencyGraph:        {Name: "DependencyGraph", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredFile, ont.PredNamespace, ont.PredModule, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupStructural, types.GroupBinding}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
+	types.HotspotComplexity:      {Name: "HotspotComplexity", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionForward, IncludeUnused: true},
+	types.CallGraph:              {Name: "CallGraph", NodeKindFilter: []string{ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupMessaging, types.GroupInfrastructure}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 99, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
+	types.LayeredArchitecture:    {Name: "LayeredArchitecture", NodeKindFilter: []string{ont.PredTypeDecl, ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredExecutable, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupCallGraph, types.GroupComposition, types.GroupTypeHierarchy}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 99, Direction: types.EdgeDirectionBoth, IncludeUnused: true},
 	types.ChangeImpact:           {Name: "ChangeImpact", PredicateGroup: []types.PredicateGroup{types.GroupAny}, EntryStrategy: types.EntryStrategyChangedFiles, MaxDepth: 5, Direction: types.EdgeDirectionReverse},
-	types.Infrastructure:         {Name: "Infrastructure", NodeKindFilter: []string{"gm:ExternalSDK", "gm:ExternalAPI", "gm:ExternalFFI", "gm:VirtualDatabase", "gm:Module", "gm:Namespace", "gm:External"}, PredicateGroup: []types.PredicateGroup{types.GroupInfrastructure, types.GroupStructural, types.GroupMessaging, types.GroupSecurity}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionReverse},
+	types.Infrastructure:         {Name: "Infrastructure", NodeKindFilter: []string{ont.PredExternalSDK, ont.PredExternalAPI, ont.PredExternalFFI, ont.PredVirtualDatabase, ont.PredVirtualContext, ont.PredVirtualEndpoint, ont.PredVirtualQueue, ont.PredVirtualSecuritySink, ont.PredVirtualCloudAPI, ont.PredModule, ont.PredNamespace, ont.PredFile, ont.PredFunction, ont.PredMethod, ont.PredExternal}, PredicateGroup: []types.PredicateGroup{types.GroupInfrastructure, types.GroupStructural, types.GroupMessaging, types.GroupSecurity}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 3, Direction: types.EdgeDirectionReverse, IncludeUnused: true},
 }
 
+// GetExtractionConfig returns the per-diagram extraction configuration,
+// applying the default view set (all views) when a config does not declare
+// one (master_overhaul_plan.md §4.5 / W0-05). View-based edge filtering is
+// applied by later phases (W4-01 §8.4).
 func GetExtractionConfig(t types.DiagramType, opts types.QueryOptions) types.ExtractionConfig {
 	cfg, ok := extractionConfigs[t]
 	if !ok {
-		return types.ExtractionConfig{Name: "Default", PredicateGroup: []types.PredicateGroup{types.GroupAny}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 7, Direction: types.EdgeDirectionForward}
+		cfg = types.ExtractionConfig{Name: "Default", PredicateGroup: []types.PredicateGroup{types.GroupAny}, EntryStrategy: types.EntryStrategyAll, MaxDepth: 7, Direction: types.EdgeDirectionForward}
 	}
 	switch t {
 	case types.UMLSequence, types.UMLCommunication, types.UMLInteractionOverview, types.C4Dynamic:
 		cfg.MaxDepth = opts.MaxDepth
 	}
+	if len(cfg.Views) == 0 {
+		cfg.Views = append([]types.ViewTag(nil), types.AllViews...)
+	}
 	return cfg
 }
 
-// getEntryPoints finds the entry points based on QueryOptions.
+// getEntryPoints discovers entry points for diagrams that need a starting
+// node. Priority: explicit --entry, then nodes flagged gm:isEntrypoint, then
+// nodes whose ID/name marks them as an entry (main), then handler/controller/
+// api naming, then every matching node as a last-resort fallback.
 func getEntryPoints(nodes map[string]*types.TTLNode, opts types.QueryOptions, defaultFilter func(*types.TTLNode) bool) []string {
 	var startIDs []string
 	if opts.EntryPointID != "" {
-		startIDs = append(startIDs, opts.EntryPointID)
+		return []string{opts.EntryPointID}
+	}
+
+	inScope := func(id string) bool {
+		return opts.ScopePrefix == "" || strings.HasPrefix(id, opts.ScopePrefix)
+	}
+	seen := make(map[string]bool)
+	add := func(id string) {
+		if !seen[id] {
+			seen[id] = true
+			startIDs = append(startIDs, id)
+		}
+	}
+
+	// Pass 1: explicit entry-point markers from the analyzer.
+	for id, n := range nodes {
+		if defaultFilter(n) && n.IsEntrypoint && inScope(id) {
+			add(id)
+		}
+	}
+	if len(startIDs) > 0 {
 		return startIDs
 	}
 
-	// F.5 Auto-Discover Sequence Diagram Entry Points
-	// First pass: try to find main, handler, controller, api
+	// Pass 2: canonical "main" entry points.
 	for id, n := range nodes {
-		if defaultFilter(n) {
+		if defaultFilter(n) && inScope(id) {
+			lower := strings.ToLower(id + " " + n.Name)
+			if strings.Contains(lower, ".main") || strings.Contains(lower, "::main") || strings.HasSuffix(strings.ToLower(n.Name), " main") || strings.EqualFold(n.Name, "main") {
+				add(id)
+			}
+		}
+	}
+	if len(startIDs) > 0 {
+		return startIDs
+	}
+
+	// Pass 3: handler / controller / api naming.
+	for id, n := range nodes {
+		if defaultFilter(n) && inScope(id) {
 			lower := strings.ToLower(id + " " + n.Name)
 			if strings.Contains(lower, "main") || strings.Contains(lower, "handler") || strings.Contains(lower, "controller") || strings.Contains(lower, "api") {
-				if opts.ScopePrefix == "" || strings.HasPrefix(id, opts.ScopePrefix) {
-					startIDs = append(startIDs, id)
-				}
+				add(id)
 			}
 		}
 	}
-
-	// Second pass: fallback if no entry points found
-	if len(startIDs) == 0 {
-		for id, n := range nodes {
-			if defaultFilter(n) {
-				if opts.ScopePrefix == "" || strings.HasPrefix(id, opts.ScopePrefix) {
-					startIDs = append(startIDs, id)
-				}
-			}
-		}
+	if len(startIDs) > 0 {
+		return startIDs
 	}
 
+	// Pass 4: last-resort fallback to every matching node.
+	for id, n := range nodes {
+		if defaultFilter(n) && inScope(id) {
+			add(id)
+		}
+	}
 	return startIDs
 }
 
@@ -507,11 +583,11 @@ func parseBaseEdge(block string, edgeMap map[string]*types.TTLEdge) error {
 
 	// Tombstones (AUDIT Issue 2 Phase 2A-4): the legacy serializer form
 	// `<uri> gm:status "DELETED" .` is a deletion marker, not an edge.
-	if pred == "gm:status" {
+	if pred == ont.PredStatus {
 		if parseLiteral(tgt) == "DELETED" {
 			return nil
 		}
-		return fmt.Errorf("unexpected gm:status value in edge block: %.50s", block)
+		return fmt.Errorf("unexpected %s value in edge block: %.50s", ont.PredStatus, block)
 	}
 
 	key := fmt.Sprintf("%s|%s|%s", src, pred, tgt)
@@ -557,12 +633,12 @@ func bindEdgeProperty(block string, edgeMap map[string]*types.TTLEdge) error {
 		edgeMap[key] = edge
 	}
 
-	if strings.HasPrefix(propsPart, "gm:lineNumber") {
-		numStr := strings.TrimSpace(strings.TrimPrefix(propsPart, "gm:lineNumber"))
+	if strings.HasPrefix(propsPart, ont.PredLineNumber) {
+		numStr := strings.TrimSpace(strings.TrimPrefix(propsPart, ont.PredLineNumber))
 		if n, err := strconv.Atoi(numStr); err == nil {
 			edge.LineNumber = n
 		} else {
-			return fmt.Errorf("bad gm:lineNumber value %q for edge %s: %v", numStr, key, err)
+			return fmt.Errorf("bad %s value %q for edge %s: %v", ont.PredLineNumber, numStr, key, err)
 		}
 	}
 	return nil
@@ -605,29 +681,29 @@ func parseNodeBlock(block string, nodes map[string]*types.TTLNode) {
 			if val != "rdfs:Resource" {
 				node.Kind = val
 			}
-		case "gm:name":
+		case ont.PredName:
 			node.Name = parseLiteral(val)
-		case "gm:primitiveType":
+		case ont.PredPrimitiveType:
 			node.PrimitiveType = parseLiteral(val)
-		case "gm:belongsToFile":
+		case ont.PredBelongsToFile:
 			node.FileURI = types.ParseNodeURI(val)
-		case "gm:lineStart":
+		case ont.PredLineStart:
 			if n, err := strconv.Atoi(val); err == nil {
 				node.LineStart = n
 			}
-		case "gm:lineEnd":
+		case ont.PredLineEnd:
 			if n, err := strconv.Atoi(val); err == nil {
 				node.LineEnd = n
 			}
-		case "gm:code":
+		case ont.PredCode:
 			node.Code = parseLiteral(val)
-		case "gm:isEntrypoint":
+		case ont.PredIsEntrypoint:
 			if val == "true" {
 				node.IsEntrypoint = true
 			}
-		case "gm:primitiveZone":
+		case ont.PredPrimitiveZone:
 			node.PrimitiveZone = parseLiteral(val)
-		case "gm:status":
+		case ont.PredStatus:
 			if parseLiteral(val) == "DELETED" {
 				return
 			}
@@ -635,18 +711,18 @@ func parseNodeBlock(block string, nodes map[string]*types.TTLNode) {
 			if node.Properties == nil {
 				node.Properties = make(map[string]string)
 			}
-			node.Properties[strings.TrimPrefix(pred, "gm:")] = parseLiteral(val)
+			node.Properties[strings.TrimPrefix(pred, ont.PrefixGM)] = parseLiteral(val)
 		}
 	}
 
 	// A block typed gm:Deleted is a tombstone even without gm:status.
-	if node.Kind == "gm:Deleted" {
+	if node.Kind == ont.PredDeleted {
 		return
 	}
 
 	if node.ID != "" && node.Kind != "" {
-		if strings.HasPrefix(node.ID, "ext:") && node.Kind == "rdfs:Class" {
-			node.Kind = "gm:External"
+		if strings.HasPrefix(node.ID, ont.PrefixExt) && node.Kind == "rdfs:Class" {
+			node.Kind = ont.PredExternal
 		}
 		nodes[node.ID] = node
 	}
@@ -895,7 +971,7 @@ func parseBaseEdgeScoped(block string, edgeMap map[string]*types.NativeEdge, mat
 	if len(parts) < 3 {
 		return fmt.Errorf("malformed edge block dropped (expected 3+ fields): %.50s", block)
 	}
-	if parts[1] == "gm:status" {
+	if parts[1] == ont.PredStatus {
 		return nil // tombstone marker, not an edge
 	}
 	src := types.ParseNodeURI(parts[0])
@@ -935,11 +1011,11 @@ func bindEdgePropertyScoped(block string, edgeMap map[string]*types.NativeEdge, 
 		edge = &types.NativeEdge{SourceID: src, Predicate: pred, TargetID: tgt}
 		edgeMap[key] = edge
 	}
-	if strings.HasPrefix(propsPart, "gm:lineNumber") {
-		if n, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(propsPart, "gm:lineNumber"))); err == nil {
+	if strings.HasPrefix(propsPart, ont.PredLineNumber) {
+		if n, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(propsPart, ont.PredLineNumber))); err == nil {
 			edge.LineNumber = n
 		} else {
-			return fmt.Errorf("bad gm:lineNumber value %q for edge %s: %v", propsPart, key, err)
+			return fmt.Errorf("bad %s value %q for edge %s: %v", ont.PredLineNumber, propsPart, key, err)
 		}
 	}
 	return nil
@@ -974,7 +1050,7 @@ func ParseTTLNodeByID(ttlPath, nodeID string) (*types.TTLNode, []types.TTLEdge, 
 			tgt := types.ParseNodeURI(fields[2])
 			key := fmt.Sprintf("%s|%s|%s", src, fields[1], tgt)
 			if e, ok := edgeMap[key]; ok {
-				if n, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(block[endIdx+2:]), "gm:lineNumber"))); err == nil {
+				if n, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(block[endIdx+2:]), ont.PredLineNumber))); err == nil {
 					e.LineNumber = n
 				}
 			}
@@ -990,7 +1066,7 @@ func ParseTTLNodeByID(ttlPath, nodeID string) (*types.TTLNode, []types.TTLEdge, 
 			if src != nodeID && tgt != nodeID {
 				return nil
 			}
-			if parts[1] == "gm:status" {
+			if parts[1] == ont.PredStatus {
 				return nil
 			}
 			key := fmt.Sprintf("%s|%s|%s", src, parts[1], tgt)

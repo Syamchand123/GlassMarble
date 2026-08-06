@@ -1,4 +1,4 @@
-package stage2
+﻿package stage2
 
 import (
 	"strconv"
@@ -280,7 +280,7 @@ func stripCommentsAndStrings(s string) string {
 	return result.String()
 }
 
-func ApplyEnterpriseIntelligence(node *GASTNode, symTable *FileSymbolTable, rawTokens []stage1.RawToken, nodes []*GASTNode) {
+func ApplyEnterpriseIntelligence(node *GASTNode, symTable *FileSymbolTable, RichTokens []stage1.RichToken, nodes []*GASTNode) {
 	if node == nil {
 		return
 	}
@@ -317,7 +317,7 @@ func ApplyEnterpriseIntelligence(node *GASTNode, symTable *FileSymbolTable, rawT
 			}
 
 			// 6. Hot-Paths (N+1)
-			if hasNPlusOne(node, rawTokens, nodes) {
+			if hasNPlusOne(node, RichTokens, nodes) {
 				node.Properties["n_plus_one_query_warning"] = "true"
 			}
 			if isPerformanceHotPath(node.Primitives) {
@@ -342,7 +342,7 @@ func ApplyEnterpriseIntelligence(node *GASTNode, symTable *FileSymbolTable, rawT
 	}
 
 	for _, child := range node.Children {
-		ApplyEnterpriseIntelligence(child, symTable, rawTokens, nodes)
+		ApplyEnterpriseIntelligence(child, symTable, RichTokens, nodes)
 	}
 }
 
@@ -455,12 +455,12 @@ func isPIILeak(node *GASTNode) bool {
 	return false
 }
 
-func hasNPlusOne(node *GASTNode, rawTokens []stage1.RawToken, nodes []*GASTNode) bool {
+func hasNPlusOne(node *GASTNode, RichTokens []stage1.RichToken, nodes []*GASTNode) bool {
 	if !hasPrimitive(node.Primitives, PrimDatabaseSQL) && !hasPrimitive(node.Primitives, PrimDiskIO) {
 		return false
 	}
 	// Check if any loop token traces back to this function node
-	for i, tok := range rawTokens {
+	for i, tok := range RichTokens {
 		content := strings.TrimSpace(tok.Content)
 		if strings.HasPrefix(content, "for ") || strings.HasPrefix(content, "while ") || strings.HasPrefix(content, "foreach ") {
 			// trace up ParentIdx
@@ -469,7 +469,7 @@ func hasNPlusOne(node *GASTNode, rawTokens []stage1.RawToken, nodes []*GASTNode)
 				if nodes[curr] != nil && nodes[curr].ID == node.ID {
 					return true
 				}
-				curr = rawTokens[curr].ParentIdx
+				curr = RichTokens[curr].ParentIdx
 			}
 		}
 	}

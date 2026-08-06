@@ -11,7 +11,7 @@ import (
 
 // Translator defines the interface for language-specific token coercion.
 type Translator interface {
-	CoerceToken(tok stage1.RawToken, fileRelPath string) *GASTNode
+	CoerceToken(tok stage1.RichToken, parent *stage1.RichToken, fileRelPath string) *GASTNode
 }
 
 // Dispatcher returns the appropriate Translator for all 13 supported languages + generic fallback.
@@ -50,7 +50,7 @@ func Dispatcher(lang stage1.SupportedLang) Translator {
 	}
 }
 
-func baseNode(tok stage1.RawToken, fileRelPath string) *GASTNode {
+func baseNode(tok stage1.RichToken, fileRelPath string) *GASTNode {
 	name := tok.Name
 	if name == "" {
 		name = tok.Type

@@ -1,9 +1,11 @@
 package stage4
 
 import (
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage3"
 	"path/filepath"
 	"strings"
+
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage3"
+	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 )
 
 // LinkCallGraph processes Stage 3's GlobalCallQueue to draw CALLS edges across the CPG.
@@ -40,15 +42,13 @@ func resolveCallSite(callSite stage3.LinkedCallSite, om *stage3.OwnershipMap, cp
 	if interfaceFQN != "" {
 		if ifaceNode, exists := cpg.GetNode(interfaceFQN); exists && ifaceNode.Kind == "INTERFACE" {
 			// Find all concrete implementations of this interface
-			for _, edges := range cpg.OutboundEdges {
-				for _, e := range edges {
-					if e.TargetID == interfaceFQN && e.Type == EdgeImplements {
-						structID := e.SourceID
-						// Look for matching method on concrete struct
-						targetMethodFQN := structID + "::" + method
-						if _, ok := cpg.GetNode(targetMethodFQN); ok {
-							cpg.AddEdge(callerID, targetMethodFQN, EdgeCalls, callSite.LineNumber)
-						}
+			for _, e := range cpg.InboundEdges[interfaceFQN] {
+				if e.Type == EdgeImplements {
+					structID := e.SourceID
+					// Look for matching method on concrete struct
+					targetMethodFQN := structID + "::" + method
+					if _, ok := cpg.GetNode(targetMethodFQN); ok {
+						cpg.AddEdge(callerID, targetMethodFQN, EdgeCalls, callSite.LineNumber)
 					}
 				}
 			}
@@ -101,8 +101,10 @@ func resolveCallSite(callSite stage3.LinkedCallSite, om *stage3.OwnershipMap, cp
 						"caller_ctx":  callerID,
 					},
 				}
-				// The virtual node is a specialization of the real node
-				cpg.AddEdge(contextNodeID, targetFQN, EdgeInstantiates, 0)
+				// The virtual node is a specialization of the real node;
+				// the dedicated predicate keeps gm:instantiatesGeneric
+				// reserved for real generic instantiation (W1-18/A-18).
+				cpg.AddEdge(contextNodeID, targetFQN, EdgeVirtualContext, 0)
 			}
 
 			cpg.AddEdge(callerID, contextNodeID, EdgeContextCall, callSite.LineNumber)
@@ -286,9 +288,17 @@ func resolveCallTarget(receiver, method, filePath string, localImports []string,
 			if stage3.IsStdlibImport(imp, filePath) {
 				continue
 			}
-			if extNode, ok := stage3Out.ExternalDependencies[imp]; ok {
-				// Inject the external node into CPG if not present
-				extID := "ext:" + imp
+			// v2 (W1-09): ext:<escaped> primary; raw v1 spelling self-healed
+			// for reads (old caches/deps.json emit raw import paths).
+			extNode, ok := stage3Out.ExternalDependencies[imp]
+			if !ok {
+				extNode, ok = stage3Out.ExternalDependencies[stage3.ResolveExternalKey(imp)]
+			}
+			if ok {
+				// v2 (W1-09/W1-14, A-11): ext node IDs are the canonical
+				// ext:<escaped> keys — never alias- or module-path-mangled
+				// ("ext:akgerrs \"path\""). Legacy cached raw keys self-heal.
+				extID := stage3.ResolveExternalKey(imp)
 				if _, exists := cpg.GetNode(extID); !exists {
 					cpg.GraphNodes[extID] = &ResolvedNode{
 						ID:         extID,
@@ -303,14 +313,19 @@ func resolveCallTarget(receiver, method, filePath string, localImports []string,
 					apiID = extID + "::" + receiver + "." + method
 				}
 				if _, exists := cpg.GetNode(apiID); !exists {
-					props := map[string]string{"primitive": "EXTERNAL_SDK_CALL"}
+					props := map[string]string{
+						"primitive":     "EXTERNAL_SDK_CALL",
+						ont.PredProvenance: "ast",
+					}
 					cpg.GraphNodes[apiID] = &ResolvedNode{
 						ID:         apiID,
 						Kind:       "EXTERNAL_API",
 						Name:       method,
 						Properties: props,
 					}
-					cpg.AddEdge(extID, apiID, EdgeContains, 0)
+					// A-11 (§5.3.3): ext→api CONTAINS edges removed; file→ext
+					// DEPENDS_ON is emitted by the dependency linker and the
+					// call site links to the API directly.
 				}
 				return apiID, 0.9 // High confidence because we matched the exact external import
 			}

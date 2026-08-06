@@ -53,8 +53,13 @@ type FileTask struct {
 	Time     time.Time
 }
 
-// RawToken represents a localized structural element found by Tree-sitter.
-type RawToken struct {
+// RichToken represents a localized structural element found by Tree-sitter.
+// It is a superset of the legacy RichToken (master_overhaul_plan.md §5.1.1):
+// the flat token stream keeps the original fields, while declaration nodes
+// additionally carry their tree-sitter field roles and declaration-relevant
+// named children so stage 2 translators never need content-regex parsing
+// (fixes A-07/A-08/A-18 at the source).
+type RichToken struct {
 	Kind       TokenKind
 	Type       string
 	Content    string
@@ -67,21 +72,40 @@ type RawToken struct {
 	StartByte  uint32
 	EndByte    uint32
 	HasError   bool
+
+	// FieldRoles maps tree-sitter field name â†’ child token text
+	// (e.g. "name"â†’"Options", "type"â†’"string", "base_type"â†’"Base",
+	// "receiver"â†’"s", "result"â†’"bool", "interface"â†’"Provider").
+	// For declaration nodes only. §5.1.1.
+	FieldRoles map[string]string
+	// NamedChildren holds only declaration-relevant named children of a
+	// declaration node (e.g. field_declaration / method_spec children of a
+	// type_spec). §5.1.1.
+	NamedChildren []*RichToken
+	// IsFieldDecl marks a field-bearing declaration node
+	// (field_declaration, property_signature, ...). §5.1.1.
+	IsFieldDecl bool
+	// IsMethodSpec marks an interface method declaration (Go method_spec,
+	// TS method_signature). §5.1.1.
+	IsMethodSpec bool
+	// IsEmbedded marks Go anonymous embedding / C++ base class nodes.
+	// §5.1.1.
+	IsEmbedded bool
 }
 
 // IngestionResult aggregates the parsed syntax fragments of a single file.
 type IngestionResult struct {
-	FilePath  string
-	RelPath   string
-	Language  SupportedLang
-	Change    ChangeKind
-	Commit    string
-	Author    string
-	Time      time.Time
-	RawTokens []RawToken
-	Bytes     int
-	HasErrors bool
-	Error     error
+	FilePath   string
+	RelPath    string
+	Language   SupportedLang
+	Change     ChangeKind
+	Commit     string
+	Author     string
+	Time       time.Time
+	RichTokens []RichToken
+	Bytes      int
+	HasErrors  bool
+	Error      error
 }
 
 // DeleteEvent is emitted for files removed from the repository. They bypass
