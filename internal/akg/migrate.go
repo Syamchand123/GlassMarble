@@ -7,8 +7,9 @@ import (
 )
 
 // AutoMigrateOnLoad checks the loaded AKG schema version and automatically
-// migrates schema v1/v2 databases to schema v3, backing up the original TTL file
-// as akg_state.v<version>.ttl.bak.
+// migrates schema v1/v2 databases to schema v3, backing up the original JSON file
+// as akg.json.v<version>.bak. The legacy TTL self-heal path is handled in
+// loadFromDisk and kept behind the one-time fallback flag for pre-v3 repos.
 func AutoMigrateOnLoad(storageDir string, graph *CodePropertyGraph) (string, error) {
 	if graph == nil {
 		return "", fmt.Errorf("cannot migrate nil graph")
@@ -23,7 +24,10 @@ func AutoMigrateOnLoad(storageDir string, graph *CodePropertyGraph) (string, err
 		oldVersion = 2
 	}
 
-	StatePath := filepath.Join(storageDir, "akg_state.ttl")
+	StatePath := filepath.Join(storageDir, jsonStateFile)
+	if _, err := os.Stat(StatePath); os.IsNotExist(err) {
+		StatePath = filepath.Join(storageDir, "akg_state.ttl")
+	}
 	var backupPath string
 	if _, err := os.Stat(StatePath); err == nil {
 		bak, err := CreateSchemaBackup(storageDir, oldVersion)

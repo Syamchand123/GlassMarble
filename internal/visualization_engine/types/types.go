@@ -1,7 +1,6 @@
 package types
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -302,46 +301,13 @@ type GraphSummary struct {
 	Truncated           bool    `json:"truncated,omitempty"`
 }
 
-// FormatNodeURI converts a bare node ID into a fully-qualified GlassMarble IRI string,
-// encoding special characters and choosing the correct namespace (file, module, or node).
-// The encoding is reversible: ParseNodeURI decodes every escape produced here,
-// including a literal '%' (encoded as %25).
-func FormatNodeURI(id string) string {
-	clean := strings.ReplaceAll(id, "%", "%25")
-	// Backslashes are encoded, not rewritten to '/', so the encoding is an
-	// exact inverse of ParseNodeURI's percentDecode: a Windows path or a
-	// source snippet containing '\' survives Format->Parse unchanged
-	// (AUDIT Issue 2 Phase 2B-6 round-trip invariant).
-	clean = strings.ReplaceAll(clean, "\\", "%5C")
-	clean = strings.ReplaceAll(clean, "\"", "%22")
-	clean = strings.ReplaceAll(clean, " ", "%20")
-	clean = strings.ReplaceAll(clean, "<", "%3C")
-	clean = strings.ReplaceAll(clean, ">", "%3E")
-	clean = strings.ReplaceAll(clean, "`", "%60")
-	// Issue 3 Phase 3D-14: `{ } | ^` and control characters break the
-	// line-based TTL block parser when node IDs embed source snippets
-	// (virtual nodes). Escape them symmetrically with ParseNodeURI.
-	clean = strings.ReplaceAll(clean, "{", "%7B")
-	clean = strings.ReplaceAll(clean, "}", "%7D")
-	clean = strings.ReplaceAll(clean, "|", "%7C")
-	clean = strings.ReplaceAll(clean, "^", "%5E")
-	clean = strings.ReplaceAll(clean, "\r", "%0D")
-	clean = strings.ReplaceAll(clean, "\n", "%0A")
-	clean = strings.ReplaceAll(clean, "\t", "%09")
-
-	if strings.HasPrefix(clean, "file:") {
-		return fmt.Sprintf("<http://glassmarble.org/file/%s>", clean[5:])
-	}
-	if strings.HasPrefix(clean, "module:") {
-		return fmt.Sprintf("<http://glassmarble.org/namespace/%s>", clean[7:])
-	}
-	return fmt.Sprintf("<http://glassmarble.org/node/%s>", clean)
-}
-
-// ParseNodeURI strips the GlassMarble IRI prefix from a URI and returns the bare node ID.
-// Supports glassmarble.org/node/, /file/, and /namespace/ namespaces, as well as plain
-// angle-bracket IRIs. Percent-escapes produced by FormatNodeURI are decoded (%25, %22,
-// %20, %3C, %3E, %60 and any other %XX sequence).
+// ParseNodeURI strips the legacy GlassMarble IRI prefix from a URI and
+// returns the bare node ID. It serves the legacy Turtle read path
+// (visualization_engine/stage1 + internal/akg self-heal): the canonical
+// GraphJSON store carries bare node IDs and never invokes it. Supports
+// glassmarble.org/node/, /file/, and /namespace/ namespaces, as well as
+// plain angle-bracket IRIs. Percent-escapes are decoded (%25, %22, %20,
+// %3C, %3E, %60 and any other %XX sequence).
 func ParseNodeURI(uri string) string {
 	uri = strings.TrimSpace(uri)
 	var bare string

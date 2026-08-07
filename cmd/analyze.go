@@ -102,7 +102,6 @@ type analysisSummary struct {
 	virtualNodes  int
 	danglingEdges int
 	stateBytes    int64
-	walBytes      int64
 	duration      time.Duration
 	storageDir    string
 }
@@ -117,7 +116,6 @@ type analysisJSON struct {
 	VirtualNodes  int      `json:"virtual_nodes"`
 	DanglingEdges int      `json:"dangling_edges"`
 	StateBytes    int64    `json:"state_bytes"`
-	WALBytes      int64    `json:"wal_bytes"`
 	DurationMs    int64    `json:"duration_ms"`
 	Skipped       []string `json:"skipped,omitempty"`
 	Warnings      []string `json:"warnings,omitempty"`
@@ -348,7 +346,7 @@ func runAnalysis(opts runAnalysisOptions) error {
 	// payload alone would count cross-file edges as dangling. Sizes are
 	// part of the noise budget so bloat stays visible.
 	q := akg.MeasureGraphQuality(tm.GetActiveGraph())
-	stateSize, walSize := akgStateSizes(storageDir)
+	stateSize := akgStateSize(storageDir)
 
 	if opts.onSummary != nil {
 		opts.onSummary(analysisSummary{
@@ -359,7 +357,6 @@ func runAnalysis(opts runAnalysisOptions) error {
 			virtualNodes:  q.VirtualNodes,
 			danglingEdges: q.DanglingEdges,
 			stateBytes:    stateSize,
-			walBytes:      walSize,
 			duration:      duration,
 			storageDir:    storageDir,
 		})
@@ -375,7 +372,6 @@ func runAnalysis(opts runAnalysisOptions) error {
 			VirtualNodes:  q.VirtualNodes,
 			DanglingEdges: q.DanglingEdges,
 			StateBytes:    stateSize,
-			WALBytes:      walSize,
 			DurationMs:    duration.Milliseconds(),
 			Skipped:       stage1Out.Skipped,
 			Warnings:      stage1Out.Warnings,
@@ -385,8 +381,8 @@ func runAnalysis(opts runAnalysisOptions) error {
 		return nil
 	}
 
-	fmt.Printf("Analyzed %d files | %d nodes | %d edges | %d virtual | %d dangling | state=%s wal=%s | %.1fs\n",
-		len(stage1Out.Updated), q.TotalNodes, q.TotalEdges, q.VirtualNodes, q.DanglingEdges, humanBytes(stateSize), humanBytes(walSize), duration.Seconds())
+	fmt.Printf("Analyzed %d files | %d nodes | %d edges | %d virtual | %d dangling | state=%s | %.1fs\n",
+		len(stage1Out.Updated), q.TotalNodes, q.TotalEdges, q.VirtualNodes, q.DanglingEdges, humanBytes(stateSize), duration.Seconds())
 	if q.DanglingEdges > 0 {
 		fmt.Printf("WARNING: %d edges reference missing nodes (dangling). Run `gmb analyze --full` to rebuild.\n", q.DanglingEdges)
 	}
@@ -428,7 +424,6 @@ func runAnalyzeTUI(c *cobra.Command, opts runAnalysisOptions) error {
 				VirtualNodes:  s.virtualNodes,
 				DanglingEdges: s.danglingEdges,
 				StateBytes:    s.stateBytes,
-				WALBytes:      s.walBytes,
 				Duration:      s.duration,
 			}
 		}
@@ -448,17 +443,13 @@ func runAnalyzeTUI(c *cobra.Command, opts runAnalysisOptions) error {
 	}, run, c.InOrStdin(), c.OutOrStdout())
 }
 
-// akgStateSizes reports the persisted artifact sizes for the QA report. The
-// canonical GraphJSON store (akg.json) is the state artifact from Phase C
-// onward; the legacy akg_state.ttl mirror is no longer measured.
-func akgStateSizes(storageDir string) (stateBytes, walBytes int64) {
+// akgStateSize reports the persisted state artifact size for the QA report.
+// The canonical GraphJSON store (akg.json) is the single state artifact.
+func akgStateSize(storageDir string) int64 {
 	if st, err := os.Stat(filepath.Join(storageDir, "akg.json")); err == nil {
-		stateBytes = st.Size()
+		return st.Size()
 	}
-	if st, err := os.Stat(filepath.Join(storageDir, "wal", "akg_transactions.wal")); err == nil {
-		walBytes = st.Size()
-	}
-	return
+	return 0
 }
 
 // humanBytes renders a byte count for the QA report.
@@ -506,17 +497,15 @@ func runAnalysisBenchmark(cmd *cobra.Command, opts runAnalysisOptions) error {
 		}
 	}
 
-	stateSize, walSize := akgStateSizes(storageDir)
+	stateSize := akgStateSize(storageDir)
 
 	totalSec := totalDuration.Seconds()
 	commitSec := commitMS / 1000.0
 	stateMB := float64(stateSize) / (1024 * 1024)
-	walMB := float64(walSize) / (1024 * 1024)
 
 	passTotal := totalSec <= 20.0
 	passCommit := commitSec <= 8.0 || commitMS == 0
 	passState := stateMB <= 12.0 || stateSize == 0
-	passWAL := walMB <= 8.0
 
 	statusStr := func(p bool) string {
 		if p {
@@ -530,9 +519,8 @@ func runAnalysisBenchmark(cmd *cobra.Command, opts runAnalysisOptions) error {
 	fmt.Fprintf(out, "%-22s %-12s %-10s %s\n", "analyze total", fmt.Sprintf("%.2fs", totalSec), "<= 20.0s", statusStr(passTotal))
 	fmt.Fprintf(out, "%-22s %-12s %-10s %s\n", "akg-commit", fmt.Sprintf("%.2fs", commitSec), "<= 8.0s", statusStr(passCommit))
 	fmt.Fprintf(out, "%-22s %-12s %-10s %s\n", "state size", fmt.Sprintf("%.2fMB", stateMB), "<= 12.0MB", statusStr(passState))
-	fmt.Fprintf(out, "%-22s %-12s %-10s %s\n", "WAL size", fmt.Sprintf("%.2fMB", walMB), "<= 8.0MB", statusStr(passWAL))
 
-	if !passTotal || !passCommit || !passState || !passWAL {
+	if !passTotal || !passCommit || !passState {
 		return producterrs.Tagged("benchmark gate exceeded performance budget", producterrs.ErrRenderLimit)
 	}
 	return nil

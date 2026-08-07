@@ -9,31 +9,15 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
 )
 
-// TestTTLJSONParity (Phase B parity gate) serializes the same graph through the
-// legacy TTL path and the GraphJSON path, then asserts structural equality:
-// node set (IDs, kinds, names, properties), edge set (projected to the
-// TTL-equivalent deduped (source, predicate, target, line) triples since TTL
-// collapses duplicate parallel edges and drops edge properties), entrypoints,
-// folder zones, commit hash and version. JSON must be a strict superset of the
-// TTL semantics — never a subset.
-func TestTTLJSONParity(t *testing.T) {
+// TestGraphJSONRoundTripFidelity (Phase B parity gate, JSON-only since Phase D)
+// round-trips the same graph through ExportGraphJSON → ImportGraphJSON and
+// asserts structural equality: node set (IDs, kinds, names, properties,
+// file specs), edge set (source/type/target/line, parallel edges preserved),
+// entrypoints, folder zones, commit hash and version. The canonical
+// GraphJSON store must be lossless.
+func TestGraphJSONRoundTripFidelity(t *testing.T) {
 	g := buildExportTestGraph()
 
-	// Legacy TTL side: serialize + canonical parse (same code path loadFromDisk uses).
-	var ttlBuf bytes.Buffer
-	if err := SerializeToTurtle(g, &ttlBuf); err != nil {
-		t.Fatalf("SerializeToTurtle failed: %v", err)
-	}
-	StatePath := filepath.Join(t.TempDir(), "akg_state.ttl")
-	if err := os.WriteFile(StatePath, ttlBuf.Bytes(), 0644); err != nil {
-		t.Fatal(err)
-	}
-	fromTTL, err := reconstructFromTTLFileEx(StatePath, false)
-	if err != nil {
-		t.Fatalf("TTL reconstruct failed: %v", err)
-	}
-
-	// JSON side.
 	var jsonBuf bytes.Buffer
 	if err := ExportGraphJSON(g, &jsonBuf); err != nil {
 		t.Fatalf("ExportGraphJSON failed: %v", err)
@@ -44,65 +28,62 @@ func TestTTLJSONParity(t *testing.T) {
 	}
 
 	// Metadata parity.
-	if fromTTL.CommitHash != fromJSON.CommitHash || fromTTL.Version != fromJSON.Version {
-		t.Errorf("metadata mismatch: TTL={%q v%d} JSON={%q v%d}", fromTTL.CommitHash, fromTTL.Version, fromJSON.CommitHash, fromJSON.Version)
+	if g.CommitHash != fromJSON.CommitHash || g.Version != fromJSON.Version {
+		t.Errorf("metadata mismatch: source={%q v%d} JSON={%q v%d}", g.CommitHash, g.Version, fromJSON.CommitHash, fromJSON.Version)
 	}
 
-	// Node set parity (incl. properties).
+	// Node set parity (incl. properties + file specs).
 	fromJSON.Nodes.Iterate(func(id string, jn *stage4.ResolvedNode) {
-		tn, ok := fromTTL.Nodes.Get(id)
+		src, ok := g.Nodes.Get(id)
 		if !ok {
-			t.Errorf("JSON node %q missing from TTL load", id)
+			t.Errorf("JSON node %q not in source graph", id)
 			return
 		}
-		if tn.Kind != jn.Kind || tn.Name != jn.Name {
-			t.Errorf("node %q mismatch: TTL={kind %q name %q} JSON={kind %q name %q}", id, tn.Kind, tn.Name, jn.Kind, jn.Name)
+		if src.Kind != jn.Kind || src.Name != jn.Name {
+			t.Errorf("node %q mismatch: source={kind %q name %q} JSON={kind %q name %q}", id, src.Kind, src.Name, jn.Kind, jn.Name)
 		}
-		if tn.FileSpec.Path != jn.FileSpec.Path || tn.FileSpec.LineStart != jn.FileSpec.LineStart || tn.FileSpec.LineEnd != jn.FileSpec.LineEnd {
-			t.Errorf("node %q file_spec mismatch: TTL=%+v JSON=%+v", id, tn.FileSpec, jn.FileSpec)
+		if src.FileSpec.Path != jn.FileSpec.Path || src.FileSpec.LineStart != jn.FileSpec.LineStart || src.FileSpec.LineEnd != jn.FileSpec.LineEnd {
+			t.Errorf("node %q file_spec mismatch: source=%+v JSON=%+v", id, src.FileSpec, jn.FileSpec)
 		}
 		for k, v := range jn.Properties {
-			if tn.Properties[k] != v {
-				t.Errorf("node %q property %q mismatch: TTL=%q JSON=%q", id, k, tn.Properties[k], v)
+			if src.Properties[k] != v {
+				t.Errorf("node %q property %q mismatch: source=%q JSON=%q", id, k, src.Properties[k], v)
 			}
 		}
 	})
-	if fromTTL.Nodes.Len() != fromJSON.Nodes.Len() {
-		t.Errorf("node count mismatch: TTL=%d JSON=%d", fromTTL.Nodes.Len(), fromJSON.Nodes.Len())
+	if g.Nodes.Len() != fromJSON.Nodes.Len() {
+		t.Errorf("node count mismatch: source=%d JSON=%d", g.Nodes.Len(), fromJSON.Nodes.Len())
 	}
 
-	// Edge set parity on the TTL-canonical (source, type, target) projection:
-	// the serializer collapses duplicate parallel edges to one triple keeping
-	// the max line number, so the JSON edge set is compared in that same
-	// canonical form. JSON must be a strict superset of the TTL semantics.
-	ttlTriples := edgeTripleCanonicalSet(fromTTL)
+	// Edge set parity on the (source, type, target, line) projection.
+	srcTriples := edgeTripleCanonicalSet(g)
 	jsonTriples := edgeTripleCanonicalSet(fromJSON)
 	for k, line := range jsonTriples {
-		if ttlTriples[k] != line {
-			t.Errorf("edge triple %q mismatch: TTL line=%d JSON line=%d", k, ttlTriples[k], line)
+		if srcTriples[k] != line {
+			t.Errorf("edge triple %q mismatch: source line=%d JSON line=%d", k, srcTriples[k], line)
 		}
 	}
-	if len(ttlTriples) != len(jsonTriples) {
-		t.Errorf("edge triple set size mismatch: TTL=%d JSON=%d", len(ttlTriples), len(jsonTriples))
+	if len(srcTriples) != len(jsonTriples) {
+		t.Errorf("edge triple set size mismatch: source=%d JSON=%d", len(srcTriples), len(jsonTriples))
 	}
 
 	// Entrypoints + folder zones parity.
-	for _, ep := range fromJSON.Entrypoints {
+	for _, ep := range g.Entrypoints {
 		found := false
-		for _, tEp := range fromTTL.Entrypoints {
-			if tEp == ep {
+		for _, jEp := range fromJSON.Entrypoints {
+			if jEp == ep {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Errorf("JSON entrypoint %q missing from TTL load", ep)
+			t.Errorf("source entrypoint %q missing from JSON load", ep)
 		}
 	}
-	fromJSON.FolderZones.Iterate(func(id, zone string) {
-		tZone, ok := fromTTL.FolderZones.Get(id)
-		if !ok || tZone != zone {
-			t.Errorf("folder zone %q mismatch: TTL=%q JSON=%q", id, tZone, zone)
+	g.FolderZones.Iterate(func(id, zone string) {
+		jZone, ok := fromJSON.FolderZones.Get(id)
+		if !ok || jZone != zone {
+			t.Errorf("folder zone %q mismatch: source=%q JSON=%q", id, zone, jZone)
 		}
 	})
 }

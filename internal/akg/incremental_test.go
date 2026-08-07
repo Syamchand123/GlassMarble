@@ -26,23 +26,3 @@ func TestIncrementalTracker_DetectUnchangedFiles(t *testing.T) {
 	assert.Contains(t, unchanged, f1)
 	assert.Contains(t, modified, f2)
 }
-
-func TestSerializeGraphDiffToTurtle(t *testing.T) {
-	diff := &GraphDiff{
-		NodesAdded: []DiffNode{
-			{ID: "pkg/a.go::A", Kind: "Struct", Name: "A"},
-		},
-		EdgesAdded: []DiffEdge{
-			{SourceID: "pkg/a.go::A", TargetID: "pkg/b.go::B", Type: "calls", Line: 10},
-		},
-		NodesRemoved: []DiffNode{
-			{ID: "pkg/c.go::C", Kind: "Struct", Name: "C"},
-		},
-	}
-
-	ttl := SerializeGraphDiffToTurtle(diff, 2)
-	assert.Contains(t, ttl, "Delta Append for Version 2")
-	assert.Contains(t, ttl, "Deleted")
-	assert.Contains(t, ttl, "Struct")
-	assert.Contains(t, ttl, "<< <http://glassmarble.org/node/pkg/a.go::A>")
-}

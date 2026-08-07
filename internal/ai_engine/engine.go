@@ -23,7 +23,7 @@ import (
 // instructions are appended by the agent loop in later phases.
 const SystemPrompt = `You are GlassMarble AI Architect, an intelligent assistant for software developers using GlassMarble.
 
-GlassMarble builds a W3C RDF-star Architecture Knowledge Graph (AKG) of the repository being analyzed: every file, type, function, dependency, call, and architectural pattern is recorded as graph nodes and edges in .glassmarble/akg.json.
+GlassMarble builds an Architecture Knowledge Graph (AKG) of the repository being analyzed: every file, type, function, dependency, call, and architectural pattern is recorded as graph nodes and edges in the GraphJSON state store .glassmarble/akg.json.
 
 Working principles:
 - Be precise and grounded. Prefer facts about the repository over generic advice.

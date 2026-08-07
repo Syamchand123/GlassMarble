@@ -61,16 +61,16 @@ func init() {
 	rootCmd.PersistentFlags().Bool("debug", false, "Enable debug logging")
 	rootCmd.PersistentFlags().StringP("config", "c", "", "config file (default is $HOME/.glassmarble.yaml)")
 	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "verbose output")
-	rootCmd.PersistentFlags().Int("max-ttl-mb", 0, "Refuse to load or commit an AKG state file larger than this many MiB (0 = unlimited) (AUDIT Phase 4A-4)")
+	rootCmd.PersistentFlags().Int("max-json-mb", 0, "Refuse to load or commit an AKG state file (akg.json) larger than this many MiB (0 = unlimited) (AUDIT Phase 4A-4)")
 }
 
 // newAKGManager builds the AKG transaction manager for a storage directory,
-// honoring the persistent --max-ttl-mb budget flag (AUDIT Issue 4 Phase 4A-4).
+// honoring the persistent --max-json-mb budget flag (AUDIT Issue 4 Phase 4A-4).
 // A nil cmd (e.g. from the watch loop) means "no budget flag" — unlimited.
 func newAKGManager(storageDir string, cmd *cobra.Command) (*akg.AKGTransactionManager, error) {
 	var maxBytes int64
 	if cmd != nil {
-		if maxMB, _ := cmd.Flags().GetInt("max-ttl-mb"); maxMB > 0 {
+		if maxMB, _ := cmd.Flags().GetInt("max-json-mb"); maxMB > 0 {
 			maxBytes = int64(maxMB) << 20
 		}
 	}

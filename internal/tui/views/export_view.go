@@ -10,9 +10,6 @@ import (
 // snapshot" phrase is preserved for tests.
 func RenderExportSuccess(format, path string, nodeCount int, sizeBytes int64) string {
 	formatBadge := tui.BadgeInfo.Render("  GraphJSON (.json)  ")
-	if format == "turtle" {
-		formatBadge = tui.BadgeOK.Render("  Turtle (.ttl)  ")
-	}
 	rows := []string{
 		tui.StyleOK.Render("  ✓  Exported AKG snapshot (" + itoa(nodeCount) + " nodes)"),
 		"",
@@ -30,5 +27,5 @@ func RenderExportSuccess(format, path string, nodeCount int, sizeBytes int64) st
 
 // RenderExportUnsupported renders the unsupported-format error card.
 func RenderExportUnsupported(ext string) string {
-	return tui.StyleCard.Render("  " + tui.StyleError.Render(fmt.Sprintf("  ✗ Unsupported output format %q (use .json or .ttl)", ext)))
+	return tui.StyleCard.Render("  " + tui.StyleError.Render(fmt.Sprintf("  ✗ Unsupported output format %q (use .json)", ext)))
 }

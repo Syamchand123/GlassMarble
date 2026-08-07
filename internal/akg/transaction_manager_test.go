@@ -24,10 +24,10 @@ func TestExecuteDelta_NilPayload(t *testing.T) {
 	}
 }
 
-// TestMaxTTLBytesGuardRejectsOversizedCommit: a delta whose staged TTL would
-// exceed the --max-ttl-mb budget is refused and the previous good file is
-// kept (AUDIT Issue 4 Phase 4A-4).
-func TestMaxTTLBytesGuardRejectsOversizedCommit(t *testing.T) {
+// TestMaxStateBytesGuardRejectsOversizedCommit: a delta whose staged JSON
+// would exceed the --max-json-mb budget is refused and the previous good file
+// is kept (AUDIT Issue 4 Phase 4A-4).
+func TestMaxStateBytesGuardRejectsOversizedCommit(t *testing.T) {
 	dir := t.TempDir()
 	// 1-byte budget: any serialized graph exceeds it, so the commit must be
 	// refused and the previous good file kept.
@@ -40,23 +40,17 @@ func TestMaxTTLBytesGuardRejectsOversizedCommit(t *testing.T) {
 
 	err = tm.ExecuteDeltaTransaction(payload, []string{"test.go"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--max-ttl-mb")
+	assert.Contains(t, err.Error(), "--max-json-mb")
 
 	// The commit must not leave a state file behind.
 	if _, statErr := os.Stat(filepath.Join(dir, "akg.json")); !os.IsNotExist(statErr) {
 		t.Error("oversized commit must not leave a state file behind")
 	}
-
-	// WAL must not block future recovery (rollback on failed save).
-	walPath := filepath.Join(dir, "wal", "akg_transactions.wal")
-	if st, statErr := os.Stat(walPath); statErr == nil && st.Size() > 0 {
-		t.Errorf("WAL must be truncated after a refused commit, got %d bytes", st.Size())
-	}
 }
 
-// TestMaxTTLBytesGuardRejectsOversizedLoad: an existing state file larger
+// TestMaxStateBytesGuardRejectsOversizedLoad: an existing state file larger
 // than the budget is refused at load (AUDIT Issue 4 Phase 4A-4).
-func TestMaxTTLBytesGuardRejectsOversizedLoad(t *testing.T) {
+func TestMaxStateBytesGuardRejectsOversizedLoad(t *testing.T) {
 	dir := t.TempDir()
 	tm, err := NewAKGTransactionManager(dir)
 	require.NoError(t, err)
@@ -68,7 +62,7 @@ func TestMaxTTLBytesGuardRejectsOversizedLoad(t *testing.T) {
 	// 1-byte budget: any existing state file is refused on reload.
 	_, err = NewAKGTransactionManagerWithOptions(dir, 1)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--max-ttl-mb")
+	assert.Contains(t, err.Error(), "--max-json-mb")
 
 	// A fresh database (no state file) is always allowed.
 	fresh := t.TempDir()
@@ -466,52 +460,6 @@ func TestGetActiveGraph(t *testing.T) {
 	assert.Equal(t, 0, graph.Nodes.Len())
 }
 
-// TestRecover_BoundedReplay verifies that WAL entries already captured in the
-// TTL (txID <= maxAppliedTx from the gm:version metadata) are skipped, while
-// newer committed entries are replayed exactly once (AUDIT Issue 3 Phase 3B-7).
-func TestRecover_BoundedReplay(t *testing.T) {
-	dir := t.TempDir()
-	tm, err := NewAKGTransactionManager(dir)
-	require.NoError(t, err)
-	defer tm.Close()
-
-	payload := stage4.NewStage4Output("hash1")
-	payload.GraphNodes["real1"] = &stage4.ResolvedNode{ID: "real1", Kind: "FUNCTION", Name: "real1"}
-	require.NoError(t, tm.ExecuteDeltaTransaction(payload, []string{"a.go"}))
-	// After a successful commit the WAL is truncated; graph.Version is now 1.
-
-	// Simulate a crash window: stale committed entry for the already-applied
-	// tx 1 (must be skipped) and a new committed entry tx 2 (must be replayed).
-	require.NoError(t, tm.wal.AppendEntry(&WALEntry{
-		TxID: 1, CommitHash: "hash1", Status: WALStatusStarted, ModifiedFiles: []string{"a.go"},
-		Payload: &stage4.Stage4Output{CommitHash: "hash1", GraphNodes: map[string]*stage4.ResolvedNode{
-			"staleNode": {ID: "staleNode", Kind: "FUNCTION", Name: "stale"},
-		}},
-	}))
-	require.NoError(t, tm.wal.MarkCommitted(1))
-	require.NoError(t, tm.wal.AppendEntry(&WALEntry{
-		TxID: 2, CommitHash: "hash2", Status: WALStatusStarted, ModifiedFiles: []string{"b.go"},
-		Payload: &stage4.Stage4Output{CommitHash: "hash2", GraphNodes: map[string]*stage4.ResolvedNode{
-			"replayed2": {ID: "replayed2", Kind: "FUNCTION", Name: "replayed2"},
-		}},
-	}))
-	require.NoError(t, tm.wal.MarkCommitted(2))
-
-	require.NoError(t, tm.Recover())
-
-	graph := tm.GetActiveSnapshot()
-	require.Equal(t, uint64(2), graph.Version, "replay bound should advance to newest replayed tx")
-	if _, ok := graph.GetNode("real1"); !ok {
-		t.Error("node from committed delta must survive")
-	}
-	if _, ok := graph.GetNode("replayed2"); !ok {
-		t.Error("newer committed WAL entry must be replayed")
-	}
-	if _, ok := graph.GetNode("staleNode"); ok {
-		t.Error("stale WAL entry at or below maxAppliedTx must NOT be replayed")
-	}
-}
-
 // TestSchemaVersionMismatchRejected verifies that a persisted TTL with a newer
 // schema version fails loudly instead of silently loading an empty graph
 // (AUDIT Issue 3 Phase 3A-3).
@@ -615,8 +563,8 @@ func TestDeltaPersistsEntrypointsAndZones(t *testing.T) {
 
 // TestDanglingEdgeSweepNeverPersists verifies the engine-side zero-dangling
 // guard (AUDIT Issue 5 Phase 5A-1): a delta whose edge targets a missing
-// node commits cleanly — the sweep drops the edge, the WAL truncates, and
-// the reloaded graph contains zero dangling edges.
+// node commits cleanly — the sweep drops the edge — and the reloaded graph
+// contains zero dangling edges.
 func TestDanglingEdgeSweepNeverPersists(t *testing.T) {
 	dir := t.TempDir()
 	tm, err := NewAKGTransactionManager(dir)
@@ -643,8 +591,8 @@ func TestDanglingEdgeSweepNeverPersists(t *testing.T) {
 	_, ok := snapshot.GetNode("a.go::ok")
 	require.True(t, ok, "baseline node must survive the sweep")
 
-	// The WAL truncates after the commit: a fresh manager opens cleanly and
-	// the persisted file carries no dangling edges.
+	// The persisted file carries no dangling edges: a fresh manager opens
+	// cleanly.
 	reloaded, err := NewAKGTransactionManager(dir)
 	require.NoError(t, err)
 	defer reloaded.Close()

@@ -142,7 +142,7 @@ func TestDoctorCommandCorruptFails(t *testing.T) {
 	}
 }
 
-func TestDiffCommandWALTruncated(t *testing.T) {
+func TestDiffCommandNoPendingTransactions(t *testing.T) {
 	tempDir := t.TempDir()
 	writeDoctorState(t, tempDir, doctorFixtureGraph())
 
@@ -151,7 +151,7 @@ func TestDiffCommandWALTruncated(t *testing.T) {
 		t.Fatalf("diff command failed: %v\n%s", err, output)
 	}
 	if !strings.Contains(output, "No pending transactions") {
-		t.Errorf("expected truncated-WAL message:\n%s", output)
+		t.Errorf("expected no-pending-transactions message:\n%s", output)
 	}
 	if !strings.Contains(output, "abcdef123456") {
 		t.Errorf("expected current commit hash in diff output:\n%s", output)

@@ -6,99 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
-	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 )
-
-// TestSerializeSingleStatement (W2-01 / K-01 / AC-11):
-// Verifies that SerializeToTurtle writes single RDF-star statements per edge
-// and does NOT double-write base triples.
-func TestSerializeSingleStatement(t *testing.T) {
-	graph := NewCodePropertyGraph("commit_test_hash")
-	graph.SchemaVersion = CurrentSchemaVersion
-
-	srcNode := &stage4.ResolvedNode{
-		ID:   "type:internal/test:Foo",
-		Kind: "STRUCT",
-		Name: "Foo",
-		FileSpec: stage4.LocationMeta{
-			Path:      "internal/test/foo.go",
-			LineStart: 10,
-			LineEnd:   20,
-		},
-	}
-	tgtNode := &stage4.ResolvedNode{
-		ID:   "type:internal/test:Bar",
-		Kind: "STRUCT",
-		Name: "Bar",
-		FileSpec: stage4.LocationMeta{
-			Path:      "internal/test/bar.go",
-			LineStart: 5,
-			LineEnd:   15,
-		},
-	}
-
-	graph.Nodes = graph.Nodes.Set(srcNode.ID, srcNode).Set(tgtNode.ID, tgtNode)
-
-	edge := stage4.ResolvedEdge{
-		SourceID:   srcNode.ID,
-		TargetID:   tgtNode.ID,
-		Type:       stage4.EdgeCalls,
-		LineNumber: 15,
-		Confidence: 1.0,
-	}
-	graph.OutboundEdges = graph.OutboundEdges.Set(srcNode.ID, []stage4.ResolvedEdge{edge})
-
-	var buf bytes.Buffer
-	err := SerializeToTurtle(graph, &buf)
-	if err != nil {
-		t.Fatalf("SerializeToTurtle failed: %v", err)
-	}
-
-	output := buf.String()
-
-	// 1. Assert RDF-star single statement is present
-	if !strings.Contains(output, "<< <http://glassmarble.org/node/type:internal/test:Foo> gm:calls <http://glassmarble.org/node/type:internal/test:Bar> >>") {
-		t.Errorf("expected RDF-star edge statement in output:\n%s", output)
-	}
-
-	// 2. Assert double-written base triple is NOT present
-	baseTriple := "<http://glassmarble.org/node/type:internal/test:Foo> gm:calls <http://glassmarble.org/node/type:internal/test:Bar> ."
-	if strings.Contains(output, baseTriple) {
-		t.Errorf("found unwanted base triple double-write:\n%s", output)
-	}
-}
-
-// TestMetadataFields (W2-03 / K-02 / AC-12):
-// Asserts metadata block contains commitHash, schemaVersion (3), version, analyzerVersion, generatedAt, views.
-func TestMetadataFields(t *testing.T) {
-	graph := NewCodePropertyGraph("abc123def456")
-	graph.SchemaVersion = CurrentSchemaVersion
-	graph.Version = 42
-
-	var buf bytes.Buffer
-	err := SerializeToTurtle(graph, &buf)
-	if err != nil {
-		t.Fatalf("SerializeToTurtle failed: %v", err)
-	}
-
-	output := buf.String()
-
-	if !strings.Contains(output, ont.PredCommitHash+` "abc123def456"`) {
-		t.Errorf("missing gm:commitHash in metadata:\n%s", output)
-	}
-	if !strings.Contains(output, ont.PredSchemaVersion+` 3`) {
-		t.Errorf("missing gm:schemaVersion 3 in metadata:\n%s", output)
-	}
-	if !strings.Contains(output, ont.PredAnalyzerVersion+` "1.0.0-overhaul"`) {
-		t.Errorf("missing gm:analyzerVersion in metadata:\n%s", output)
-	}
-	if !strings.Contains(output, ont.PredViews+` "structural"`) {
-		t.Errorf("missing gm:views in metadata:\n%s", output)
-	}
-}
 
 // TestLegacyReadBackCompat (W2-02 / K-01 / AC-28):
 // Asserts legacy TTL files with base triples + reified blocks parse to identical graph as v3.
@@ -147,14 +57,11 @@ func TestLegacyReadBackCompat(t *testing.T) {
 	}
 }
 
-// TestNoContentByDefault (W2-07 / K-05 / AC-06):
-// Asserts analyze --full without --store-code yields zero gm:content in serialized TTL.
+// TestNoContentByDefault (K-05 / AC-06):
+// Asserts the content policy drops source code from AKG nodes when
+// --store-code is disabled, and the canonical GraphJSON export never
+// carries it.
 func TestNoContentByDefault(t *testing.T) {
-	SetStoreCode(false)
-	defer SetStoreCode(false)
-
-	graph := NewCodePropertyGraph("content_test")
-
 	node := &stage4.ResolvedNode{
 		ID:   "type:main:App",
 		Kind: "STRUCT",
@@ -163,30 +70,24 @@ func TestNoContentByDefault(t *testing.T) {
 			"content": "func (a *App) Run() { println(\"hello\") }",
 		},
 	}
+	ApplyContentPolicy(node, GetStoreCode())
+
+	graph := NewCodePropertyGraph("content_test")
 	graph.Nodes = graph.Nodes.Set(node.ID, node)
 
 	var buf bytes.Buffer
-	if err := SerializeToTurtle(graph, &buf); err != nil {
-		t.Fatalf("SerializeToTurtle failed: %v", err)
+	if err := ExportGraphJSON(graph, &buf); err != nil {
+		t.Fatalf("ExportGraphJSON failed: %v", err)
 	}
-
-	output := buf.String()
-	if strings.Contains(output, "gm:content") {
-		t.Errorf("found gm:content when --store-code is disabled:\n%s", output)
-	}
-	if !strings.Contains(output, ont.PredHasContent+` "false"`) {
-		t.Errorf("expected gm:hasContent \"false\":\n%s", output)
+	if strings.Contains(buf.String(), "func (a *App) Run()") {
+		t.Errorf("content leaked into GraphJSON when --store-code is disabled:\n%s", buf.String())
 	}
 }
 
-// TestStoreCodeCap (W2-07 / K-05):
-// Asserts that when --store-code is enabled, content is kept for structural nodes and capped at 512B.
+// TestStoreCodeCap (K-05):
+// Asserts that when --store-code is enabled, content is kept for structural
+// nodes and capped at 512B in the GraphJSON export.
 func TestStoreCodeCap(t *testing.T) {
-	SetStoreCode(true)
-	defer SetStoreCode(false)
-
-	graph := NewCodePropertyGraph("content_test")
-
 	longContent := strings.Repeat("A", 1000)
 	node := &stage4.ResolvedNode{
 		ID:   "type:main:App",
@@ -196,19 +97,20 @@ func TestStoreCodeCap(t *testing.T) {
 			"content": longContent,
 		},
 	}
+	ApplyContentPolicy(node, true)
+
+	graph := NewCodePropertyGraph("content_test")
 	graph.Nodes = graph.Nodes.Set(node.ID, node)
 
 	var buf bytes.Buffer
-	if err := SerializeToTurtle(graph, &buf); err != nil {
-		t.Fatalf("SerializeToTurtle failed: %v", err)
+	if err := ExportGraphJSON(graph, &buf); err != nil {
+		t.Fatalf("ExportGraphJSON failed: %v", err)
 	}
-
-	output := buf.String()
-	if !strings.Contains(output, "gm:content") {
-		t.Fatalf("expected gm:content when --store-code is enabled:\n%s", output)
+	if strings.Contains(buf.String(), longContent) {
+		t.Errorf("content was not truncated to %d bytes", MaxContentLength)
 	}
-	if strings.Contains(output, longContent) {
-		t.Errorf("content was not truncated to 512B")
+	if !strings.Contains(buf.String(), strings.Repeat("A", MaxContentLength)) {
+		t.Errorf("expected capped content in GraphJSON export")
 	}
 }
 
@@ -297,48 +199,6 @@ func TestWriteReadSymmetry(t *testing.T) {
 	}
 	if _, hasCode := restoredNode.Properties["code"]; hasCode {
 		t.Errorf("unexpected 'code' property key found in restored node (K-08 key symmetry failure)")
-	}
-}
-
-// TestWALRoundTrip (W2-05 / 6.10):
-// Asserts WAL entries replay cleanly to identical graph.
-func TestWALRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-
-	wal, err := NewWriteAheadLog(dir)
-	if err != nil {
-		t.Fatalf("NewWriteAheadLog failed: %v", err)
-	}
-
-	payload := stage4.NewStage4Output("wal_test_commit")
-	node := &stage4.ResolvedNode{
-		ID:   "type:pkg:Worker",
-		Kind: "STRUCT",
-		Name: "Worker",
-	}
-	payload.GraphNodes[node.ID] = node
-
-	entry := &WALEntry{
-		TxID:       1,
-		CommitHash: "wal_test_commit",
-		Timestamp:  time.Now().UTC(),
-		Payload:    payload,
-		Status:     WALStatusStarted,
-	}
-
-	if err := wal.AppendEntry(entry); err != nil {
-		t.Fatalf("AppendEntry failed: %v", err)
-	}
-
-	entries, err := wal.ReadAllEntries()
-	if err != nil {
-		t.Fatalf("ReadAllEntries failed: %v", err)
-	}
-	if len(entries) != 1 {
-		t.Fatalf("expected 1 entry, got %d", len(entries))
-	}
-	if entries[0].CommitHash != "wal_test_commit" {
-		t.Errorf("commit hash mismatch: %q", entries[0].CommitHash)
 	}
 }
 

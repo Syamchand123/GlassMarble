@@ -16,7 +16,7 @@ var importCmd = &cobra.Command{
 	Short: "Import a portable graph document, replacing the active AKG snapshot",
 	Long: `Replaces the active AKG database with the contents of a GraphJSON file
 produced by ` + "`gmb export`" + ` (or any compatible GraphJSON document). The
-previous snapshot is overwritten; the WAL is truncated after import.
+previous snapshot is overwritten by a single atomic akg.json write.
 
 Dangling references in the imported document are rejected so the persisted
 state always stays verified.`,

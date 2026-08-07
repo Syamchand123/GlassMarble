@@ -379,16 +379,13 @@ func (ec *EngineCoordinator) parseGraph(opts types.QueryOptions) (*types.NativeG
 		return cached, nil
 	}
 
-	var native *types.NativeGraph
-	if ec.parseFn != nil {
-		native, err = ec.parseFn(ec.statePath, opts)
-	} else if opts.Scope == types.ScopeFile && opts.ScopePath != "" {
-		// Lazy file-scoped read: only the file's triples are materialized
-		// (AUDIT Issue 4 Phase 4A-2).
-		native, err = stage1.ParseTTLFileToNativeScoped(ec.statePath, opts.ScopePath)
-	} else {
-		native, err = stage1.ParseTTLFileToNative(ec.statePath)
+	parseFn := ec.parseFn
+	if parseFn == nil {
+		parseFn = func(path string, opts types.QueryOptions) (*types.NativeGraph, error) {
+			return stage1.ExtractSubgraph(path, opts.DiagramType, opts)
+		}
 	}
+	native, err := parseFn(ec.statePath, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse state file: %w", err)
 	}

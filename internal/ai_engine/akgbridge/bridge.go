@@ -95,9 +95,9 @@ func (b *Bridge) Snapshot() (*akg.CodePropertyGraph, error) {
 		return b.snap, nil
 	}
 
-	// The transaction manager self-heals from the legacy TTL on open and may
-	// checkpoint the WAL or repair caches; Close() flushes any pending
-	// writes before we hand the snapshot to concurrent readers.
+	// The transaction manager self-heals from the legacy TTL on open and
+	// writes a fresh akg.json; Close() flushes any pending writes before we
+	// hand the snapshot to concurrent readers.
 	tm, err := akg.NewAKGTransactionManager(b.akgDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open AKG database: %w", err)

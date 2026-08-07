@@ -36,7 +36,8 @@ type BuildDiagramRequest struct {
 
 	// ParseFn overrides the state-file parser used by the engine
 	// coordinator. Callers serving the canonical akg.json GraphJSON store
-	// set it to akg.ParseGraphForQuery; nil keeps the legacy Turtle parser.
+	// pass akg.ParseGraphForQuery; nil keeps the coordinator's built-in
+	// legacy Turtle reader (pre-migration state files only).
 	ParseFn visualization_engine.ParseFn
 
 	// Legacy flat fields for backward compatibility
@@ -172,7 +173,7 @@ func BuildDiagramWithContext(ctx context.Context, req BuildDiagramRequest) (*Bui
 	doneExtract := StartSpan("extract")
 	ec := visualization_engine.NewEngineCoordinator(req.StatePath)
 	// The request layer installs the canonical GraphJSON reader (Phase C);
-	// without it the coordinator falls back to the legacy Turtle parser.
+	// without it the coordinator keeps its built-in legacy Turtle fallback.
 	if req.ParseFn != nil {
 		ec.SetParseFn(req.ParseFn)
 	}

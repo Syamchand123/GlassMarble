@@ -100,7 +100,8 @@ const (
 // two families; the serializer emits a single gm:view attribute per triple
 // (K-01), so they keep their primary family view and security filtering is
 // applied at extraction time. The returned value must match the gm:view
-// vocabulary declared in internal/akg/ontology.ttl.
+// vocabulary declared in the AKG ontology (internal/akg/ontology.ttl), the
+// shared predicate vocabulary enforced by the ontology conformance tests.
 func ViewOfEdgeType(et RelationshipType) string {
 	switch et {
 	case EdgeSecuritySink:

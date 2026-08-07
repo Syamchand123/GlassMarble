@@ -13,23 +13,20 @@ import (
 )
 
 // housekeepingCmd reports and prunes the .glassmarble working set
-// (AUDIT Issue 4 Phase 4B-8): saved marbles, AI chat sessions, and WAL
-// segments. The AKG state file itself is never touched here — it is guarded
-// by the post-write verification and the --max-ttl-mb budget.
+// (AUDIT Issue 4 Phase 4B-8): saved marbles and AI chat sessions. The AKG
+// state file itself is never touched here — it is guarded by the post-write
+// verification and the --max-json-mb budget.
 var housekeepingCmd = &cobra.Command{
 	Use:   "housekeeping",
-	Short: "Report and prune .glassmarble working-set storage (marbles, sessions, WAL)",
+	Short: "Report and prune .glassmarble working-set storage (marbles, sessions)",
 	Long: `Scans .glassmarble/ and reports the bytes held by each working-set area
-(wal/, marbles/, ai/), then optionally prunes saved diagrams and chat
+(marbles/, ai/), then optionally prunes saved diagrams and chat
 sessions older than --older-than days. The AKG state file (akg.json)
 is never pruned by this command.
 
   gmb housekeeping                 # report sizes only
   gmb housekeeping --prune         # delete marbles/sessions older than 30 days
-  gmb housekeeping --prune --older-than 7   # 7-day retention
-
-WAL segments are truncated automatically after every successful load; the
---prune run also truncates the WAL if a healthy state file exists.`,
+  gmb housekeeping --prune --older-than 7   # 7-day retention`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, _ := cmd.Flags().GetString("dir")
 		if dir == "" {
@@ -52,7 +49,6 @@ WAL segments are truncated automatically after every successful load; the
 		}
 		areas := []*area{
 			{name: "state (akg.json)", path: filepath.Join(storageDir, "akg.json")},
-			{name: "wal/", path: filepath.Join(storageDir, "wal")},
 			{name: "marbles/", path: filepath.Join(storageDir, "marbles")},
 			{name: "ai/", path: filepath.Join(storageDir, "ai")},
 		}
@@ -126,21 +122,6 @@ WAL segments are truncated automatically after every successful load; the
 			prunedBytes += pruneArea(a.path, cutoff, &prunedFiles)
 		}
 
-		// WAL truncation: safe after a successful load of a healthy state file.
-		if stateStat, err := os.Stat(filepath.Join(storageDir, "akg.json")); err == nil && stateStat.Size() > 0 {
-			if walDirStat, err := os.Stat(filepath.Join(storageDir, "wal")); err == nil && walDirStat.IsDir() {
-				if old, err := walDirSize(filepath.Join(storageDir, "wal")); err == nil && old > 0 {
-					if tm, err := newAKGManager(storageDir, cmd); err == nil {
-						tm.Close() // load + recovery truncate the WAL on exit path
-						if after, _ := walDirSize(filepath.Join(storageDir, "wal")); after < old {
-							prunedBytes += old - after
-							prunedFiles++
-						}
-					}
-				}
-			}
-		}
-
 		fmt.Printf("\nPruned %d file(s), %s reclaimed (retention: %d days).\n", prunedFiles, humanBytes(prunedBytes), olderThan)
 		return nil
 	},
@@ -182,27 +163,9 @@ func prunePreview(dir string, cutoff time.Time, staleFiles *int) int64 {
 	return reclaimed
 }
 
-// walDirSize sums the WAL segment chain bytes.
-func walDirSize(walDir string) (int64, error) {
-	var size int64
-	entries, err := os.ReadDir(walDir)
-	if err != nil {
-		return 0, err
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		if info, err := e.Info(); err == nil {
-			size += info.Size()
-		}
-	}
-	return size, nil
-}
-
 func init() {
 	housekeepingCmd.Flags().String("dir", ".", "Directory path containing the .glassmarble/ folder")
-	housekeepingCmd.Flags().Bool("prune", false, "Delete marbles/sessions older than the retention window and truncate the WAL")
+	housekeepingCmd.Flags().Bool("prune", false, "Delete marbles/sessions older than the retention window")
 	housekeepingCmd.Flags().Int("older-than", 30, "Retention window in days for pruned working-set files")
 	rootCmd.AddCommand(housekeepingCmd)
 }

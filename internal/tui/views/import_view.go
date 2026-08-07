@@ -16,7 +16,6 @@ func RenderImportSuccess(inputPath, storageDir string, nodeCount, edgeCount int)
 		tui.BadgeOK.Render("  ✓  Imported AKG snapshot  "),
 		tui.KV("Nodes", itoa(nodeCount)),
 		tui.KV("Edges", itoa(edgeCount)),
-		tui.KV("WAL", tui.StyleMuted.Render("truncated after import")),
 		"",
 		tui.StyleMuted.Render("  Verify with: gmb doctor"),
 	}

@@ -7,7 +7,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 )
 
-// DiffEntry is one WAL transaction rendered in the `gmb diff` view.
+// DiffEntry is one committed graph transaction rendered in the `gmb diff` view.
 type DiffEntry struct {
 	TxID          int
 	CommitHash    string
@@ -30,7 +30,7 @@ func RenderDiff(commitHash string, schemaVersion int, graphVersion uint64, entri
 
 	if len(entries) == 0 {
 		rows = append(rows,
-			tui.BadgeInfo.Render("  INFO  ")+"  No pending transactions: the WAL was truncated after the last atomic write.",
+			tui.BadgeInfo.Render("  INFO  ")+"  No pending transactions: every committed transaction is fully persisted in akg.json.",
 			"              The current akg.json is the fully persisted latest state.",
 		)
 		return tui.StyleCard.Render("  " + joinLines(rows))

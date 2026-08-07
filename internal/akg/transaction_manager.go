@@ -34,18 +34,17 @@ type AKGCommitEvent struct {
 type AKGTransactionManager struct {
 	mu          sync.Mutex
 	container   *MVCCGraphContainer
-	wal         *WriteAheadLog
 	storageDir  string
 	subscribers []chan AKGCommitEvent
-	// MaxTTLBytes is the AKG state-file budget (AUDIT Issue 4 Phase 4A-4).
+	// MaxStateBytes is the AKG akg.json state-file budget (AUDIT Issue 4 Phase 4A-4).
 	// Loading and committing are refused when the state file would exceed it;
 	// 0 means unlimited.
-	MaxTTLBytes int64
+	MaxStateBytes int64
 }
 
 // metadataNodeURI is the ID of the metadata node block written at the top of
-// every full TTL serialization. It carries gm:commitHash, gm:schemaVersion,
-// and gm:version (the WAL replay bound).
+// legacy Turtle serializations. It carries gm:commitHash, gm:schemaVersion,
+// and gm:version.
 const metadataNodeURI = "http://glassmarble.org/node/metadata"
 
 // jsonStateFile is the canonical GraphJSON state file (v3 store) and the
@@ -54,121 +53,46 @@ const metadataNodeURI = "http://glassmarble.org/node/metadata"
 // one-time self-heal migration of pre-v3 repositories.
 const jsonStateFile = "akg.json"
 
-// NewAKGTransactionManager initializes the Transaction Manager, restores state from disk, and runs WAL recovery.
+// NewAKGTransactionManager initializes the Transaction Manager and restores state from disk.
 func NewAKGTransactionManager(storageDir string) (*AKGTransactionManager, error) {
 	return NewAKGTransactionManagerWithOptions(storageDir, 0)
 }
 
 // NewAKGTransactionManagerWithOptions initializes the Transaction Manager
-// with an explicit state-file byte budget (--max-ttl-mb, AUDIT Issue 4
+// with an explicit state-file byte budget (--max-json-mb, AUDIT Issue 4
 // Phase 4A-4): oversized artifacts are refused on load and on commit.
-func NewAKGTransactionManagerWithOptions(storageDir string, maxTTLBytes int64) (*AKGTransactionManager, error) {
+func NewAKGTransactionManagerWithOptions(storageDir string, maxStateBytes int64) (*AKGTransactionManager, error) {
 	if err := os.MkdirAll(storageDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create AKG storage directory: %w", err)
 	}
 
-	wal, err := NewWriteAheadLog(filepath.Join(storageDir, "wal"))
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize WAL logger: %w", err)
-	}
-
 	container := NewMVCCGraphContainer()
 	tm := &AKGTransactionManager{
-		container:   container,
-		wal:         wal,
-		storageDir:  storageDir,
-		MaxTTLBytes: maxTTLBytes,
+		container:      container,
+		storageDir:     storageDir,
+		MaxStateBytes:  maxStateBytes,
 	}
 
-	// Acquire startup file lock to protect recovery and loading
+	// Acquire startup file lock to protect loading
 	if err := tm.AcquireLock(); err != nil {
 		return nil, fmt.Errorf("database lock acquisition failed at startup: %w", err)
 	}
 	defer tm.ReleaseLock()
 
 	// Restore persistent state from disk. Failures surface loudly: a corrupt
-	// or incompatible TTL must never silently produce an empty graph
+	// or incompatible state file must never silently produce an empty graph
 	// (AUDIT Issue 3 Phase 3B-10 / Issue 5 §5.6).
 	if err := tm.loadFromDisk(); err != nil {
 		return nil, fmt.Errorf("failed to restore AKG state from disk: %w", err)
 	}
 
-	// Replay and recover any committed transactions from the WAL file
-	if err := tm.Recover(); err != nil {
-		return nil, fmt.Errorf("WAL recovery failed: %w", err)
-	}
-
 	// Seed the MVCC transaction counter from the restored graph version so
 	// the transaction sequence continues across process runs: the first
 	// commit of this run gets version+1, akg.json's graph version stays
-	// monotonically increasing, and the WAL replay bound stays correct.
+	// monotonically increasing.
 	container.txCounter = tm.container.GetSnapshot().Version
 
 	return tm, nil
-}
-
-// Recover checks the WAL log on disk to replay any committed transactions that weren't fully written to state.
-func (tm *AKGTransactionManager) Recover() error {
-	activeGraph := tm.container.GetSnapshot()
-
-	// Replay is bounded by maxAppliedTx (the TTL metadata gm:version):
-	// transactions already captured in the TTL are skipped instead of being
-	// replayed from scratch on every startup (AUDIT Issue 3 Phase 3B-7).
-	maxAppliedTx := activeGraph.Version
-
-	// Streaming single-pass recovery (AUDIT Issue 4 Phase 4B-5): entries are
-	// read in append order — which is transaction order — and a committed
-	// delta is applied the moment its COMMITTED marker is seen. Memory is
-	// bounded by the in-flight transaction's payload instead of the whole
-	// log. A STARTED entry whose marker never arrived (crash mid-transaction)
-	// or an ABORTED entry is simply dropped.
-	pending := make(map[uint64]*WALEntry)
-	replayed := false
-
-	err := tm.wal.ForEachEntry(func(entry *WALEntry) error {
-		switch entry.Status {
-		case WALStatusStarted:
-			pending[entry.TxID] = entry
-		case WALStatusAborted:
-			delete(pending, entry.TxID)
-		case WALStatusCommitted:
-			started, ok := pending[entry.TxID]
-			delete(pending, entry.TxID)
-			if !ok || started.Payload == nil || started.TxID <= maxAppliedTx {
-				return nil
-			}
-			shadow := activeGraph.Clone()
-			shadow.CommitHash = started.CommitHash
-			shadow.Version = started.TxID
-
-			if _, err := tm.applyDeltaToShadow(shadow, started.Payload, started.ModifiedFiles); err != nil {
-				return fmt.Errorf("WAL recovery failed to apply transaction %d: %w", started.TxID, err)
-			}
-
-			tm.container.PromoteShadowSnapshot(shadow)
-			activeGraph = shadow
-			maxAppliedTx = started.TxID
-			replayed = true
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
-	if replayed {
-		if err := tm.saveToDisk(activeGraph); err != nil {
-			return fmt.Errorf("WAL recovery failed to persist replayed state: %w", err)
-		}
-	}
-
-	// After a successful recovery akg.json captures all committed state; the
-	// WAL can be truncated so it stays bounded (AUDIT Issue 4 Phase 4B-8).
-	if err := tm.wal.Truncate(); err != nil {
-		return fmt.Errorf("WAL truncation after recovery failed: %w", err)
-	}
-
-	return nil
 }
 
 // GetActiveSnapshot returns a thread-safe read-only pointer to the active graph.
@@ -195,10 +119,9 @@ func (tm *AKGTransactionManager) GetActiveGraph() *CodePropertyGraph {
 }
 
 // ReplaceGraph atomically swaps the active graph with the supplied graph and
-// persists it as a full TTL rewrite (used by `gmb import`). The graph is
-// validated before promotion: dangling edges are rejected so the persisted
-// state never carries references to missing nodes. The WAL is truncated
-// afterwards because the imported graph is a full snapshot, not a delta.
+// persists it as a full GraphJSON rewrite (used by `gmb import`). The graph
+// is validated before promotion: dangling edges are rejected so the persisted
+// state never carries references to missing nodes.
 func (tm *AKGTransactionManager) ReplaceGraph(graph *CodePropertyGraph) error {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
@@ -208,7 +131,7 @@ func (tm *AKGTransactionManager) ReplaceGraph(graph *CodePropertyGraph) error {
 	}
 
 	// Reject dangling edges up front: the post-write verification would reject
-	// the TTL anyway, but failing early with a clearer message beats a
+	// the state file anyway, but failing early with a clearer message beats a
 	// serialization/rename round-trip (AUDIT Issue 5 Phase 5A-1).
 	dangling := 0
 	graph.OutboundEdges.Iterate(func(srcID string, edges []stage4.ResolvedEdge) {
@@ -233,13 +156,6 @@ func (tm *AKGTransactionManager) ReplaceGraph(graph *CodePropertyGraph) error {
 	}
 
 	tm.container.PromoteShadowSnapshot(graph)
-
-	// The WAL holds only pre-import delta transactions; they were captured by
-	// the full rewrite so truncating keeps the log bounded (AUDIT Issue 4
-	// Phase 4B-8).
-	if err := tm.wal.Truncate(); err != nil {
-		return fmt.Errorf("failed to truncate WAL after import: %w", err)
-	}
 	return nil
 }
 
@@ -310,19 +226,6 @@ func (tm *AKGTransactionManager) ExecuteDeltaTransaction(payload *stage4.Stage4O
 	shadow, txID := tm.container.AllocateShadowSnapshot()
 	shadow.CommitHash = payload.CommitHash
 
-	// Step A.1: Write-Ahead Log (WAL Write) to disk before mutating in-memory shadow
-	walEntry := &WALEntry{
-		TxID:          txID,
-		CommitHash:    payload.CommitHash,
-		Timestamp:     time.Now().UTC(),
-		ModifiedFiles: modifiedFiles,
-		Payload:       payload,
-		Status:        WALStatusStarted,
-	}
-	if err := tm.wal.AppendEntry(walEntry); err != nil {
-		return fmt.Errorf("WAL logging failed (Sub-Stage A.1): %w", err)
-	}
-
 	// Apply delta to shadow snapshot (Sub-Stage B, C, D)
 	_, err := tm.applyDeltaToShadow(shadow, payload, modifiedFiles)
 	if err != nil {
@@ -332,31 +235,16 @@ func (tm *AKGTransactionManager) ExecuteDeltaTransaction(payload *stage4.Stage4O
 	// ------------------------------------------------------------------------
 	// SUB-STAGE D.3: Atomic Commit & Persistence
 	// ------------------------------------------------------------------------
-	if err := tm.wal.MarkCommitted(txID); err != nil {
-		return fmt.Errorf("WAL commit marker failed: %w", err)
-	}
-
 	// Promote shadow snapshot to active graph snapshot
 	tm.container.PromoteShadowSnapshot(shadow)
 
 	// Persist synchronously (single writer, lock held) with tmp+fsync+rename
 	// semantics: the previous good file survives any failure, and errors reach
 	// the caller instead of being swallowed (AUDIT Issue 3 Phase 3B-4/3B-10).
+	// Since Phase C the atomic JSON write is the durability story — no WAL is
+	// involved in the primary write path.
 	if err := tm.saveToDisk(shadow); err != nil {
-		// Roll the WAL back: the staged state file never replaced the previous
-		// good file, so the rejected transaction must not replay on the next
-		// startup — recovery would hit the same verification failure and
-		// block every subsequent run (zero-dangling guard, Issue 5 Phase 5A-1).
-		if truncErr := tm.wal.Truncate(); truncErr != nil {
-			return fmt.Errorf("failed to persist AKG state: %w (additionally failed to roll back WAL: %v)", err, truncErr)
-		}
 		return fmt.Errorf("failed to persist AKG state: %w", err)
-	}
-
-	// akg.json now captures every transaction up to txID; replaying the WAL
-	// would be redundant. Truncate keeps .glassmarble bounded.
-	if err := tm.wal.Truncate(); err != nil {
-		return fmt.Errorf("failed to truncate WAL after commit: %w", err)
 	}
 
 	// Broadcast commit event to visual layout subscribers
@@ -702,7 +590,7 @@ func (tm *AKGTransactionManager) writeJSONState(graph *CodePropertyGraph) error 
 		return fmt.Errorf("failed to close temp JSON state file: %w", err)
 	}
 
-	if err := tm.enforceTTLBudget(tmp.Name()); err != nil {
+	if err := tm.enforceStateBudget(tmp.Name()); err != nil {
 		return err
 	}
 
@@ -766,7 +654,7 @@ func (tm *AKGTransactionManager) verifyJSONFile(jsonPath string, graph *CodeProp
 		}
 	}
 	if dangling > 0 {
-		return fmt.Errorf("post-write JSON verification failed: %d dangling edge(s) (edges referencing missing nodes); the write was rejected and the previous good file was kept. Remove .glassmarble/akg.json and .glassmarble/wal/akg_transactions.wal, then re-run `gmb analyze --full` to rebuild from scratch", dangling)
+		return fmt.Errorf("post-write JSON verification failed: %d dangling edge(s) (edges referencing missing nodes); the write was rejected and the previous good file was kept. Remove .glassmarble/akg.json, then re-run `gmb analyze --full` to rebuild from scratch", dangling)
 	}
 
 	graph.Verified = true
@@ -774,21 +662,21 @@ func (tm *AKGTransactionManager) verifyJSONFile(jsonPath string, graph *CodeProp
 	return nil
 }
 
-// enforceTTLBudget refuses to proceed when the state file at path exceeds
-// the configured --max-ttl-mb budget. It is applied on load (oversized
+// enforceStateBudget refuses to proceed when the state file at path exceeds
+// the configured --max-json-mb budget. It is applied on load (oversized
 // artifacts must not be pulled into RAM) and on save (an oversized commit is
 // rejected before the atomic rename, leaving the previous good file in place).
-func (tm *AKGTransactionManager) enforceTTLBudget(path string) error {
-	if tm.MaxTTLBytes <= 0 {
+func (tm *AKGTransactionManager) enforceStateBudget(path string) error {
+	if tm.MaxStateBytes <= 0 {
 		return nil
 	}
 	st, err := os.Stat(path)
 	if err != nil {
 		return nil
 	}
-	if st.Size() > tm.MaxTTLBytes {
-		return fmt.Errorf("AKG state file is %.1f MB, exceeding the --max-ttl-mb budget of %.1f MB; refused. Lower the analysis scope (--link-level=architecture), raise the budget, or rebuild with `gmb analyze --full`",
-			float64(st.Size())/(1<<20), float64(tm.MaxTTLBytes)/(1<<20))
+	if st.Size() > tm.MaxStateBytes {
+		return fmt.Errorf("AKG state file is %.1f MB, exceeding the --max-json-mb budget of %.1f MB; refused. Lower the analysis scope (--link-level=architecture), raise the budget, or rebuild with `gmb analyze --full`",
+			float64(st.Size())/(1<<20), float64(tm.MaxStateBytes)/(1<<20))
 	}
 	return nil
 }
@@ -796,9 +684,9 @@ func (tm *AKGTransactionManager) enforceTTLBudget(path string) error {
 // loadFromDisk restores the active graph from the canonical GraphJSON state
 // database (akg.json). A missing akg.json with a legacy akg_state.ttl
 // present triggers the one-time self-heal migration (D3): the TTL is loaded
-// with today's semantics (schema backup/migrate, WAL replay by the caller),
-// akg.json is written from the restored graph, and the TTL is archived as
-// akg_state.ttl.bak — never deleted.
+// with today's semantics (schema backup/migrate), akg.json is written from
+// the restored graph, and the TTL is archived as akg_state.ttl.bak — never
+// deleted.
 func (tm *AKGTransactionManager) loadFromDisk() error {
 	jsonPath := filepath.Join(tm.storageDir, jsonStateFile)
 	if _, err := os.Stat(jsonPath); err == nil {
@@ -825,8 +713,7 @@ func (tm *AKGTransactionManager) loadFromDisk() error {
 		return nil
 	}
 
-	// Fresh database: start empty. WAL replay still applies any
-	// committed-but-unpersisted transactions from a previous run.
+	// Fresh database: start empty.
 	graph := NewCodePropertyGraph("initial")
 	graph.Version = 0
 	graph.SchemaVersion = CurrentSchemaVersion
@@ -836,7 +723,7 @@ func (tm *AKGTransactionManager) loadFromDisk() error {
 
 // loadFromJSON restores the active graph from an akg.json document.
 func (tm *AKGTransactionManager) loadFromJSON(jsonPath string) error {
-	if err := tm.enforceTTLBudget(jsonPath); err != nil {
+	if err := tm.enforceStateBudget(jsonPath); err != nil {
 		return err
 	}
 	data, err := os.ReadFile(jsonPath)
@@ -883,7 +770,7 @@ func (tm *AKGTransactionManager) loadFromJSON(jsonPath string) error {
 // migration with a .bak backup, and a re-persist of the migrated state.
 func (tm *AKGTransactionManager) loadFromLegacyTTL() error {
 	StatePath := filepath.Join(tm.storageDir, "akg_state.ttl")
-	if err := tm.enforceTTLBudget(StatePath); err != nil {
+	if err := tm.enforceStateBudget(StatePath); err != nil {
 		return err
 	}
 	graph, err := tm.reconstructFromTurtle()
@@ -1134,7 +1021,7 @@ func scanDeletedNodeIDs(StatePath string) (map[string]bool, error) {
 // parser drops the metadata node (ID "metadata") from its node map, so the
 // restore path cannot rely on ParseTTLFile for it. Maxima are used for
 // version/schemaVersion so duplicate blocks from incremental appends can
-// never regress the WAL replay bound or smuggle an old schema past the check.
+// never regress the restore version or smuggle an old schema past the check.
 func scanTTLMetadata(StatePath string) (commitHash string, schemaVersion int, version uint64, err error) {
 	f, err := os.Open(StatePath)
 	if err != nil {

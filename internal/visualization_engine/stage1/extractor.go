@@ -2,6 +2,7 @@ package stage1
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +12,101 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
+
+// graphJSON and graphNodeJSON/graphEdgeJSON mirror the akg package's JSON structures
+// for parsing GraphJSON files without importing akg (avoiding circular dependency).
+type graphJSON struct {
+	SchemaVersion   int                          `json:"schema_version"`
+	CommitHash      string                       `json:"commit_hash"`
+	Version         uint64                       `json:"version"`
+	Entrypoints     []string                     `json:"entrypoints,omitempty"`
+	Nodes           []graphNodeJSON              `json:"nodes"`
+	Edges           []graphEdgeJSON              `json:"edges"`
+	Summary         *types.GraphSummary          `json:"summary,omitempty"`
+	Errors          []danglingReferenceErrorJSON `json:"errors,omitempty"`
+	Verified        bool                         `json:"verified,omitempty"`
+	VerificationMsg string                       `json:"verification_msg,omitempty"`
+}
+
+type danglingReferenceErrorJSON struct {
+	SourceID   string `json:"source_id"`
+	TargetID   string `json:"target_id"`
+	EdgeType   string `json:"edge_type"`
+	LineNumber int    `json:"line_number"`
+	Message    string `json:"message"`
+}
+
+type graphNodeJSON struct {
+	ID              string            `json:"id"`
+	Kind            string            `json:"kind"`
+	Name            string            `json:"name"`
+	Primitive       string            `json:"primitive,omitempty"`
+	PrimitiveScores map[string]float64 `json:"primitive_scores,omitempty"`
+	FileSpec        fileSpecJSON      `json:"file_spec"`
+	Properties      map[string]string `json:"properties,omitempty"`
+}
+
+type graphEdgeJSON struct {
+	SourceID   string            `json:"source_id"`
+	TargetID   string            `json:"target_id"`
+	Type       string            `json:"type"`
+	LineNumber int               `json:"line_number,omitempty"`
+	Confidence float32           `json:"confidence,omitempty"`
+	IsCycle    bool              `json:"is_cycle,omitempty"`
+	Properties map[string]string `json:"properties,omitempty"`
+}
+
+type fileSpecJSON struct {
+	Path      string `json:"path"`
+	LineStart int    `json:"line_start,omitempty"`
+	LineEnd   int    `json:"line_end,omitempty"`
+}
+
+func parseGraphJSON(statePath string) (map[string]*types.TTLNode, []types.TTLEdge, error) {
+	if strings.HasSuffix(statePath, ".ttl") {
+		return ParseTTLFile(statePath)
+	}
+
+	file, err := os.Open(statePath)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer file.Close()
+
+	var g graphJSON
+	if err := json.NewDecoder(file).Decode(&g); err != nil {
+		if nodes, edges, ttlErr := ParseTTLFile(statePath); ttlErr == nil {
+			return nodes, edges, nil
+		}
+		return nil, nil, err
+	}
+
+	nodes := make(map[string]*types.TTLNode, len(g.Nodes))
+	for _, gn := range g.Nodes {
+		nodes[gn.ID] = &types.TTLNode{
+			ID:            gn.ID,
+			Kind:          gn.Kind,
+			Name:          gn.Name,
+			PrimitiveType: gn.Primitive,
+			FileURI:       gn.FileSpec.Path,
+			LineStart:     gn.FileSpec.LineStart,
+			LineEnd:       gn.FileSpec.LineEnd,
+			Properties:    gn.Properties,
+		}
+	}
+
+	edges := make([]types.TTLEdge, 0, len(g.Edges))
+	for _, ge := range g.Edges {
+		edges = append(edges, types.TTLEdge{
+			SourceID:   ge.SourceID,
+			Predicate:  ge.Type,
+			TargetID:   ge.TargetID,
+			LineNumber: ge.LineNumber,
+		})
+	}
+
+	return nodes, edges, nil
+}
 
 // ParseIssue describes a single malformed statement found while parsing a TTL
 // file. ParseTTLFile aggregates all issues and returns them as the error so a
@@ -27,11 +123,11 @@ func (p ParseIssue) Error() string {
 	return p.Msg
 }
 
-// ExtractSubgraph parses a TTL file and extracts a subgraph matching the given diagram type and options.
+// ExtractSubgraph parses a GraphJSON file and extracts a subgraph matching the given diagram type and options.
 func ExtractSubgraph(StatePath string, t types.DiagramType, opts types.QueryOptions) (*types.VirtualSubgraph, error) {
-	nodes, edges, err := ParseTTLFile(StatePath)
+	nodes, edges, err := parseGraphJSON(StatePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse Turtle file: %w", err)
+		return nil, fmt.Errorf("failed to parse GraphJSON file: %w", err)
 	}
 
 	cfg := GetExtractionConfig(t, opts)

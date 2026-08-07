@@ -23,7 +23,6 @@ type StatusData struct {
 	VirtualShare  float64
 	Dangling      int
 	JSONBytes     int64
-	WALBytes      int64
 	Verified      bool
 }
 
@@ -66,7 +65,7 @@ func RenderStatus(s StatusData) string {
 		"  Health Errors: " + fmt.Sprintf("%d dangling reference(s)", s.Dangling),
 		"",
 		"  " + tui.Divider("Storage", 56),
-		"  Storage:       " + fmt.Sprintf("State %s | WAL %s", humanBytes(s.JSONBytes), humanBytes(s.WALBytes)),
+		"  Storage:       State " + humanBytes(s.JSONBytes),
 		"  Verification:  " + strings.TrimSpace(verified),
 	}
 	return tui.StyleCard.Render("  " + joinLines(rows))

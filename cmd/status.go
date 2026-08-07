@@ -28,7 +28,6 @@ type statusJSON struct {
 	VirtualShare  float64   `json:"virtual_share_pct,omitempty"`
 	Dangling      int       `json:"dangling_references,omitempty"`
 	JSONBytes     int64     `json:"json_bytes,omitempty"`
-	WALBytes      int64     `json:"wal_bytes,omitempty"`
 	Verified      bool      `json:"verified,omitempty"`
 	Error         string    `json:"error,omitempty"`
 	GeneratedAt   time.Time `json:"generated_at"`
@@ -82,7 +81,7 @@ var statusCmd = &cobra.Command{
 			virtualShare = 100 * float64(stats.VirtualCount) / float64(stats.NodeCount)
 		}
 
-		stateSize, walSize := akgStateSizes(storageDir)
+		stateSize := akgStateSize(storageDir)
 
 		jsonSize := stateSize
 
@@ -102,7 +101,6 @@ var statusCmd = &cobra.Command{
 				VirtualShare:  virtualShare,
 				Dangling:      stats.Dangling,
 				JSONBytes:     jsonSize,
-				WALBytes:      walSize,
 				Verified:      stats.Dangling == 0,
 				GeneratedAt:   time.Now(),
 			}
@@ -126,7 +124,6 @@ var statusCmd = &cobra.Command{
 			VirtualShare:  virtualShare,
 			Dangling:      stats.Dangling,
 			JSONBytes:     jsonSize,
-			WALBytes:      walSize,
 			Verified:      stats.Dangling == 0,
 		}
 		fmt.Println(views.RenderStatus(sd))

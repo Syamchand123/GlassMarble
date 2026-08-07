@@ -174,7 +174,7 @@ func watchEventRelevant(w *fsnotify.Watcher, ev fsnotify.Event) bool {
 	if hasIgnoredSegment(p) {
 		return false
 	}
-	if strings.HasSuffix(p, ".ttl") || strings.HasSuffix(p, ".wal") || strings.HasSuffix(p, ".lock") {
+	if strings.HasSuffix(p, ".wal") || strings.HasSuffix(p, ".lock") {
 		return false
 	}
 	return true

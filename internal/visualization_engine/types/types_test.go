@@ -1,7 +1,6 @@
 package types
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -98,39 +97,10 @@ func TestExtractionConfigDefault(t *testing.T) {
 }
 
 // ============================================================================
-// URI encoding/decoding round-trip tests (AUDIT Issue 2 Phase 2B-6 and Issue 3
-// Phase 3D-14). FormatNodeURI and ParseNodeURI must be exact inverses for every
-// character the serializer escapes, including the later additions { } | ^ and
-// control characters.
+// URI decoding tests (AUDIT Issue 2 Phase 2B-6 and Issue 3 Phase 3D-14).
+// ParseNodeURI serves the legacy Turtle read path; FormatNodeURI died with the
+// TTL serializer and is not part of the JSON-native codebase.
 // ============================================================================
-
-func TestFormatNodeURINamespaces(t *testing.T) {
-	cases := []struct {
-		id, want string
-	}{
-		{"path::Func", "<http://glassmarble.org/node/path::Func>"},
-		{"file:src/main.go", "<http://glassmarble.org/file/src/main.go>"},
-		{"module:internal/db", "<http://glassmarble.org/namespace/internal/db>"},
-	}
-	for _, c := range cases {
-		if got := FormatNodeURI(c.id); got != c.want {
-			t.Errorf("FormatNodeURI(%q) = %q, want %q", c.id, got, c.want)
-		}
-	}
-}
-
-func TestFormatNodeURIEscapes(t *testing.T) {
-	// Every special character the serializer escapes (AUDIT Issue 3 Phase
-	// 3D-14 / ontology_test.go's "special-chars" node). The angle brackets are
-	// the IRI delimiters themselves, so they are intentionally present.
-	input := "my dir/x.go::Foo\"<>&|^`{}"
-	got := FormatNodeURI(input)
-	for _, forbidden := range []string{" ", "\"", "{", "}", "|", "^", "`"} {
-		if strings.Contains(got, forbidden) {
-			t.Errorf("FormatNodeURI(%q) still contains %q in %q", input, forbidden, got)
-		}
-	}
-}
 
 func TestParseNodeURINamespaces(t *testing.T) {
 	cases := []struct {
@@ -145,27 +115,6 @@ func TestParseNodeURINamespaces(t *testing.T) {
 	for _, c := range cases {
 		if got := ParseNodeURI(c.uri); got != c.want {
 			t.Errorf("ParseNodeURI(%q) = %q, want %q", c.uri, got, c.want)
-		}
-	}
-}
-
-func TestRoundTripFormatParseNodeURI(t *testing.T) {
-	// Any node ID with special characters must survive
-	// FormatNodeURI -> ParseNodeURI unchanged (AUDIT Issue 2 Phase 2B-6).
-	inputs := []string{
-		"file:my dir/x.go",
-		"src/db.go::DBStore::Fetch(id)",
-		"ext:( \"fmt\" )::{: defer tm.saveToDisk(...)}",
-		"path::Func{param|with|pipes}",
-		"node::with%20percent::x",
-		"module:internal/db",
-		"file:x.go::Name\"with\"quotes",
-		"::{}|^`<>\\",
-	}
-	for _, in := range inputs {
-		got := ParseNodeURI(FormatNodeURI(in))
-		if got != in {
-			t.Errorf("round-trip %q -> %q -> %q", in, FormatNodeURI(in), got)
 		}
 	}
 }

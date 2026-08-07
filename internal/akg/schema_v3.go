@@ -23,28 +23,33 @@ var SchemaMigrations = []SchemaMigrationRecord{
 	{Version: 3, Description: "Schema v3: single-statement RDF-star serialization (no double write), canonical ID support, view tags, content policy, and stale-kind consolidation."},
 }
 
-// CreateSchemaBackup copies the existing akg_state.ttl file to a backup file
-// named akg_state.v<version>.ttl.bak before performing an in-place schema migration.
+// CreateSchemaBackup copies the existing akg.json (or legacy akg_state.ttl) file to a backup file
+// before performing an in-place schema migration.
 func CreateSchemaBackup(storageDir string, fromVersion int) (string, error) {
-	StatePath := filepath.Join(storageDir, "akg_state.ttl")
-	if _, err := os.Stat(StatePath); err != nil {
-		return "", nil // No file to back up
+	StatePath := filepath.Join(storageDir, jsonStateFile)
+	bakName := fmt.Sprintf("akg.json.v%d.bak", fromVersion)
+	if _, err := os.Stat(StatePath); os.IsNotExist(err) {
+		StatePath = filepath.Join(storageDir, "akg_state.ttl")
+		bakName = fmt.Sprintf("akg_state.v%d.ttl.bak", fromVersion)
+		if _, err := os.Stat(StatePath); err != nil {
+			return "", nil // No file to back up
+		}
 	}
-	bakPath := filepath.Join(storageDir, fmt.Sprintf("akg_state.v%d.ttl.bak", fromVersion))
+	bakPath := filepath.Join(storageDir, bakName)
 	src, err := os.Open(StatePath)
 	if err != nil {
-		return "", fmt.Errorf("failed to open TTL for backup: %w", err)
+		return "", fmt.Errorf("failed to open state file for backup: %w", err)
 	}
 	defer src.Close()
 
 	dst, err := os.Create(bakPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to create backup TTL file: %w", err)
+		return "", fmt.Errorf("failed to create backup file: %w", err)
 	}
 	defer dst.Close()
 
 	if _, err := io.Copy(dst, src); err != nil {
-		return "", fmt.Errorf("failed to copy TTL content to backup: %w", err)
+		return "", fmt.Errorf("failed to copy content to backup: %w", err)
 	}
 	_ = dst.Sync()
 	return bakPath, nil

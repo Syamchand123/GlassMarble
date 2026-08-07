@@ -14,7 +14,7 @@ func TestHousekeepingPrune(t *testing.T) {
 	storage := filepath.Join(root, ".glassmarble")
 	marbles := filepath.Join(storage, "marbles")
 	sessions := filepath.Join(storage, "ai", "sessions")
-	for _, d := range []string{marbles, sessions, filepath.Join(storage, "wal")} {
+	for _, d := range []string{marbles, sessions} {
 		if err := os.MkdirAll(d, 0755); err != nil {
 			t.Fatal(err)
 		}

@@ -1,15 +1,11 @@
 package akg
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/git"
-	"github.com/Syamchand123/GlassMarble/internal/product/ont"
-	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
 // IncrementalTracker manages append-only delta tracking and detects unchanged files (W2-06 / §6.4).
@@ -67,26 +63,4 @@ func (it *IncrementalTracker) DetectUnchangedFiles(allFiles []string) (unchanged
 		}
 	}
 	return unchanged, modified
-}
-
-// SerializeGraphDiffToTurtle converts a GraphDiff delta into a clean append-only RDF-star Turtle string (W2-06 / §6.4).
-// It emits metadata only when version advances, avoiding header duplication.
-func SerializeGraphDiffToTurtle(diff *GraphDiff, newVersion uint64) string {
-	if diff == nil {
-		return ""
-	}
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("\n# --- Delta Append for Version %d ---\n", newVersion))
-	for _, n := range diff.NodesRemoved {
-		sb.WriteString(fmt.Sprintf("<http://glassmarble.org/node/%s> a <%sDeleted> .\n", types.ParseNodeURI(n.ID), ont.PrefixGM))
-	}
-	for _, n := range diff.NodesAdded {
-		sb.WriteString(fmt.Sprintf("<http://glassmarble.org/node/%s> a <%s%s> ;\n", types.ParseNodeURI(n.ID), ont.PrefixGM, n.Kind))
-		sb.WriteString(fmt.Sprintf("    <%sname> %q .\n", ont.PrefixGM, n.Name))
-	}
-	for _, e := range diff.EdgesAdded {
-		sb.WriteString(fmt.Sprintf("<< <http://glassmarble.org/node/%s> <%s%s> <http://glassmarble.org/node/%s> >> <%slineNumber> %d .\n",
-			types.ParseNodeURI(e.SourceID), ont.PrefixGM, strings.TrimPrefix(e.Type, ont.PrefixGM), types.ParseNodeURI(e.TargetID), ont.PrefixGM, e.Line))
-	}
-	return sb.String()
 }
