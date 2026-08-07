@@ -88,7 +88,7 @@ func TestBuildCanonicalIDUnknownKind(t *testing.T) {
 
 func TestParseCanonicalIDGolden(t *testing.T) {
 	cases := []struct {
-		id                    string
+		id                                        string
 		wantKind, wantPath, wantOwner, wantSymbol string
 	}{
 		{"type:internal/tui/programs/analyze/program.go:Options", "type", "internal/tui/programs/analyze/program.go", "", "Options"},
@@ -157,7 +157,10 @@ func TestParseCanonicalIDErrors(t *testing.T) {
 }
 
 func TestNormalizeKind(t *testing.T) {
-	cases := []struct{ in string; want Kind }{
+	cases := []struct {
+		in   string
+		want Kind
+	}{
 		{"STRUCT", KindType}, {"CLASS", KindType}, {"INTERFACE", KindType}, {"TYPE_DECL", KindType},
 		{"METHOD", KindMethod}, {"FUNCTION", KindFunction}, {"EXECUTABLE", KindFunction},
 		{"FIELD", KindField}, {"PARAMETER", KindParam}, {"VARIABLE", KindVar}, {"DFG_VAR", KindVar},

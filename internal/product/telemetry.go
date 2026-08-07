@@ -10,11 +10,11 @@ import (
 
 // Span represents a single timed phase execution span (11.4 / W7-02).
 type Span struct {
-	Name      string        `json:"name"`
-	StartTime time.Time     `json:"start_time"`
-	EndTime   time.Time     `json:"end_time"`
-	Duration  time.Duration `json:"duration_ns"`
-	DurationMS float64      `json:"duration_ms"`
+	Name       string        `json:"name"`
+	StartTime  time.Time     `json:"start_time"`
+	EndTime    time.Time     `json:"end_time"`
+	Duration   time.Duration `json:"duration_ns"`
+	DurationMS float64       `json:"duration_ms"`
 }
 
 // TelemetryRecorder records phase spans during pipeline execution.

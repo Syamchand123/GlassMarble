@@ -26,7 +26,7 @@ type DiagramOptions struct {
 
 // BuildDiagramRequest holds all configuration parameters for generating an architecture diagram (11.1 / §11.1).
 type BuildDiagramRequest struct {
-	StatePath     string
+	StatePath   string
 	DiagramType types.DiagramType
 	Format      string // "mermaid" | "plantuml" | "dot"
 	Options     DiagramOptions
@@ -301,4 +301,3 @@ func hasGeneratedByHeader(markup string) bool {
 	}
 	return false
 }
-

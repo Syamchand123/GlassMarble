@@ -134,8 +134,8 @@ func TestCleanExtID(t *testing.T) {
 		{`ext:alias "net/http"`, "", stage3.ResolveExternalKey("net/http"), true},
 		{`ext:old path with spaces`, "", stage3.ResolveExternalKey("path with spaces"), true},
 		{`ext:internal/errors`, "", stage3.ResolveExternalKey("internal/errors"), true}, // unescaped → self-heal
-		{"ext:internal%2Ferrors", "", "", false}, // canonical spelling: untouched
-		{"module:internal/tui", "", "", false},   // not an ext ID
+		{"ext:internal%2Ferrors", "", "", false},                                        // canonical spelling: untouched
+		{"module:internal/tui", "", "", false},                                          // not an ext ID
 	}
 	for _, tc := range cases {
 		got, ok := cleanExtID(tc.id, tc.prefix)

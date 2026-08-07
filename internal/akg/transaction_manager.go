@@ -68,9 +68,9 @@ func NewAKGTransactionManagerWithOptions(storageDir string, maxStateBytes int64)
 
 	container := NewMVCCGraphContainer()
 	tm := &AKGTransactionManager{
-		container:      container,
-		storageDir:     storageDir,
-		MaxStateBytes:  maxStateBytes,
+		container:     container,
+		storageDir:    storageDir,
+		MaxStateBytes: maxStateBytes,
 	}
 
 	// Acquire startup file lock to protect loading

@@ -39,13 +39,13 @@ const (
 	// concurrency_linker, event_linker, rpc_linker, ffi_linker, di_linker,
 	// security_linker, semantic_linker. Emitted edges describe what a node
 	// does at runtime (calls, messaging, I/O, lifecycle).
-	EdgeCalls            RelationshipType = "CALLS"
-	EdgeContextCall      RelationshipType = "1CFA_CALL"
+	EdgeCalls       RelationshipType = "CALLS"
+	EdgeContextCall RelationshipType = "1CFA_CALL"
 	// EdgeVirtualContext: VIRTUAL_CONTEXT specialization link
 	// (contextNode → base function), serialized as gm:virtualContextLink
 	// (W1-18/A-18 — previously mislabeled as INSTANTIATES_GENERIC;
 	// gm:instantiatesGeneric is reserved for real generic instantiation).
-	EdgeVirtualContext RelationshipType = "VIRTUAL_CONTEXT_LINK"
+	EdgeVirtualContext   RelationshipType = "VIRTUAL_CONTEXT_LINK"
 	EdgeSpawnsConcurrent RelationshipType = "SPAWNS_CONCURRENT"
 	EdgeDefers           RelationshipType = "CFG_DEFERS"
 	EdgeCatches          RelationshipType = "CFG_CATCHES"

@@ -37,13 +37,13 @@ type danglingReferenceErrorJSON struct {
 }
 
 type graphNodeJSON struct {
-	ID              string            `json:"id"`
-	Kind            string            `json:"kind"`
-	Name            string            `json:"name"`
-	Primitive       string            `json:"primitive,omitempty"`
+	ID              string             `json:"id"`
+	Kind            string             `json:"kind"`
+	Name            string             `json:"name"`
+	Primitive       string             `json:"primitive,omitempty"`
 	PrimitiveScores map[string]float64 `json:"primitive_scores,omitempty"`
-	FileSpec        fileSpecJSON      `json:"file_spec"`
-	Properties      map[string]string `json:"properties,omitempty"`
+	FileSpec        fileSpecJSON       `json:"file_spec"`
+	Properties      map[string]string  `json:"properties,omitempty"`
 }
 
 type graphEdgeJSON struct {

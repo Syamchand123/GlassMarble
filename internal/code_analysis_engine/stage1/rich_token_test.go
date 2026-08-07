@@ -124,7 +124,6 @@ end
 	}
 }
 
-
 func parseSnippet(t *testing.T, lang SupportedLang, relPath, src string) *IngestionResult {
 	t.Helper()
 	spec := specFor(t, lang)

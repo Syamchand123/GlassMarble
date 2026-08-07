@@ -25,7 +25,7 @@ func TestBuildDiagramParity(t *testing.T) {
 	require.NoError(t, err)
 
 	req := DiagramRequest{
-		StatePath:       StatePath,
+		StatePath:     StatePath,
 		Type:          types.UMLClass,
 		Scope:         types.ScopeGlobal,
 		Format:        "mermaid",

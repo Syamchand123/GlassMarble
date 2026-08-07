@@ -88,7 +88,7 @@ func buildRichTestStage3Out() *stage3.Stage3Output {
 		Properties: map[string]string{
 			"file_path": "service.go",
 		},
-		BaseTypes: []string{"Base"},
+		BaseTypes:   []string{"Base"},
 		Implemented: []string{"Handler"},
 		Children: []*stage2.GASTNode{
 			mkField("TargetDir", "field"),
@@ -104,9 +104,9 @@ func buildRichTestStage3Out() *stage3.Stage3Output {
 	handler := &stage2.GASTNode{Type: stage2.GASTTypeDeclaration, Name: "Handler", Kind: "interface", StartLine: 1}
 
 	main := &stage2.GASTNode{
-		Type: stage2.GASTFunction,
-		Name: "main",
-		Kind: "function",
+		Type:      stage2.GASTFunction,
+		Name:      "main",
+		Kind:      "function",
 		StartLine: 1,
 		Children: []*stage2.GASTNode{
 			{Type: stage2.GASTCallExpression, Name: "Dispatch", ReceiverType: "Dispatcher", StartLine: 4},

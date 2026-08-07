@@ -31,7 +31,7 @@ const (
 // internal/visualization_engine; this struct only relays the options.
 type Config struct {
 	DiagType    types.DiagramType
-	StatePath     string
+	StatePath   string
 	Opts        types.QueryOptions
 	SaveFile    string
 	OutputFlag  string
@@ -113,7 +113,7 @@ func (m *model) generate() tea.Cmd {
 		}
 		start := time.Now()
 		req := product.DiagramRequest{
-			StatePath:       m.cfg.StatePath,
+			StatePath:     m.cfg.StatePath,
 			ParseFn:       akg.ParseGraphForQuery,
 			Type:          m.cfg.DiagType,
 			Scope:         opts.Scope,
@@ -127,14 +127,14 @@ func (m *model) generate() tea.Cmd {
 			// the requested linkage level, not the architecture default
 			// (GAP-H-05).
 			Options: product.DiagramOptions{
-				LinkLevel:    opts.LinkLevel,
-				Scope:        opts.Scope,
-				ScopePath:    opts.ScopePath,
-				Entry:        opts.EntryPointID,
-				Depth:        opts.MaxDepth,
+				LinkLevel:     opts.LinkLevel,
+				Scope:         opts.Scope,
+				ScopePath:     opts.ScopePath,
+				Entry:         opts.EntryPointID,
+				Depth:         opts.MaxDepth,
 				IncludeUnused: opts.IncludeUnused,
-				MaxNodes:     opts.MaxNodes,
-				ChangedFiles: opts.ChangedFiles,
+				MaxNodes:      opts.MaxNodes,
+				ChangedFiles:  opts.ChangedFiles,
 			},
 		}
 		markup, summary, err := product.BuildDiagram(req)

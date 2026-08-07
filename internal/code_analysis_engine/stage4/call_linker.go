@@ -314,7 +314,7 @@ func resolveCallTarget(receiver, method, filePath string, localImports []string,
 				}
 				if _, exists := cpg.GetNode(apiID); !exists {
 					props := map[string]string{
-						"primitive":     "EXTERNAL_SDK_CALL",
+						"primitive":        "EXTERNAL_SDK_CALL",
 						ont.PredProvenance: "ast",
 					}
 					cpg.GraphNodes[apiID] = &ResolvedNode{

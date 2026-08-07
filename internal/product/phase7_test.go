@@ -19,7 +19,7 @@ func TestCLI_TUI_AI_Parity(t *testing.T) {
 	}
 
 	req := product.BuildDiagramRequest{
-		StatePath:     StatePath,
+		StatePath:   StatePath,
 		DiagramType: types.UMLClass,
 		Format:      "mermaid",
 		Options: product.DiagramOptions{
@@ -99,7 +99,7 @@ func TestFormatParity_HeaderComments(t *testing.T) {
 	for _, fmtCase := range formats {
 		t.Run(fmtCase.format, func(t *testing.T) {
 			req := product.BuildDiagramRequest{
-				StatePath:     StatePath,
+				StatePath:   StatePath,
 				DiagramType: types.UMLClass,
 				Format:      fmtCase.format,
 				Options: product.DiagramOptions{

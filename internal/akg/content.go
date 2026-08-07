@@ -30,6 +30,7 @@ const MaxContentLength = 512
 // When storeCode is false (default):
 //   - Properties["content"] is removed.
 //   - Properties["hasContent"] is set to "false".
+//
 // When storeCode is true:
 //   - Content is kept only for structural nodes (STRUCT, CLASS, INTERFACE, FUNCTION, METHOD).
 //   - Content is capped at MaxContentLength (512 bytes).

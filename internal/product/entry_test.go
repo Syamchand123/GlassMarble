@@ -11,7 +11,7 @@ import (
 func TestResolveEntryPoint_ExplicitSymbol(t *testing.T) {
 	graph := &types.VirtualSubgraph{
 		Nodes: map[string]*types.TTLNode{
-			"cmd/main.go::main": {Name: "main", IsEntrypoint: true},
+			"cmd/main.go::main":    {Name: "main", IsEntrypoint: true},
 			"internal/foo.go::Foo": {Name: "Foo"},
 		},
 	}
@@ -24,7 +24,7 @@ func TestResolveEntryPoint_ExplicitSymbol(t *testing.T) {
 func TestResolveEntryPoint_AutoEntry(t *testing.T) {
 	graph := &types.VirtualSubgraph{
 		Nodes: map[string]*types.TTLNode{
-			"cmd/main.go::main": {Name: "main", IsEntrypoint: true},
+			"cmd/main.go::main":    {Name: "main", IsEntrypoint: true},
 			"internal/foo.go::Foo": {Name: "Foo"},
 		},
 	}
