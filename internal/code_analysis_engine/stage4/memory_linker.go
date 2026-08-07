@@ -69,7 +69,7 @@ func extractEscapesFromGAST(node *stage2.GASTNode, relPath, currentFuncID string
 					// The escape target must exist — previously every edge
 					// dangled because VAR_ nodes were never created
 					// (AUDIT Issue 1.6).
-					if !cpg.NodeExists(varID) {
+					if !cpg.HasNode(varID) {
 						ensureVirtualNode(varID, "VIRTUAL_VARIABLE", escapedObj, cpg)
 					}
 					cpg.AddEdge(funcID, varID, EdgeEscapesToHeap, int(node.StartLine))

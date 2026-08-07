@@ -162,7 +162,7 @@ func (b *InitialGraphBuilder) traverseDirectory(dir *stage3.DirectoryNode) {
 		var fileMembers []string
 		b.extractNodesFromGAST(file.GASTRoot, normPath, "", &fileMembers)
 		for _, memberID := range fileMembers {
-			if b.output.NodeExists(memberID) {
+			if b.output.HasNode(memberID) {
 				b.output.AddEdge(fileID, memberID, EdgeContains, 0)
 			}
 		}

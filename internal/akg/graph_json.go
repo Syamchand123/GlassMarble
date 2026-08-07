@@ -208,6 +208,7 @@ func WriteEmptyJSONState(path string) error {
 		return fmt.Errorf("failed to create %s: %w", path, err)
 	}
 	g := NewCodePropertyGraph("initial")
+	g.Version = 0
 	if err := ExportGraphJSON(g, f); err != nil {
 		f.Close()
 		return fmt.Errorf("failed to serialize empty state: %w", err)

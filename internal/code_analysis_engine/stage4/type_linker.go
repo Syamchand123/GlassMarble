@@ -220,5 +220,27 @@ func resolveTypeToFQN(rawType, currentFilePath string, globalIndex map[string][]
 		return id
 	}
 
+	// 4. v3 (incremental): persisted-graph type-name lookup. The delta's
+	// global index only knows modified files, so types defined in
+	// unmodified files (e.g. a delta of service.go referencing store.DB)
+	// resolve against the linked base graph. Stored node names are the
+	// bare type name ("DB"), so package-qualified refs ("store.DB") are
+	// reduced to their last dot-segment. Mirrors nameToNodeID's
+	// STRUCT/CLASS/INTERFACE semantics — no PARAM/FIELD false positives.
+	// A full rescan links against an empty base, so this never fires there.
+	if cpg.db != nil {
+		bare := clean
+		if i := strings.LastIndex(bare, "."); i != -1 {
+			bare = bare[i+1:]
+		}
+		for _, kind := range []string{"STRUCT", "CLASS", "INTERFACE"} {
+			for _, n := range cpg.db.GetNodesByKind(kind) {
+				if n != nil && n.Name == bare {
+					return n.ID
+				}
+			}
+		}
+	}
+
 	return ""
 }

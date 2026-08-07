@@ -98,6 +98,12 @@ func NewAKGTransactionManagerWithOptions(storageDir string, maxTTLBytes int64) (
 		return nil, fmt.Errorf("WAL recovery failed: %w", err)
 	}
 
+	// Seed the MVCC transaction counter from the restored graph version so
+	// the transaction sequence continues across process runs: the first
+	// commit of this run gets version+1, akg.json's graph version stays
+	// monotonically increasing, and the WAL replay bound stays correct.
+	container.txCounter = tm.container.GetSnapshot().Version
+
 	return tm, nil
 }
 

@@ -332,7 +332,54 @@ func resolveCallTarget(receiver, method, filePath string, localImports []string,
 		}
 	}
 
+	// Attempt 6: v3 (incremental): persisted-graph symbol lookup. In a delta,
+	// the symbol index and ownership map only cover modified files, so targets
+	// defined in unmodified files (e.g. a delta of service.go calling
+	// store.Open) resolve against the linked base graph instead of vanishing.
+	// Candidate order is preserved; the receiver filter prefers the exact
+	// type/package owner when multiple symbols share a name.
+	if cpg.db != nil {
+		// FUNCTION/METHOD only — never PARAM/FIELD or virtual nodes that
+		// merely share the callee's name.
+		var hits []*ResolvedNode
+		for _, kind := range []string{"FUNCTION", "METHOD"} {
+			hits = append(hits, cpg.db.GetNodesByKind(kind)...)
+		}
+		if len(hits) > 0 {
+			if receiver != "" {
+				for _, n := range hits {
+					if n != nil && n.Name == method && dbCandidateMatches(receiver, n.ID) {
+						return n.ID, 0.7
+					}
+				}
+			}
+			for _, n := range hits {
+				if n != nil && n.Name == method {
+					return n.ID, 0.6
+				}
+			}
+		}
+	}
+
 	return "", 0.0
+}
+
+// dbCandidateMatches reports whether a persisted-graph node ID plausibly owns
+// the call-site receiver: the receiver segment of a universal ID (the last
+// "::" segment) for method targets, or the file's package name for free
+// functions ("path/pkg::Open" called via pkg.Open).
+func dbCandidateMatches(receiver, id string) bool {
+	rcv := strings.ToLower(receiver)
+	parts := strings.Split(id, "::")
+	if len(parts) >= 2 && strings.EqualFold(parts[len(parts)-2], receiver) {
+		return true
+	}
+	fileSeg := parts[0]
+	if i := strings.LastIndex(fileSeg, "/"); i != -1 {
+		fileSeg = fileSeg[i+1:]
+	}
+	fileSeg = strings.TrimSuffix(fileSeg, filepath.Ext(fileSeg))
+	return strings.EqualFold(fileSeg, receiver) || strings.Contains(strings.ToLower(fileSeg), rcv)
 }
 
 // receiverTypeMatches reports whether a call-site receiver name corresponds to

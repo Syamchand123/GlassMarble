@@ -162,7 +162,7 @@ skipDFGNode:
 func buildDFGSummaryNodes(dfgSummaries map[string]*dfgVarSummary, cpg *Stage4Output) {
 	for funcID, summary := range dfgSummaries {
 		summaryID := funcID + "::DFG_SUMMARY"
-		if cpg.NodeExists(summaryID) {
+		if cpg.HasNode(summaryID) {
 			continue
 		}
 

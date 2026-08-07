@@ -133,7 +133,7 @@ func buildCFGSummaryNodes(branchCounts map[string]map[string]int, cpg *Stage4Out
 		}
 
 		summaryID := funcID + "::CFG_SUMMARY"
-		if cpg.NodeExists(summaryID) {
+		if cpg.HasNode(summaryID) {
 			continue
 		}
 

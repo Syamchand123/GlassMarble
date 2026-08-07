@@ -36,6 +36,28 @@ func LinkFileDependencies(stage3Out *stage3.Stage3Output, cpg *Stage4Output) {
 		moduleToFile[fe.relPath] = fe.relPath
 	}
 
+	// v3 (incremental): unmodified files are invisible to the delta's own
+	// import index; backfill it from the persisted graph so DEPENDS_ON edges
+	// across the delta boundary survive (e.g. a delta of service.go must
+	// still depend on store.go). A full rescan links against an empty base,
+	// so this is a no-op there.
+	if cpg.db != nil {
+		for _, fn := range cpg.db.GetNodesByKind("FILE") {
+			if fn == nil || fn.FileSpec.Path == "" {
+				continue
+			}
+			mod := moduleFromRelPath(fn.FileSpec.Path)
+			if mod != "" {
+				if _, exists := moduleToFile[mod]; !exists {
+					moduleToFile[mod] = fn.FileSpec.Path
+				}
+			}
+			if _, exists := moduleToFile[fn.FileSpec.Path]; !exists {
+				moduleToFile[fn.FileSpec.Path] = fn.FileSpec.Path
+			}
+		}
+	}
+
 	// Create EdgeDependsOn for each file that imports another known file
 	for _, fe := range files {
 		// File nodes are registered under the "file:" prefix by the builder.

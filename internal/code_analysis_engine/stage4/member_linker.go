@@ -203,6 +203,9 @@ func linkImportMembers(node *stage2.GASTNode, relPath string, globalIndex map[st
 	}
 	fileID := "file:" + stage3.NormalizeRelativePath(relPath)
 	targetID := "file:" + stage3.NormalizeRelativePath(node.Name)
+	// NodeExists (not HasNode) is deliberate: the import target is usually an
+	// unmodified file that lives only in the persisted graph, and this is a
+	// pure lookup — no node is skipped from the delta.
 	if cpg.NodeExists(targetID) {
 		cpg.AddEdgeProperties(fileID, targetID, EdgeDependsOn, int(node.StartLine), 1.0,
 			map[string]string{ont.PredProvenance: "ast"})
@@ -210,9 +213,11 @@ func linkImportMembers(node *stage2.GASTNode, relPath string, globalIndex map[st
 }
 
 // ensureMemberNode registers a structural spine node (FIELD/PARAM) without
-// clobbering existing nodes (base/delta/db all count).
+// clobbering nodes already emitted in this delta. The persisted graph is
+// deliberately not consulted: modified-file nodes are swept on commit, so a
+// base hit would mean the node is never re-added.
 func ensureMemberNode(cpg *Stage4Output, id, kind, name, relPath string, line int) {
-	if cpg.NodeExists(id) {
+	if cpg.HasNode(id) {
 		return
 	}
 	cpg.GraphNodes[id] = &ResolvedNode{

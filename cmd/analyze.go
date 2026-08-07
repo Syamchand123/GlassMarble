@@ -188,6 +188,13 @@ func runAnalysis(opts runAnalysisOptions) error {
 		}
 	}
 
+	// A full rescan (--full, no base state, empty git diff, or diff error)
+	// re-ingests every file. The delta linkers must then not deduplicate
+	// against the persisted base graph: they only re-emit "new" nodes, and
+	// the commit sweep removes every modified-file node missing from the
+	// delta, so deduplicating would silently delete untouched derived
+	// nodes. Stage 4 therefore links full rescans against an empty base.
+	fullRescan := full
 	var stage1Out *stage1.StageOutput
 	doneParse := product.StartSpan("parse")
 	if !full {
@@ -216,6 +223,7 @@ func runAnalysis(opts runAnalysisOptions) error {
 		}
 	}
 	if stage1Out == nil {
+		fullRescan = true
 		stage1Out, err = stage1.RunIngestion(cfg)
 		if err != nil {
 			doneParse()
@@ -301,7 +309,11 @@ func runAnalysis(opts runAnalysisOptions) error {
 		opts.progress(4, "Semantic Linking", 0, 0)
 	}
 	doneStage4 := product.StartSpan("stage4")
-	cpg, err := stage4.Link(stage3Out, modifiedFiles, tm.GetActiveGraph(), linkerCfg)
+	var linkBase stage4.GraphDB = tm.GetActiveGraph()
+	if fullRescan {
+		linkBase = akg.NewCodePropertyGraph("rescan")
+	}
+	cpg, err := stage4.Link(stage3Out, modifiedFiles, linkBase, linkerCfg)
 	if err != nil {
 		doneStage4()
 		return fmt.Errorf("stage 4 linker failed: %w", err)

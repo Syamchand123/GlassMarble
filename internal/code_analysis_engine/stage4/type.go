@@ -269,7 +269,8 @@ func (s *Stage4Output) GetNode(id string) (*ResolvedNode, bool) {
 }
 
 // NodeExists checks whether a node with the given ID exists in the local delta,
-// shared base, or global DB. Used by linkers to avoid recreating summary nodes.
+// shared base, or global DB. Use for read/lookup decisions only (e.g. whether
+// an edge target may already exist in an unmodified file).
 func (s *Stage4Output) NodeExists(id string) bool {
 	if _, ok := s.GraphNodes[id]; ok {
 		return true
@@ -281,6 +282,23 @@ func (s *Stage4Output) NodeExists(id string) bool {
 	}
 	if s.db != nil {
 		_, ok := s.db.GetNode(id)
+		return ok
+	}
+	return false
+}
+
+// HasNode checks whether a node ID exists in the current delta payload
+// (GraphNodes plus the builder's shared base set). Unlike NodeExists it never
+// consults the persisted graph: every node a delta emits belongs to a file
+// that the commit will sweep and re-add, so skip decisions must be based on
+// the delta alone — a base-graph hit would silently lose the node when the
+// sweep removes all nodes of modified files.
+func (s *Stage4Output) HasNode(id string) bool {
+	if _, ok := s.GraphNodes[id]; ok {
+		return true
+	}
+	if s.baseNodes != nil {
+		_, ok := s.baseNodes[id]
 		return ok
 	}
 	return false
