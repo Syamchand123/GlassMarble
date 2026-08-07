@@ -28,8 +28,8 @@ func (p ParseIssue) Error() string {
 }
 
 // ExtractSubgraph parses a TTL file and extracts a subgraph matching the given diagram type and options.
-func ExtractSubgraph(ttlPath string, t types.DiagramType, opts types.QueryOptions) (*types.VirtualSubgraph, error) {
-	nodes, edges, err := ParseTTLFile(ttlPath)
+func ExtractSubgraph(StatePath string, t types.DiagramType, opts types.QueryOptions) (*types.VirtualSubgraph, error) {
+	nodes, edges, err := ParseTTLFile(StatePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse Turtle file: %w", err)
 	}
@@ -480,12 +480,12 @@ func filterNodes(nodes map[string]*types.TTLNode, opts types.QueryOptions, filte
 	return ids
 }
 
-// ParseTTLFile parses a Turtle (.ttl) file at ttlPath and returns extracted TTLNodes,
+// ParseTTLFile parses a Turtle (.ttl) file at StatePath and returns extracted TTLNodes,
 // TTLEdges, and any parse error. Use ParseTTLFileToNative for a NativeGraph result.
 // Malformed statements are reported as a structured error (with line numbers)
 // instead of being silently dropped (AUDIT Issue 2 Phase 2B-8).
-func ParseTTLFile(ttlPath string) (map[string]*types.TTLNode, []types.TTLEdge, error) {
-	file, err := os.Open(ttlPath)
+func ParseTTLFile(StatePath string) (map[string]*types.TTLNode, []types.TTLEdge, error) {
+	file, err := os.Open(StatePath)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -533,7 +533,7 @@ func ParseTTLFile(ttlPath string) (map[string]*types.TTLNode, []types.TTLEdge, e
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, nil, fmt.Errorf("scanning %s: %w", ttlPath, err)
+		return nil, nil, fmt.Errorf("scanning %s: %w", StatePath, err)
 	}
 
 	// A trailing statement that never reached its terminator is a truncated
@@ -544,7 +544,7 @@ func ParseTTLFile(ttlPath string) (map[string]*types.TTLNode, []types.TTLEdge, e
 	}
 
 	if len(issues) > 0 {
-		return nil, nil, fmt.Errorf("%s: %d malformed statement(s): %w", ttlPath, len(issues), issues[0])
+		return nil, nil, fmt.Errorf("%s: %d malformed statement(s): %w", StatePath, len(issues), issues[0])
 	}
 
 	parsedEdges := make([]types.TTLEdge, 0, len(edgeMap))
@@ -854,8 +854,8 @@ func bfsSubgraph(
 }
 
 // ParseTTLFileToNative parses a TTL file and returns a NativeGraph directly (types are aliases, no copy needed).
-func ParseTTLFileToNative(ttlPath string) (*types.NativeGraph, error) {
-	nodes, edges, err := ParseTTLFile(ttlPath)
+func ParseTTLFileToNative(StatePath string) (*types.NativeGraph, error) {
+	nodes, edges, err := ParseTTLFile(StatePath)
 	if err != nil {
 		return nil, err
 	}
@@ -865,8 +865,8 @@ func ParseTTLFileToNative(ttlPath string) (*types.NativeGraph, error) {
 // StreamTTLBlocks streams a TTL file into logical statement blocks in file
 // order; it is the exported generic form of the streaming primitive behind
 // the lazy query entry points (AUDIT Issue 4 Phase 4A-2).
-func StreamTTLBlocks(ttlPath string, handle func(block string) error) error {
-	return scanTTLStream(ttlPath, handle)
+func StreamTTLBlocks(StatePath string, handle func(block string) error) error {
+	return scanTTLStream(StatePath, handle)
 }
 
 // scanTTLStream streams a TTL file into logical statement blocks (node
@@ -875,8 +875,8 @@ func StreamTTLBlocks(ttlPath string, handle func(block string) error) error {
 // block is a hard error (truncated file). It is the shared streaming
 // primitive behind the lazy query entry points so the whole database is
 // never materialized for a small read (AUDIT Issue 4 Phase 4A-2).
-func scanTTLStream(ttlPath string, handle func(block string) error) error {
-	file, err := os.Open(ttlPath)
+func scanTTLStream(StatePath string, handle func(block string) error) error {
+	file, err := os.Open(StatePath)
 	if err != nil {
 		return err
 	}
@@ -909,10 +909,10 @@ func scanTTLStream(ttlPath string, handle func(block string) error) error {
 	}
 
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("scanning %s: %w", ttlPath, err)
+		return fmt.Errorf("scanning %s: %w", StatePath, err)
 	}
 	if len(block) > 0 {
-		return fmt.Errorf("%s: unterminated statement block at line %d (truncated file?)", ttlPath, blockStartLine)
+		return fmt.Errorf("%s: unterminated statement block at line %d (truncated file?)", StatePath, blockStartLine)
 	}
 	return nil
 }
@@ -924,7 +924,7 @@ func scanTTLStream(ttlPath string, handle func(block string) error) error {
 // mirror ApplyScope(ScopeFile) exactly, so the result equals a full parse
 // followed by ApplyScope. In the serialized layout all node blocks precede
 // all edge blocks, so the endpoint set is complete when edges are streamed.
-func ParseTTLFileToNativeScoped(ttlPath, scopePath string) (*types.NativeGraph, error) {
+func ParseTTLFileToNativeScoped(StatePath, scopePath string) (*types.NativeGraph, error) {
 	if scopePath == "" {
 		return nil, fmt.Errorf("file scope requires a non-empty path")
 	}
@@ -936,7 +936,7 @@ func ParseTTLFileToNativeScoped(ttlPath, scopePath string) (*types.NativeGraph, 
 	edgeMap := make(map[string]*types.NativeEdge)
 	scopedPath := "/" + strings.TrimPrefix(scopePath, "/")
 
-	err := scanTTLStream(ttlPath, func(block string) error {
+	err := scanTTLStream(StatePath, func(block string) error {
 		trimmed := strings.TrimSpace(block)
 		if strings.HasPrefix(trimmed, "<<") {
 			if err := bindEdgePropertyScoped(block, edgeMap, matched); err != nil {
@@ -1039,11 +1039,11 @@ func bindEdgePropertyScoped(block string, edgeMap map[string]*types.NativeEdge, 
 // node's incident degree — the rest of the database is never materialized
 // (AUDIT Issue 4 Phase 4A-2). If the node is absent, (nil, nil, nil) is
 // returned with no error.
-func ParseTTLNodeByID(ttlPath, nodeID string) (*types.TTLNode, []types.TTLEdge, error) {
+func ParseTTLNodeByID(StatePath, nodeID string) (*types.TTLNode, []types.TTLEdge, error) {
 	var found *types.TTLNode
 	edgeMap := make(map[string]*types.TTLEdge)
 
-	err := scanTTLStream(ttlPath, func(block string) error {
+	err := scanTTLStream(StatePath, func(block string) error {
 		trimmed := strings.TrimSpace(block)
 		if strings.HasPrefix(trimmed, "<<") {
 			// Bind an incident edge and line number from RDF-star statement
@@ -1122,8 +1122,8 @@ func ParseTTLNodeByID(ttlPath, nodeID string) (*types.TTLNode, []types.TTLEdge, 
 // each parsed node; iteration stops when fn returns false. Edge blocks and
 // the metadata node are skipped, so --list/--search style reads never
 // materialize the graph (AUDIT Issue 4 Phase 4A-2).
-func StreamTTLNodes(ttlPath string, fn func(*types.TTLNode) bool) error {
-	return scanTTLStream(ttlPath, func(block string) error {
+func StreamTTLNodes(StatePath string, fn func(*types.TTLNode) bool) error {
+	return scanTTLStream(StatePath, func(block string) error {
 		trimmed := strings.TrimSpace(block)
 		if strings.HasPrefix(trimmed, "<<") || isBaseEdge(trimmed) {
 			return nil

@@ -1,4 +1,4 @@
-package cmd_test
+﻿package cmd_test
 
 import (
 	"os"
@@ -10,7 +10,7 @@ import (
 // TestCompareCommandTwoFiles diffs two exported snapshots.
 func TestCompareCommandTwoFiles(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, doctorFixtureTTL)
+	writeDoctorState(t, tempDir, doctorFixtureGraph())
 
 	// Export the base fixture, then add a node via import to build a head.
 	basePath := filepath.Join(tempDir, "base.json")
@@ -54,7 +54,7 @@ func TestCompareCommandTwoFiles(t *testing.T) {
 // TestCompareCommandJSON emits machine-readable diff JSON.
 func TestCompareCommandJSON(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, doctorFixtureTTL)
+	writeDoctorState(t, tempDir, doctorFixtureGraph())
 
 	basePath := filepath.Join(tempDir, "base.json")
 	if _, err := runGmbCommand(t, "export", "--dir", tempDir, "--output", basePath); err != nil {

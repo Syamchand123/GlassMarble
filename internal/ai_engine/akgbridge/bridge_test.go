@@ -83,12 +83,12 @@ func TestSnapshotReloadsAfterTTLChange(t *testing.T) {
 		t.Fatalf("Snapshot: %v", err)
 	}
 
-	// Remove the TTL: the next call must notice and report the missing DB.
-	if err := os.Remove(filepath.Join(dir, ".glassmarble", "akg_state.ttl")); err != nil {
-		t.Fatalf("remove ttl: %v", err)
+	// Remove the state: the next call must notice and report the missing DB.
+	if err := os.Remove(filepath.Join(dir, ".glassmarble", "akg.json")); err != nil {
+		t.Fatalf("remove state: %v", err)
 	}
 	if _, err := b.Snapshot(); err == nil || !strings.Contains(err.Error(), "gmb analyze") {
-		t.Fatalf("expected missing-AKG error after TTL removal, got %v", err)
+		t.Fatalf("expected missing-AKG error after state removal, got %v", err)
 	}
 
 	// Re-seed: the bridge must reload the fresh state.

@@ -12,18 +12,23 @@ import (
 	"github.com/Syamchand123/GlassMarble/cmd"
 )
 
-func writeMockTTL(t *testing.T, dir string) {
-	ttlContent := `@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
-@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
-@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-@prefix gm: <http://glassmarble.org/schema#> .
-
-# Classes
-<http://glassmarble.org/node/src/db.go::DBStore> a gm:TypeDecl ;
-    gm:name "DBStore" ;
-    gm:primitiveType "DATABASE" ;
-    gm:belongsToFile <http://glassmarble.org/file/src/db.go> ;
-    a rdfs:Resource .
+func writeMockState(t *testing.T, dir string) {
+	stateContent := `{
+  "schema_version": 3,
+  "commit_hash": "fixture",
+  "version": 0,
+  "entrypoints": ["src/db.go::DBStore"],
+  "nodes": [
+    {
+      "id": "src/db.go::DBStore",
+      "kind": "TYPE_DECL",
+      "name": "DBStore",
+      "primitive": "DATABASE",
+      "file_spec": { "path": "src/db.go", "line_start": 1, "line_end": 30 }
+    }
+  ],
+  "edges": []
+}
 `
 
 	gmDir := filepath.Join(dir, ".glassmarble")
@@ -31,9 +36,9 @@ func writeMockTTL(t *testing.T, dir string) {
 		t.Fatalf("Failed to create .glassmarble directory: %v", err)
 	}
 
-	ttlPath := filepath.Join(gmDir, "akg_state.ttl")
-	if err := os.WriteFile(ttlPath, []byte(ttlContent), 0644); err != nil {
-		t.Fatalf("Failed to write mock TTL file: %v", err)
+	statePath := filepath.Join(gmDir, "akg.json")
+	if err := os.WriteFile(statePath, []byte(stateContent), 0644); err != nil {
+		t.Fatalf("Failed to write mock state file: %v", err)
 	}
 }
 
@@ -45,7 +50,7 @@ func TestVisualizeCommand_Class(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	writeMockTTL(t, tempDir)
+	writeMockState(t, tempDir)
 
 	// Execute command with custom dir path
 	buf := new(bytes.Buffer)
@@ -84,7 +89,7 @@ func TestVisualizeCommand_SaveFlag(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	writeMockTTL(t, tempDir)
+	writeMockState(t, tempDir)
 
 	buf := new(bytes.Buffer)
 	command := cmd.RootCmdForTesting()
@@ -129,7 +134,7 @@ func TestVisualizeCommand_SummaryFlag(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	writeMockTTL(t, tempDir)
+	writeMockState(t, tempDir)
 
 	buf := new(bytes.Buffer)
 	command := cmd.RootCmdForTesting()
@@ -161,7 +166,7 @@ func TestVisualizeCommand_OutputFlag(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	writeMockTTL(t, tempDir)
+	writeMockState(t, tempDir)
 
 	outputPath := filepath.Join(tempDir, "output.md")
 	buf := new(bytes.Buffer)
@@ -201,7 +206,7 @@ func TestVisualizeCommand_OutputIgnoredWhenSave(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	writeMockTTL(t, tempDir)
+	writeMockState(t, tempDir)
 
 	outputPath := filepath.Join(tempDir, "ignored_output.md")
 	buf := new(bytes.Buffer)
@@ -234,7 +239,7 @@ func TestVisualizeCommand_PageRankFlag(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	writeMockTTL(t, tempDir)
+	writeMockState(t, tempDir)
 
 	buf := new(bytes.Buffer)
 	command := cmd.RootCmdForTesting()
@@ -263,7 +268,7 @@ func TestVisualizeCommand_CommunityFlag(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	writeMockTTL(t, tempDir)
+	writeMockState(t, tempDir)
 
 	buf := new(bytes.Buffer)
 	command := cmd.RootCmdForTesting()
@@ -289,7 +294,7 @@ func TestVisualizeCommand_SccFlag(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	writeMockTTL(t, tempDir)
+	writeMockState(t, tempDir)
 
 	buf := new(bytes.Buffer)
 	command := cmd.RootCmdForTesting()

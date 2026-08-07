@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/product"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 	"github.com/spf13/cobra"
@@ -41,7 +42,8 @@ var rebaseGoldensCmd = &cobra.Command{
 		for _, dtype := range diagramTypes {
 			for _, fmtStr := range formats {
 				req := product.BuildDiagramRequest{
-					TTLPath:     filepath.Join(targetDir, ".glassmarble", "akg_state.ttl"),
+					StatePath:     filepath.Join(targetDir, ".glassmarble", "akg.json"),
+					ParseFn:     akg.ParseGraphForQuery,
 					DiagramType: dtype,
 					Format:      fmtStr,
 					Options: product.DiagramOptions{

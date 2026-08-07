@@ -17,7 +17,7 @@ import (
 func TestMasterRegressionBattery(t *testing.T) {
 	t.Run("V-01 & V-10: Validation & Unused Parity", func(t *testing.T) {
 		req := product.BuildDiagramRequest{
-			TTLPath:     ".glassmarble/akg_state.ttl",
+			StatePath:     ".glassmarble/akg_state.ttl",
 			DiagramType: types.UMLClass,
 			Format:      "invalid_format",
 			Options: product.DiagramOptions{
@@ -35,7 +35,7 @@ func TestMasterRegressionBattery(t *testing.T) {
 
 	t.Run("V-02, V-04, V-06: Member & Class Header Real Names", func(t *testing.T) {
 		req := product.BuildDiagramRequest{
-			TTLPath:     ".glassmarble/akg_state.ttl",
+			StatePath:     ".glassmarble/akg_state.ttl",
 			DiagramType: types.UMLClass,
 			Format:      "mermaid",
 			Options: product.DiagramOptions{
@@ -58,7 +58,7 @@ func TestMasterRegressionBattery(t *testing.T) {
 
 	t.Run("V-05 & K-01: Determinism & RDF-Star Single Statement", func(t *testing.T) {
 		req := product.BuildDiagramRequest{
-			TTLPath:     ".glassmarble/akg_state.ttl",
+			StatePath:     ".glassmarble/akg_state.ttl",
 			DiagramType: types.UMLClass,
 			Format:      "mermaid",
 			Options: product.DiagramOptions{

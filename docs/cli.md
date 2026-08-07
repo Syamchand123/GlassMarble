@@ -7,7 +7,7 @@
 ## Commands
 
 ### `gmb analyze`
-Parses, normalizes, aggregates, and semantic-links source code files into the AKG graph database (`.glassmarble/akg_state.ttl`).
+Parses, normalizes, aggregates, and semantic-links source code files into the AKG graph database (`.glassmarble/akg.json`).
 
 ```bash
 gmb analyze [--dir <path>] [--commit <hash>] [--full] [--workers <N>] [--link-level <level>] [--json] [--bench]

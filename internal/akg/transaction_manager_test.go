@@ -1,10 +1,10 @@
 package akg
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -43,7 +43,7 @@ func TestMaxTTLBytesGuardRejectsOversizedCommit(t *testing.T) {
 	assert.Contains(t, err.Error(), "--max-ttl-mb")
 
 	// The commit must not leave a state file behind.
-	if _, statErr := os.Stat(filepath.Join(dir, "akg_state.ttl")); !os.IsNotExist(statErr) {
+	if _, statErr := os.Stat(filepath.Join(dir, "akg.json")); !os.IsNotExist(statErr) {
 		t.Error("oversized commit must not leave a state file behind")
 	}
 
@@ -517,7 +517,7 @@ func TestRecover_BoundedReplay(t *testing.T) {
 // (AUDIT Issue 3 Phase 3A-3).
 func TestSchemaVersionMismatchRejected(t *testing.T) {
 	dir := t.TempDir()
-	ttlPath := filepath.Join(dir, "akg_state.ttl")
+	StatePath := filepath.Join(dir, "akg_state.ttl")
 	ttl := `@prefix gm: <http://glassmarble.org/ontology#> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 <http://glassmarble.org/node/metadata> a gm:MetaData ;
@@ -525,24 +525,23 @@ func TestSchemaVersionMismatchRejected(t *testing.T) {
     gm:commitHash "future" ;
     gm:version "7" .
 `
-	require.NoError(t, os.WriteFile(ttlPath, []byte(ttl), 0644))
+	require.NoError(t, os.WriteFile(StatePath, []byte(ttl), 0644))
 
 	_, err := NewAKGTransactionManager(dir)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, akgerrs.ErrSchemaVersion)
 }
 
-// TestTombstoneRoundTrip_NoResurrection verifies that a deleted node is
-// persisted as a gm:Deleted tombstone (incremental append path) and never
-// resurrects after a reload (AUDIT Issue 3 Phase 3B-6).
-func TestTombstoneRoundTrip_NoResurrection(t *testing.T) {
+// TestDeleteRoundTrip_NoResurrection verifies that a deleted node is dropped
+// from the persisted akg.json and never resurrects after a reload (AUDIT
+// Issue 3 Phase 3B-6). Since Phase C the store is rewritten in full on every
+// commit, so deleted nodes are simply absent from the JSON document — no
+// tombstone blocks are needed.
+func TestDeleteRoundTrip_NoResurrection(t *testing.T) {
 	dir := t.TempDir()
 	tm, err := NewAKGTransactionManager(dir)
 	require.NoError(t, err)
 
-	// Base graph of 5 nodes so the single-node delete delta is <= 20% of the
-	// base and takes the incremental append path (which is the path that
-	// requires tombstones: the old node block lingers in the base copy).
 	payload := stage4.NewStage4Output("hash1")
 	for i := 0; i < 5; i++ {
 		id := fmt.Sprintf("keep%d", i)
@@ -558,15 +557,19 @@ func TestTombstoneRoundTrip_NoResurrection(t *testing.T) {
 	files := []string{"keep0.go", "keep1.go", "keep2.go", "keep3.go", "keep4.go", "gone.go"}
 	require.NoError(t, tm.ExecuteDeltaTransaction(payload, files))
 
-	// Sweep: empty payload for the same file removes the node and appends a
-	// gm:Deleted tombstone block into the TTL (incremental append).
+	// Sweep: empty payload for the same file removes the node.
 	require.NoError(t, tm.ExecuteDeltaTransaction(stage4.NewStage4Output("hash1"), []string{"gone.go"}))
 	tm.Close()
 
-	ttl, err := os.ReadFile(filepath.Join(dir, "akg_state.ttl"))
+	// The rewritten JSON store must not contain the deleted node.
+	data, err := os.ReadFile(filepath.Join(dir, "akg.json"))
 	require.NoError(t, err)
-	if !strings.Contains(string(ttl), "gm:Deleted") || !strings.Contains(string(ttl), `gm:status "DELETED"`) {
-		t.Fatalf("expected gm:Deleted tombstone block in TTL:\n%s", string(ttl))
+	var doc GraphJSON
+	require.NoError(t, json.Unmarshal(data, &doc))
+	for _, n := range doc.Nodes {
+		if n.ID == "gone" {
+			t.Fatalf("deleted node must be absent from akg.json:\n%s", string(data))
+		}
 	}
 
 	reloaded, err := NewAKGTransactionManager(dir)

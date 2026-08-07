@@ -35,7 +35,7 @@ var statsCmd = &cobra.Command{
 			fmt.Println("full scan              <= 12.0s   PASS")
 			fmt.Println("visualize class        <= 3.0s    PASS")
 			fmt.Println("visualize sequence     <= 2.0s    PASS")
-			fmt.Println("TTL size               <= 12.0MB  PASS")
+			fmt.Println("state size             <= 12.0MB  PASS")
 			fmt.Println("WAL size               <= 8.0MB   PASS")
 			fmt.Println("")
 			fmt.Println("See internal/product/performance.md for complete Big-O complexity bounds.")

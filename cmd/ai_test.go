@@ -257,8 +257,8 @@ func TestAIDoctorCommandAllGood(t *testing.T) {
 	if err := os.MkdirAll(gmDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(gmDir, "akg_state.ttl"), []byte("@prefix gm: <http://glassmarble.org/schema#> .\n"), 0o644); err != nil {
-		t.Fatalf("write ttl: %v", err)
+	if err := os.WriteFile(filepath.Join(gmDir, "akg.json"), []byte(`{"schema_version":3,"commit_hash":"test","version":0,"nodes":[],"edges":[]}`), 0o644); err != nil {
+		t.Fatalf("write state: %v", err)
 	}
 
 	buf := new(strings.Builder)

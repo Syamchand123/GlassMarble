@@ -1,4 +1,4 @@
-package cmd_test
+﻿package cmd_test
 
 import (
 	"os"
@@ -10,7 +10,7 @@ import (
 // TestDriftCommandPass reports no drift for a healthy graph with no config.
 func TestDriftCommandPass(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, doctorFixtureTTL)
+	writeDoctorState(t, tempDir, doctorFixtureGraph())
 
 	output, err := runGmbCommand(t, "drift", "--dir", tempDir)
 	if err != nil {
@@ -27,7 +27,7 @@ func TestDriftCommandPass(t *testing.T) {
 // TestDriftCommandJSON emits a machine-readable report.
 func TestDriftCommandJSON(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, doctorFixtureTTL)
+	writeDoctorState(t, tempDir, doctorFixtureGraph())
 
 	output, err := runGmbCommand(t, "drift", "--dir", tempDir, "--json")
 	if err != nil {
@@ -57,7 +57,7 @@ func TestDriftCommandEmptyDB(t *testing.T) {
 // the violation is surfaced.
 func TestDriftCommandForbiddenConfig(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, doctorFixtureTTL)
+	writeDoctorState(t, tempDir, doctorFixtureGraph())
 
 	gmDir := filepath.Join(tempDir, ".glassmarble")
 	cfgYAML := `drift:

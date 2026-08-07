@@ -1,44 +1,46 @@
-package cmd_test
+﻿package cmd_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Syamchand123/GlassMarble/cmd"
+	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
-const doctorFixtureTTL = `@prefix gm: <http://glassmarble.org/schema#> .
+// doctorFixtureGraph returns a two-node, one-edge GraphJSON state fixture
+// (schema 3) shared across the CLI test suite.
+func doctorFixtureGraph() *akg.GraphJSON {
+	return &akg.GraphJSON{
+		SchemaVersion: akg.CurrentSchemaVersion,
+		Version:       7,
+		CommitHash:    "abcdef1234567890",
+		Nodes: []akg.GraphNodeJSON{
+			{ID: "cmd/app/main.go::Main", Kind: "EXECUTABLE", Name: "Main", FileSpec: akg.LocationMetaJSON{Path: "cmd/app/main.go", LineStart: 1, LineEnd: 5}},
+			{ID: "internal/db/db.go::Connect", Kind: "EXECUTABLE", Name: "Connect", FileSpec: akg.LocationMetaJSON{Path: "internal/db/db.go", LineStart: 1, LineEnd: 3}},
+		},
+		Edges: []akg.GraphEdgeJSON{
+			{SourceID: "cmd/app/main.go::Main", TargetID: "internal/db/db.go::Connect", Type: "CALLS", LineNumber: 3},
+		},
+	}
+}
 
-<http://glassmarble.org/node/metadata> a gm:MetaData ;
-    gm:version 7 ;
-    gm:schemaVersion 1 ;
-    gm:commitHash "abcdef1234567890" ;
-    .
-
-<http://glassmarble.org/node/cmd/app/main.go::Main> a gm:Executable ;
-    gm:name "Main" ;
-    gm:belongsToFile <http://glassmarble.org/file/cmd/app/main.go> ;
-    .
-
-<http://glassmarble.org/node/internal/db/db.go::Connect> a gm:Executable ;
-    gm:name "Connect" ;
-    gm:belongsToFile <http://glassmarble.org/file/internal/db/db.go> ;
-    .
-
-<http://glassmarble.org/node/cmd/app/main.go::Main> gm:calls <http://glassmarble.org/node/internal/db/db.go::Connect> .
-`
-
-func writeDoctorState(t *testing.T, dir, ttl string) {
+func writeDoctorState(t *testing.T, dir string, g *akg.GraphJSON) {
 	t.Helper()
 	gmDir := filepath.Join(dir, ".glassmarble")
 	if err := os.MkdirAll(gmDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(gmDir, "akg_state.ttl"), []byte(ttl), 0o644); err != nil {
+	data, err := json.MarshalIndent(g, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gmDir, "akg.json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -97,13 +99,13 @@ func runGmbCommand(t *testing.T, args ...string) (string, error) {
 
 func TestDoctorCommandHealthy(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, doctorFixtureTTL)
+	writeDoctorState(t, tempDir, doctorFixtureGraph())
 
 	output, err := runGmbCommand(t, "doctor", "--dir", tempDir)
 	if err != nil {
 		t.Fatalf("doctor command failed: %v\n%s", err, output)
 	}
-	for _, want := range []string{"DOCTOR: OK", "Schema:        v1", "Parse-back:    ok", "Dangling:      0", "ontology conformant"} {
+	for _, want := range []string{"DOCTOR: OK", "Schema:        v3", "Parse-back:    ok", "Dangling:      0"} {
 		if !strings.Contains(output, want) {
 			t.Errorf("doctor output missing %q:\n%s", want, output)
 		}
@@ -123,11 +125,17 @@ func TestDoctorCommandUninitialized(t *testing.T) {
 
 func TestDoctorCommandCorruptFails(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, "@prefix gm: <http://glassmarble.org/schema#> .\n<http://glassmarble.org/node/x> a gm:Executable ;\n")
+	gmDir := filepath.Join(tempDir, ".glassmarble")
+	if err := os.MkdirAll(gmDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gmDir, "akg.json"), []byte("{ not valid json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	output, err := runGmbCommand(t, "doctor", "--dir", tempDir)
 	if err == nil {
-		t.Fatalf("expected doctor to fail on truncated TTL, got success:\n%s", output)
+		t.Fatalf("expected doctor to fail on corrupt state, got success:\n%s", output)
 	}
 	if !strings.Contains(output, "Parse-back:    FAILED") {
 		t.Errorf("expected parse-back failure report:\n%s", output)
@@ -136,7 +144,7 @@ func TestDoctorCommandCorruptFails(t *testing.T) {
 
 func TestDiffCommandWALTruncated(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, doctorFixtureTTL)
+	writeDoctorState(t, tempDir, doctorFixtureGraph())
 
 	output, err := runGmbCommand(t, "diff", "--dir", tempDir)
 	if err != nil {
@@ -152,13 +160,13 @@ func TestDiffCommandWALTruncated(t *testing.T) {
 
 func TestStatusCommandExtended(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, doctorFixtureTTL)
+	writeDoctorState(t, tempDir, doctorFixtureGraph())
 
 	output, err := runGmbCommand(t, "status", "--dir", tempDir)
 	if err != nil {
 		t.Fatalf("status command failed: %v\n%s", err, output)
 	}
-	for _, want := range []string{"Schema Version: 1", "Graph Version: 7", "abcdef1234567890", "Entrypoints:   0", "Virtual Nodes:"} {
+	for _, want := range []string{"Schema Version: 3", "Graph Version: 7", "abcdef1234567890", "Entrypoints:   0", "Virtual Nodes:"} {
 		if !strings.Contains(output, want) {
 			t.Errorf("status output missing %q:\n%s", want, output)
 		}

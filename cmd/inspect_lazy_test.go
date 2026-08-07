@@ -1,37 +1,36 @@
-package cmd_test
+﻿package cmd_test
 
 import (
 	"strings"
 	"testing"
+
+	"github.com/Syamchand123/GlassMarble/internal/akg"
 )
 
-// inspectLazyFixture has two gm:Function nodes in different files, one
-// entrypoint, and one cross-file call edge with an RDF-star line number.
-const inspectLazyFixture = `@prefix gm: <http://glassmarble.org/schema#> .
-
-<http://glassmarble.org/node/app/main.go::Main> a gm:Function ;
-    gm:name "Main" ;
-    gm:belongsToFile <http://glassmarble.org/file/app/main.go> ;
-    gm:lineStart 10 ;
-    gm:lineEnd 30 ;
-    gm:isEntrypoint true ;
-    .
-<http://glassmarble.org/node/app/util.go::Helper> a gm:Function ;
-    gm:name "Helper" ;
-    gm:belongsToFile <http://glassmarble.org/file/app/util.go> ;
-    gm:lineStart 5 ;
-    gm:lineEnd 12 ;
-    .
-<http://glassmarble.org/node/app/main.go::Main> gm:calls <http://glassmarble.org/node/app/util.go::Helper> .
-<< <http://glassmarble.org/node/app/main.go::Main> gm:calls <http://glassmarble.org/node/app/util.go::Helper> >> gm:lineNumber 14 .
-`
+// inspectLazyFixture has two FUNCTION nodes in different files, one
+// entrypoint, and one cross-file call edge with its line number.
+func inspectLazyFixture() *akg.GraphJSON {
+	return &akg.GraphJSON{
+		SchemaVersion: akg.CurrentSchemaVersion,
+		Version:       1,
+		CommitHash:    "lazyfixture",
+		Entrypoints:   []string{"app/main.go::Main"},
+		Nodes: []akg.GraphNodeJSON{
+			{ID: "app/main.go::Main", Kind: "FUNCTION", Name: "Main", FileSpec: akg.LocationMetaJSON{Path: "app/main.go", LineStart: 10, LineEnd: 30}},
+			{ID: "app/util.go::Helper", Kind: "FUNCTION", Name: "Helper", FileSpec: akg.LocationMetaJSON{Path: "app/util.go", LineStart: 5, LineEnd: 12}},
+		},
+		Edges: []akg.GraphEdgeJSON{
+			{SourceID: "app/main.go::Main", TargetID: "app/util.go::Helper", Type: "CALLS", LineNumber: 14},
+		},
+	}
+}
 
 // TestInspectNodeDetailLazy: node details come from the lazy streaming
 // lookup, including incident edges with their line numbers
 // (AUDIT Issue 4 Phase 4A-2).
 func TestInspectNodeDetailLazy(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, inspectLazyFixture)
+	writeDoctorState(t, tempDir, inspectLazyFixture())
 
 	output, err := runGmbCommand(t, "inspect", "app/main.go::Main", "--dir", tempDir)
 	if err != nil {
@@ -55,7 +54,7 @@ func TestInspectNodeDetailLazy(t *testing.T) {
 // restored-graph path.
 func TestInspectNodeNotFoundLazy(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, inspectLazyFixture)
+	writeDoctorState(t, tempDir, inspectLazyFixture())
 
 	_, err := runGmbCommand(t, "inspect", "ghost", "--dir", tempDir)
 	if err == nil {
@@ -69,7 +68,7 @@ func TestInspectNodeNotFoundLazy(t *testing.T) {
 // TestInspectListLazy: --list streams FUNCTION/METHOD nodes only.
 func TestInspectListLazy(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, inspectLazyFixture)
+	writeDoctorState(t, tempDir, inspectLazyFixture())
 
 	output, err := runGmbCommand(t, "inspect", "--list", "--dir", tempDir)
 	if err != nil {
@@ -89,7 +88,7 @@ func TestInspectListLazy(t *testing.T) {
 // TestInspectSearchLazy: --search matches by ID or name.
 func TestInspectSearchLazy(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, inspectLazyFixture)
+	writeDoctorState(t, tempDir, inspectLazyFixture())
 
 	// --list=false: bound flag vars persist across invocations in one test
 	// process, so every mode must be stated explicitly.
@@ -109,7 +108,7 @@ func TestInspectSearchLazy(t *testing.T) {
 // the streaming scan and prints its details.
 func TestInspectFileLineLazy(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, inspectLazyFixture)
+	writeDoctorState(t, tempDir, inspectLazyFixture())
 
 	output, err := runGmbCommand(t, "inspect", "--file", "app/main.go", "--line", "12", "--list=false", "--search=", "--dir", tempDir)
 	if err != nil {

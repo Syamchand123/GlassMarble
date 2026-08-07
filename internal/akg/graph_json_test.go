@@ -31,6 +31,17 @@ func buildExportTestGraph() *CodePropertyGraph {
 	})
 	addEdgeToGraph(g, "a::main", "b::svc", stage4.EdgeCalls, 7)
 	addEdgeToGraph(g, "a::main", "b::svc", stage4.EdgeCalls, 8) // parallel edge with distinct line
+	// Edge property facts (gm:provenance / gm:embedding, W1-11/W1-14).
+	g.OutboundEdges = g.OutboundEdges.Set("a::main", []stage4.ResolvedEdge{
+		{SourceID: "a::main", TargetID: "b::svc", Type: stage4.EdgeCalls, LineNumber: 7,
+			Properties: map[string]string{"provenance": "import-resolved", "embedding": "0.91"}},
+		{SourceID: "a::main", TargetID: "b::svc", Type: stage4.EdgeCalls, LineNumber: 8},
+	})
+	g.InboundEdges = g.InboundEdges.Set("b::svc", []stage4.ResolvedEdge{
+		{SourceID: "a::main", TargetID: "b::svc", Type: stage4.EdgeCalls, LineNumber: 7,
+			Properties: map[string]string{"provenance": "import-resolved", "embedding": "0.91"}},
+		{SourceID: "a::main", TargetID: "b::svc", Type: stage4.EdgeCalls, LineNumber: 8},
+	})
 	g.FolderZones = g.FolderZones.Set("b::svc", "SERVICE_ZONE")
 	return g
 }
@@ -87,6 +98,21 @@ func TestGraphJSONRoundTrip(t *testing.T) {
 		t.Fatalf("parallel edges lost: got %d, want 2", len(edges))
 	}
 
+	// Edge properties must survive the round trip (GraphEdgeJSON.Properties).
+	var withProps *stage4.ResolvedEdge
+	for i := range edges {
+		if len(edges[i].Properties) > 0 {
+			withProps = &edges[i]
+			break
+		}
+	}
+	if withProps == nil {
+		t.Fatal("edge properties lost after import")
+	}
+	if withProps.Properties["provenance"] != "import-resolved" || withProps.Properties["embedding"] != "0.91" {
+		t.Errorf("edge properties mismatch: %v", withProps.Properties)
+	}
+
 	zone, _ := restored.FolderZones.Get("b::svc")
 	if zone != "SERVICE_ZONE" {
 		t.Errorf("FolderZones lost: got %q", zone)
@@ -114,6 +140,50 @@ func TestGraphJSONCorruptRejected(t *testing.T) {
 	_, err := ImportGraphJSON(strings.NewReader("{ not valid json"))
 	if err == nil {
 		t.Fatal("expected error for corrupt JSON")
+	}
+}
+
+// TestGraphJSONEdgePropsNotDeduped verifies parallel edges that differ only in
+// properties are exported and imported without collapsing, while true
+// duplicates (identical incl. properties) are still deduplicated.
+func TestGraphJSONEdgePropsNotDeduped(t *testing.T) {
+	g := NewCodePropertyGraph("test")
+	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{
+		{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls, LineNumber: 1},
+		{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls, LineNumber: 1, Properties: map[string]string{"embedding": "0.5"}},
+		{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls, LineNumber: 1, Properties: map[string]string{"embedding": "0.5"}},
+	})
+	g.InboundEdges = g.InboundEdges.Set("b", []stage4.ResolvedEdge{
+		{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls, LineNumber: 1},
+		{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls, LineNumber: 1, Properties: map[string]string{"embedding": "0.5"}},
+		{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls, LineNumber: 1, Properties: map[string]string{"embedding": "0.5"}},
+	})
+
+	var buf bytes.Buffer
+	if err := ExportGraphJSON(g, &buf); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := ImportGraphJSON(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edges := restored.GetOutboundEdges("a")
+	if len(edges) != 2 {
+		t.Fatalf("edge count = %d, want 2 (plain + property-carrying)", len(edges))
+	}
+	propCount := 0
+	for _, e := range edges {
+		if len(e.Properties) > 0 {
+			propCount++
+			if e.Properties["embedding"] != "0.5" {
+				t.Errorf("property value lost: %v", e.Properties)
+			}
+		}
+	}
+	if propCount != 1 {
+		t.Errorf("property-carrying edge count = %d, want 1", propCount)
 	}
 }
 

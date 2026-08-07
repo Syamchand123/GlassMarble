@@ -149,7 +149,7 @@ Created by `gmb init` (or on demand). Lives at `<repo>/.glassmarble/` and is aut
 
 ```
 .glassmarble/
-├── akg_state.ttl                # The AKG graph — canonical RDF Turtle
+├── akg.json                     # The AKG graph — canonical GraphJSON (source of truth)
 ├── config.yaml                  # Project config (root_dir, debug, output_format, max_file_bytes, drift:)
 ├── wal/
 │   └── akg_transactions.wal     # Write-ahead log (transaction replay; truncated after each successful commit)
@@ -163,7 +163,7 @@ Created by `gmb init` (or on demand). Lives at `<repo>/.glassmarble/` and is aut
 
 | Artifact | Purpose | Guarded by |
 |---|---|---|
-| `akg_state.ttl` | The graph itself. Committed atomically with a `.tmp-*` rename. | post-write verification, `--max-ttl-mb` budget |
+| `akg.json` | The graph itself. Committed atomically with a `.tmp-*` rename. | post-write verification (byte parity + zero-dangling guard), `--max-ttl-mb` budget |
 | `wal/akg_transactions.wal` | Crash-safety: every transaction is appended, then truncated after a successful commit | `gmb doctor` staleness check, `housekeeping --prune` |
 | `db.lock` | Mutual exclusion for transactions (30s staleness timeout) | `AcquireLock`/`ReleaseLock` |
 | `marbles/` | Saved diagrams from `visualize --save` and AI artifacts | `housekeeping --prune` |
@@ -297,7 +297,7 @@ Design intent: TUI for humans, plain/JSON for automation. The plain output is by
 1. `.glassmarble/` directory
 2. `.glassmarble/marbles/` directory
 3. `.glassmarble/config.yaml` (default values) — only if missing
-4. `.glassmarble/akg_state.ttl` (empty) — only if missing
+4. `.glassmarble/akg.json` (empty but valid GraphJSON) — only if missing
 5. Appends `.glassmarble` to `.gitignore` (creates `.gitignore` if needed)
 
 **Execution flow:**
@@ -305,7 +305,7 @@ Design intent: TUI for humans, plain/JSON for automation. The plain output is by
 resolve abs path
   → mkdir .glassmarble, .glassmarble/marbles
   → write config.yaml (if absent)
-  → write empty akg_state.ttl (if absent)
+  → write empty akg.json state file (if absent)
   → update/create .gitignore
   → print styled success card (badge)
 ```
@@ -351,7 +351,7 @@ resolve abs dir
   → config load (workers, max_file_bytes merged)
   → GitTrackedOnly = true when .git exists
   → if NOT --full:
-        hasBaseState = (akg_state.ttl exists AND is non-empty)   # empty file from init does NOT count
+        hasBaseState = (akg.json exists AND contains nodes)   # empty graph from init does NOT count
         diff = CollectGitDiff(dir, commitHash)                    # ""  → git diff HEAD (working tree)
                                                                   # hash → git diff-tree <hash> (commit vs parent)
         if hasBaseState && diffErr == nil && len(diff) > 0:
@@ -362,7 +362,7 @@ resolve abs dir
   → Stage 3: topology aggregation → global definition index
   → open AKG transaction manager (.glassmarble)
   → Stage 4: CPG linking (delta mode against base graph)
-  → ExecuteDeltaTransaction(cpg, modifiedFiles)   # atomic TTL commit, WAL truncation
+  → ExecuteDeltaTransaction(cpg, modifiedFiles)   # atomic GraphJSON commit, WAL truncation
   → quality report on the MERGED graph (nodes/edges/virtual/dangling)
   → report skipped files & ingestion warnings
 ```
@@ -375,21 +375,21 @@ Stage 2: Normalized 3 syntax trees.
 Stage 3: Built topology with 42 global definition symbols.
 Linker level: architecture (CFG/DFG disabled)
 Stage 4: Bound Delta CPG with 90 new/modified nodes.
-Analyzed 3 files | 120 nodes | 240 edges | 18 virtual | 0 dangling | ttl=180.0KB wal=0B | 0.4s
+Analyzed 3 files | 120 nodes | 240 edges | 18 virtual | 0 dangling | state=180.0KB wal=0B | 0.4s
 WARNING: 1 file(s) skipped during ingestion (oversized or unsupported language):
   - assets/logo.png (exceeds MaxFileBytes)
 Note: 2 ingestion warning(s):
   - internal/x.go (untracked by git)
 ```
 
-**JSON output fields** (`--json`): `target_dir`, `commit_hash`, `files_analyzed`, `nodes`, `edges`, `virtual_nodes`, `dangling_edges`, `ttl_bytes`, `wal_bytes`, `duration_ms`, `skipped[]`, `warnings[]`, `storage_dir`.
+**JSON output fields** (`--json`): `target_dir`, `commit_hash`, `files_analyzed`, `nodes`, `edges`, `virtual_nodes`, `dangling_edges`, `state_bytes`, `wal_bytes`, `duration_ms`, `skipped[]`, `warnings[]`, `storage_dir`.
 
 **Delta vs full — decision table:**
 
 | Situation | Path taken |
 |---|---|
-| No `.glassmarble/akg_state.ttl` | **Full scan** (nothing to diff against) |
-| `init` created empty TTL | **Full scan** (empty file is not a base) |
+| No `.glassmarble/akg.json` | **Full scan** (nothing to diff against) |
+| `init` created empty graph | **Full scan** (empty document is not a base) |
 | TTL non-empty, working tree clean | **Full scan** (empty diff) |
 | TTL non-empty, working tree dirty | **Delta** — only changed files re-parsed, merged into base |
 | `--full` | **Full scan** of every file at `full` linker detail |
@@ -534,11 +534,11 @@ gmb status --json | jq '.verified, .nodes, .dangling_references'
 
 **Flags:** `--dir` (string, default `.`).
 
-**Behavior:** Replays the write-ahead log and prints the structural mutations of every recorded transaction: TxID, commit hash, timestamp, status, nodes added, edges added, modified file count. Because the WAL is truncated after every successful atomic TTL write, a clean database shows **no pending transactions** — the latest state lives in `akg_state.ttl`.
+**Behavior:** Replays the write-ahead log and prints the structural mutations of every recorded transaction: TxID, commit hash, timestamp, status, nodes added, edges added, modified file count. Because the WAL is truncated after every successful atomic GraphJSON write, a clean database shows **no pending transactions** — the latest state lives in `akg.json`.
 
 **Use cases:**
 - Verify that the last analysis committed cleanly.
-- Recover context after a crash (WAL entries that never made it to the TTL).
+- Recover context after a crash (WAL entries that never made it to the state file).
 
 ---
 
@@ -763,11 +763,11 @@ gmb drift --json | jq '.violations'
 ```
 validate diagram type
   → sequence requires --entry (else error)
-  → locate .glassmarble/akg_state.ttl (else: "active AKG database not found")
+  → locate .glassmarble/akg.json (else: "active AKG database not found")
   → parse scope (global | folder:path | file:path)
   → optional analytics pipeline (pagerank/community/scc)
   → optional --summary callback
-  → 3-tier visualizer engine projects the TTL into markup
+  → 3-tier visualizer engine projects the state into markup
   → output routing:
         --render <x.svg|png>  → Kroki POST (30s timeout) → mermaid-cli fallback → raw markup saved as <target>.txt on total failure
         --save <name>         → .glassmarble/marbles/<name>.md with language fence (mermaid/plantuml/dot)
@@ -816,7 +816,7 @@ gmb visualize callgraph --render callgraph.png
    ```
    gmb compare main-branch.json pr-branch.json
    ```
-2. **Working-tree mode** (`--dir`, no args) — base is the **committed AKG** (`.glassmarble/akg_state.ttl`); head is produced by a **fresh full analysis of the current working tree**. The base is cloned first so the analysis doesn't mutate it.
+2. **Working-tree mode** (`--dir`, no args) — base is the **committed AKG** (`.glassmarble/akg.json`); head is produced by a **fresh full analysis of the current working tree**. The base is cloned first so the analysis doesn't mutate it.
 
 **Behavior:** `akg.DiffGraphs(base, head)` → added/removed nodes, added/removed edges, touched files. Rendered as a two-column styled compare (or JSON).
 
@@ -925,7 +925,7 @@ gmb hooks uninstall
 
 ### 8.17 `gmb housekeeping`
 
-**Purpose:** Report and prune `.glassmarble` working-set storage (marbles, AI sessions, WAL). **Never touches `akg_state.ttl`** (guarded by verification and `--max-ttl-mb`).
+**Purpose:** Report and prune `.glassmarble` working-set storage (marbles, AI sessions, WAL). **Never touches `akg.json`** (guarded by verification and `--max-ttl-mb`).
 
 **Syntax:** `gmb housekeeping [--prune] [--older-than <days>] [--dir <path>]`
 
@@ -938,7 +938,7 @@ gmb hooks uninstall
 | `--older-than` | int | `30` | Retention window in days |
 
 **Behavior:**
-- **Report only** (no `--prune`): per-area sizes for `state (akg_state.ttl)`, `wal/`, `marbles/`, `ai/` + totals, plus a hint to run `--prune`.
+- **Report only** (no `--prune`): per-area sizes for `state (akg.json)`, `wal/`, `marbles/`, `ai/` + totals, plus a hint to run `--prune`.
 - **With `--prune`:** interactive terminals show a preview and ask for confirmation; non-TTY runs prune directly. Deletes marbles/ai files older than the cutoff, then truncates the WAL **if a healthy non-empty state file exists**.
 
 **Use cases:**
@@ -1348,7 +1348,7 @@ gmb housekeeping --prune --older-than 7   # prune + truncate WAL (cron-friendly)
 
 Common errors:
 - `AKG database is empty -- run 'glassmarble analyze' first` → run `gmb analyze` (or `gmb init` first).
-- `active AKG database not found at ...` → missing `.glassmarble/akg_state.ttl`.
+- `active AKG database not found at ...` → missing `.glassmarble/akg.json`.
 - `failed to commit AKG transaction` / lock timeouts → concurrent analysis or stale lock (auto-reclaimed after 30s).
 - `Refuse to load ... larger than N MiB` → `--max-ttl-mb` budget hit.
 

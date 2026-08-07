@@ -4,11 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
-	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
@@ -16,12 +13,12 @@ import (
 
 var diffCmd = &cobra.Command{
 	Use:   "diff",
-	Short: "Show architectural diff across committed transactions",
-	Long: `Replays the write-ahead log and prints the structural mutations of every
-recorded transaction: commit hash, node/edge deltas, and modified files.
-Because the WAL is truncated after each successful atomic TTL write, a clean
-database shows no pending transactions (the latest state is fully persisted
-in akg_state.ttl).`,
+	Short: "Show the persisted AKG state and its committed transaction version",
+	Long: `Reports the currently persisted architectural state: commit hash, schema
+version, and the graph version (the count of committed transactions captured
+in akg.json). The state file is the single source of truth — every committed
+transaction is fully persisted in akg.json, so there is no transaction log
+left to replay.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, _ := cmd.Flags().GetString("dir")
 		if dir == "" {
@@ -29,59 +26,19 @@ in akg_state.ttl).`,
 		}
 
 		storageDir := filepath.Join(dir, ".glassmarble")
-		walDir := filepath.Join(storageDir, "wal")
-
-		ttlPath := filepath.Join(storageDir, "akg_state.ttl")
-		if _, err := os.Stat(ttlPath); err != nil {
-			return producterrs.Tagged(fmt.Sprintf("no AKG database at %s -- run 'glassmarble analyze' first", ttlPath), producterrs.ErrValidation)
+		statePath := filepath.Join(storageDir, "akg.json")
+		if _, err := os.Stat(statePath); err != nil {
+			return producterrs.Tagged(fmt.Sprintf("no AKG database at %s -- run 'glassmarble analyze' first", statePath), producterrs.ErrValidation)
 		}
 
-		commitHash, schemaVersion, version, err := akg.TTLMetadata(storageDir)
+		commitHash, schemaVersion, version, err := akg.StateMetadata(storageDir)
 		if err != nil {
-			return fmt.Errorf("failed to read TTL metadata: %w", err)
+			return fmt.Errorf("failed to read AKG metadata: %w", err)
 		}
 
-		wal, err := akg.NewWriteAheadLog(walDir)
-		if err != nil {
-			return fmt.Errorf("failed to open WAL: %w", err)
-		}
-		entries, err := wal.ReadAllEntries()
-		if err != nil {
-			return fmt.Errorf("failed to read WAL: %w", err)
-		}
-
-		sort.Slice(entries, func(i, j int) bool {
-			return entries[i].TxID < entries[j].TxID
-		})
-
-		var viewEntries []views.DiffEntry
-		for _, e := range entries {
-			ve := views.DiffEntry{
-				TxID:       int(e.TxID),
-				CommitHash: e.CommitHash,
-				Timestamp:  e.Timestamp.Format(time.RFC3339),
-				Status:     string(e.Status),
-			}
-			if e.Payload != nil {
-				ve.HasPayload = true
-				ve.NodesAdded = len(e.Payload.GraphNodes)
-				ve.EdgesAdded = countOutboundEdges(e.Payload.OutboundEdges)
-			}
-			ve.ModifiedFiles = len(e.ModifiedFiles)
-			viewEntries = append(viewEntries, ve)
-		}
-
-		fmt.Println(views.RenderDiff(commitHash, schemaVersion, version, viewEntries))
+		fmt.Println(views.RenderDiff(commitHash, schemaVersion, version, nil))
 		return nil
 	},
-}
-
-func countOutboundEdges(out map[string][]stage4.ResolvedEdge) int {
-	n := 0
-	for _, edges := range out {
-		n += len(edges)
-	}
-	return n
 }
 
 func init() {

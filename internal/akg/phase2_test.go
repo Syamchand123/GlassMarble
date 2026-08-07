@@ -122,12 +122,12 @@ func TestLegacyReadBackCompat(t *testing.T) {
 <http://glassmarble.org/node/n1> gm:calls <http://glassmarble.org/node/n2> .
 << <http://glassmarble.org/node/n1> gm:calls <http://glassmarble.org/node/n2> >> gm:lineNumber 25 .
 `
-	ttlPath := filepath.Join(dir, "akg_state.ttl")
-	if err := os.WriteFile(ttlPath, []byte(legacyTTL), 0644); err != nil {
+	StatePath := filepath.Join(dir, "akg_state.ttl")
+	if err := os.WriteFile(StatePath, []byte(legacyTTL), 0644); err != nil {
 		t.Fatalf("failed to write legacy TTL: %v", err)
 	}
 
-	graph, err := reconstructFromTTLFile(ttlPath)
+	graph, err := reconstructFromTTLFile(StatePath)
 	if err != nil {
 		t.Fatalf("reconstructFromTTLFile failed on legacy TTL: %v", err)
 	}
@@ -229,8 +229,8 @@ func TestSchemaMigration(t *testing.T) {
 <http://glassmarble.org/node/t1> a gm:TypeDecl ;
     gm:name "StaleType" .
 `
-	ttlPath := filepath.Join(dir, "akg_state.ttl")
-	if err := os.WriteFile(ttlPath, []byte(v2TTL), 0644); err != nil {
+	StatePath := filepath.Join(dir, "akg_state.ttl")
+	if err := os.WriteFile(StatePath, []byte(v2TTL), 0644); err != nil {
 		t.Fatalf("failed to write v2 TTL: %v", err)
 	}
 
@@ -343,7 +343,8 @@ func TestWALRoundTrip(t *testing.T) {
 }
 
 // TestVerifySkipsMacro (W2-04 / K-03):
-// Verifies that verifyTTLFile does not run topological macro inference.
+// Verifies that post-write verification (verifyJSONFile) does not run
+// topological macro inference.
 func TestVerifySkipsMacro(t *testing.T) {
 	dir := t.TempDir()
 
@@ -362,8 +363,8 @@ func TestVerifySkipsMacro(t *testing.T) {
 		t.Fatalf("NewAKGTransactionManager failed: %v", err)
 	}
 
-	// Calling saveToDisk invokes verifyTTLFile internally
-	if err := tm.saveToDisk(graph, nil, nil, 0); err != nil {
+	// Calling saveToDisk invokes verifyJSONFile internally (K-03 / W2-04)
+	if err := tm.saveToDisk(graph); err != nil {
 		t.Fatalf("saveToDisk failed: %v", err)
 	}
 

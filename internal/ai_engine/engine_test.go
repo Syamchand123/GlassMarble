@@ -145,8 +145,8 @@ func TestDoctorAllGood(t *testing.T) {
 	if err := os.MkdirAll(ttlDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(ttlDir, "akg_state.ttl"), []byte("@prefix gm: <http://glassmarble.org/schema#> .\n"), 0o644); err != nil {
-		t.Fatalf("write ttl: %v", err)
+	if err := os.WriteFile(filepath.Join(ttlDir, "akg.json"), []byte(`{"schema_version":3,"commit_hash":"test","version":0,"nodes":[],"edges":[]}`), 0o644); err != nil {
+		t.Fatalf("write state: %v", err)
 	}
 
 	rep := Doctor(context.Background(), &aiconfig.Config{
@@ -188,7 +188,7 @@ func TestDoctorMissingAKG(t *testing.T) {
 	if rep.AKGExists {
 		t.Error("AKG should not exist in empty temp dir")
 	}
-	if !strings.Contains(rep.AKGPath, "akg_state.ttl") {
+	if !strings.Contains(rep.AKGPath, "akg.json") {
 		t.Errorf("AKG path = %q", rep.AKGPath)
 	}
 }

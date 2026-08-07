@@ -34,7 +34,7 @@ var inspectCmd = &cobra.Command{
 		}
 
 		storageDir := filepath.Join(dir, ".glassmarble")
-		if _, err := os.Stat(filepath.Join(storageDir, "akg_state.ttl")); os.IsNotExist(err) {
+		if _, err := os.Stat(filepath.Join(storageDir, "akg.json")); os.IsNotExist(err) {
 			return producterrs.Tagged(fmt.Sprintf("AKG database is empty -- run 'glassmarble analyze' first"), producterrs.ErrEmptySubgraph)
 		}
 

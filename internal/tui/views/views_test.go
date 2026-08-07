@@ -6,24 +6,25 @@ import (
 )
 
 // RenderDoctorUninitialized and RenderStatusUninitialized must carry the
-// "Uninitialized" marker plus the resolved TTL path so CLI users know exactly
-// which database directory is missing (§5 Phase 1 non-interactive fallback).
+// "Uninitialized" marker plus the resolved state path so CLI users know
+// exactly which database directory is missing (§5 Phase 1 non-interactive
+// fallback).
 func TestRenderDoctorUninitialized(t *testing.T) {
-	out := RenderDoctorUninitialized(`/repo/.glassmarble/akg_state.ttl`)
+	out := RenderDoctorUninitialized(`/repo/.glassmarble/akg.json`)
 	if !strings.Contains(out, "Uninitialized") {
 		t.Errorf("missing Uninitialized marker:\n%s", out)
 	}
-	if !strings.Contains(out, "akg_state.ttl") {
-		t.Errorf("missing ttl path:\n%s", out)
+	if !strings.Contains(out, "akg.json") {
+		t.Errorf("missing state path:\n%s", out)
 	}
 }
 
 func TestRenderStatusUninitialized(t *testing.T) {
-	out := RenderStatusUninitialized(`/repo/.glassmarble/akg_state.ttl`)
+	out := RenderStatusUninitialized(`/repo/.glassmarble/akg.json`)
 	if !strings.Contains(out, "Status: Uninitialized") {
 		t.Errorf("missing status header:\n%s", out)
 	}
-	if !strings.Contains(out, "/repo/.glassmarble/akg_state.ttl") {
+	if !strings.Contains(out, "/repo/.glassmarble/akg.json") {
 		t.Errorf("missing analyzed path:\n%s", out)
 	}
 }
@@ -42,7 +43,6 @@ func TestRenderStatusPreservesPrefixes(t *testing.T) {
 		IndexedFiles:  6,
 		Entrypoints:   2,
 		VirtualCount:  0,
-		FreshnessOK:   true,
 	}
 	out := RenderStatus(s)
 	for _, want := range []string{

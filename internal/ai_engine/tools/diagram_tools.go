@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/product"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
@@ -68,9 +69,9 @@ func diagramTools() []Tool {
 				if dt == types.UMLSequence && strArg(args, "entry", "") == "" {
 					return nil, fmt.Errorf("entry required: try --entry symbol:main.go::main")
 				}
-				ttlPath := filepath.Join(env.RootDir, ".glassmarble", "akg_state.ttl")
-				if _, err := os.Stat(ttlPath); err != nil {
-					return nil, fmt.Errorf("AKG database not found at %s — run `gmb analyze` first", ttlPath)
+				statePath := filepath.Join(env.RootDir, ".glassmarble", "akg.json")
+				if _, err := os.Stat(statePath); err != nil {
+					return nil, fmt.Errorf("AKG database not found at %s — run `gmb analyze` first", statePath)
 				}
 				scope, scopePath, err := parseDiagramScope(strArg(args, "scope", "global"))
 				if err != nil {
@@ -95,7 +96,7 @@ func diagramTools() []Tool {
 					}
 				}
 
-				markup, summary, err := renderWithSummary(env, ttlPath, dt, opts)
+				markup, summary, err := renderWithSummary(env, statePath, dt, opts)
 				if err != nil {
 					return nil, fmt.Errorf("diagram generation failed: %w", err)
 				}
@@ -140,9 +141,9 @@ func diagramTools() []Tool {
 				if !ok {
 					return nil, fmt.Errorf("unknown diagram type %q — see diagram_types for the 31 supported types", strArg(args, "type", ""))
 				}
-				ttlPath := filepath.Join(env.RootDir, ".glassmarble", "akg_state.ttl")
-				if _, err := os.Stat(ttlPath); err != nil {
-					return nil, fmt.Errorf("AKG database not found at %s — run `gmb analyze` first", ttlPath)
+				statePath := filepath.Join(env.RootDir, ".glassmarble", "akg.json")
+				if _, err := os.Stat(statePath); err != nil {
+					return nil, fmt.Errorf("AKG database not found at %s — run `gmb analyze` first", statePath)
 				}
 				scope, scopePath, err := parseDiagramScope(strArg(args, "scope", "global"))
 				if err != nil {
@@ -155,7 +156,7 @@ func diagramTools() []Tool {
 					Scope:         scope,
 					ScopePath:     scopePath,
 				}
-				_, summary, err := renderWithSummary(env, ttlPath, dt, opts)
+				_, summary, err := renderWithSummary(env, statePath, dt, opts)
 				if err != nil {
 					return nil, fmt.Errorf("diagram summary failed: %w", err)
 				}
@@ -220,9 +221,10 @@ func saveDiagramMarkup(rootDir string, dt types.DiagramType, markup string) (str
 	return filePath, nil
 }
 
-func renderWithSummary(env *Env, ttlPath string, dt types.DiagramType, opts types.QueryOptions) (string, *types.GraphSummary, error) {
+func renderWithSummary(env *Env, statePath string, dt types.DiagramType, opts types.QueryOptions) (string, *types.GraphSummary, error) {
 	req := product.BuildDiagramRequest{
-		TTLPath:     ttlPath,
+		StatePath:     statePath,
+		ParseFn:     akg.ParseGraphForQuery,
 		DiagramType: dt,
 		Format:      opts.Format,
 		Options: product.DiagramOptions{

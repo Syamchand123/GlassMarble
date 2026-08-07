@@ -2,8 +2,9 @@ package akg
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -37,7 +38,7 @@ type AKGTransactionManager struct {
 	storageDir  string
 	subscribers []chan AKGCommitEvent
 	// MaxTTLBytes is the AKG state-file budget (AUDIT Issue 4 Phase 4A-4).
-	// Loading and committing are refused when the TTL would exceed it;
+	// Loading and committing are refused when the state file would exceed it;
 	// 0 means unlimited.
 	MaxTTLBytes int64
 }
@@ -46,6 +47,12 @@ type AKGTransactionManager struct {
 // every full TTL serialization. It carries gm:commitHash, gm:schemaVersion,
 // and gm:version (the WAL replay bound).
 const metadataNodeURI = "http://glassmarble.org/node/metadata"
+
+// jsonStateFile is the canonical GraphJSON state file (v3 store) and the
+// single source of truth since Phase C ended the dual-write window: commits
+// persist to akg.json only. akg_state.ttl remains a read-only input for the
+// one-time self-heal migration of pre-v3 repositories.
+const jsonStateFile = "akg.json"
 
 // NewAKGTransactionManager initializes the Transaction Manager, restores state from disk, and runs WAL recovery.
 func NewAKGTransactionManager(storageDir string) (*AKGTransactionManager, error) {
@@ -144,12 +151,12 @@ func (tm *AKGTransactionManager) Recover() error {
 	}
 
 	if replayed {
-		if err := tm.saveToDisk(activeGraph, nil, nil, 0); err != nil {
+		if err := tm.saveToDisk(activeGraph); err != nil {
 			return fmt.Errorf("WAL recovery failed to persist replayed state: %w", err)
 		}
 	}
 
-	// After a successful recovery the TTL captures all committed state; the
+	// After a successful recovery akg.json captures all committed state; the
 	// WAL can be truncated so it stays bounded (AUDIT Issue 4 Phase 4B-8).
 	if err := tm.wal.Truncate(); err != nil {
 		return fmt.Errorf("WAL truncation after recovery failed: %w", err)
@@ -215,7 +222,7 @@ func (tm *AKGTransactionManager) ReplaceGraph(graph *CodePropertyGraph) error {
 	// Rebuild non-serialized indexes the way loadFromDisk does.
 	rebuildIndexes(graph)
 
-	if err := tm.saveToDisk(graph, nil, nil, 0); err != nil {
+	if err := tm.saveToDisk(graph); err != nil {
 		return fmt.Errorf("failed to persist imported graph: %w", err)
 	}
 
@@ -311,10 +318,7 @@ func (tm *AKGTransactionManager) ExecuteDeltaTransaction(payload *stage4.Stage4O
 	}
 
 	// Apply delta to shadow snapshot (Sub-Stage B, C, D)
-	// Capture the pre-transaction size BEFORE the sweep so delete-only deltas
-	// can still take the incremental append path (AUDIT Issue 3 Phase 3B-6).
-	preTxSize := tm.container.GetSnapshot().Nodes.Len()
-	deletedNodeIDs, err := tm.applyDeltaToShadow(shadow, payload, modifiedFiles)
+	_, err := tm.applyDeltaToShadow(shadow, payload, modifiedFiles)
 	if err != nil {
 		return err
 	}
@@ -332,9 +336,9 @@ func (tm *AKGTransactionManager) ExecuteDeltaTransaction(payload *stage4.Stage4O
 	// Persist synchronously (single writer, lock held) with tmp+fsync+rename
 	// semantics: the previous good file survives any failure, and errors reach
 	// the caller instead of being swallowed (AUDIT Issue 3 Phase 3B-4/3B-10).
-	if err := tm.saveToDisk(shadow, payload, deletedNodeIDs, preTxSize); err != nil {
-		// Roll the WAL back: the staged TTL never replaced the previous good
-		// file, so the rejected transaction must not replay on the next
+	if err := tm.saveToDisk(shadow); err != nil {
+		// Roll the WAL back: the staged state file never replaced the previous
+		// good file, so the rejected transaction must not replay on the next
 		// startup — recovery would hit the same verification failure and
 		// block every subsequent run (zero-dangling guard, Issue 5 Phase 5A-1).
 		if truncErr := tm.wal.Truncate(); truncErr != nil {
@@ -343,7 +347,7 @@ func (tm *AKGTransactionManager) ExecuteDeltaTransaction(payload *stage4.Stage4O
 		return fmt.Errorf("failed to persist AKG state: %w", err)
 	}
 
-	// The TTL now captures every transaction up to txID; replaying the WAL
+	// akg.json now captures every transaction up to txID; replaying the WAL
 	// would be redundant. Truncate keeps .glassmarble bounded.
 	if err := tm.wal.Truncate(); err != nil {
 		return fmt.Errorf("failed to truncate WAL after commit: %w", err)
@@ -654,147 +658,109 @@ func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, p
 	return deletedNodeIDs, nil
 }
 
-// saveToDisk persists the graph to the TTL file atomically:
-// tmp-file -> fsync -> post-write verification -> atomic rename.
+// saveToDisk persists the graph to the canonical GraphJSON state file
+// atomically: tmp-file -> fsync -> post-write verification -> atomic rename.
 // The previous good file is preserved on any failure (AUDIT Issue 3
-// Phase 3B-4, Issue 5 Phase 5A-1).
-func (tm *AKGTransactionManager) saveToDisk(graph *CodePropertyGraph, payload *stage4.Stage4Output, deletedNodeIDs map[string]bool, baseSize int) error {
+// Phase 3B-4, Issue 5 Phase 5A-1). Since Phase C the JSON store is the single
+// write artifact; the legacy Turtle mirror is no longer produced (the TTL
+// read path remains for one-time self-heal migration of pre-v3 repositories).
+func (tm *AKGTransactionManager) saveToDisk(graph *CodePropertyGraph) error {
 	if graph == nil {
 		return fmt.Errorf("cannot persist nil graph")
 	}
+	if err := tm.writeJSONState(graph); err != nil {
+		return fmt.Errorf("failed to persist state file: %w", err)
+	}
+	return nil
+}
 
-	ttlPath := filepath.Join(tm.storageDir, "akg_state.ttl")
+// writeJSONState atomically persists the graph as GraphJSON (tmp-file -> fsync
+// -> parse-back verification -> rename), mirroring the former TTL write path.
+// A JSON write failure never disturbs the previous good state file.
+func (tm *AKGTransactionManager) writeJSONState(graph *CodePropertyGraph) error {
+	jsonPath := filepath.Join(tm.storageDir, jsonStateFile)
 
-	tmp, err := os.CreateTemp(tm.storageDir, "akg_state.ttl.tmp-*")
+	tmp, err := os.CreateTemp(tm.storageDir, "akg.json.tmp-*")
 	if err != nil {
-		return fmt.Errorf("failed to create temp TTL file: %w", err)
+		return fmt.Errorf("failed to create temp JSON state file: %w", err)
 	}
 	defer os.Remove(tmp.Name())
 
-	// Incremental append path: stage the existing TTL and append the delta
-	// (tombstones + new nodes/edges) instead of rewriting the whole graph.
-	// baseSize is the PRE-transaction active graph size: measuring the
-	// post-sweep shadow would see 0 nodes after a delete delta and force a
-	// full rewrite, losing the tombstones entirely.
-	incremental := false
-	if payload != nil && len(deletedNodeIDs) != 0 {
-		deltaSize := len(payload.GraphNodes) + len(deletedNodeIDs)
-		if _, statErr := os.Stat(ttlPath); statErr == nil && baseSize > 0 && float64(deltaSize) <= float64(baseSize)*0.20 {
-			src, openErr := os.Open(ttlPath)
-			if openErr != nil {
-				return fmt.Errorf("failed to open existing TTL for incremental append: %w", openErr)
-			}
-			if _, copyErr := io.Copy(tmp, src); copyErr != nil {
-				src.Close()
-				return fmt.Errorf("failed to stage existing TTL for incremental append: %w", copyErr)
-			}
-			src.Close()
-
-			bw := bufio.NewWriter(tmp)
-			if err := SerializeDeltaToTurtle(payload, deletedNodeIDs, graph.Version, bw); err != nil {
-				return fmt.Errorf("delta serialization failed: %w", err)
-			}
-			if err := bw.Flush(); err != nil {
-				return fmt.Errorf("failed to flush buffer: %w", err)
-			}
-			incremental = true
-		}
+	if err := ExportGraphJSON(graph, tmp); err != nil {
+		return fmt.Errorf("JSON serialization failed: %w", err)
 	}
-
-	// Full rewrite (compaction) path
-	if !incremental {
-		bw := bufio.NewWriter(tmp)
-		if err := SerializeToTurtle(graph, bw); err != nil {
-			return fmt.Errorf("TTL serialization failed: %w", err)
-		}
-		if err := bw.Flush(); err != nil {
-			return fmt.Errorf("failed to flush buffer: %w", err)
-		}
-	}
-
 	if err := tmp.Sync(); err != nil {
-		return fmt.Errorf("failed to fsync temp TTL file: %w", err)
+		return fmt.Errorf("failed to fsync temp JSON state file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("failed to close temp TTL file: %w", err)
+		return fmt.Errorf("failed to close temp JSON state file: %w", err)
 	}
 
-	// State-file budget guard: an oversized staged TTL is rejected BEFORE
-	// verification and the atomic rename, so the previous good file stays in
-	// place and the WAL can be rolled back (AUDIT Issue 4 Phase 4A-4).
 	if err := tm.enforceTTLBudget(tmp.Name()); err != nil {
 		return err
 	}
 
 	// Post-write verification BEFORE the atomic rename: if the staged file is
-	// corrupt or lossy, the previous good file is still in place (AUDIT
-	// Issue 5 Phase 5A-1).
-	if err := tm.verifyTTLFile(tmp.Name(), graph); err != nil {
+	// corrupt or lossy, the previous good file is still in place.
+	if err := tm.verifyJSONFile(tmp.Name(), graph); err != nil {
 		return err
 	}
 
-	if err := os.Rename(tmp.Name(), ttlPath); err != nil {
-		return fmt.Errorf("failed to atomically rename TTL into place: %w", err)
+	if err := os.Rename(tmp.Name(), jsonPath); err != nil {
+		return fmt.Errorf("failed to atomically rename JSON state file into place: %w", err)
 	}
 	return nil
 }
 
-// verifyTTLFile re-reads a staged TTL with the canonical parser and asserts
-// node/edge parity with the in-memory graph. Any deviation — unparseable
-// file, node/edge lossiness, or a single dangling edge (source or target
-// missing from the node set) — fails the write so the previous good file
-// stays in place (AUDIT Issue 5 Phase 5A-1: zero dangling edges at write
-// time; the engine-side producers were fixed in the Issue 1 batches).
-func (tm *AKGTransactionManager) verifyTTLFile(ttlPath string, graph *CodePropertyGraph) error {
-	restored, err := reconstructFromTTLFileEx(ttlPath, false)
+// verifyJSONFile re-reads a staged GraphJSON file and asserts it is byte-
+// identical to a fresh export of the in-memory graph. ExportGraphJSON is
+// deterministic (sorted nodes/edges, sorted property keys), so byte equality
+// is the strongest possible parity check: any node/edge/property loss,
+// mutation or ordering drift fails the write before the atomic rename. The
+// zero-dangling guard (every persisted edge must reference real nodes) is
+// also enforced here, preserving the write-time invariant that
+// verifyTTLFile held on the legacy Turtle path (AUDIT Issue 5 Phase 5A-1).
+func (tm *AKGTransactionManager) verifyJSONFile(jsonPath string, graph *CodePropertyGraph) error {
+	data, err := os.ReadFile(jsonPath)
 	if err != nil {
-		return fmt.Errorf("post-write verification failed: file did not parse back cleanly: %w", err)
+		return fmt.Errorf("post-write JSON verification failed: %w", err)
 	}
 
-	if restored.Nodes.Len() != graph.Nodes.Len() {
-		return fmt.Errorf("post-write verification failed: node count mismatch (file=%d graph=%d)", restored.Nodes.Len(), graph.Nodes.Len())
+	var doc GraphJSON
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("post-write JSON verification failed: file did not parse back cleanly: %w", err)
+	}
+	if doc.SchemaVersion != graph.SchemaVersion || doc.Version != graph.Version || doc.CommitHash != graph.CommitHash {
+		return fmt.Errorf("post-write JSON verification failed: metadata mismatch (file={schema %d, ver %d, %q} graph={schema %d, ver %d, %q})",
+			doc.SchemaVersion, doc.Version, doc.CommitHash, graph.SchemaVersion, graph.Version, graph.CommitHash)
 	}
 
-	restoredEdges := 0
-	restored.OutboundEdges.Iterate(func(_ string, edges []stage4.ResolvedEdge) {
-		restoredEdges += len(edges)
-	})
-	// The TTL is triple-oriented: parallel edges sharing (source, predicate,
-	// target) collapse to one canonical triple on persist (the serializer
-	// dedups, keeping the max line number). Verification must therefore
-	// compare against the deduplicated edge count, not the raw total.
-	type keyT struct{ s, p, t string }
-	seen := make(map[keyT]int)
-	graph.OutboundEdges.Iterate(func(sourceID string, edges []stage4.ResolvedEdge) {
-		for _, edge := range edges {
-			pred := mapEdgeTypeToPredicate(edge.Type)
-			if pred == "" {
-				continue
-			}
-			seen[keyT{sourceID, pred, edge.TargetID}]++
-		}
-	})
-	expectedEdges := len(seen)
-	if restoredEdges != expectedEdges {
-		return fmt.Errorf("post-write verification failed: edge count mismatch (file=%d graph=%d)", restoredEdges, expectedEdges)
+	var buf bytes.Buffer
+	if err := ExportGraphJSON(graph, &buf); err != nil {
+		return fmt.Errorf("post-write JSON verification failed: %w", err)
+	}
+	if !bytes.Equal(data, buf.Bytes()) {
+		return fmt.Errorf("post-write JSON verification failed: serialized output does not match the in-memory graph; the write was rejected and the previous good file was kept")
 	}
 
 	// Zero-dangling guard: every persisted edge must reference real nodes.
 	// The merged graph is verified as a whole (base + delta), so a dangling
 	// edge is a hard integrity failure, never a tolerated warning.
+	nodeSet := make(map[string]struct{}, len(doc.Nodes))
+	for _, n := range doc.Nodes {
+		nodeSet[n.ID] = struct{}{}
+	}
 	dangling := 0
-	restored.OutboundEdges.Iterate(func(sourceID string, edges []stage4.ResolvedEdge) {
-		for _, edge := range edges {
-			if _, ok := restored.Nodes.Get(sourceID); !ok {
-				dangling++
-			}
-			if _, ok := restored.Nodes.Get(edge.TargetID); !ok {
-				dangling++
-			}
+	for _, e := range doc.Edges {
+		if _, ok := nodeSet[e.SourceID]; !ok {
+			dangling++
 		}
-	})
+		if _, ok := nodeSet[e.TargetID]; !ok {
+			dangling++
+		}
+	}
 	if dangling > 0 {
-		return fmt.Errorf("post-write verification failed: %d dangling edge(s) (edges referencing missing nodes); the write was rejected and the previous good TTL was kept. Remove .glassmarble/akg_state.ttl and .glassmarble/wal/akg_transactions.wal, then re-run `gmb analyze --full` to rebuild from scratch", dangling)
+		return fmt.Errorf("post-write JSON verification failed: %d dangling edge(s) (edges referencing missing nodes); the write was rejected and the previous good file was kept. Remove .glassmarble/akg.json and .glassmarble/wal/akg_transactions.wal, then re-run `gmb analyze --full` to rebuild from scratch", dangling)
 	}
 
 	graph.Verified = true
@@ -821,24 +787,101 @@ func (tm *AKGTransactionManager) enforceTTLBudget(path string) error {
 	return nil
 }
 
-// loadFromDisk restores the active graph from the primary Turtle state
-// database (akg_state.ttl). It automatically handles schema migration (v1/v2 -> v3) with a .bak backup.
+// loadFromDisk restores the active graph from the canonical GraphJSON state
+// database (akg.json). A missing akg.json with a legacy akg_state.ttl
+// present triggers the one-time self-heal migration (D3): the TTL is loaded
+// with today's semantics (schema backup/migrate, WAL replay by the caller),
+// akg.json is written from the restored graph, and the TTL is archived as
+// akg_state.ttl.bak — never deleted.
 func (tm *AKGTransactionManager) loadFromDisk() error {
-	ttlPath := filepath.Join(tm.storageDir, "akg_state.ttl")
-	if err := tm.enforceTTLBudget(ttlPath); err != nil {
+	jsonPath := filepath.Join(tm.storageDir, jsonStateFile)
+	if _, err := os.Stat(jsonPath); err == nil {
+		return tm.loadFromJSON(jsonPath)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	// No akg.json. Legacy TTL self-heal path.
+	StatePath := filepath.Join(tm.storageDir, "akg_state.ttl")
+	if _, err := os.Stat(StatePath); err == nil {
+		if err := tm.loadFromLegacyTTL(); err != nil {
+			return err
+		}
+		// Persist the canonical JSON store from the restored graph, then
+		// archive the TTL out of the way (never delete user data).
+		if err := tm.writeJSONState(tm.container.GetSnapshot()); err != nil {
+			return fmt.Errorf("self-heal: failed to write akg.json from legacy state: %w", err)
+		}
+		bakPath := StatePath + ".bak"
+		if err := os.Rename(StatePath, bakPath); err != nil {
+			return fmt.Errorf("self-heal: failed to archive legacy state file as %s: %w", bakPath, err)
+		}
+		return nil
+	}
+
+	// Fresh database: start empty. WAL replay still applies any
+	// committed-but-unpersisted transactions from a previous run.
+	graph := NewCodePropertyGraph("initial")
+	graph.Version = 0
+	graph.SchemaVersion = CurrentSchemaVersion
+	tm.container.ActiveGraph = graph
+	return nil
+}
+
+// loadFromJSON restores the active graph from an akg.json document.
+func (tm *AKGTransactionManager) loadFromJSON(jsonPath string) error {
+	if err := tm.enforceTTLBudget(jsonPath); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(jsonPath)
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", jsonPath, err)
+	}
+
+	// Schema migration with an akg.json.bak backup of the pre-migration
+	// artifact. ImportGraphJSON performs the in-memory migration itself.
+	var doc GraphJSON
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("failed to parse %s: %w", jsonPath, err)
+	}
+	if doc.SchemaVersion > 0 && doc.SchemaVersion < CurrentSchemaVersion {
+		bakPath := jsonPath + ".bak"
+		if err := os.WriteFile(bakPath, data, 0644); err != nil {
+			return fmt.Errorf("schema migration backup failed: %w", err)
+		}
+	}
+
+	graph, err := ImportGraphJSON(bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("failed to restore AKG state from akg.json: %w", err)
+	}
+
+	// Schema v3 migration handling (K-07 / W2-08)
+	if doc.SchemaVersion > 0 && doc.SchemaVersion < CurrentSchemaVersion {
+		oldVer := doc.SchemaVersion
+		if err := tm.writeJSONState(graph); err != nil {
+			return fmt.Errorf("persisting schema migration failed: %w", err)
+		}
+		graph.VerificationMsg = fmt.Sprintf("Migrated AKG schema from v%d to v%d (backup created at %s)", oldVer, CurrentSchemaVersion, jsonPath+".bak")
+	}
+
+	// Rebuild LineIndex since it is not serialized
+	rebuildIndexes(graph)
+
+	tm.container.ActiveGraph = graph
+	return nil
+}
+
+// loadFromLegacyTTL restores the active graph from the legacy Turtle state
+// database (akg_state.ttl), preserving the previous load semantics: schema
+// migration with a .bak backup, and a re-persist of the migrated state.
+func (tm *AKGTransactionManager) loadFromLegacyTTL() error {
+	StatePath := filepath.Join(tm.storageDir, "akg_state.ttl")
+	if err := tm.enforceTTLBudget(StatePath); err != nil {
 		return err
 	}
 	graph, err := tm.reconstructFromTurtle()
 	if err != nil {
-		if os.IsNotExist(err) {
-			// Fresh database: start empty. WAL replay still applies any
-			// committed-but-unpersisted transactions from a previous run.
-			graph = NewCodePropertyGraph("initial")
-			graph.Version = 0
-			graph.SchemaVersion = CurrentSchemaVersion
-			tm.container.ActiveGraph = graph
-			return nil
-		}
 		return err
 	}
 
@@ -849,7 +892,7 @@ func (tm *AKGTransactionManager) loadFromDisk() error {
 		if err := MigrateToSchemaV3(graph); err != nil {
 			return fmt.Errorf("schema migration failed: %w", err)
 		}
-		if err := tm.saveToDisk(graph, nil, nil, 0); err != nil {
+		if err := tm.saveToDisk(graph); err != nil {
 			return fmt.Errorf("persisting schema migration failed: %w", err)
 		}
 		graph.VerificationMsg = fmt.Sprintf("Migrated AKG schema from v%d to v%d (backup created at %s)", oldVer, CurrentSchemaVersion, bakPath)
@@ -866,24 +909,25 @@ func (tm *AKGTransactionManager) reconstructFromTurtle() (*CodePropertyGraph, er
 	return reconstructFromTTLFileEx(filepath.Join(tm.storageDir, "akg_state.ttl"), true)
 }
 
-func reconstructFromTTLFile(ttlPath string) (*CodePropertyGraph, error) {
-	return reconstructFromTTLFileEx(ttlPath, true)
+func reconstructFromTTLFile(StatePath string) (*CodePropertyGraph, error) {
+	return reconstructFromTTLFileEx(StatePath, true)
 }
 
 // reconstructFromTTLFileEx rebuilds a CodePropertyGraph from a TTL file.
-// If runMacros is false, topological macro inference is skipped (used by verifyTTLFile, K-03 / W2-04).
-func reconstructFromTTLFileEx(ttlPath string, runMacros bool) (*CodePropertyGraph, error) {
-	if _, err := os.Stat(ttlPath); os.IsNotExist(err) {
+// If runMacros is false, topological macro inference is skipped (used by TTL
+// parity verification, K-03 / W2-04).
+func reconstructFromTTLFileEx(StatePath string, runMacros bool) (*CodePropertyGraph, error) {
+	if _, err := os.Stat(StatePath); os.IsNotExist(err) {
 		return nil, err
 	}
 
 	// Tombstones first
-	deletedIDs, err := scanDeletedNodeIDs(ttlPath)
+	deletedIDs, err := scanDeletedNodeIDs(StatePath)
 	if err != nil {
 		return nil, err
 	}
 
-	nodes, edges, err := stage1.ParseTTLFile(ttlPath)
+	nodes, edges, err := stage1.ParseTTLFile(StatePath)
 	if err != nil {
 		return nil, fmt.Errorf("TTL parse failed: %w", err)
 	}
@@ -1004,7 +1048,7 @@ func reconstructFromTTLFileEx(ttlPath string, runMacros bool) (*CodePropertyGrap
 	}
 
 	// Restore metadata node
-	commitHash, schemaVersion, ttlVersion, err := scanTTLMetadata(ttlPath)
+	commitHash, schemaVersion, ttlVersion, err := scanTTLMetadata(StatePath)
 	if err != nil {
 		return nil, fmt.Errorf("metadata scan failed: %w", err)
 	}
@@ -1021,7 +1065,7 @@ func reconstructFromTTLFileEx(ttlPath string, runMacros bool) (*CodePropertyGrap
 		return nil, fmt.Errorf("%w: file schema version %d exceeds supported %d", akgerrs.ErrSchemaVersion, schemaVersion, CurrentSchemaVersion)
 	}
 
-	// Run macro inference if requested (skipped during verifyTTLFile - K-03 / W2-04)
+	// Run macro inference if requested (skipped during TTL parity verification - K-03 / W2-04)
 	if runMacros {
 		RunTopologicalMacroInference(graph)
 	}
@@ -1035,10 +1079,10 @@ func reconstructFromTTLFileEx(ttlPath string, runMacros bool) (*CodePropertyGrap
 // set of node IDs marked for deletion. Last block wins: a node that was
 // deleted and then re-added within the same delta stream keeps its latest
 // (non-tombstone) block.
-func scanDeletedNodeIDs(ttlPath string) (map[string]bool, error) {
+func scanDeletedNodeIDs(StatePath string) (map[string]bool, error) {
 	deleted := make(map[string]bool)
 
-	f, err := os.Open(ttlPath)
+	f, err := os.Open(StatePath)
 	if err != nil {
 		return nil, err
 	}
@@ -1085,8 +1129,8 @@ func scanDeletedNodeIDs(ttlPath string) (map[string]bool, error) {
 // restore path cannot rely on ParseTTLFile for it. Maxima are used for
 // version/schemaVersion so duplicate blocks from incremental appends can
 // never regress the WAL replay bound or smuggle an old schema past the check.
-func scanTTLMetadata(ttlPath string) (commitHash string, schemaVersion int, version uint64, err error) {
-	f, err := os.Open(ttlPath)
+func scanTTLMetadata(StatePath string) (commitHash string, schemaVersion int, version uint64, err error) {
+	f, err := os.Open(StatePath)
 	if err != nil {
 		return "", 0, 0, err
 	}

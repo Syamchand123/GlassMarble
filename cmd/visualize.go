@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/product"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
@@ -50,7 +51,7 @@ var (
 var visualizeCmd = &cobra.Command{
 	Use:   "visualize [diagram_type]",
 	Short: "Generate visual architecture diagrams (marbles) from the AKG",
-	Long:  `Queries the W3C RDF Turtle database file (.ttl) and projects the graph layout into Mermaid.js, PlantUML, or DOT format.`,
+	Long:  `Queries the canonical AKG state database (akg.json) and projects the graph layout into Mermaid.js, PlantUML, or DOT format.`,
 	Args:  cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		diagName := args[0]
@@ -75,10 +76,10 @@ var visualizeCmd = &cobra.Command{
 			return producterrs.Tagged(fmt.Sprintf("entry point ID (--entry) is mandatory for UML Sequence diagrams"), producterrs.ErrEntryMissing)
 		}
 
-		// Resolve .ttl path
-		ttlPath := filepath.Join(storagePath, ".glassmarble", "akg_state.ttl")
-		if _, err := os.Stat(ttlPath); os.IsNotExist(err) {
-			return fmt.Errorf("active AKG database not found at %s. Please run analysis first", ttlPath)
+		// Resolve the canonical state path (Phase C: akg.json).
+		statePath := filepath.Join(storagePath, ".glassmarble", "akg.json")
+		if _, err := os.Stat(statePath); os.IsNotExist(err) {
+			return fmt.Errorf("active AKG database not found at %s. Please run analysis first", statePath)
 		}
 
 		start := time.Now()
@@ -127,7 +128,7 @@ var visualizeCmd = &cobra.Command{
 		if renderFlag == "" && tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout()) {
 			return visualizeprog.Run(visualizeprog.Config{
 				DiagType:    diagType,
-				TTLPath:     ttlPath,
+				StatePath:     statePath,
 				Opts:        opts,
 				SaveFile:    saveFile,
 				OutputFlag:  outputFlag,
@@ -150,7 +151,8 @@ var visualizeCmd = &cobra.Command{
 
 		// Generate Diagram Markup (Marble) via unified pipeline entry (V-11 / 11.1)
 		req := product.BuildDiagramRequest{
-			TTLPath:     ttlPath,
+			StatePath:     statePath,
+			ParseFn:     akg.ParseGraphForQuery,
 			DiagramType: diagType,
 			Format:      formatFlag,
 			Options: product.DiagramOptions{
@@ -487,7 +489,7 @@ func printDiagramTypeCheck(cmd *cobra.Command, name string) error {
 		}
 	}
 
-	ttlPath := filepath.Join(storagePath, ".glassmarble", "akg_state.ttl")
+	statePath := filepath.Join(storagePath, ".glassmarble", "akg.json")
 	nodeCount := 0
 	edgeCount := 0
 	resolvedEntry := entryPointID
@@ -495,9 +497,10 @@ func printDiagramTypeCheck(cmd *cobra.Command, name string) error {
 		resolvedEntry = "auto"
 	}
 
-	if _, statErr := os.Stat(ttlPath); statErr == nil {
+	if _, statErr := os.Stat(statePath); statErr == nil {
 		req := product.BuildDiagramRequest{
-			TTLPath:     ttlPath,
+			StatePath:     statePath,
+			ParseFn:     akg.ParseGraphForQuery,
 			DiagramType: dt,
 			Format:      "mermaid",
 			Options: product.DiagramOptions{

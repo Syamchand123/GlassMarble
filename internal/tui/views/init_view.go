@@ -14,7 +14,7 @@ func RenderInitSuccess(gmDir string, gitignoreUpdated bool) string {
 		"",
 		tui.KV("Location", tui.StyleCode.Render(".glassmarble/")),
 		tui.KV("Config", tui.StyleCode.Render(gmDir+"/config.yaml")),
-		tui.KV("AKG State", tui.StyleCode.Render(gmDir+"/akg_state.ttl")),
+		tui.KV("AKG State", tui.StyleCode.Render(gmDir+"/akg.json")),
 	}
 	if gitignoreUpdated {
 		rows = append(rows, tui.KV("Gitignore", tui.StyleMuted.Render(".glassmarble added to .gitignore")))

@@ -200,12 +200,13 @@ When an end-user runs a command like `glassmarble visualize class --dir ./projec
                                ▼
              ┌─────────────────┴─────────────────┐
              ▼                                   ▼
-   ┌───────────────────┐               ┌───────────────────┐
-   │ JSON Cache Valid  │               │ JSON Cache Corrupt│
-   └─────────┬─────────┘               └─────────┬─────────┘
-             │ (Fast load)                       │ (Self-Healing Fallback)
-             │                                   │ parses akg_state.ttl
-             │                                   │ rewrites JSON cache
+   ┌───────────────────┐               ┌──────────────────────┐
+   │ akg.json Present  │               │ No akg.json; legacy  │
+   │                   │               │ TTL present          │
+   └─────────┬─────────┘               └──────────┬───────────┘
+             │ (Fast load)                        │ (One-time migration)
+             │                                    │ parses akg_state.ttl
+             │                                    │ writes akg.json; TTL → .bak
              ▼                                   ▼
    ┌───────────────────────────────────────────────┐
    │ Graph Database Loaded in Memory               │
@@ -239,13 +240,13 @@ When an end-user runs a command like `glassmarble visualize class --dir ./projec
 ### A. Unit & Integration Test Suites
 Every phase has direct unit tests inside the workspace:
 *   **Database Concurrency & Locking**: Verified in `internal/akg/transaction_manager_test.go`. Asserts concurrent lock acquisition failures.
-*   **Self-Healing Fallback Loader**: Verified in `transaction_manager_test.go` by intentionally writing corrupted JSON contents and asserting that the Turtle loader successfully reconstructs the CPG.
+*   **Self-Healing Migration Loader**: Verified in `transaction_manager_test.go` — a missing `akg.json` with a legacy `akg_state.ttl` present restores the graph from Turtle and archives the TTL as `.bak`; a corrupt `akg.json` fails loudly instead of being silently rebuilt (see `doctor_test.go`).
 *   **Parser & Translators**: Verified in `internal/code_analysis_engine/stage2/stage2_test.go` and `stage4/stage4_test.go`.
 
 ### B. End-to-End Real Codebase Integration Test
 We validated the system using a real polyglot codebase containing 11 files across Go, Python, and JavaScript:
 1.  **Codebase Ingestion**: Executed `go run scratch/run_ingestion.go`. It parsed all 12 source files, normalized the ASTs, and generated the CPG graph.
-2.  **Transaction Commit**: The graph was committed to `.glassmarble/akg_state.ttl` and `.glassmarble/akg_state.json`.
+2.  **Transaction Commit**: The graph was committed to `.glassmarble/akg.json`.
 3.  **Visualization Generation**: We ran:
     `.\glassmarble.exe visualize class --dir .\scratch\real_e2e_db --unused --save "real_class_marble"`
     It generated the class diagram markdown block correctly mapping call hierarchies to class relationships.
@@ -275,10 +276,10 @@ While GlassMarble is robust, the current architecture has a few limitations:
 The `G:\GlassMarble\internal\akg` package is the core database storage and transaction engine of GlassMarble. It provides strict concurrency control, serialization of Code Property Graph (CPG) structures into standard W3C RDF-star, and self-healing recovery mechanisms.
 
 ### A. Storage Architecture & Directory Structures
-When GlassMarble ingests a codebase, it creates a `.glassmarble/` database directory at the root of the project. This folder contains three key files:
+When GlassMarble ingests a codebase, it creates a `.glassmarble/` database directory at the root of the project. This folder contains these key files:
 
-1.  **`akg_state.ttl`**: The primary source of truth. It contains the entire architecture graph serialized in W3C RDF-star Turtle syntax.
-2.  **`akg_state.json`**: An optimized lookup cache. It contains pre-indexed JSON representations of nodes and edges, allowing fast visualization query loads without parsing the heavy Turtle syntax on every execution.
+1.  **`akg.json`**: The single source of truth. It contains the entire architecture graph serialized as GraphJSON — deterministic, sorted nodes/edges, lossless for edge metadata (confidence, self-loops, parallel edges).
+2.  **`akg_state.ttl.bak`**: Present only after a one-time self-heal migration of a pre-v3 repository; the legacy Turtle state is archived, never deleted.
 3.  **`db.lock`**: A temporary file token used as an exclusive lock.
 
 ### B. Concurrency Control & Write-Lock Mechanics
@@ -289,26 +290,28 @@ To prevent database corruption during parallel runs (for example, if a developer
     os.OpenFile(lockFilePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0666)
     ```
     On Windows/Linux, the `os.O_EXCL` flag guarantees that the file creation is atomic. If the lock file already exists, the operating system blocks the call and returns an error. GlassMarble immediately aborts the write operation, indicating that another transaction is in progress.
-*   **Write-Ahead & Atomic File Swapping**: Rather than editing `akg_state.ttl` or `akg_state.json` directly (which would leave them in a corrupted state if the program crashed midway), the transaction manager writes content to temporary files (e.g., `akg_state.ttl.tmp`). Once the write succeeds, it performs an atomic swap:
+*   **Write-Ahead & Atomic File Swapping**: Rather than editing `akg.json` directly (which would leave it in a corrupted state if the program crashed midway), the transaction manager writes content to temporary files (e.g., `akg.json.tmp-*`). Once the write succeeds, it performs an atomic swap:
     ```go
     os.Rename(tempPath, finalPath)
     ```
     This ensures that the database transition is fully transactional (all-or-nothing).
 *   **Lock Release**: In a `defer` block, the transaction manager deletes `db.lock` to release access.
 
-### C. Self-Healing Fallback Recovery System
-If `akg_state.json` is missing, corrupted, or deleted, the transaction manager initiates a **Self-Healing Recovery** process:
+### C. Legacy Self-Healing Migration
+If `akg.json` is missing but a legacy `akg_state.ttl` exists, the transaction manager runs a **one-time self-heal migration**:
 
-1.  **Turtle Parser Activation**: It opens the primary Turtle file `akg_state.ttl` and reads it line-by-line using a regex scanner.
+1.  **Turtle Parser Activation**: It opens the legacy Turtle file `akg_state.ttl` and reads it line-by-line using a scanner.
 2.  **Triple Reconstruction**: It parses standard RDF triples (`subject predicate object`) and maps them back to node elements (like `gm:TypeDecl`, `gm:Executable`) and edge properties (like `gm:calls`, `gm:inheritsFrom`).
 3.  **RDF-Star Nested Extraction**: It detects nested assertions to reconstruct line numbers and call metadata:
     ```
     << <subject> <predicate> <object> >> <metaPredicate> <metaValue>
     ```
-4.  **Re-indexing & Cache Recovery**: Once the graph structure is fully built in memory, it serializes and saves it as a fresh `akg_state.json`, restoring fast-query capability automatically.
+4.  **Re-indexing & Persistence**: Once the graph structure is fully built in memory, it writes it as a fresh `akg.json` and archives the TTL as `akg_state.ttl.bak` (never deleted). From then on, `akg.json` is the only state file.
+
+A corrupt `akg.json` fails loudly at startup instead of being silently overwritten; `gmb doctor` reports the corruption so the state can be rebuilt with `gmb analyze --full`.
 
 ### D. RDF-Star Turtle Serialization (`turtle_serializer.go`)
-The [`turtle_serializer.go`](file:///G:/GlassMarble/internal/akg/turtle_serializer.go) file converts the internal CPG Go structs into clean Turtle text:
+The [`turtle_serializer.go`](file:///G:/GlassMarble/internal/akg/turtle_serializer.go) file converts the internal CPG Go structs into Turtle text. It is retained for the legacy TTL migration reader and `gmb export --format turtle`; the canonical store is GraphJSON (see `graph_json.go`):
 
 *   **Namespace Mappings**: Automatically binds URIs like `<http://glassmarble.org/node/...>` to keep graphs clean and structured.
 *   **Type Coercion**: Maps GAST nodes and predicates to standard ontology types (e.g. `stage4.EdgeCalls` is mapped to `gm:calls`).
@@ -318,7 +321,7 @@ The [`turtle_serializer.go`](file:///G:/GlassMarble/internal/akg/turtle_serializ
 
 ## 9. GlassMarble System Architecture Diagram
 
-The diagram below provides a complete visual representation of the GlassMarble system architecture, illustrating the flow of data from source code files, through the multi-stage analysis pipeline, into the transaction-managed RDF-star graph storage, and finally through the visualization engine to emit Mermaid diagrams.
+The diagram below provides a complete visual representation of the GlassMarble system architecture, illustrating the flow of data from source code files, through the multi-stage analysis pipeline, into the transaction-managed GraphJSON state store, and finally through the visualization engine to emit Mermaid diagrams.
 
 ```mermaid
 graph TB
@@ -340,18 +343,17 @@ graph TB
         WAL["Write-Ahead Log (WAL)<br/>(wal.go, akg_transactions.wal)"]
         MVCC["MVCC Snapshot Promotion<br/>(mvcc.go, CodePropertyGraph)"]
         Reasoner["Topological Inference Reasoner<br/>(reasoner.go)"]
-        TS["Turtle Serializer<br/>(turtle_serializer.go)"]
+        TS["GraphJSON Serializer<br/>(graph_json.go)"]
         
-        TTL["Primary Storage: akg_state.ttl<br/>(W3C RDF-star Turtle)"]
-        JSON["Lookup Cache: akg_state.json<br/>(Fast Index Cache)"]
+        JSON["Primary Storage: akg.json<br/>(GraphJSON, source of truth)"]
+        TTL["Legacy Turtle Input<br/>(akg_state.ttl, pre-v3 repos only)"]
         
         TM -->|"1. Append Transaction"| WAL
         TM -->|"2. Shadow Clone & Mutation"| MVCC
         MVCC -->|"3. Run Rules Inference"| Reasoner
         MVCC -->|"4. Serialize Graph"| TS
-        TS -->|"5. Atomic Write Swap"| TTL
-        MVCC -->|"5. Atomic Write Cache"| JSON
-        TTL -->|"Self-Healing Fallback Recovery"| TM
+        TS -->|"5. Atomic Write Swap"| JSON
+        TTL -->|"One-time self-heal migration"| TM
     end
 
     subgraph VizEngine ["Visualization Engine (Diagram Projector)"]
@@ -370,8 +372,8 @@ graph TB
     Repo[("Source Git Repository")] -->|"git.go (File Deltas)"| S1
     S4 -->|"Committed CPG Payload"| TM
     
-    JSON -->|"Fast DB Snapshot Lookup"| VE1
-    TTL -->|"Cold DB Query Load"| VE1
+    JSON -->|"AKG State Load"| VE1
+    TTL -->|"Legacy state (migrated once)"| TM
     
     VE3 -->|"Export MD Visuals"| Marbles["Mermaid Marbles Markdown<br/>(.glassmarble/marbles/[name].md)"]
     
@@ -506,8 +508,9 @@ scan can never silently exhaust the host. The working set has four parts:
 1.  **CLI analysis graph** � the in-memory `CodePropertyGraph` (nodes, edges,
     indexes) held during `gmb analyze` and by read commands (`status`,
     `inspect`, `tree`, `visualize`, `ai`).
-2.  **TTL artifact** � `.glassmarble/akg_state.ttl`, the single source of
-    truth on disk (atomic writes + post-write verification).
+2.  **State file** � `.glassmarble/akg.json`, the single source of
+    truth on disk (atomic writes + post-write verification + zero-dangling
+    guard).
 3.  **WAL** � `.glassmarble/wal/`, the crash-recovery log.
 4.  **Visualization cache** � the parsed-graph `SubgraphCache` used by
     diagram rendering.

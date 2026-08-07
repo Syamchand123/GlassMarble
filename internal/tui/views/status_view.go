@@ -22,19 +22,17 @@ type StatusData struct {
 	VirtualCount  int
 	VirtualShare  float64
 	Dangling      int
-	TTLBytes      int64
+	JSONBytes     int64
 	WALBytes      int64
 	Verified      bool
-	FreshnessOK   bool
-	UnpersistedTx int
 }
 
 // RenderStatusUninitialized renders the `gmb status` dashboard for an
 // uninitialized database directory.
-func RenderStatusUninitialized(ttlPath string) string {
+func RenderStatusUninitialized(StatePath string) string {
 	return tui.StyleCard.Render(joinLines([]string{
 		"  GlassMarble Status: Uninitialized",
-		"  No active AKG database found at " + tui.StyleCode.Render(ttlPath) + ". Run 'glassmarble analyze' first.",
+		"  No active AKG database found at " + tui.StyleCode.Render(StatePath) + ". Run 'glassmarble analyze' first.",
 	}))
 }
 
@@ -68,16 +66,8 @@ func RenderStatus(s StatusData) string {
 		"  Health Errors: " + fmt.Sprintf("%d dangling reference(s)", s.Dangling),
 		"",
 		"  " + tui.Divider("Storage", 56),
-		"  Storage:       " + fmt.Sprintf("TTL %s | WAL %s", humanBytes(s.TTLBytes), humanBytes(s.WALBytes)),
+		"  Storage:       " + fmt.Sprintf("State %s | WAL %s", humanBytes(s.JSONBytes), humanBytes(s.WALBytes)),
 		"  Verification:  " + strings.TrimSpace(verified),
-		"  Freshness:     " + freshnessLabel(s),
 	}
 	return tui.StyleCard.Render("  " + joinLines(rows))
-}
-
-func freshnessLabel(s StatusData) string {
-	if !s.FreshnessOK {
-		return tui.StyleWarningText.Render(fmt.Sprintf("WARNING — WAL is newer than the TTL (%d unpersisted transaction(s))", s.UnpersistedTx))
-	}
-	return "ok"
 }

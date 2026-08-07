@@ -270,182 +270,14 @@ func writeGraphToWriter(w io.Writer, graph *CodePropertyGraph) error {
 }
 
 func mapKindToClass(kind string) string {
-	// SHARED KIND-VOCABULARY CONTRACT (AUDIT Issue 2 Phase 2A-5 / Issue 3
-	// Phase 3A): kinds produced by the analysis engine map 1:1 to ontology
-	// classes; extraction filters in internal/visualization_engine consume
-	// these exact classes. Fallback classes (gm:TypeDecl, gm:Executable,
-	// gm:ControlStructure, ...) remain for legacy engine kinds that still
-	// emit them. Every class returned here must be declared in ontology.ttl
-	// (enforced by ontology_test.go).
-	switch kind {
-	// Core structural kinds
-	case "MODULE":
-		return ont.PredModule
-	case "NAMESPACE":
-		return ont.PredNamespace
-	case "FILE":
-		return ont.PredFile
-	case "STRUCT":
-		return ont.PredStruct
-	case "CLASS":
-		return ont.PredClass
-	case "INTERFACE":
-		return ont.PredInterface
-	case "FUNCTION":
-		return ont.PredFunction
-	case "METHOD":
-		return ont.PredMethod
-	case "FIELD":
-		return ont.PredMember
-	case "PARAMETER":
-		return ont.PredParameter
-	case "VARIABLE", "DFG_VAR":
-		return ont.PredVariable
-	case "PACKAGE":
-		return ont.PredPackage
-	case "META_DATA":
-		return ont.PredMetaData
-	// Fallback classes for legacy engine kinds mapped to standard ontology classes (K-06)
-	case "TYPE_DECL", "TYPE":
-		return ont.PredStruct
-	case "EXECUTABLE":
-		return ont.PredFunction
-	case "IF_BRANCH", "LOOP_BRANCH", "SWITCH_BRANCH":
-		return ont.PredControlStructure
-	case "CFG_SUMMARY":
-		return ont.PredCFGSummary
-	case "DFG_SUMMARY":
-		return ont.PredDFGSummary
-	case "EVENT_TOPIC":
-		return ont.PredEventTopic
-	case "VIRTUAL_DATABASE":
-		return ont.PredVirtualDatabase
-	case "VIRTUAL_ENDPOINT":
-		return ont.PredVirtualEndpoint
-	case "BLOCK":
-		return ont.PredBlock
-	case "ANNOTATION", "DECORATOR":
-		return ont.PredAnnotation
-	// Virtual / synthetic classes fabricated by the linker passes
-	case "VIRTUAL_CONTEXT":
-		return ont.PredVirtualContext
-	case "VIRTUAL_QUEUE":
-		return ont.PredVirtualQueue
-	case "VIRTUAL_TAINT_SOURCE":
-		return ont.PredVirtualTaintSource
-	case "VIRTUAL_GLOBAL_STATE":
-		return ont.PredVirtualGlobalState
-	case "VIRTUAL_SECURITY_SINK":
-		return ont.PredVirtualSecuritySink
-	case "VIRTUAL_RESOURCE":
-		return ont.PredVirtualResource
-	case "VIRTUAL_CLOUD_API":
-		return ont.PredVirtualCloudAPI
-	case "EXTERNAL_SDK":
-		return ont.PredExternalSDK
-	case "EXTERNAL_API":
-		return ont.PredExternalAPI
-	case "EXTERNAL_FFI":
-		return ont.PredExternalFFI
-	case "HEAP_ALLOCATION":
-		return ont.PredHeapAllocation
-	case "ABSTRACT_CONSTRAINT":
-		return ont.PredAbstractConstraint
-	case "CFG_FLOW":
-		return ont.PredCFGFlow
-	case "EXCEPTIONAL_BRANCH":
-		return ont.PredExceptionalBranch
-	case "DELETED":
-		return ont.PredDeleted
-	default:
-		return "rdfs:Class"
-	}
+	return stage4.KindToClass(kind)
 }
 
 // mapClassToKind is the inverse of mapKindToClass. It reconstructs an
 // internal node kind from a serialized rdfs class URI so that graphs
 // restored from Turtle keep their kinds across save/restore cycles.
 func mapClassToKind(class string) string {
-	switch class {
-	case ont.PredModule:
-		return "MODULE"
-	case ont.PredNamespace:
-		return "NAMESPACE"
-	case ont.PredFile:
-		return "FILE"
-	case ont.PredStruct:
-		return "STRUCT"
-	case ont.PredClass:
-		return "CLASS"
-	case ont.PredInterface:
-		return "INTERFACE"
-	case ont.PredFunction:
-		return "FUNCTION"
-	case ont.PredMethod:
-		return "METHOD"
-	case ont.PredMember:
-		return "FIELD"
-	case ont.PredVariable:
-		return "VARIABLE"
-	case ont.PredParameter:
-		return "PARAMETER"
-	case ont.PredPackage:
-		return "PACKAGE"
-	case ont.PredTypeDecl:
-		return "STRUCT"
-	case ont.PredExecutable:
-		return "FUNCTION"
-	case ont.PredControlStructure:
-		return "IF_BRANCH"
-	case ont.PredCFGSummary:
-		return "CFG_SUMMARY"
-	case ont.PredDFGSummary:
-		return "DFG_SUMMARY"
-	case ont.PredEventTopic:
-		return "EVENT_TOPIC"
-	case ont.PredVirtualDatabase:
-		return "VIRTUAL_DATABASE"
-	case ont.PredVirtualEndpoint:
-		return "VIRTUAL_ENDPOINT"
-	case ont.PredBlock:
-		return "BLOCK"
-	case ont.PredAnnotation:
-		return "ANNOTATION"
-	case ont.PredMetaData:
-		return "META_DATA"
-	case ont.PredVirtualContext:
-		return "VIRTUAL_CONTEXT"
-	case ont.PredVirtualQueue:
-		return "VIRTUAL_QUEUE"
-	case ont.PredVirtualTaintSource:
-		return "VIRTUAL_TAINT_SOURCE"
-	case ont.PredVirtualGlobalState:
-		return "VIRTUAL_GLOBAL_STATE"
-	case ont.PredVirtualSecuritySink:
-		return "VIRTUAL_SECURITY_SINK"
-	case ont.PredVirtualResource:
-		return "VIRTUAL_RESOURCE"
-	case ont.PredVirtualCloudAPI:
-		return "VIRTUAL_CLOUD_API"
-	case ont.PredExternalSDK:
-		return "EXTERNAL_SDK"
-	case ont.PredExternalAPI:
-		return "EXTERNAL_API"
-	case ont.PredExternalFFI:
-		return "EXTERNAL_FFI"
-	case ont.PredHeapAllocation:
-		return "HEAP_ALLOCATION"
-	case ont.PredAbstractConstraint:
-		return "ABSTRACT_CONSTRAINT"
-	case ont.PredCFGFlow:
-		return "CFG_FLOW"
-	case ont.PredExceptionalBranch:
-		return "EXCEPTIONAL_BRANCH"
-	case ont.PredDeleted:
-		return "DELETED"
-	default:
-		return strings.TrimPrefix(class, ont.PrefixGM)
-	}
+	return stage4.ClassToKind(class)
 }
 
 func mapEdgeTypeToPredicate(edgeType stage4.RelationshipType) string {
@@ -649,6 +481,14 @@ func mapPredicateToEdgeType(pred string) stage4.RelationshipType {
 		// the edge.
 		return stage4.RelationshipType(strings.ToUpper(strings.TrimPrefix(pred, ont.PrefixGM)))
 	}
+}
+
+// EdgeTypeToPredicate is the exported form of mapEdgeTypeToPredicate: it
+// converts a canonical RelationshipType constant to the visualization
+// predicate string consumed by the extraction configs
+// (internal/visualization_engine/stage1).
+func EdgeTypeToPredicate(edgeType stage4.RelationshipType) string {
+	return mapEdgeTypeToPredicate(edgeType)
 }
 
 func escapeLiteral(str string) string {

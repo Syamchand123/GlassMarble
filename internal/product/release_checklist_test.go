@@ -61,7 +61,7 @@ func TestPhase10ReleaseChecklist(t *testing.T) {
 
 	t.Run("5. Determinism Byte-Equal Guarantee", func(t *testing.T) {
 		req := product.BuildDiagramRequest{
-			TTLPath:     ".glassmarble/akg_state.ttl",
+			StatePath:     ".glassmarble/akg_state.ttl",
 			DiagramType: types.UMLClass,
 			Format:      "mermaid",
 			Options: product.DiagramOptions{

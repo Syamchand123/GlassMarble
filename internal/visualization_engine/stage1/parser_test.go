@@ -1,80 +1,15 @@
 package stage1
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
-func TestParseMinimal(t *testing.T) {
-	path := filepath.Join("..", "testdata", "minimal.ttl")
-	nodes, edges, err := ParseTTLFile(path)
-	if err != nil {
-		t.Fatalf("ParseTTLFile failed: %v", err)
-	}
-	if len(nodes) != 2 {
-		t.Errorf("expected 2 nodes, got %d", len(nodes))
-	}
-	if len(edges) != 1 {
-		t.Errorf("expected 1 edge, got %d", len(edges))
-	}
-}
-
-func TestParseEmpty(t *testing.T) {
-	path := filepath.Join("..", "testdata", "empty.ttl")
-	nodes, edges, err := ParseTTLFile(path)
-	if err != nil {
-		t.Fatalf("ParseTTLFile failed: %v", err)
-	}
-	if len(nodes) != 0 {
-		t.Errorf("expected 0 nodes, got %d", len(nodes))
-	}
-	if len(edges) != 0 {
-		t.Errorf("expected 0 edges, got %d", len(edges))
-	}
-}
-
-func TestParseAllPredicates(t *testing.T) {
-	path := filepath.Join("..", "testdata", "all_predicates.ttl")
-	nodes, edges, err := ParseTTLFile(path)
-	if err != nil {
-		t.Fatalf("ParseTTLFile failed: %v", err)
-	}
-	predCount := make(map[string]int)
-	for _, e := range edges {
-		predCount[e.Predicate]++
-	}
-	expectedPreds := []string{"gm:calls", "gm:inheritsFrom", "gm:composes", "gm:dataFlowTo", "gm:controlFlowTo", "gm:belongsToFile"}
-	for _, p := range expectedPreds {
-		if predCount[p] == 0 {
-			t.Errorf("expected at least one edge with predicate %q", p)
-		}
-	}
-	if len(nodes) == 0 {
-		t.Error("expected at least one node")
-	}
-}
-
-func TestParseAllKinds(t *testing.T) {
-	path := filepath.Join("..", "testdata", "all_kinds.ttl")
-	nodes, edges, err := ParseTTLFile(path)
-	if err != nil {
-		t.Fatalf("ParseTTLFile failed: %v", err)
-	}
-	kindCount := make(map[string]int)
-	for _, n := range nodes {
-		kindCount[n.Kind]++
-	}
-	expectedKinds := []string{"gm:TypeDecl", "gm:Executable", "gm:Namespace", "gm:File", "gm:Database", "gm:ExternalSystem"}
-	for _, k := range expectedKinds {
-		if kindCount[k] == 0 {
-			t.Errorf("expected at least one node with kind %q", k)
-		}
-	}
-	t.Logf("parsed %d nodes, %d edges", len(nodes), len(edges))
-}
+// These tests exercise the retained legacy Turtle parsing internals
+// (fallback path). The GraphJSON store entry points are tested in
+// internal/akg (viz_graph_test.go).
 
 func TestParseNodeBlockBasic(t *testing.T) {
 	nodes := make(map[string]*types.TTLNode)
@@ -272,50 +207,6 @@ func TestBindEdgePropertyFusedBrackets(t *testing.T) {
 	}
 }
 
-func TestParseFullGraph(t *testing.T) {
-	path := filepath.Join("..", "testdata", "full_graph.ttl")
-	nodes, edges, err := ParseTTLFile(path)
-	if err != nil {
-		t.Fatalf("ParseTTLFile failed: %v", err)
-	}
-	if len(nodes) == 0 {
-		t.Error("expected non-zero nodes from full_graph.ttl")
-	}
-	if len(edges) == 0 {
-		t.Error("expected non-zero edges from full_graph.ttl")
-	}
-}
-
-func TestParseTTLFileToNative(t *testing.T) {
-	path := filepath.Join("..", "testdata", "minimal.ttl")
-	ng, err := ParseTTLFileToNative(path)
-	if err != nil {
-		t.Fatalf("ParseTTLFileToNative failed: %v", err)
-	}
-	if ng == nil {
-		t.Fatal("expected non-nil NativeGraph")
-	}
-	if len(ng.Nodes) != 2 {
-		t.Errorf("expected 2 nodes, got %d", len(ng.Nodes))
-	}
-	if len(ng.Edges) != 1 {
-		t.Errorf("expected 1 edge, got %d", len(ng.Edges))
-	}
-}
-
-func TestParseEmptyFile(t *testing.T) {
-	nodes, edges, err := ParseTTLFile(filepath.Join("..", "testdata", "empty.ttl"))
-	if err != nil {
-		t.Fatalf("ParseTTLFile failed: %v", err)
-	}
-	if len(nodes) != 0 {
-		t.Errorf("expected 0 nodes, got %d", len(nodes))
-	}
-	if len(edges) != 0 {
-		t.Errorf("expected 0 edges, got %d", len(edges))
-	}
-}
-
 func TestPredicatesForGroupCallGraph(t *testing.T) {
 	preds := predicatesForGroup(types.GroupCallGraph)
 	if len(preds) == 0 {
@@ -410,25 +301,6 @@ func TestPredicatesForGroupMessaging(t *testing.T) {
 	}
 }
 
-func TestParseDeltaAppend(t *testing.T) {
-	path := filepath.Join("..", "testdata", "delta_append.ttl")
-	nodes, edges, err := ParseTTLFile(path)
-	if err != nil {
-		t.Fatalf("ParseTTLFile failed: %v", err)
-	}
-	// OldWorker has gm:status "DELETED" and should be filtered out
-	if _, ok := nodes["cmd/app/worker.go::OldWorker"]; ok {
-		t.Error("OldWorker with DELETED status should not be in nodes")
-	}
-	// Main and Connect should still be present
-	if _, ok := nodes["cmd/app/main.go::Main"]; !ok {
-		t.Error("expected Main to be present in delta_append.ttl")
-	}
-	if len(edges) > 0 {
-		t.Logf("parsed %d edges from delta_append.ttl", len(edges))
-	}
-}
-
 func TestParseNodeBlockSemicolonOnly(t *testing.T) {
 	nodes := make(map[string]*types.TTLNode)
 	// Empty attributes with just semicolons should work
@@ -438,19 +310,6 @@ func TestParseNodeBlockSemicolonOnly(t *testing.T) {
 	parseNodeBlock(block, nodes)
 	if len(nodes) != 1 {
 		t.Errorf("expected 1 node with empty attributes, got %d", len(nodes))
-	}
-}
-
-func TestParseMalformedTTL(t *testing.T) {
-	nodes, edges, err := ParseTTLFile(filepath.Join("..", "testdata", "does_not_exist.ttl"))
-	if err == nil {
-		t.Error("expected error for non-existent file")
-	}
-	if nodes != nil {
-		t.Error("expected nil nodes for error case")
-	}
-	if edges != nil {
-		t.Error("expected nil edges for error case")
 	}
 }
 

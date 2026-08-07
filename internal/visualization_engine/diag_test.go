@@ -1,4 +1,4 @@
-package visualization_engine
+package visualization_engine_test
 
 import (
 	"fmt"
@@ -8,17 +8,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/stage1"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/stage2"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
+// statePath is the canonical GraphJSON state of the development workspace;
+// these are live integration diagnostics, skipped when no database exists.
+const statePath = "G:/GlassMarble/.glassmarble/akg.json"
+
 func TestDiagAllTypes(t *testing.T) {
-	ttl := "G:/GlassMarble/.glassmarble/akg_state.ttl"
-	if _, err := os.Stat(ttl); err != nil {
-		t.Skip("skipping integration test: .glassmarble/akg_state.ttl not present on disk")
+	if _, err := os.Stat(statePath); err != nil {
+		t.Skip("skipping integration test: .glassmarble/akg.json not present on disk")
 	}
-	nodes, edges, err := stage1.ParseTTLFile(ttl)
+	nodes, edges, err := akg.ParseGraphFile(statePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,11 +58,10 @@ func TestDiagAllTypes(t *testing.T) {
 }
 
 func TestDiagEndpoints(t *testing.T) {
-	ttl := "G:/GlassMarble/.glassmarble/akg_state.ttl"
-	if _, err := os.Stat(ttl); err != nil {
-		t.Skip("skipping integration test: .glassmarble/akg_state.ttl not present on disk")
+	if _, err := os.Stat(statePath); err != nil {
+		t.Skip("skipping integration test: .glassmarble/akg.json not present on disk")
 	}
-	nodes, edges, err := stage1.ParseTTLFile(ttl)
+	nodes, edges, err := akg.ParseGraphFile(statePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,11 +109,10 @@ func TestDiagEndpoints(t *testing.T) {
 }
 
 func TestDiagEntry(t *testing.T) {
-	ttl := "G:/GlassMarble/.glassmarble/akg_state.ttl"
-	if _, err := os.Stat(ttl); err != nil {
-		t.Skip("skipping integration test: .glassmarble/akg_state.ttl not present on disk")
+	if _, err := os.Stat(statePath); err != nil {
+		t.Skip("skipping integration test: .glassmarble/akg.json not present on disk")
 	}
-	nodes, _, err := stage1.ParseTTLFile(ttl)
+	nodes, _, err := akg.ParseGraphFile(statePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,12 +150,11 @@ func TestDiagEntry(t *testing.T) {
 }
 
 func TestDiagComponent(t *testing.T) {
-	ttl := "G:/GlassMarble/.glassmarble/akg_state.ttl"
-	if _, err := os.Stat(ttl); err != nil {
-		t.Skip("skipping integration test: .glassmarble/akg_state.ttl not present on disk")
+	if _, err := os.Stat(statePath); err != nil {
+		t.Skip("skipping integration test: .glassmarble/akg.json not present on disk")
 	}
 	t0 := nowMs()
-	nodes, edges, err := stage1.ParseTTLFile(ttl)
+	nodes, edges, err := akg.ParseGraphFile(statePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,12 +179,11 @@ func TestDiagComponent(t *testing.T) {
 }
 
 func TestDiagTiming(t *testing.T) {
-	ttl := "G:/GlassMarble/.glassmarble/akg_state.ttl"
-	if _, err := os.Stat(ttl); err != nil {
-		t.Skip("skipping integration test: .glassmarble/akg_state.ttl not present on disk")
+	if _, err := os.Stat(statePath); err != nil {
+		t.Skip("skipping integration test: .glassmarble/akg.json not present on disk")
 	}
 	t0 := nowMs()
-	nodes, edges, err := stage1.ParseTTLFile(ttl)
+	nodes, edges, err := akg.ParseGraphFile(statePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,11 +214,10 @@ func nowMs() int64 {
 }
 
 func TestDiagParse(t *testing.T) {
-	ttl := "G:/GlassMarble/.glassmarble/akg_state.ttl"
-	if _, err := os.Stat(ttl); err != nil {
-		t.Skip("skipping integration test: .glassmarble/akg_state.ttl not present on disk")
+	if _, err := os.Stat(statePath); err != nil {
+		t.Skip("skipping integration test: .glassmarble/akg.json not present on disk")
 	}
-	nodes, edges, err := stage1.ParseTTLFile(ttl)
+	nodes, edges, err := akg.ParseGraphFile(statePath)
 	if err != nil {
 		t.Fatal("PARSE ERROR:", err)
 	}

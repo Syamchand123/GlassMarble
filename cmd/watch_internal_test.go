@@ -16,7 +16,7 @@ func TestWatchEventRelevant(t *testing.T) {
 		want bool
 	}{
 		{"src/main.go", true},
-		{".glassmarble/akg_state.ttl", false},
+		{".glassmarble/akg.json", false},
 		{"src/.git/index.lock", false},
 		{"node_modules/pkg/index.js", false},
 		{"vendor/foo.go", false},

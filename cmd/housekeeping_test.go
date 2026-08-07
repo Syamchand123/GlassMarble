@@ -24,7 +24,7 @@ func TestHousekeepingPrune(t *testing.T) {
 	stale := filepath.Join(marbles, "stale_c4.md")
 	fresh := filepath.Join(marbles, "fresh_c4.md")
 	staleSess := filepath.Join(sessions, "old.json")
-	state := filepath.Join(storage, "akg_state.ttl")
+	state := filepath.Join(storage, "akg.json")
 	for _, p := range []string{stale, fresh, staleSess, state} {
 		if err := os.WriteFile(p, []byte("x"), 0644); err != nil {
 			t.Fatal(err)

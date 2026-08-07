@@ -13,13 +13,13 @@ import (
 
 // TestCLI_TUI_AI_Parity verifies that CLI, TUI, and AI tools all consume BuildDiagram (W7-01).
 func TestCLI_TUI_AI_Parity(t *testing.T) {
-	ttlPath := filepath.Join("..", "visualization_engine", "testdata", "sample.ttl")
-	if _, err := os.Stat(ttlPath); os.IsNotExist(err) {
+	StatePath := filepath.Join("..", "visualization_engine", "testdata", "sample.ttl")
+	if _, err := os.Stat(StatePath); os.IsNotExist(err) {
 		t.Skip("sample.ttl fixture not found; skipping integration parity test")
 	}
 
 	req := product.BuildDiagramRequest{
-		TTLPath:     ttlPath,
+		StatePath:     StatePath,
 		DiagramType: types.UMLClass,
 		Format:      "mermaid",
 		Options: product.DiagramOptions{
@@ -82,8 +82,8 @@ func TestPhaseSpans_Telemetry(t *testing.T) {
 
 // TestFormatParity_HeaderComments verifies Mermaid, PlantUML, and DOT format encoding & headers (W7-04 / 11.5).
 func TestFormatParity_HeaderComments(t *testing.T) {
-	ttlPath := filepath.Join("..", "visualization_engine", "testdata", "sample.ttl")
-	if _, err := os.Stat(ttlPath); os.IsNotExist(err) {
+	StatePath := filepath.Join("..", "visualization_engine", "testdata", "sample.ttl")
+	if _, err := os.Stat(StatePath); os.IsNotExist(err) {
 		t.Skip("sample.ttl fixture not found; skipping format test")
 	}
 
@@ -99,7 +99,7 @@ func TestFormatParity_HeaderComments(t *testing.T) {
 	for _, fmtCase := range formats {
 		t.Run(fmtCase.format, func(t *testing.T) {
 			req := product.BuildDiagramRequest{
-				TTLPath:     ttlPath,
+				StatePath:     StatePath,
 				DiagramType: types.UMLClass,
 				Format:      fmtCase.format,
 				Options: product.DiagramOptions{

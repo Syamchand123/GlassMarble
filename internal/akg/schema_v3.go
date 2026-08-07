@@ -26,12 +26,12 @@ var SchemaMigrations = []SchemaMigrationRecord{
 // CreateSchemaBackup copies the existing akg_state.ttl file to a backup file
 // named akg_state.v<version>.ttl.bak before performing an in-place schema migration.
 func CreateSchemaBackup(storageDir string, fromVersion int) (string, error) {
-	ttlPath := filepath.Join(storageDir, "akg_state.ttl")
-	if _, err := os.Stat(ttlPath); err != nil {
+	StatePath := filepath.Join(storageDir, "akg_state.ttl")
+	if _, err := os.Stat(StatePath); err != nil {
 		return "", nil // No file to back up
 	}
 	bakPath := filepath.Join(storageDir, fmt.Sprintf("akg_state.v%d.ttl.bak", fromVersion))
-	src, err := os.Open(ttlPath)
+	src, err := os.Open(StatePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to open TTL for backup: %w", err)
 	}

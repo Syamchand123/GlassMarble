@@ -21,7 +21,7 @@ var housekeepingCmd = &cobra.Command{
 	Short: "Report and prune .glassmarble working-set storage (marbles, sessions, WAL)",
 	Long: `Scans .glassmarble/ and reports the bytes held by each working-set area
 (wal/, marbles/, ai/), then optionally prunes saved diagrams and chat
-sessions older than --older-than days. The AKG state file (akg_state.ttl)
+sessions older than --older-than days. The AKG state file (akg.json)
 is never pruned by this command.
 
   gmb housekeeping                 # report sizes only
@@ -51,7 +51,7 @@ WAL segments are truncated automatically after every successful load; the
 			files int
 		}
 		areas := []*area{
-			{name: "state (akg_state.ttl)", path: filepath.Join(storageDir, "akg_state.ttl")},
+			{name: "state (akg.json)", path: filepath.Join(storageDir, "akg.json")},
 			{name: "wal/", path: filepath.Join(storageDir, "wal")},
 			{name: "marbles/", path: filepath.Join(storageDir, "marbles")},
 			{name: "ai/", path: filepath.Join(storageDir, "ai")},
@@ -127,7 +127,7 @@ WAL segments are truncated automatically after every successful load; the
 		}
 
 		// WAL truncation: safe after a successful load of a healthy state file.
-		if ttlStat, err := os.Stat(filepath.Join(storageDir, "akg_state.ttl")); err == nil && ttlStat.Size() > 0 {
+		if stateStat, err := os.Stat(filepath.Join(storageDir, "akg.json")); err == nil && stateStat.Size() > 0 {
 			if walDirStat, err := os.Stat(filepath.Join(storageDir, "wal")); err == nil && walDirStat.IsDir() {
 				if old, err := walDirSize(filepath.Join(storageDir, "wal")); err == nil && old > 0 {
 					if tm, err := newAKGManager(storageDir, cmd); err == nil {

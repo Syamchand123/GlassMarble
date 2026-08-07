@@ -23,9 +23,9 @@ func AutoMigrateOnLoad(storageDir string, graph *CodePropertyGraph) (string, err
 		oldVersion = 2
 	}
 
-	ttlPath := filepath.Join(storageDir, "akg_state.ttl")
+	StatePath := filepath.Join(storageDir, "akg_state.ttl")
 	var backupPath string
-	if _, err := os.Stat(ttlPath); err == nil {
+	if _, err := os.Stat(StatePath); err == nil {
 		bak, err := CreateSchemaBackup(storageDir, oldVersion)
 		if err != nil {
 			return "", fmt.Errorf("failed to backup schema before migration: %w", err)

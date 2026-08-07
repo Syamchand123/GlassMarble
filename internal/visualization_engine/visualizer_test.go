@@ -19,8 +19,8 @@ func TestNewEngineCoordinator(t *testing.T) {
 	if ec == nil {
 		t.Fatal("expected non-nil EngineCoordinator")
 	}
-	if ec.ttlPath != "/fake/path.ttl" {
-		t.Errorf("expected ttlPath '/fake/path.ttl', got '%s'", ec.ttlPath)
+	if ec.statePath != "/fake/path.ttl" {
+		t.Errorf("expected statePath '/fake/path.ttl', got '%s'", ec.statePath)
 	}
 }
 
@@ -140,8 +140,8 @@ func TestNewEngineCoordinatorNilPath(t *testing.T) {
 	if ec == nil {
 		t.Fatal("expected non-nil EngineCoordinator")
 	}
-	if ec.ttlPath != "" {
-		t.Errorf("expected empty ttlPath, got '%s'", ec.ttlPath)
+	if ec.statePath != "" {
+		t.Errorf("expected empty statePath, got '%s'", ec.statePath)
 	}
 }
 
@@ -566,7 +566,7 @@ func TestComputeGraphSummaryAllDiagramTypes(t *testing.T) {
 	}
 }
 
-func TestProjectDiagramInvalidTTLPath(t *testing.T) {
+func TestProjectDiagramInvalidStatePath(t *testing.T) {
 	ec := NewEngineCoordinator("/nonexistent/path/to/file.ttl")
 	_, err := ec.ProjectDiagram(types.UMLClass, types.QueryOptions{})
 	if err == nil {

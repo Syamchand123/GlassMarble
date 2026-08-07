@@ -1,4 +1,4 @@
-package cmd_test
+﻿package cmd_test
 
 import (
 	"encoding/json"
@@ -11,7 +11,7 @@ import (
 // TestExportCommandJSON writes the doctor fixture as GraphJSON.
 func TestExportCommandJSON(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, doctorFixtureTTL)
+	writeDoctorState(t, tempDir, doctorFixtureGraph())
 
 	outPath := filepath.Join(tempDir, "graph.json")
 	output, err := runGmbCommand(t, "export", "--dir", tempDir, "--output", outPath)
@@ -38,7 +38,7 @@ func TestExportCommandJSON(t *testing.T) {
 // TestExportCommandMissingOutput errors when --output is absent.
 func TestExportCommandMissingOutput(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, doctorFixtureTTL)
+	writeDoctorState(t, tempDir, doctorFixtureGraph())
 
 	_, err := runGmbCommand(t, "export", "--dir", tempDir)
 	if err == nil {
@@ -65,7 +65,7 @@ func TestExportCommandEmptyDB(t *testing.T) {
 // it back, and verifies the status reports the restored graph.
 func TestImportCommandRoundTrip(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, doctorFixtureTTL)
+	writeDoctorState(t, tempDir, doctorFixtureGraph())
 
 	outPath := filepath.Join(tempDir, "graph.json")
 	if _, err := runGmbCommand(t, "export", "--dir", tempDir, "--output", outPath); err != nil {
@@ -74,7 +74,7 @@ func TestImportCommandRoundTrip(t *testing.T) {
 
 	// Remove the on-disk state so import starts from an empty database.
 	gmDir := filepath.Join(tempDir, ".glassmarble")
-	if err := os.Remove(filepath.Join(gmDir, "akg_state.ttl")); err != nil {
+	if err := os.Remove(filepath.Join(gmDir, "akg.json")); err != nil {
 		t.Fatalf("failed to clear state: %v", err)
 	}
 

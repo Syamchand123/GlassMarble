@@ -2,10 +2,10 @@
 // (Architecture Knowledge Graph) snapshot of a repository.
 //
 // The snapshot is loaded once per repository state via the AKG transaction
-// manager and cached; whenever .glassmarble/akg_state.ttl changes (a new
+// manager and cached; whenever .glassmarble/akg.json changes (a new
 // `gmb analyze` run), the next call transparently reloads it. This gives the
 // agent tools the full graph algorithm surface (cycles, PageRank, impact
-// radius, ...) without re-parsing the TTL for every query.
+// radius, ...) without re-parsing the JSON state for every query.
 package akgbridge
 
 import (
@@ -56,10 +56,10 @@ func New(rootDir string) *Bridge {
 // RootDir returns the repository root the bridge serves.
 func (b *Bridge) RootDir() string { return b.rootDir }
 
-// Status returns stat-only information about akg_state.ttl without loading
-// the graph itself.
+// Status returns stat-only information about the canonical akg.json state
+// without loading the graph itself.
 func (b *Bridge) Status() Status {
-	st := Status{Path: filepath.Join(b.akgDir, "akg_state.ttl")}
+	st := Status{Path: filepath.Join(b.akgDir, "akg.json")}
 	if fi, err := os.Stat(st.Path); err == nil {
 		st.Exists = true
 		st.Size = fi.Size()
@@ -69,7 +69,7 @@ func (b *Bridge) Status() Status {
 }
 
 // Clear drops the cached snapshot so the next Snapshot call reloads from
-// disk even if the TTL is unchanged.
+// disk even if the state is unchanged.
 func (b *Bridge) Clear() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -77,9 +77,9 @@ func (b *Bridge) Clear() {
 	b.stat = fileStat{}
 }
 
-// Snapshot returns the current AKG snapshot, reloading it whenever
-// akg_state.ttl has changed since the last load. A missing database is
-// reported with actionable guidance.
+// Snapshot returns the current AKG snapshot, reloading it whenever akg.json
+// has changed since the last load. A missing database is reported with
+// actionable guidance.
 func (b *Bridge) Snapshot() (*akg.CodePropertyGraph, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -95,7 +95,7 @@ func (b *Bridge) Snapshot() (*akg.CodePropertyGraph, error) {
 		return b.snap, nil
 	}
 
-	// The transaction manager self-heals from the TTL on open and may
+	// The transaction manager self-heals from the legacy TTL on open and may
 	// checkpoint the WAL or repair caches; Close() flushes any pending
 	// writes before we hand the snapshot to concurrent readers.
 	tm, err := akg.NewAKGTransactionManager(b.akgDir)
@@ -109,7 +109,7 @@ func (b *Bridge) Snapshot() (*akg.CodePropertyGraph, error) {
 		b.stat = fileStat{}
 		return nil, fmt.Errorf("AKG database at %s is empty — run `gmb analyze` first", st.Path)
 	}
-	// The open itself may rewrite the TTL (cache repair), so re-stat before
+	// The open itself may rewrite the state (cache repair), so re-stat before
 	// caching: the next call must not spuriously reload.
 	fresh := b.Status()
 	repairRestoredIndexes(snap)

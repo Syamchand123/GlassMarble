@@ -27,11 +27,9 @@ type statusJSON struct {
 	VirtualCount  int       `json:"virtual_nodes,omitempty"`
 	VirtualShare  float64   `json:"virtual_share_pct,omitempty"`
 	Dangling      int       `json:"dangling_references,omitempty"`
-	TTLBytes      int64     `json:"ttl_bytes,omitempty"`
+	JSONBytes     int64     `json:"json_bytes,omitempty"`
 	WALBytes      int64     `json:"wal_bytes,omitempty"`
 	Verified      bool      `json:"verified,omitempty"`
-	FreshnessOK   bool      `json:"freshness_ok,omitempty"`
-	UnpersistedTx int       `json:"unpersisted_transactions,omitempty"`
 	Error         string    `json:"error,omitempty"`
 	GeneratedAt   time.Time `json:"generated_at"`
 }
@@ -48,29 +46,29 @@ var statusCmd = &cobra.Command{
 		}
 
 		storageDir := filepath.Join(dir, ".glassmarble")
-		ttlPath := filepath.Join(storageDir, "akg_state.ttl")
+		jsonPath := filepath.Join(storageDir, "akg.json")
 
-		if _, err := os.Stat(ttlPath); os.IsNotExist(err) {
+		if _, err := os.Stat(jsonPath); os.IsNotExist(err) {
 			if asJSON {
 				out, _ := json.MarshalIndent(statusJSON{Initialized: false, Error: "no active AKG database", GeneratedAt: time.Now()}, "", "  ")
 				fmt.Println(string(out))
 				return nil
 			}
-			fmt.Println(views.RenderStatusUninitialized(ttlPath))
+			fmt.Println(views.RenderStatusUninitialized(jsonPath))
 			return nil
 		}
 
-		commitHash, schemaVersion, version, err := akg.TTLMetadata(storageDir)
+		commitHash, schemaVersion, version, err := akg.StateMetadata(storageDir)
 		if err != nil {
 			return fmt.Errorf("failed to read AKG metadata: %w", err)
 		}
 
-		ttlInfo, err := os.Stat(ttlPath)
+		stateInfo, err := os.Stat(jsonPath)
 		if err != nil {
-			return fmt.Errorf("failed to stat TTL: %w", err)
+			return fmt.Errorf("failed to stat AKG state: %w", err)
 		}
 
-		// Lazy read: status streams the TTL once (bounded memory) instead of
+		// Lazy read: status streams akg.json once (bounded memory) instead of
 		// restoring the graph and rebuilding every index (AUDIT Issue 4
 		// Phase 4A-2). Restore-only figures (macro rules, which are derived
 		// data recomputed on load) are intentionally not shown here.
@@ -84,7 +82,9 @@ var statusCmd = &cobra.Command{
 			virtualShare = 100 * float64(stats.VirtualCount) / float64(stats.NodeCount)
 		}
 
-		ttlSize, walSize := akgStorageSizes(storageDir)
+		stateSize, walSize := akgStateSizes(storageDir)
+
+		jsonSize := stateSize
 
 		if asJSON {
 			sj := statusJSON{
@@ -93,7 +93,7 @@ var statusCmd = &cobra.Command{
 				SchemaVersion: schemaVersion,
 				GraphVersion:  version,
 				CommitHash:    commitHash,
-				LastAnalysis:  ttlInfo.ModTime().Format(time.RFC3339),
+				LastAnalysis:  stateInfo.ModTime().Format(time.RFC3339),
 				NodeCount:     stats.NodeCount,
 				EdgeCount:     stats.Edges,
 				IndexedFiles:  stats.IndexedFiles,
@@ -101,14 +101,10 @@ var statusCmd = &cobra.Command{
 				VirtualCount:  stats.VirtualCount,
 				VirtualShare:  virtualShare,
 				Dangling:      stats.Dangling,
-				TTLBytes:      ttlSize,
+				JSONBytes:     jsonSize,
 				WALBytes:      walSize,
 				Verified:      stats.Dangling == 0,
 				GeneratedAt:   time.Now(),
-			}
-			if stale, txCount, err := akg.WALFreshness(storageDir); err == nil {
-				sj.FreshnessOK = !stale
-				sj.UnpersistedTx = txCount
 			}
 			out, _ := json.MarshalIndent(sj, "", "  ")
 			fmt.Println(string(out))
@@ -121,7 +117,7 @@ var statusCmd = &cobra.Command{
 			SchemaVersion: schemaVersion,
 			GraphVersion:  version,
 			CommitHash:    commitHash,
-			LastAnalysis:  ttlInfo.ModTime().Format(time.RFC3339),
+			LastAnalysis:  stateInfo.ModTime().Format(time.RFC3339),
 			NodeCount:     stats.NodeCount,
 			EdgeCount:     stats.Edges,
 			IndexedFiles:  stats.IndexedFiles,
@@ -129,13 +125,9 @@ var statusCmd = &cobra.Command{
 			VirtualCount:  stats.VirtualCount,
 			VirtualShare:  virtualShare,
 			Dangling:      stats.Dangling,
-			TTLBytes:      ttlSize,
+			JSONBytes:     jsonSize,
 			WALBytes:      walSize,
 			Verified:      stats.Dangling == 0,
-		}
-		if stale, txCount, err := akg.WALFreshness(storageDir); err == nil {
-			sd.FreshnessOK = !stale
-			sd.UnpersistedTx = txCount
 		}
 		fmt.Println(views.RenderStatus(sd))
 		return nil

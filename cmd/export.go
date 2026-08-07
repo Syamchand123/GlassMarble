@@ -21,7 +21,8 @@ var exportCmd = &cobra.Command{
 
 GraphJSON is the recommended interchange format: it is lossless (edge
 confidence, parallel edges), deterministic, and trivially reviewable in pull
-requests. Turtle matches the on-disk akg_state.ttl format.`,
+requests. Turtle matches the legacy akg_state.ttl format and is offered for
+interoperability with RDF tooling.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, _ := cmd.Flags().GetString("dir")
 		output, _ := cmd.Flags().GetString("output")

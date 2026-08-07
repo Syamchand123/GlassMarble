@@ -26,13 +26,18 @@ type DiagramOptions struct {
 
 // BuildDiagramRequest holds all configuration parameters for generating an architecture diagram (11.1 / §11.1).
 type BuildDiagramRequest struct {
-	TTLPath     string
+	StatePath     string
 	DiagramType types.DiagramType
 	Format      string // "mermaid" | "plantuml" | "dot"
 	Options     DiagramOptions
 	OnProgress  func(stage, detail string)
 	OnWarning   func(msg string)
 	OnSummary   func(s *types.GraphSummary)
+
+	// ParseFn overrides the state-file parser used by the engine
+	// coordinator. Callers serving the canonical akg.json GraphJSON store
+	// set it to akg.ParseGraphForQuery; nil keeps the legacy Turtle parser.
+	ParseFn visualization_engine.ParseFn
 
 	// Legacy flat fields for backward compatibility
 	Type          types.DiagramType
@@ -75,8 +80,8 @@ func BuildDiagramEx(req BuildDiagramRequest) (*BuildDiagramResult, error) {
 
 // BuildDiagramWithContext accepts a Context for context cancellation and telemetry span tracking.
 func BuildDiagramWithContext(ctx context.Context, req BuildDiagramRequest) (*BuildDiagramResult, error) {
-	if req.TTLPath == "" {
-		return nil, producterrs.Annotate(fmt.Errorf("TTLPath is required"), producterrs.ErrValidation)
+	if req.StatePath == "" {
+		return nil, producterrs.Annotate(fmt.Errorf("StatePath is required"), producterrs.ErrValidation)
 	}
 
 	// Normalize flat legacy fields into Options if Options is empty
@@ -165,7 +170,12 @@ func BuildDiagramWithContext(ctx context.Context, req BuildDiagramRequest) (*Bui
 
 	// Record Telemetry Spans (11.4 / W7-02)
 	doneExtract := StartSpan("extract")
-	ec := visualization_engine.NewEngineCoordinator(req.TTLPath)
+	ec := visualization_engine.NewEngineCoordinator(req.StatePath)
+	// The request layer installs the canonical GraphJSON reader (Phase C);
+	// without it the coordinator falls back to the legacy Turtle parser.
+	if req.ParseFn != nil {
+		ec.SetParseFn(req.ParseFn)
+	}
 	doneExtract()
 
 	doneProject := StartSpan("project")

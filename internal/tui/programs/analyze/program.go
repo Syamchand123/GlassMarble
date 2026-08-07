@@ -35,7 +35,7 @@ type Summary struct {
 	Edges         int
 	VirtualNodes  int
 	DanglingEdges int
-	TTLBytes      int64
+	StateBytes    int64
 	WALBytes      int64
 	Duration      time.Duration
 }
@@ -259,7 +259,7 @@ func renderSummaryCard(sum Summary, width int) string {
 	b.WriteString("\n")
 	b.WriteString(tui.KV("Dangling", fmt.Sprintf("%d", sum.DanglingEdges)))
 	b.WriteString("\n")
-	b.WriteString(tui.KV("TTL Size", humanBytes(sum.TTLBytes)))
+	b.WriteString(tui.KV("State Size", humanBytes(sum.StateBytes)))
 	b.WriteString("\n")
 	b.WriteString(tui.KV("WAL Size", humanBytes(sum.WALBytes)))
 	b.WriteString("\n")

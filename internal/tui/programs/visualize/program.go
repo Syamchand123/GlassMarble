@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/product"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/components"
@@ -30,7 +31,7 @@ const (
 // internal/visualization_engine; this struct only relays the options.
 type Config struct {
 	DiagType    types.DiagramType
-	TTLPath     string
+	StatePath     string
 	Opts        types.QueryOptions
 	SaveFile    string
 	OutputFlag  string
@@ -112,7 +113,8 @@ func (m *model) generate() tea.Cmd {
 		}
 		start := time.Now()
 		req := product.DiagramRequest{
-			TTLPath:       m.cfg.TTLPath,
+			StatePath:       m.cfg.StatePath,
+			ParseFn:       akg.ParseGraphForQuery,
 			Type:          m.cfg.DiagType,
 			Scope:         opts.Scope,
 			ScopePath:     opts.ScopePath,
@@ -257,7 +259,7 @@ func (m *model) loadingView() string {
 	label := "Generating " + displayName(m.cfg.DiagType) + " Diagram"
 	header := components.RenderHeader(label, "GlassMarble", width)
 	spinnerLine := m.spinner.View() + " " + progress
-	source := tui.KV("Source", m.cfg.TTLPath)
+	source := tui.KV("Source", m.cfg.StatePath)
 	scope := tui.KV("Scope", scopeLabel(m.cfg.Opts))
 	card := tui.StyleCard.Render(tui.Indent(spinnerLine+"\n\n"+source+"\n"+scope, 2))
 	status := components.RenderStatusBar(

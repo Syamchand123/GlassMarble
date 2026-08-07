@@ -31,7 +31,7 @@ func RenderDiff(commitHash string, schemaVersion int, graphVersion uint64, entri
 	if len(entries) == 0 {
 		rows = append(rows,
 			tui.BadgeInfo.Render("  INFO  ")+"  No pending transactions: the WAL was truncated after the last atomic write.",
-			"              The current akg_state.ttl is the fully persisted latest state.",
+			"              The current akg.json is the fully persisted latest state.",
 		)
 		return tui.StyleCard.Render("  " + joinLines(rows))
 	}

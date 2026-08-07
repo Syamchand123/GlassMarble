@@ -24,7 +24,7 @@ func TestHotspotCommandEmptyDB(t *testing.T) {
 // the other) and verifies the higher-in-degree node is ranked first.
 func TestHotspotCommandRanksByIndegree(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, doctorFixtureTTL)
+	writeDoctorState(t, tempDir, doctorFixtureGraph())
 
 	output, err := runGmbCommand(t, "hotspot", "--dir", tempDir, "--top", "5")
 	if err != nil {
@@ -43,7 +43,7 @@ func TestHotspotCommandRanksByIndegree(t *testing.T) {
 // TestDependencyCommandSummary verifies the no-target summary output.
 func TestDependencyCommandSummary(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, doctorFixtureTTL)
+	writeDoctorState(t, tempDir, doctorFixtureGraph())
 
 	output, err := runGmbCommand(t, "dependency", "--dir", tempDir)
 	if err != nil {
@@ -57,7 +57,7 @@ func TestDependencyCommandSummary(t *testing.T) {
 // TestDependencyCommandTarget resolves a node by name and prints its deps.
 func TestDependencyCommandTarget(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, doctorFixtureTTL)
+	writeDoctorState(t, tempDir, doctorFixtureGraph())
 
 	output, err := runGmbCommand(t, "dependency", "--dir", tempDir, "Connect")
 	if err != nil {
@@ -74,7 +74,7 @@ func TestDependencyCommandTarget(t *testing.T) {
 // TestDependencyCommandUnknownTarget errors when nothing matches.
 func TestDependencyCommandUnknownTarget(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, doctorFixtureTTL)
+	writeDoctorState(t, tempDir, doctorFixtureGraph())
 
 	_, err := runGmbCommand(t, "dependency", "--dir", tempDir, "doesnotexist")
 	if err == nil {
@@ -88,7 +88,7 @@ func TestDependencyCommandUnknownTarget(t *testing.T) {
 // TestTreeCommand renders a sorted tree of file paths.
 func TestTreeCommand(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, doctorFixtureTTL)
+	writeDoctorState(t, tempDir, doctorFixtureGraph())
 
 	output, err := runGmbCommand(t, "tree", "--dir", tempDir)
 	if err != nil {
@@ -214,9 +214,9 @@ func TestAnalyzeCommandFullScan(t *testing.T) {
 		t.Errorf("missing analysis summary:\n%s", output)
 	}
 
-	ttlPath := filepath.Join(tempDir, ".glassmarble", "akg_state.ttl")
-	if _, err := os.Stat(ttlPath); err != nil {
-		t.Errorf("akg_state.ttl not created: %v", err)
+	StatePath := filepath.Join(tempDir, ".glassmarble", "akg.json")
+	if _, err := os.Stat(StatePath); err != nil {
+		t.Errorf("akg.json not created: %v", err)
 	}
 }
 
@@ -235,7 +235,7 @@ func TestAnalyzeCommandEmptyDir(t *testing.T) {
 // TestStatusCommandJSON emits valid machine-readable JSON for an initialized DB.
 func TestStatusCommandJSON(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, doctorFixtureTTL)
+	writeDoctorState(t, tempDir, doctorFixtureGraph())
 
 	output, err := runGmbCommand(t, "status", "--dir", tempDir, "--json")
 	if err != nil {
@@ -244,7 +244,7 @@ func TestStatusCommandJSON(t *testing.T) {
 	if !strings.HasPrefix(strings.TrimSpace(output), "{") {
 		t.Fatalf("output is not JSON:\n%s", output)
 	}
-	for _, want := range []string{`"initialized": true`, `"schema_version": 1`, `"nodes": 2`, `"verified": true`} {
+	for _, want := range []string{`"initialized": true`, `"schema_version": 3`, `"nodes": 2`, `"verified": true`} {
 		if !strings.Contains(output, want) {
 			t.Errorf("status JSON missing %s:\n%s", want, output)
 		}
@@ -266,7 +266,7 @@ func TestStatusCommandJSONUninitialized(t *testing.T) {
 // TestHotspotCommandJSON emits a JSON hotspots array.
 func TestHotspotCommandJSON(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, doctorFixtureTTL)
+	writeDoctorState(t, tempDir, doctorFixtureGraph())
 
 	output, err := runGmbCommand(t, "hotspot", "--dir", tempDir, "--json", "--top", "5")
 	if err != nil {
@@ -283,7 +283,7 @@ func TestHotspotCommandJSON(t *testing.T) {
 // TestDependencyCommandJSONSummary emits a JSON dependency summary.
 func TestDependencyCommandJSONSummary(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, doctorFixtureTTL)
+	writeDoctorState(t, tempDir, doctorFixtureGraph())
 
 	output, err := runGmbCommand(t, "dependency", "--dir", tempDir, "--json")
 	if err != nil {
@@ -299,7 +299,7 @@ func TestDependencyCommandJSONSummary(t *testing.T) {
 // TestDependencyCommandJSONTarget emits per-node inbound/outbound edges.
 func TestDependencyCommandJSONTarget(t *testing.T) {
 	tempDir := t.TempDir()
-	writeDoctorState(t, tempDir, doctorFixtureTTL)
+	writeDoctorState(t, tempDir, doctorFixtureGraph())
 
 	output, err := runGmbCommand(t, "dependency", "--dir", tempDir, "Connect", "--json")
 	if err != nil {

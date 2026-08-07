@@ -24,7 +24,7 @@
 
 Modern codebases suffer from **documentation drift**: architecture diagrams and dependency maps are created during design and become obsolete the moment code changes. GlassMarble eliminates this permanently.
 
-GlassMarble compiles your source code — across **14 languages** — into a semantic **Architecture Knowledge Graph (AKG)** stored as a W3C RDF-star Turtle database (`.glassmarble/akg_state.ttl`). From this living graph it can:
+GlassMarble compiles your source code — across **14 languages** — into a semantic **Architecture Knowledge Graph (AKG)** stored as a portable GraphJSON database (`.glassmarble/akg.json`). From this living graph it can:
 
 - **Generate 31 architecture diagrams** (UML + C4 model) as Mermaid.js markup — always synchronized with your latest code.
 - **Detect architectural hotspots**, circular dependencies, and high-coupling bottlenecks automatically.
@@ -75,20 +75,27 @@ GlassMarble compiles your source code — across **14 languages** — into a sem
 
 ### The AKG Database
 
-The graph lives in `.glassmarble/akg_state.ttl` — a standard **W3C RDF-star Turtle** file. RDF-star allows metadata *on* edges (e.g., the exact source line of a call):
+The graph lives in `.glassmarble/akg.json` — a deterministic, diff-friendly **GraphJSON** document. Nodes and edges are sorted, and edge metadata is preserved directly (e.g., the exact source line of a call):
 
-```turtle
-<< <http://glassmarble.org/node/auth/login.go::Authenticator::Authenticate>
-   gm:calls
-   <http://glassmarble.org/node/db/database.go::DBStore::GetUser> >>
-   gm:lineNumber 18 .
+```json
+{
+  "nodes": [
+    { "id": "auth/login.go::Authenticator::Authenticate", "kind": "FUNCTION",
+      "file_spec": { "path": "auth/login.go", "line_start": 18 } }
+  ],
+  "edges": [
+    { "source_id": "auth/login.go::Authenticator::Authenticate",
+      "target_id": "db/database.go::DBStore::GetUser",
+      "type": "calls", "line_number": 18 }
+  ]
+}
 ```
 
 The database layer provides:
 - **MVCC** — atomic snapshot swaps for concurrent read safety.
 - **WAL** — Write-Ahead Logging to `.glassmarble/wal/` for crash durability.
 - **Atomic file swaps** — writes go to `.tmp`, then `os.Rename` — no corrupt half-writes.
-- **Self-healing** — if the JSON cache is missing or corrupt, it is rebuilt from the Turtle file automatically.
+- **Self-healing** — repositories created before the v3 store are migrated in place: a legacy `akg_state.ttl` is parsed once, written as `akg.json`, and archived as `akg_state.ttl.bak`.
 - **File lock** — `db.lock` prevents concurrent write collisions.
 
 ---
@@ -162,7 +169,7 @@ Initialize the `.glassmarble` workspace directory and default configuration.
 gmb init [--dir <path>]
 ```
 
-Creates `.glassmarble/`, `.glassmarble/marbles/`, `.glassmarble/config.yaml`, and an empty `akg_state.ttl`. Appends `.glassmarble` to `.gitignore` automatically.
+Creates `.glassmarble/`, `.glassmarble/marbles/`, `.glassmarble/config.yaml`, and an empty `akg.json` state file. Appends `.glassmarble` to `.gitignore` automatically.
 
 ---
 
@@ -182,7 +189,7 @@ gmb analyze [--dir <path>] [--full] [--workers <n>] [--commit <hash>] [--verbose
 | `--commit` | (working tree) | Git commit hash to associate with this analysis run. Empty (default) diffs the working tree against HEAD; a hash diffs that commit against its parent |
 | `--verbose` | `false` | Print stage-by-stage progress |
 
-**Incremental mode**: On git repositories with an existing `akg_state.ttl`, GlassMarble runs `git diff HEAD` and only re-parses changed files, merging the delta into the persisted graph. On the first run (no TTL) or when `--full` is passed, every file is scanned.
+**Incremental mode**: On git repositories with an existing `akg.json`, GlassMarble runs `git diff HEAD` and only re-parses changed files, merging the delta into the persisted graph. On the first run (no state file) or when `--full` is passed, every file is scanned.
 
 ---
 
@@ -314,7 +321,7 @@ gmb doctor [--dir <path>]
 ```
 
 Checks:
-- **Parse-back integrity** — parses `akg_state.ttl` through the canonical parser.
+- **Parse-back integrity** — parses `akg.json` through the canonical parser.
 - **Ontology conformance** — flags any undeclared `gm:` terms.
 - **Dangling edges** — edges pointing to non-existent nodes.
 - **Duplicate node IDs**.
@@ -355,7 +362,7 @@ gmb housekeeping --prune                  # delete files older than 30 days
 gmb housekeeping --prune --older-than 7   # 7-day retention window
 ```
 
-`akg_state.ttl` is **never** pruned by this command.
+The AKG state file (`akg.json`) is **never** pruned by this command.
 
 ---
 
@@ -537,8 +544,7 @@ After `gmb init` and `gmb analyze`:
 ```
 your-repo/
 ├── .glassmarble/
-│   ├── akg_state.ttl        # Primary AKG — W3C RDF-star Turtle graph (source of truth)
-│   ├── akg_state.json       # Indexed JSON cache for fast visualization loads
+│   ├── akg.json             # Primary AKG — GraphJSON (source of truth)
 │   ├── db.lock              # Ephemeral write-lock token (deleted after commit)
 │   ├── config.yaml          # GlassMarble project configuration
 │   ├── ai.yaml              # AI engine BYOK configuration

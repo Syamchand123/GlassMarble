@@ -1,6 +1,7 @@
 package akg
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -129,17 +130,19 @@ func TestStreamGraphStatsParity(t *testing.T) {
 // counted as dangling.
 func TestStreamGraphStatsDangling(t *testing.T) {
 	dir := t.TempDir()
-	ttl := `
-@prefix gm: <http://glassmarble.org/> .
-<http://glassmarble.org/node/n1> a gm:Function ;
-    gm:name "f" ;
-    gm:belongsToFile <http://glassmarble.org/node/file:src/a.go> ;
-    gm:lineStart 1 ;
-    gm:lineEnd 5 .
-<http://glassmarble.org/node/n1> gm:calls <http://glassmarble.org/node/ghost> .
-<< <http://glassmarble.org/node/n1> gm:calls <http://glassmarble.org/node/ghost> >> gm:lineNumber 3 .
-`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "akg_state.ttl"), []byte(ttl), 0o644))
+	g := &GraphJSON{
+		SchemaVersion: CurrentSchemaVersion,
+		Version:       1,
+		Nodes: []GraphNodeJSON{
+			{ID: "n1", Kind: "FUNCTION", Name: "f", FileSpec: LocationMetaJSON{Path: "src/a.go", LineStart: 1, LineEnd: 5}},
+		},
+		Edges: []GraphEdgeJSON{
+			{SourceID: "n1", TargetID: "ghost", Type: "CALLS", LineNumber: 3},
+		},
+	}
+	data, err := json.MarshalIndent(g, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "akg.json"), data, 0o644))
 
 	stats, err := StreamGraphStats(dir)
 	require.NoError(t, err)
@@ -175,17 +178,4 @@ func TestToNativeGraphParity(t *testing.T) {
 	assert.Equal(t, 2, stats.NodeCount)
 	assert.Equal(t, 1, stats.Edges)
 	assert.Equal(t, 0, stats.Dangling)
-}
-
-// TestWALFreshnessEmpty: no WAL means no stale transactions.
-func TestWALFreshnessEmpty(t *testing.T) {
-	dir := commitTestGraph(t)
-	stale, txCount, err := WALFreshness(dir)
-	require.NoError(t, err)
-	assert.False(t, stale)
-	assert.Equal(t, 0, txCount)
-
-	stale, _, err = WALFreshness(filepath.Join(t.TempDir()))
-	require.NoError(t, err)
-	assert.False(t, stale)
 }

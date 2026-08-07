@@ -74,13 +74,29 @@ func estimatedBytes(graph *types.NativeGraph) int64 {
 	return n
 }
 
+// ParseFn materializes a NativeGraph from a persisted state file. The
+// coordinator defaults to the legacy Turtle parser; callers serving the
+// canonical GraphJSON store (Phase C) install the akg-backed adapter via
+// SetParseFn. The akg package cannot be imported here (import cycle via
+// stage4 → product), so the wiring happens at the request layer.
+type ParseFn func(path string, opts types.QueryOptions) (*types.NativeGraph, error)
+
 type EngineCoordinator struct {
-	ttlPath string
+	statePath string
+	parseFn   ParseFn
 }
 
-// NewEngineCoordinator creates a new EngineCoordinator with the given TTL file path.
-func NewEngineCoordinator(ttlPath string) *EngineCoordinator {
-	return &EngineCoordinator{ttlPath: ttlPath}
+// NewEngineCoordinator creates a new EngineCoordinator for the given state
+// file path. By default the legacy Turtle parser is used; SetParseFn
+// overrides it (e.g. with the akg GraphJSON reader).
+func NewEngineCoordinator(statePath string) *EngineCoordinator {
+	return &EngineCoordinator{statePath: statePath}
+}
+
+// SetParseFn installs a custom state-file parser, replacing the default
+// legacy Turtle reader.
+func (ec *EngineCoordinator) SetParseFn(fn ParseFn) {
+	ec.parseFn = fn
 }
 
 func reportProgress(cb func(stage, detail string), stage, detail string) {
@@ -349,30 +365,32 @@ func (sc *SubgraphCache) Size() (int, int64) {
 }
 
 func (ec *EngineCoordinator) parseGraph(opts types.QueryOptions) (*types.NativeGraph, error) {
-	info, err := os.Stat(ec.ttlPath)
+	info, err := os.Stat(ec.statePath)
 	if err != nil {
-		return nil, fmt.Errorf("cannot stat TTL file: %w", err)
+		return nil, fmt.Errorf("cannot stat state file: %w", err)
 	}
 
 	// Scope and ScopePath both participate in the cache key: a file-scoped
 	// parse (which loads only the file's triples) must never collide with
 	// the global parse, and two different file/folder scopes must never
 	// collide with each other (AUDIT Issue 4 Phase 4A-3 / GAP-M-04).
-	cacheKey := fmt.Sprintf("parse:%s:%d:%d:%d:%s", ec.ttlPath, info.Size(), info.ModTime().UnixNano(), opts.Scope, opts.ScopePath)
+	cacheKey := fmt.Sprintf("parse:%s:%d:%d:%d:%s", ec.statePath, info.Size(), info.ModTime().UnixNano(), opts.Scope, opts.ScopePath)
 	if cached := subgraphCache.Get(cacheKey, info.ModTime()); cached != nil {
 		return cached, nil
 	}
 
 	var native *types.NativeGraph
-	if opts.Scope == types.ScopeFile && opts.ScopePath != "" {
+	if ec.parseFn != nil {
+		native, err = ec.parseFn(ec.statePath, opts)
+	} else if opts.Scope == types.ScopeFile && opts.ScopePath != "" {
 		// Lazy file-scoped read: only the file's triples are materialized
 		// (AUDIT Issue 4 Phase 4A-2).
-		native, err = stage1.ParseTTLFileToNativeScoped(ec.ttlPath, opts.ScopePath)
+		native, err = stage1.ParseTTLFileToNativeScoped(ec.statePath, opts.ScopePath)
 	} else {
-		native, err = stage1.ParseTTLFileToNative(ec.ttlPath)
+		native, err = stage1.ParseTTLFileToNative(ec.statePath)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse Turtle file: %w", err)
+		return nil, fmt.Errorf("failed to parse state file: %w", err)
 	}
 
 	subgraphCache.Set(cacheKey, info.ModTime(), native)

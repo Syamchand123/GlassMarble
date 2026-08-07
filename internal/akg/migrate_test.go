@@ -10,10 +10,10 @@ import (
 
 func TestAutoMigrateOnLoad(t *testing.T) {
 	tempDir := t.TempDir()
-	ttlPath := filepath.Join(tempDir, "akg_state.ttl")
+	StatePath := filepath.Join(tempDir, "akg_state.ttl")
 
 	// Create dummy TTL file
-	if err := os.WriteFile(ttlPath, []byte("# dummy v2 ttl"), 0644); err != nil {
+	if err := os.WriteFile(StatePath, []byte("# dummy v2 ttl"), 0644); err != nil {
 		t.Fatalf("failed to create dummy ttl: %v", err)
 	}
 

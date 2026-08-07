@@ -11,7 +11,7 @@ func RenderImportSuccess(inputPath, storageDir string, nodeCount, edgeCount int)
 		tui.BadgeWarn.Render("  ⚠  Replacing active AKG snapshot  "),
 		"",
 		tui.KV("Source", tui.StyleCode.Render(inputPath)),
-		tui.KV("Replacing", tui.StyleCode.Render(storageDir+"/akg_state.ttl")),
+		tui.KV("Replacing", tui.StyleCode.Render(storageDir+"/akg.json")),
 		"",
 		tui.BadgeOK.Render("  ✓  Imported AKG snapshot  "),
 		tui.KV("Nodes", itoa(nodeCount)),

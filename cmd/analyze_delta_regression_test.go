@@ -64,7 +64,7 @@ func setupAnalyzeGitRepo(t *testing.T) string {
 }
 
 // TestAnalyzeAfterInitFullScan reproduces the reported bug end-to-end: `gmb
-// init` writes an EMPTY akg_state.ttl, and a bare `gmb analyze` must still
+// init` writes an EMPTY akg.json, and a bare `gmb analyze` must still
 // ingest the whole repository (3 files), not just the files from the latest
 // commit (1 file). Regression for the --commit "HEAD" default + empty-base
 // delta path.
@@ -88,7 +88,7 @@ func TestAnalyzeAfterInitFullScan(t *testing.T) {
 }
 
 // TestAnalyzeAfterInitDirtyTreeFullScan verifies the empty-base guard: with an
-// empty akg_state.ttl (from init) even a dirty working tree must trigger a
+// empty akg.json (from init) even a dirty working tree must trigger a
 // full scan, because a delta against an empty base would produce a partial
 // graph with only the changed files.
 func TestAnalyzeAfterInitDirtyTreeFullScan(t *testing.T) {

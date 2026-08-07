@@ -76,7 +76,7 @@ func loadGraphJSONFile(path string) (*akg.CodePropertyGraph, error) {
 }
 
 // loadWorkingTreeSnapshots compares the committed AKG (git HEAD) with the
-// current working tree. The base is read from .glassmarble/akg_state.ttl; the
+// current working tree. The base is read from .glassmarble/akg.json; the
 // head is produced by a fresh analysis of the working tree, then both are
 // normalized to GraphJSON.
 func loadWorkingTreeSnapshots(dir string, cmd *cobra.Command) (*akg.CodePropertyGraph, *akg.CodePropertyGraph, error) {

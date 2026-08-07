@@ -13,7 +13,7 @@ import (
 // TestBuildDiagramParity verifies CLI/TUI/AI parity when invoking product.BuildDiagram (W7-01 / §11.1).
 func TestBuildDiagramParity(t *testing.T) {
 	tmpDir := t.TempDir()
-	ttlPath := filepath.Join(tmpDir, "akg_state.ttl")
+	StatePath := filepath.Join(tmpDir, "akg_state.ttl")
 	ttlContent := `@prefix gm: <https://glassmarble.dev/schema/> .
 <file:pkg/a.go::Service> a gm:TypeDecl ;
     gm:name "Service" ;
@@ -21,11 +21,11 @@ func TestBuildDiagramParity(t *testing.T) {
     gm:filePath "pkg/a.go" ;
     gm:lineStart 1 .
 `
-	err := os.WriteFile(ttlPath, []byte(ttlContent), 0644)
+	err := os.WriteFile(StatePath, []byte(ttlContent), 0644)
 	require.NoError(t, err)
 
 	req := DiagramRequest{
-		TTLPath:       ttlPath,
+		StatePath:       StatePath,
 		Type:          types.UMLClass,
 		Scope:         types.ScopeGlobal,
 		Format:        "mermaid",

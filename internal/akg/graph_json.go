@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"sort"
+	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
 )
@@ -47,12 +49,13 @@ type LocationMetaJSON struct {
 
 // GraphEdgeJSON is the portable form of a ResolvedEdge.
 type GraphEdgeJSON struct {
-	SourceID   string  `json:"source_id"`
-	TargetID   string  `json:"target_id"`
-	Type       string  `json:"type"`
-	LineNumber int     `json:"line_number,omitempty"`
-	Confidence float32 `json:"confidence,omitempty"`
-	IsCycle    bool    `json:"is_cycle,omitempty"`
+	SourceID   string            `json:"source_id"`
+	TargetID   string            `json:"target_id"`
+	Type       string            `json:"type"`
+	LineNumber int               `json:"line_number,omitempty"`
+	Confidence float32           `json:"confidence,omitempty"`
+	IsCycle    bool              `json:"is_cycle,omitempty"`
+	Properties map[string]string `json:"properties,omitempty"`
 }
 
 // ExportGraphJSON serializes an AKG snapshot into the portable GraphJSON
@@ -89,8 +92,15 @@ func ExportGraphJSON(graph *CodePropertyGraph, w io.Writer) error {
 			if node == nil {
 				return
 			}
+			// node.ID is the canonical identifier; fall back to the map key
+			// when it is unset so export stays lossless even for graphs
+			// built without explicit node IDs.
+			outID := node.ID
+			if outID == "" {
+				outID = id
+			}
 			doc.Nodes = append(doc.Nodes, GraphNodeJSON{
-				ID:              node.ID,
+				ID:              outID,
 				Kind:            node.Kind,
 				Name:            node.Name,
 				Primitive:       node.Primitive,
@@ -109,18 +119,28 @@ func ExportGraphJSON(graph *CodePropertyGraph, w io.Writer) error {
 		seen := make(map[string]bool)
 		graph.OutboundEdges.Iterate(func(srcID string, edges []stage4.ResolvedEdge) {
 			for _, e := range edges {
-				key := e.SourceID + "\x00" + e.TargetID + "\x00" + string(e.Type) + "\x00" + fmt.Sprint(e.LineNumber)
+				// Mirror the node fallback: the OutboundEdges map key is the
+				// canonical source ID when the edge does not carry one.
+				outSrc := e.SourceID
+				if outSrc == "" {
+					outSrc = srcID
+				}
+				key := outSrc + "\x00" + e.TargetID + "\x00" + string(e.Type) + "\x00" + fmt.Sprint(e.LineNumber)
+				if len(e.Properties) > 0 {
+					key += "\x00" + sortedPropertiesKey(e.Properties)
+				}
 				if seen[key] {
 					continue
 				}
 				seen[key] = true
 				doc.Edges = append(doc.Edges, GraphEdgeJSON{
-					SourceID:   e.SourceID,
+					SourceID:   outSrc,
 					TargetID:   e.TargetID,
 					Type:       string(e.Type),
 					LineNumber: e.LineNumber,
 					Confidence: e.Confidence,
 					IsCycle:    e.IsCycle,
+					Properties: e.Properties,
 				})
 			}
 		})
@@ -143,6 +163,73 @@ func ExportGraphJSON(graph *CodePropertyGraph, w io.Writer) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(doc)
+}
+
+// sortedPropertiesKey builds a deterministic serialization of a property map
+// so edge deduplication does not collapse parallel edges that differ only in
+// their properties (e.g. gm:embedding / gm:provenance facts).
+func sortedPropertiesKey(m map[string]string) string {
+	if len(m) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k)
+		b.WriteByte('=')
+		b.WriteString(m[k])
+		b.WriteByte('\x01')
+	}
+	return b.String()
+}
+
+// copyStringMap returns a shallow copy of m (nil for nil) so imported graphs
+// never alias decoded document memory.
+func copyStringMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+// WriteEmptyJSONState writes a valid empty GraphJSON state document (used by
+// `gmb init` so a fresh repository parses cleanly on first load).
+func WriteEmptyJSONState(path string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("failed to create %s: %w", path, err)
+	}
+	g := NewCodePropertyGraph("initial")
+	if err := ExportGraphJSON(g, f); err != nil {
+		f.Close()
+		return fmt.Errorf("failed to serialize empty state: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("failed to finalize %s: %w", path, err)
+	}
+	return nil
+}
+
+// StateMetadata reads commit hash, schema version and graph version from the
+// canonical akg.json state file without restoring the graph.
+func StateMetadata(storageDir string) (commitHash string, schemaVersion int, version uint64, err error) {
+	data, err := os.ReadFile(jsonStatePath(storageDir))
+	if err != nil {
+		return "", 0, 0, err
+	}
+	var doc GraphJSON
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return "", 0, 0, fmt.Errorf("failed to parse state metadata: %w", err)
+	}
+	return doc.CommitHash, doc.SchemaVersion, doc.Version, nil
 }
 
 // ImportGraphJSON parses a GraphJSON document and reconstructs an in-memory
@@ -186,8 +273,42 @@ func ImportGraphJSON(r io.Reader) (*CodePropertyGraph, error) {
 				LineStart: n.FileSpec.LineStart,
 				LineEnd:   n.FileSpec.LineEnd,
 			},
-			Properties: n.Properties,
+			Properties: copyStringMap(n.Properties),
 		})
+	}
+
+	// Rebuild derived indexes (KindIndex, HashIndex, FileNodeIndex) exactly as
+	// reconstructFromTTLFileEx does, so an imported graph is index-complete.
+	kindIndex := make(map[string]map[string]bool)
+	hashIndex := make(map[string][]string)
+	fileNodeIndex := make(map[string]map[string]bool)
+	graph.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
+		if node == nil {
+			return
+		}
+		if kindIndex[node.Kind] == nil {
+			kindIndex[node.Kind] = make(map[string]bool)
+		}
+		kindIndex[node.Kind][id] = true
+		if h, ok := node.Properties["hash"]; ok && h != "" {
+			hashIndex[h] = append(hashIndex[h], id)
+		}
+		normPath := normalizePath(node.FileSpec.Path)
+		if normPath != "" {
+			if fileNodeIndex[normPath] == nil {
+				fileNodeIndex[normPath] = make(map[string]bool)
+			}
+			fileNodeIndex[normPath][id] = true
+		}
+	})
+	for k, v := range kindIndex {
+		graph.KindIndex = graph.KindIndex.Set(k, v)
+	}
+	for k, v := range hashIndex {
+		graph.HashIndex = graph.HashIndex.Set(k, v)
+	}
+	for k, v := range fileNodeIndex {
+		graph.FileNodeIndex = graph.FileNodeIndex.Set(k, v)
 	}
 
 	for _, e := range doc.Edges {
@@ -201,6 +322,7 @@ func ImportGraphJSON(r io.Reader) (*CodePropertyGraph, error) {
 			LineNumber: e.LineNumber,
 			Confidence: e.Confidence,
 			IsCycle:    e.IsCycle,
+			Properties: copyStringMap(e.Properties),
 		}
 		out, _ := graph.OutboundEdges.Get(e.SourceID)
 		graph.OutboundEdges = graph.OutboundEdges.Set(e.SourceID, append(out, edge))

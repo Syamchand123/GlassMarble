@@ -34,8 +34,13 @@ func TestCommitBudgetGate(t *testing.T) {
 
 	assert.LessOrEqual(t, duration.Seconds(), 8.0, "Transaction commit must complete within 8 seconds")
 
-	// Check output file
-	ttlPath := filepath.Join(tmpDir, "akg_state.ttl")
-	_, err = os.Stat(ttlPath)
-	assert.NoError(t, err, "akg_state.ttl must exist after transaction commit")
+	// Check output file: the canonical state is akg.json; the legacy TTL
+	// mirror is no longer written since Phase C.
+	jsonPath := filepath.Join(tmpDir, "akg.json")
+	_, err = os.Stat(jsonPath)
+	assert.NoError(t, err, "akg.json must exist after transaction commit")
+
+	StatePath := filepath.Join(tmpDir, "akg_state.ttl")
+	_, err = os.Stat(StatePath)
+	assert.True(t, os.IsNotExist(err), "akg_state.ttl must not be written after transaction commit")
 }
