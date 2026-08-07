@@ -2,8 +2,10 @@ package stage3
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
+	"github.com/Syamchand123/GlassMarble/internal/product/ids"
 	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
@@ -105,14 +107,39 @@ func getParticipantLabel(id string) string {
 	return fmt.Sprintf("\"%s\"", sanitizeMermaidLabel(id))
 }
 
+// parseFQN splits a node ID into (path, receiver, symbol). Both the legacy
+// `path::symbol` dialect and the canonical scheme (type:path:owner:symbol,
+// master_overhaul_plan.md §4.1) are accepted: legacy IDs are normalized onto
+// the canonical grammar first (ids.NormalizeLegacyID is idempotent for
+// canonical IDs) and then parsed, so URL-encoded path segments are decoded
+// (GAP-C-01 / GAP-C-04). IDs that match neither grammar fall back to the
+// legacy split so plain fixture IDs keep working.
 func parseFQN(id string) (path, receiver, symbol string) {
+	norm := ids.NormalizeLegacyID(id)
+	if c, err := ids.ParseCanonicalID(norm); err == nil {
+		return c.Path, c.Owner, c.Symbol
+	}
 	parts := strings.Split(id, "::")
-	if len(parts) == 3 {
+	switch len(parts) {
+	case 3:
 		return parts[0], parts[1], parts[2]
-	} else if len(parts) == 2 {
+	case 2:
 		return parts[0], "", parts[1]
 	}
 	return id, "", ""
+}
+
+// classIDCandidates returns the plausible class-level IDs for a member whose
+// parsed path/receiver are known, covering both the legacy `path::Receiver`
+// dialect and the canonical `type:path:Receiver` / `method:path:Receiver`
+// forms. Lookups try every candidate so resolution works regardless of which
+// ID grammar the current graph uses (GAP-C-01).
+func classIDCandidates(path, rec string) []string {
+	return []string{
+		fmt.Sprintf("%s::%s", path, rec),
+		ids.CanonicalID{Kind: ids.KindType, Path: path, Symbol: rec}.String(),
+		ids.CanonicalID{Kind: ids.KindMethod, Path: path, Symbol: rec}.String(),
+	}
 }
 
 func findParentClassID(methodID string, classes map[string]*types.LayoutNode) string {
@@ -121,27 +148,64 @@ func findParentClassID(methodID string, classes map[string]*types.LayoutNode) st
 		return ""
 	}
 
-	classID := fmt.Sprintf("%s::%s", path, rec)
-	if _, exists := classes[classID]; exists {
-		return classID
+	for _, candidate := range classIDCandidates(path, rec) {
+		if _, exists := classes[candidate]; exists {
+			return candidate
+		}
 	}
 	return ""
 }
 
-func resolveNodeToClass(nodeID string, classes map[string]*types.LayoutNode) []string {
+// classIndex maps a normalized file path to the class IDs declared in it.
+// resolveNodeToClass uses it for O(1) member→class resolution instead of a
+// linear scan over the whole classes map (GAP-M-05).
+type classIndex struct {
+	byPath map[string][]string
+}
+
+// buildClassIndex pre-indexes the classes map by parsed file path.
+func buildClassIndex(classes map[string]*types.LayoutNode) *classIndex {
+	idx := &classIndex{byPath: make(map[string][]string, len(classes))}
+	for id := range classes {
+		path, _, _ := parseFQN(id)
+		if path == "" {
+			continue
+		}
+		idx.byPath[path] = append(idx.byPath[path], id)
+	}
+	for p := range idx.byPath {
+		sort.Strings(idx.byPath[p])
+	}
+	return idx
+}
+
+// lookup returns the class IDs in path whose symbol (or owner, in dialects
+// that carry one) equals rec. Both members (`rec == class symbol`) and
+// owners (`rec == class owner`) are matched so legacy and canonical graphs
+// resolve identically.
+func (idx *classIndex) lookup(path, rec string) []string {
+	var ids []string
+	for _, classID := range idx.byPath[path] {
+		cPath, cRec, cSym := parseFQN(classID)
+		if cPath != path {
+			continue
+		}
+		if rec == cSym || (cRec != "" && rec == cRec) {
+			ids = append(ids, classID)
+		}
+	}
+	return ids
+}
+
+func resolveNodeToClass(nodeID string, classes map[string]*types.LayoutNode, idx *classIndex) []string {
 	if _, exists := classes[nodeID]; exists {
 		return []string{nodeID}
 	}
 
 	path, rec, _ := parseFQN(nodeID)
-	if rec != "" {
-		cleanPath := cleanPathFromID(path)
-		for classID := range classes {
-			cleanClassPath := cleanPathFromID(classID)
-			_, _, classRec := parseFQN(classID)
-			if cleanClassPath == cleanPath && classRec == rec {
-				return []string{classID}
-			}
+	if rec != "" && idx != nil {
+		if ids := idx.lookup(path, rec); len(ids) > 0 {
+			return ids
 		}
 	}
 
@@ -149,19 +213,9 @@ func resolveNodeToClass(nodeID string, classes map[string]*types.LayoutNode) []s
 	// mapped to the class in its file only when that file declares exactly
 	// one type. This never fans one function edge out across sibling classes
 	// (AUDIT Issue 2 Phase 2C-12); files with several types stay unmapped.
-	if path != "" {
-		cleanPath := cleanPathFromID(path)
-		var match string
-		for classID := range classes {
-			if cleanPathFromID(classID) == cleanPath {
-				if match != "" {
-					return nil
-				}
-				match = classID
-			}
-		}
-		if match != "" {
-			return []string{match}
+	if path != "" && idx != nil {
+		if ids := idx.byPath[path]; len(ids) == 1 {
+			return []string{ids[0]}
 		}
 	}
 	return nil
@@ -174,8 +228,12 @@ func cleanPathFromID(id string) string {
 	res = strings.TrimPrefix(res, "file:")
 	res = strings.TrimPrefix(res, "module:")
 
-	if idx := strings.Index(res, "::"); idx != -1 {
-		res = res[:idx]
+	// Canonical IDs URL-encode path separators (file%2Fsrc%2Fmain.go), so the
+	// path must be extracted and percent-decoded through parseFQN rather than
+	// string-sliced (GAP-C-04).
+	path, _, _ := parseFQN(res)
+	if path != "" {
+		return path
 	}
 	return strings.TrimSpace(res)
 }

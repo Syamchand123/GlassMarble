@@ -34,6 +34,18 @@ func RenderPlantUMLDiagram(tree *types.LayoutTree, t types.DiagramType) string {
 			renderPlantUMLC4DynamicDiagram(tree, &sb)
 		case types.C4Deployment:
 			renderPlantUMLC4DeploymentDiagram(tree, &sb)
+		// Every remaining DiagramType routes here explicitly so the switch
+		// covers all 31 (GAP-L-03): these structure-heavy diagrams
+		// (usecase, activity, state, sequence, ER, flow, mindmap, ...) share
+		// the generic rectangle/arrow stencil, which is valid PlantUML —
+		// never a Mermaid-style fallback.
+		case types.UMLUsecase, types.UMLActivity, types.UMLState,
+			types.UMLSequence, types.UMLCommunication, types.UMLInteractionOverview,
+			types.UMLTiming, types.ERDiagram, types.DataFlow, types.Mindmap,
+			types.Flowchart, types.DependencyGraph, types.HotspotComplexity,
+			types.CallGraph, types.LayeredArchitecture, types.ChangeImpact,
+			types.Infrastructure:
+			renderPlantUMLGenericDiagram(tree, &sb)
 		default:
 			renderPlantUMLGenericDiagram(tree, &sb)
 		}

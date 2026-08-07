@@ -24,6 +24,107 @@ func findToken(t *testing.T, tokens []RichToken, pred func(RichToken) bool) *Ric
 	return nil
 }
 
+// TestJavaInterfaceMethodSpecs is the GAP-L-05 gate: Java interface methods
+// (method_declaration under interface_body) must be flagged IsMethodSpec
+// while ordinary class methods must not, even when the class implements an
+// interface.
+func TestJavaInterfaceMethodSpecs(t *testing.T) {
+	const src = `package p;
+
+interface Service {
+    String ping(String in);
+    void reset();
+}
+
+class ServiceImpl implements Service {
+    String ping(String in) { return in; }
+    void reset() {}
+}
+`
+	res := parseSnippet(t, LangJava, "service.java", src)
+
+	var ping, reset, implPing *RichToken
+	for i := range res.RichTokens {
+		tok := &res.RichTokens[i]
+		if tok.Kind != TokenDeclaration || tok.Type != "method_declaration" {
+			continue
+		}
+		switch tok.Name {
+		case "ping":
+			if ping == nil {
+				ping = &res.RichTokens[i]
+			} else {
+				implPing = &res.RichTokens[i]
+			}
+		case "reset":
+			if reset == nil {
+				reset = &res.RichTokens[i]
+			}
+		}
+	}
+	if ping == nil || reset == nil {
+		t.Fatalf("interface method_declarations not found; tokens=%v", res.RichTokens)
+	}
+	if !ping.IsMethodSpec {
+		t.Errorf("interface method 'ping' should be IsMethodSpec (isInsideInterfaceBody)")
+	}
+	if !reset.IsMethodSpec {
+		t.Errorf("interface method 'reset' should be IsMethodSpec (isInsideInterfaceBody)")
+	}
+	if implPing == nil {
+		t.Fatal("class method 'ping' not found")
+	}
+	if implPing.IsMethodSpec {
+		t.Errorf("class method 'ping' must NOT be IsMethodSpec; got %+v", implPing)
+	}
+}
+
+// TestRubyMixinEmbedding is the GAP-L-05 gate: `include`/`prepend` call
+// nodes must be flagged IsEmbedded so stage 2 can model mixin embedding.
+func TestRubyMixinEmbedding(t *testing.T) {
+	const src = `module Greets
+end
+
+class Widget
+  include Greets
+  prepend Auditable
+  def greet
+    puts "hi"
+  end
+end
+`
+	res := parseSnippet(t, LangRuby, "widget.rb", src)
+
+	var includeTok, prependTok, otherCall *RichToken
+	for i := range res.RichTokens {
+		tok := &res.RichTokens[i]
+		if tok.Kind != TokenImport {
+			continue
+		}
+		switch tok.Name {
+		case "include":
+			includeTok = &res.RichTokens[i]
+		case "prepend":
+			prependTok = &res.RichTokens[i]
+		case "puts":
+			otherCall = &res.RichTokens[i]
+		}
+	}
+	if includeTok == nil || prependTok == nil {
+		t.Fatalf("include/prepend call tokens not found; tokens=%v", res.RichTokens)
+	}
+	if !includeTok.IsEmbedded {
+		t.Errorf("`include Greets` should be IsEmbedded; got %+v", includeTok)
+	}
+	if !prependTok.IsEmbedded {
+		t.Errorf("`prepend Auditable` should be IsEmbedded; got %+v", prependTok)
+	}
+	if otherCall != nil && otherCall.IsEmbedded {
+		t.Errorf("plain call must not be IsEmbedded; got %+v", otherCall)
+	}
+}
+
+
 func parseSnippet(t *testing.T, lang SupportedLang, relPath, src string) *IngestionResult {
 	t.Helper()
 	spec := specFor(t, lang)

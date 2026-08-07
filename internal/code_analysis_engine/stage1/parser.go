@@ -138,6 +138,11 @@ func extractTokens(root *sitter.Node, source []byte, spec *LanguageSpec) ([]Rich
 			tok := makeToken(node, source, kind, currentParent, depth)
 			if kind == TokenDeclaration {
 				enrichDeclaration(&tok, node, source, spec)
+			} else if kind == TokenImport && spec.Lang == LangRuby && isRubyIncludeCall(node, source) {
+				// Ruby mixins (`include Foo`, `prepend Bar`) classify as
+				// imports; flag them so stage 2 can model the embedding
+				// relationship (GAP-L-05 / §5.1.2).
+				tok.IsEmbedded = true
 			}
 			tokens = append(tokens, tok)
 		}
@@ -258,7 +263,11 @@ func makeToken(node *sitter.Node, source []byte, kind TokenKind, parentIdx int, 
 func enrichDeclaration(tok *RichToken, node *sitter.Node, source []byte, spec *LanguageSpec) {
 	kind := node.Kind()
 	tok.IsFieldDecl = spec.isFieldDeclKind(kind)
-	tok.IsMethodSpec = spec.isMethodSpecKind(kind)
+	// Java/C# model interface methods as plain method_declaration nodes
+	// nested under interface_body, so interface membership cannot be read
+	// from the kind alone — the ancestor refinement below covers it
+	// (GAP-L-05 / master_overhaul_plan.md §5.1.2).
+	tok.IsMethodSpec = spec.isMethodSpecKind(kind) || isInsideInterfaceBody(node)
 	tok.IsEmbedded = spec.isEmbeddedKind(kind) ||
 		// Go (tree-sitter-go@v0.25.0): anonymous embedding is a
 		// field_declaration without a name field. Go-only: other grammars
@@ -295,6 +304,41 @@ func enrichDeclaration(tok *RichToken, node *sitter.Node, source []byte, spec *L
 		}
 		tok.FieldRoles["annotations"] = strings.Join(annotations, " ")
 	}
+}
+
+// isInsideInterfaceBody reports whether a declaration node sits inside an
+// interface body. Java and C# model interface methods as plain
+// method_declaration nodes nested under interface_body — the kind alone
+// cannot distinguish them from class methods, so the ancestry decides
+// (GAP-L-05). Concrete class bodies short-circuit the walk so a class
+// implementing an interface never flags its methods as specs.
+func isInsideInterfaceBody(node *sitter.Node) bool {
+	for p := node.Parent(); p != nil; p = p.Parent() {
+		switch p.Kind() {
+		case "interface_body", "interface_declaration", "interface_type":
+			return true
+		case "class_body", "struct_body", "enum_body",
+			"function_body", "block", "declaration_list":
+			return false
+		}
+	}
+	return false
+}
+
+// isRubyIncludeCall reports whether a Ruby call node is a mixin statement
+// (`include Foo`, `prepend Bar`). tree-sitter-ruby models both as call
+// nodes whose method field is the keyword, so kind lists cannot express
+// them (GAP-L-05 / master_overhaul_plan.md §5.1.2).
+func isRubyIncludeCall(node *sitter.Node, source []byte) bool {
+	m := node.ChildByFieldName("method")
+	if m == nil {
+		return false
+	}
+	switch strings.TrimSpace(m.Utf8Text(source)) {
+	case "include", "prepend":
+		return true
+	}
+	return false
 }
 
 // isAnnotationKind matches annotation-bearing child node kinds across the

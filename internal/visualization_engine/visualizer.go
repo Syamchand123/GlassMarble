@@ -286,6 +286,18 @@ func (sc *SubgraphCache) dropLocked(key string, entry *cacheEntry) {
 	}
 }
 
+// cacheTTL returns the SubgraphCache entry TTL, configurable via the
+// GMB_CACHE_TTL environment variable (a Go duration such as "5m" or "1h").
+// It defaults to 10 minutes when unset or unparseable (GAP-M-08).
+func cacheTTL() time.Duration {
+	if raw := os.Getenv("GMB_CACHE_TTL"); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 10 * time.Minute
+}
+
 func (sc *SubgraphCache) Set(key string, mtime time.Time, graph *types.NativeGraph) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
@@ -307,7 +319,7 @@ func (sc *SubgraphCache) Set(key string, mtime time.Time, graph *types.NativeGra
 		graph:      graph,
 		lastAccess: time.Now(),
 		element:    elem,
-		ttl:        10 * time.Minute,
+		ttl:        cacheTTL(),
 		bytes:      entryBytes,
 	}
 	sc.currentBytes += entryBytes
@@ -342,10 +354,11 @@ func (ec *EngineCoordinator) parseGraph(opts types.QueryOptions) (*types.NativeG
 		return nil, fmt.Errorf("cannot stat TTL file: %w", err)
 	}
 
-	// Scope participates in the cache key: a file-scoped parse (which loads
-	// only the file's triples) must never collide with the global parse
-	// (AUDIT Issue 4 Phase 4A-3).
-	cacheKey := fmt.Sprintf("parse:%s:%d:%d:%d", ec.ttlPath, info.Size(), info.ModTime().UnixNano(), opts.Scope)
+	// Scope and ScopePath both participate in the cache key: a file-scoped
+	// parse (which loads only the file's triples) must never collide with
+	// the global parse, and two different file/folder scopes must never
+	// collide with each other (AUDIT Issue 4 Phase 4A-3 / GAP-M-04).
+	cacheKey := fmt.Sprintf("parse:%s:%d:%d:%d:%s", ec.ttlPath, info.Size(), info.ModTime().UnixNano(), opts.Scope, opts.ScopePath)
 	if cached := subgraphCache.Get(cacheKey, info.ModTime()); cached != nil {
 		return cached, nil
 	}

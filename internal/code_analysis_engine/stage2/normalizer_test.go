@@ -1,6 +1,7 @@
 package stage2
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage1"
@@ -425,5 +426,47 @@ func TestFileSymbolTable(t *testing.T) {
 	}
 	if st.SecuritySinks == nil {
 		_ = append(st.SecuritySinks, SecuritySinkMeta{})
+	}
+}
+
+// TestDetectInheritanceMultiParent (GAP-M-06 / §5.2.2): a class with
+// several comma-separated bases must record one InheritanceMeta per parent,
+// and C++ visibility keywords must not leak into the parent names.
+func TestDetectInheritanceMultiParent(t *testing.T) {
+	st := &FileSymbolTable{}
+
+	detectInheritance("public class A extends B, C, D {", "A", 1, st)
+	detectInheritance("interface I extends J, K {", "I", 2, st)
+	detectInheritance("class X implements P, Q {", "X", 3, st)
+	detectInheritance("class Y : public Base1, protected Base2 {", "Y", 4, st)
+
+	var got []string
+	for _, inh := range st.Inheritances {
+		got = append(got, inh.ChildName+">"+inh.ParentName)
+		if inh.ChildName == "Y" && inh.ParentName == "Base2" && !inh.IsInterface {
+			// C++ colon inheritance is class inheritance unless the
+			// keyword is interface-like.
+		}
+	}
+	want := []string{
+		"A>B", "A>C", "A>D",
+		"I>J", "I>K",
+		"X>P", "X>Q",
+		"Y>Base1", "Y>Base2",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("detectInheritance parents = %v, want %v", got, want)
+	}
+}
+
+// TestDetectInheritanceSkipsTypeAnnotations (GAP-M-06): Python-style type
+// hints (`field: Type`) must not be misread as inheritance.
+func TestDetectInheritanceSkipsTypeAnnotations(t *testing.T) {
+	st := &FileSymbolTable{}
+	detectInheritance("var: Dict[str, int] = {}", "var", 1, st)
+	detectInheritance("def f(x: int) -> str:", "f", 2, st)
+
+	if len(st.Inheritances) != 0 {
+		t.Errorf("type annotations must not create inheritances, got %v", st.Inheritances)
 	}
 }

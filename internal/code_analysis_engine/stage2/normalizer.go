@@ -570,38 +570,37 @@ func hasBaseClassRole(lang stage1.SupportedLang) bool {
 
 func detectInheritance(content, childName string, line int, symTable *FileSymbolTable) {
 	content = strings.TrimSpace(content)
-	// " extends " â€” Java, TypeScript, PHP
+	// " extends " — Java, TypeScript, PHP. A class may extend several
+	// parents ("class A extends B, C, D"), so every comma-separated parent
+	// is captured, not just the first (GAP-M-06 / §5.2.2).
 	if idx := strings.Index(content, " extends "); idx != -1 {
-		parts := strings.Fields(content[idx+9:])
-		if len(parts) > 0 {
+		for _, parent := range splitParentList(content[idx+9:]) {
 			symTable.Inheritances = append(symTable.Inheritances, InheritanceMeta{
 				ChildName:   childName,
-				ParentName:  strings.Trim(parts[0], "{},;:"),
+				ParentName:  parent,
 				IsInterface: false,
 				LineNumber:  line,
 			})
 		}
 	}
-	// " implements " â€” Java, TypeScript
+	// " implements " — Java, TypeScript. "implements B, C, D" yields one
+	// InheritanceMeta per interface (GAP-M-06).
 	if idx := strings.Index(content, " implements "); idx != -1 {
-		parts := strings.Fields(content[idx+12:])
-		if len(parts) > 0 {
+		for _, parent := range splitParentList(content[idx+12:]) {
 			symTable.Inheritances = append(symTable.Inheritances, InheritanceMeta{
 				ChildName:   childName,
-				ParentName:  strings.Trim(parts[0], "{},;:"),
+				ParentName:  parent,
 				IsInterface: true,
 				LineNumber:  line,
 			})
 		}
 	}
-	// Colon-based inheritance " : Base" or " : public Base" â€” C++, C#
+	// Colon-based inheritance " : Base" or " : public Base" — C++, C#
 	// But NOT Rust/Python type annotations "var: Type" or "field: Type"
 	if colonIdx := strings.Index(content, " : "); colonIdx != -1 {
 		afterColon := strings.TrimSpace(content[colonIdx+3:])
 		// Skip if it looks like a Python/C# type annotation (no inheritance keywords)
-		firstWord := strings.Fields(afterColon)
-		if len(firstWord) > 0 {
-			candidate := strings.Trim(firstWord[0], "{},;")
+		for _, candidate := range splitParentList(afterColon) {
 			// Only add if the colon pattern looks like inheritance, not a type hint
 			if isLikelyInheritance(content, candidate) {
 				symTable.Inheritances = append(symTable.Inheritances, InheritanceMeta{
@@ -613,6 +612,30 @@ func detectInheritance(content, childName string, line int, symTable *FileSymbol
 			}
 		}
 	}
+}
+
+// splitParentList parses a comma/space-separated base-class list such as
+// "B, C, D {" into its individual parent names. Visibility keywords
+// (public/private/protected in C++ "class A : public B, protected C") are
+// skipped, as are brace/semicolon terminators and trailing content.
+func splitParentList(rest string) []string {
+	rest = strings.TrimSpace(rest)
+	if i := strings.IndexAny(rest, "{;"); i != -1 {
+		rest = rest[:i]
+	}
+	fields := strings.FieldsFunc(rest, func(r rune) bool { return r == ',' || r == ' ' })
+	var out []string
+	for _, f := range fields {
+		f = strings.Trim(f, "{};:")
+		switch strings.ToLower(f) {
+		case "public", "private", "protected", "virtual", "final":
+			continue
+		}
+		if f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 func isLikelyInheritance(content, parentCandidate string) bool {

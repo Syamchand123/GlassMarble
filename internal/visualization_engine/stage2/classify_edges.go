@@ -4,9 +4,63 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Syamchand123/GlassMarble/internal/product/ids"
 	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
+
+// parseIDParts splits a node ID into (path, receiver, symbol). Both the
+// legacy `path::symbol` dialect and the canonical scheme
+// (type:path:owner:symbol, master_overhaul_plan.md §4.1) are accepted:
+// legacy IDs are normalized onto the canonical grammar first
+// (ids.NormalizeLegacyID is idempotent) and then parsed, so URL-encoded
+// path segments come back decoded (GAP-C-02 / GAP-C-03).
+func parseIDParts(id string) (path, receiver, symbol string) {
+	norm := ids.NormalizeLegacyID(id)
+	if c, err := ids.ParseCanonicalID(norm); err == nil {
+		return c.Path, c.Owner, c.Symbol
+	}
+	parts := strings.Split(id, "::")
+	switch len(parts) {
+	case 3:
+		return parts[0], parts[1], parts[2]
+	case 2:
+		return parts[0], "", parts[1]
+	}
+	return id, "", ""
+}
+
+// classIDCandidates returns the class-level IDs that could own a member with
+// the given parsed path/receiver, covering the legacy `path::Receiver`
+// dialect and the canonical `type:` / `method:` forms (GAP-C-02).
+func classIDCandidates(path, rec string) []string {
+	return []string{
+		path + "::" + rec,
+		ids.CanonicalID{Kind: ids.KindType, Path: path, Symbol: rec}.String(),
+		ids.CanonicalID{Kind: ids.KindMethod, Path: path, Symbol: rec}.String(),
+	}
+}
+
+// memberParentClassID resolves the class-level ID that structurally owns id
+// (e.g. path::Receiver::Method → path::Receiver). Both ID dialects are
+// tried so legacy and canonical graphs map members identically. Nodes
+// without a receiver (path::Symbol) are treated as class-level themselves,
+// preserving the legacy two-part self-mapping.
+func memberParentClassID(id string, nodes map[string]*types.TTLNode) string {
+	path, rec, sym := parseIDParts(id)
+	if rec == "" {
+		if sym != "" {
+			return id
+		}
+		return ""
+	}
+	for _, candidate := range classIDCandidates(path, rec) {
+		if _, ok := nodes[candidate]; ok {
+			return candidate
+		}
+	}
+	return ""
+}
 
 // ClassRelation represents an aggregated type-level relationship between two classes/types (V-03 / §7.1.3).
 type ClassRelation struct {
@@ -42,12 +96,8 @@ func ClassifyEdges(sub *types.VirtualSubgraph) *EdgeProjection {
 	// Map member and method nodes to their containing class ID if present in subgraph
 	for id := range sub.Nodes {
 		if _, ok := nodeToClass[id]; !ok {
-			parts := strings.Split(id, "::")
-			if len(parts) >= 2 {
-				parentID := parts[0] + "::" + parts[1]
-				if _, ok := sub.Nodes[parentID]; ok {
-					nodeToClass[id] = parentID
-				}
+			if parentID := memberParentClassID(id, sub.Nodes); parentID != "" {
+				nodeToClass[id] = parentID
 			}
 		}
 	}

@@ -168,6 +168,7 @@ func BuildLayoutTreeEx(sub *types.VirtualSubgraph, metrics *DiagramMetrics, clus
 			InDegree:      inDeg[id],
 			OutDegree:     outDeg[id],
 			IsGodObject:   godSet[id],
+			Visibility:    node.Properties["visibility"],
 		}
 		if inDeg[id] > 5 {
 			layoutNode.IsHotspot = true
@@ -197,11 +198,11 @@ func pruneDeadComponents(sub *types.VirtualSubgraph, opts types.QueryOptions) ma
 		for id, n := range sub.Nodes {
 			switch opts.Scope {
 			case types.ScopeFolder:
-				if strings.Contains(n.FileURI, opts.ScopePath) || strings.HasPrefix(id, opts.ScopePath) {
+				if isWithinFolder(n.FileURI, opts.ScopePath) || isWithinFolder(id, opts.ScopePath) {
 					filtered[id] = n
 				}
 			case types.ScopeFile:
-				if strings.HasSuffix(n.FileURI, opts.ScopePath) || strings.HasPrefix(id, opts.ScopePath) {
+				if isWithinFile(n.FileURI, opts.ScopePath) || isWithinFile(id, opts.ScopePath) {
 					filtered[id] = n
 				}
 			default:
@@ -233,14 +234,59 @@ func pruneDeadComponents(sub *types.VirtualSubgraph, opts types.QueryOptions) ma
 	return filtered
 }
 
-func getDirectoryPath(nodeID string, kind string, diagramType types.DiagramType, communities map[string]string) string {
-	parts := strings.Split(nodeID, "::")
-	filePath := parts[0]
-	if strings.HasPrefix(filePath, "file:") {
-		filePath = filePath[5:]
-	} else if strings.HasPrefix(filePath, "module:") {
-		filePath = filePath[7:]
+// isWithinFolder reports whether candidate (a file path, FileURI or node ID)
+// lives inside the folder scope. Matching is boundary-aware: the candidate
+// must equal the scope path or start with scope + "/" — never a bare
+// substring, so scope "api" cannot match "internal/api" or "api-utils"
+// (GAP-H-01 / §8.1).
+func isWithinFolder(candidate, scopePath string) bool {
+	if candidate == "" || scopePath == "" {
+		return false
 	}
+	c := normalizeScopePath(candidate)
+	s := normalizeScopePath(scopePath)
+	return c == s || strings.HasPrefix(c, s+"/")
+}
+
+// isWithinFile reports whether candidate names the scoped file (or a node
+// inside it). Boundary-aware: the candidate must equal the scope path or end
+// with "/" + scope path — never a bare substring (GAP-H-01).
+func isWithinFile(candidate, scopePath string) bool {
+	if candidate == "" || scopePath == "" {
+		return false
+	}
+	c := normalizeScopePath(candidate)
+	s := normalizeScopePath(scopePath)
+	return c == s || strings.HasSuffix(c, "/"+s)
+}
+
+// normalizeScopePath converts a file path, FileURI or node ID into a
+// slash-normalized relative path: grammar prefixes (file:/module:/virt:) and
+// full glassmarble.org IRIs are stripped, node IDs are reduced to their path
+// segment (both the legacy `path::Symbol` and canonical `type:path:Symbol`
+// dialects via parseIDParts), backslashes become slashes, and leading
+// "./" / trailing "/" are removed.
+func normalizeScopePath(p string) string {
+	res := p
+	res = strings.TrimPrefix(res, "http://glassmarble.org/node/")
+	res = strings.TrimPrefix(res, "http://glassmarble.org/file/")
+	res = strings.TrimPrefix(res, "http://glassmarble.org/namespace/")
+	res = strings.TrimPrefix(res, "file:")
+	res = strings.TrimPrefix(res, "module:")
+	res = strings.TrimPrefix(res, "virt:")
+	res = strings.TrimPrefix(res, "./")
+	if path, _, _ := parseIDParts(res); path != "" && path != res {
+		res = path
+	}
+	res = strings.ReplaceAll(res, "\\", "/")
+	return strings.Trim(res, "/")
+}
+
+func getDirectoryPath(nodeID string, kind string, diagramType types.DiagramType, communities map[string]string) string {
+	// Path segment is extracted with the same dual-grammar parser as the
+	// rest of the engine, so canonical IDs (type:path:owner:symbol, §4.1)
+	// and legacy path::symbol IDs resolve identically (GAP-C-03).
+	filePath, _, _ := parseIDParts(nodeID)
 
 	var dir string
 	if kind == ont.PredNamespace || kind == ont.PredModule {
@@ -264,7 +310,10 @@ func getDirectoryPath(nodeID string, kind string, diagramType types.DiagramType,
 		}
 		return slashPath
 	case types.LayeredArchitecture:
-		if kind == ont.PredTypeDecl || kind == ont.PredExecutable {
+		// §8.1 grouping uses the schema-v3-migrated kind set (STRUCT /
+		// FUNCTION / CLASS / INTERFACE); the legacy TypeDecl/Executable
+		// values are retained for stale TTL files (GAP-H-02).
+		if isLayeredKind(kind) {
 			if strings.HasPrefix(slashPath, "internal/") {
 				subParts := strings.Split(strings.TrimPrefix(slashPath, "internal/"), "/")
 				if len(subParts) > 0 && subParts[0] != "" {
@@ -291,6 +340,19 @@ func getDirectoryPath(nodeID string, kind string, diagramType types.DiagramType,
 	default:
 		return slashPath
 	}
+}
+
+// isLayeredKind reports whether a node kind participates in
+// LayeredArchitecture boundary grouping. The schema-v3 migration reclassified
+// TYPE_DECL → STRUCT and EXECUTABLE → FUNCTION, so both the migrated
+// constants and the stale legacy values are accepted (GAP-H-02).
+func isLayeredKind(kind string) bool {
+	switch kind {
+	case ont.PredStruct, ont.PredClass, ont.PredInterface, ont.PredTypeDecl,
+		ont.PredFunction, ont.PredMethod, ont.PredExecutable:
+		return true
+	}
+	return false
 }
 
 func getOrCreateBoundary(dir string, treeMap map[string]*types.LayoutTree, root *types.LayoutTree) *types.LayoutTree {

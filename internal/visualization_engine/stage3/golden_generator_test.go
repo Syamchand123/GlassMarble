@@ -6,27 +6,40 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/stage1"
+	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/stage2"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 	"github.com/stretchr/testify/require"
 )
 
-// TestGenerateGoldenFixtures renders all 31 diagram types to Mermaid and PlantUML formats
-// and verifies/persists the 62 golden fixture files in testdata/golden/ (W4-06 / §8.0).
+// buildTreeFromTTLFixture parses a real TTL fixture and runs the full
+// extract → metric → layout chain so the golden fixtures exercise the real
+// pipeline on real data instead of a hand-inlined stub tree (GAP-M-07).
+func buildTreeFromTTLFixture(t *testing.T, relTTL string, dt types.DiagramType, opts types.QueryOptions) *types.LayoutTree {
+	t.Helper()
+	native, err := stage1.ParseTTLFileToNative(relTTL)
+	require.NoError(t, err, "ParseTTLFileToNative(%s)", relTTL)
+	require.NotEmpty(t, native.Nodes, "fixture %s must contain nodes", relTTL)
+
+	cfg := stage1.GetExtractionConfig(dt, opts)
+	sub, _, err := stage1.ExtractFromSubgraph(native, cfg, opts)
+	require.NoError(t, err, "ExtractFromSubgraph(%s)", dt)
+
+	metrics := stage2.ComputeAllMetrics(sub)
+	require.NotNil(t, metrics, "ComputeAllMetrics(%s)", dt)
+
+	tree := stage2.BuildLayoutTreeEx(sub, metrics, metrics.Communities, opts, dt)
+	require.NotNil(t, tree, "BuildLayoutTreeEx(%s)", dt)
+	return tree
+}
+
+// TestGenerateGoldenFixtures renders all 31 diagram types to Mermaid,
+// PlantUML and DOT formats from a real TTL fixture and persists the 93
+// golden fixture files in testdata/golden/ (W4-06 / §8.0, GAP-H-03,
+// GAP-M-07).
 func TestGenerateGoldenFixtures(t *testing.T) {
 	goldenDir := filepath.Join("..", "testdata", "golden")
 	require.NoError(t, os.MkdirAll(goldenDir, 0755))
-
-	tree := &types.LayoutTree{
-		BoundaryName: "Root",
-		Nodes: []*types.LayoutNode{
-			{ID: "node1", Name: "ServiceA", Kind: "STRUCT"},
-			{ID: "node2", Name: "RepositoryB", Kind: "STRUCT"},
-		},
-		Edges: []types.LayoutEdge{
-			{SourceID: "node1", TargetID: "node2", Predicate: "gm:calls"},
-		},
-		Summary: &types.GraphSummary{NodeCount: 2, EdgeCount: 1},
-	}
 
 	allTypes := []types.DiagramType{
 		// 14 UML
@@ -42,27 +55,53 @@ func TestGenerateGoldenFixtures(t *testing.T) {
 		types.DependencyGraph, types.HotspotComplexity, types.CallGraph,
 		types.LayeredArchitecture, types.ChangeImpact, types.Infrastructure,
 	}
+	require.Len(t, allTypes, 31, "DiagramType enumeration must cover all 31 types")
 
-	formats := []string{"mermaid", "plantuml"}
+	formats := []struct {
+		name string
+		ext  string
+	}{
+		{"mermaid", ".mmd"},
+		{"plantuml", ".puml"},
+		{"dot", ".dot"},
+	}
 	count := 0
+	firstTypeNodes := -1
 
 	for _, dt := range allTypes {
-		for _, fmtName := range formats {
-			markup := RenderDiagramFormat(tree, dt, fmtName)
-			require.NotEmpty(t, markup, "markup for %s (%s) must not be empty", dt, fmtName)
+		// Flat all-nodes extraction (no entry point): every type renders
+		// the real fixture graph, whatever its entry strategy.
+		opts := types.QueryOptions{}
+		tree := buildTreeFromTTLFixture(t, filepath.Join("..", "testdata", "full_graph.ttl"), dt, opts)
+		if firstTypeNodes < 0 {
+			firstTypeNodes = collectGoldenNodeCount(tree)
+		}
 
-			ext := ".mmd"
-			if fmtName == "plantuml" {
-				ext = ".puml"
-			}
+		for _, fmt := range formats {
+			markup := RenderDiagramFormat(tree, dt, fmt.name)
+			require.NotEmpty(t, markup, "markup for %s (%s) must not be empty", dt, fmt.name)
 
-			filename := strings.ToLower(string(dt)) + ext
+			filename := strings.ToLower(string(dt)) + fmt.ext
 			path := filepath.Join(goldenDir, filename)
-
 			require.NoError(t, os.WriteFile(path, []byte(markup), 0644))
 			count++
 		}
 	}
 
-	require.Equal(t, 62, count, "should generate exactly 62 golden fixture files (31 types x 2 formats)")
+	// The fixture tree must be a real graph, not an empty stub (GAP-M-07).
+	require.Greater(t, firstTypeNodes, 0, "real TTL fixture must yield nodes for the UML class diagram")
+	require.Equal(t, 93, count, "should generate exactly 93 golden fixture files (31 types x 3 formats)")
+}
+
+// collectGoldenNodeCount counts every node across the tree hierarchy,
+// including nodes grouped into boundary children.
+func collectGoldenNodeCount(t *types.LayoutTree) int {
+	if t == nil {
+		return 0
+	}
+	n := len(t.Nodes)
+	for _, c := range t.Children {
+		n += collectGoldenNodeCount(c)
+	}
+	return n
 }

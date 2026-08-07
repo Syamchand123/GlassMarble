@@ -169,8 +169,16 @@ func Registry() []LanguageSpec {
 				"field_declaration", "formal_parameter",
 			},
 			FieldDeclKinds: []string{"field_declaration"},
-			Imports:        []string{"import_declaration", "package_declaration"},
-			Calls:          []string{"method_invocation", "object_creation_expression"},
+			// MethodSpecKinds / EmbeddedKinds stay empty for Java: the
+			// grammar has no dedicated node kinds for interface methods
+			// (they are method_declaration inside interface_body) or base
+			// classes (extends/implements are FIELD roles on the class
+			// node). The parser flags both structurally instead:
+			// isInsideInterfaceBody sets IsMethodSpec, and stage 2's
+			// java_translator reads superclass/interfaces field roles for
+			// inheritance (GAP-L-05 / §5.1.2).
+			Imports: []string{"import_declaration", "package_declaration"},
+			Calls:   []string{"method_invocation", "object_creation_expression"},
 		},
 		{
 			Lang:        LangJS,
@@ -274,8 +282,12 @@ func Registry() []LanguageSpec {
 				"ivar", "module_function",
 			},
 			FieldDeclKinds: []string{"ivar"},
-			Imports:        []string{"call"},
-			Calls:          []string{"call", "method_call"},
+			// EmbeddedKinds stays empty for Ruby: mixins (`include Foo`,
+			// `prepend Bar`) are call nodes whose method field is the
+			// keyword — no distinct kind exists. The parser's
+			// isRubyIncludeCall flags them as IsEmbedded (GAP-L-05 / §5.1.2).
+			Imports: []string{"call"},
+			Calls:   []string{"call", "method_call"},
 		},
 		{
 			Lang:        LangPHP,

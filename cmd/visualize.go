@@ -97,6 +97,7 @@ var visualizeCmd = &cobra.Command{
 			ScopePath:     scopePath,
 			MaxNodes:      maxNodesFlag,
 			ChangedFiles:  changedFiles,
+			LinkLevel:     linkLevelFlag,
 		}
 
 		if cmd.Flags().Changed("pagerank") || cmd.Flags().Changed("community") || cmd.Flags().Changed("scc") {

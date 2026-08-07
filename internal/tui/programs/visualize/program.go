@@ -121,6 +121,19 @@ func (m *model) generate() tea.Cmd {
 			IncludeUnused: opts.IncludeUnused,
 			Format:        opts.Format,
 			OnProgress:    opts.OnProgress,
+			// Forward the --link-level flag so TUI-launched diagrams run at
+			// the requested linkage level, not the architecture default
+			// (GAP-H-05).
+			Options: product.DiagramOptions{
+				LinkLevel:    opts.LinkLevel,
+				Scope:        opts.Scope,
+				ScopePath:    opts.ScopePath,
+				Entry:        opts.EntryPointID,
+				Depth:        opts.MaxDepth,
+				IncludeUnused: opts.IncludeUnused,
+				MaxNodes:     opts.MaxNodes,
+				ChangedFiles: opts.ChangedFiles,
+			},
 		}
 		markup, summary, err := product.BuildDiagram(req)
 		if err != nil {

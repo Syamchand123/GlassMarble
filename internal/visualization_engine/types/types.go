@@ -70,6 +70,11 @@ type QueryOptions struct {
 	ScopePath     string
 	RelativePath  bool
 	PipelineCfg   *PipelineConfig
+	// LinkLevel is the graph linkage detail level ("architecture" |
+	// "standard" | "full") requested by the caller. The TUI path forwards
+	// it into the unified pipeline so interactive diagrams honor the
+	// --link-level flag (GAP-H-05).
+	LinkLevel string
 }
 
 type ScopeLevel int
@@ -233,6 +238,11 @@ type LayoutNode struct {
 	IsHotspot     bool
 	IsBottleneck  bool
 	IsGodObject   bool
+	// Visibility carries the explicit visibility token (public/private/...)
+	// from GASTNode.Visibility when the source graph provides it, so
+	// renderers can emit UML visibility markers instead of ASCII-case
+	// heuristics (GAP-L-02).
+	Visibility string
 }
 
 type LayoutEdge struct {

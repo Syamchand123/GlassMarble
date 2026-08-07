@@ -88,12 +88,40 @@ func RenderDiagram(tree *types.LayoutTree, t types.DiagramType) string {
 	return sb.String()
 }
 
+// classMember is a class-diagram member row: the display label and the
+// explicit visibility token from GASTNode.Visibility when present.
+type classMember struct {
+	label      string
+	visibility string
+}
+
+// memberVisibilityPrefix maps a visibility token onto the UML visibility
+// marker. An explicit visibility wins over the ASCII-case heuristic, which
+// is kept only as a fallback for graphs without visibility metadata
+// (GAP-L-02).
+func memberVisibilityPrefix(vis, label string) string {
+	switch strings.ToLower(vis) {
+	case "public", "exported":
+		return "+"
+	case "protected":
+		return "#"
+	case "private":
+		return "-"
+	case "packageprivate", "package", "internal", "moduleinternal":
+		return "~"
+	}
+	if len(label) > 0 && label[0] >= 'A' && label[0] <= 'Z' {
+		return "+"
+	}
+	return "-"
+}
+
 func renderClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("classDiagram\n")
 	reg := newAliasRegistry()
 	registerTreeAliases(tree, reg)
 	classes := make(map[string]*types.LayoutNode)
-	methods := make(map[string][]string)
+	methods := make(map[string][]classMember)
 
 	var collectNodes func(t *types.LayoutTree)
 	collectNodes = func(t *types.LayoutTree) {
@@ -124,7 +152,7 @@ func renderClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 				if rec != "" {
 					parentID := findParentClassID(node.ID, classes)
 					if parentID != "" {
-						methods[parentID] = append(methods[parentID], sym)
+						methods[parentID] = append(methods[parentID], classMember{label: sym, visibility: node.Visibility})
 					}
 				}
 			case ont.PredMember:
@@ -135,7 +163,7 @@ func renderClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 						if node.PrimitiveType != "" {
 							sym = node.PrimitiveType + " " + sym
 						}
-						methods[parentID] = append(methods[parentID], sym)
+						methods[parentID] = append(methods[parentID], classMember{label: sym, visibility: node.Visibility})
 					}
 				}
 			}
@@ -146,7 +174,16 @@ func renderClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	}
 	collectMethods(tree)
 
-	for id, class := range classes {
+	// Deterministic class block order: map iteration is random, so collect
+	// and sort the class IDs before emitting (GAP-M-02 / V-04).
+	classIDs := make([]string, 0, len(classes))
+	for id := range classes {
+		classIDs = append(classIDs, id)
+	}
+	sort.Strings(classIDs)
+
+	for _, id := range classIDs {
+		class := classes[id]
 		classAlias := reg.alias(id)
 		dispName := sanitizeMermaidLabel(class.Name)
 		if dispName != "" {
@@ -162,13 +199,10 @@ func renderClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 			sb.WriteString("        <<type>>\n")
 		}
 		if mList, exists := methods[id]; exists {
-			sort.Strings(mList)
+			sort.Slice(mList, func(i, j int) bool { return mList[i].label < mList[j].label })
 			for _, m := range mList {
-				mLabel := sanitizeMermaidLabel(m)
-				prefix := "-"
-				if len(mLabel) > 0 && mLabel[0] >= 'A' && mLabel[0] <= 'Z' {
-					prefix = "+"
-				}
+				mLabel := sanitizeMermaidLabel(m.label)
+				prefix := memberVisibilityPrefix(m.visibility, mLabel)
 				sb.WriteString(fmt.Sprintf("        %s%s()\n", prefix, mLabel))
 			}
 		}
@@ -178,10 +212,27 @@ func renderClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 		sb.WriteString("    }\n")
 	}
 
+	// Deterministic edge order: sort by (Source, Target, Predicate) before
+	// resolving and drawing (GAP-M-03 / V-04).
+	sortedEdges := make([]types.LayoutEdge, len(tree.Edges))
+	copy(sortedEdges, tree.Edges)
+	sort.Slice(sortedEdges, func(i, j int) bool {
+		if sortedEdges[i].SourceID != sortedEdges[j].SourceID {
+			return sortedEdges[i].SourceID < sortedEdges[j].SourceID
+		}
+		if sortedEdges[i].TargetID != sortedEdges[j].TargetID {
+			return sortedEdges[i].TargetID < sortedEdges[j].TargetID
+		}
+		return sortedEdges[i].Predicate < sortedEdges[j].Predicate
+	})
+
+	// Pre-index classes by path so member→class resolution is O(1) instead
+	// of a linear scan per edge (GAP-M-05).
+	classIdx := buildClassIndex(classes)
 	drawnRelations := make(map[string]bool)
-	for _, edge := range tree.Edges {
-		srcClasses := resolveNodeToClass(edge.SourceID, classes)
-		tgtClasses := resolveNodeToClass(edge.TargetID, classes)
+	for _, edge := range sortedEdges {
+		srcClasses := resolveNodeToClass(edge.SourceID, classes, classIdx)
+		tgtClasses := resolveNodeToClass(edge.TargetID, classes, classIdx)
 		for _, src := range srcClasses {
 			for _, tgt := range tgtClasses {
 				if src != tgt {

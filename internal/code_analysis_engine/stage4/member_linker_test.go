@@ -237,3 +237,59 @@ func TestMemberLinkerT2NameMatchFallback(t *testing.T) {
 	targetFQN := resolveTypeToFQN("Processor", "src/client.py", globalIndex, cpg)
 	assert.Equal(t, "src/handler.py::Processor", targetFQN, "T2 name-match fallback must resolve Processor to its FQN")
 }
+
+// TestMemberLinkerNilGlobalDefinitionIndex (GAP-L-04): a first-run stage3
+// output may carry a nil GlobalDefinitionIndex (empty repo). The member
+// linker must tolerate it: no panic, the structural spine (fields/params)
+// still emits, and only unresolvable targets are skipped (no fabricated
+// nodes or edges). Resolvable bases still link through GraphNodes, the
+// step-1 fallback that does not require the index.
+func TestMemberLinkerNilGlobalDefinitionIndex(t *testing.T) {
+	stage3Out := memberFixtureTree()
+	stage3Out.GlobalDefinitionIndex = nil
+
+	phantom := &stage2.GASTNode{
+		Type:      stage2.GASTTypeDeclaration,
+		Name:      "Phantom",
+		Kind:      "class",
+		StartLine: 24,
+		BaseTypes: []string{"NoSuchType"},
+		Children: []*stage2.GASTNode{
+			{Type: stage2.GASTField, Name: "Ghost", StartLine: 25},
+		},
+	}
+	dir := stage3Out.RootNode.SubFolders["pkg"]
+	dir.Files["types.go"].GASTRoot.Children = append(dir.Files["types.go"].GASTRoot.Children, phantom)
+
+	cpg := BuildInitialNodes(stage3Out, nil)
+	require.NotPanics(t, func() { LinkMembersAndReturns(stage3Out, cpg) })
+
+	// Structural spine still emitted without the index.
+	typeID := "pkg/types.go::Options"
+	fieldEdge := false
+	for _, e := range cpg.OutboundEdges[typeID] {
+		if e.Type == EdgeHasField {
+			fieldEdge = true
+		}
+	}
+	assert.True(t, fieldEdge, "HAS_FIELD edges must emit without GlobalDefinitionIndex")
+
+	// Bases present in GraphNodes still resolve via step-1 fallback.
+	ext := false
+	for _, e := range cpg.OutboundEdges[typeID] {
+		if e.Type == EdgeExtends && e.TargetID == "pkg/types.go::Base" {
+			ext = true
+		}
+	}
+	assert.True(t, ext, "EXTENDS edge must resolve through GraphNodes fallback")
+
+	// A base that exists nowhere must NOT produce a fabricated edge/node.
+	phantomID := "pkg/types.go::Phantom"
+	assert.False(t, hasEdge(cpg, phantomID, "NoSuchType", EdgeExtends), "unresolvable base must be skipped")
+	assert.True(t, hasEdge(cpg, phantomID, "pkg/types.go::Phantom::Ghost", EdgeHasField), "field spine still emits for Phantom")
+
+	// Full pipeline entry point tolerates the nil index too.
+	require.NotPanics(t, func() {
+		Link(stage3Out, nil, nil, LinkerConfig{LevelOfDetail: LevelFull})
+	})
+}

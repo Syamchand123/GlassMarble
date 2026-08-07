@@ -363,6 +363,52 @@ func TestRenderPlantUMLTiming(t *testing.T) {
 	pumlNodeInOutput(t, output, "t1")
 }
 
+// TestRenderPlantUMLC4Deployment — see above.
+
+// TestRenderPlantUMLAllDiagramTypes (GAP-L-03): every one of the 31
+// DiagramType values must render well-formed PlantUML (open/close tags
+// present) with no Mermaid-style fallback leaking through.
+func TestRenderPlantUMLAllDiagramTypes(t *testing.T) {
+	tree := &types.LayoutTree{
+		BoundaryName: "Root",
+		Nodes: []*types.LayoutNode{
+			{ID: "main.go::A", Name: "A", Kind: "gm:TypeDecl"},
+			{ID: "main.go::B", Name: "B", Kind: "gm:Executable"},
+		},
+		Edges: []types.LayoutEdge{
+			{SourceID: "main.go::A", TargetID: "main.go::B", Predicate: "gm:extends"},
+		},
+	}
+
+	all := []types.DiagramType{
+		types.UMLClass, types.UMLObject, types.UMLProfile, types.C4Code,
+		types.UMLComponent, types.UMLComposite, types.UMLPackage, types.UMLDeployment,
+		types.C4Context, types.C4Container, types.C4Component, types.C4Landscape,
+		types.C4Dynamic, types.C4Deployment,
+		types.UMLUsecase, types.UMLActivity, types.UMLState, types.UMLSequence,
+		types.UMLCommunication, types.UMLInteractionOverview, types.UMLTiming,
+		types.ERDiagram, types.DataFlow, types.Mindmap, types.Flowchart,
+		types.DependencyGraph, types.HotspotComplexity, types.CallGraph,
+		types.LayeredArchitecture, types.ChangeImpact, types.Infrastructure,
+	}
+	if len(all) != 31 {
+		t.Fatalf("DiagramType count drifted: got %d, want 31", len(all))
+	}
+
+	for _, dt := range all {
+		out := RenderPlantUMLDiagram(tree, dt)
+		if !strings.Contains(out, "@startuml") {
+			t.Errorf("%s: missing @startuml\n%s", dt, out)
+		}
+		if !strings.Contains(out, "@enduml") {
+			t.Errorf("%s: missing @enduml\n%s", dt, out)
+		}
+		if !strings.Contains(out, "main.go") && !strings.Contains(out, sanitizeForTest("main.go::A")) {
+			t.Errorf("%s: no node content rendered\n%s", dt, out)
+		}
+	}
+}
+
 func TestRenderPlantUMLC4Deployment(t *testing.T) {
 	tree := &types.LayoutTree{
 		BoundaryName: "Root",
