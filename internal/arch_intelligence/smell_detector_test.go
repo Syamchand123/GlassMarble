@@ -11,7 +11,7 @@ import (
 func TestRunSmellDetection(t *testing.T) {
 	graph := akg.NewCodePropertyGraph("test")
 	graph.Nodes = graph.Nodes.Set("god", &stage4.ResolvedNode{
-		ID: "god",
+		ID:   "god",
 		Name: "GodClass",
 	})
 	for i := 0; i < 20; i++ {

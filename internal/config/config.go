@@ -17,6 +17,9 @@ type Config struct {
 	OutputFormat  string      `yaml:"output_format"` // "mermaid", "plantuml", "dot"
 	IncludeHidden bool        `yaml:"include_hidden"`
 	Drift         DriftConfig `yaml:"drift"`
+	// Intelligence holds the Stage 5 thresholds (pattern/smell detection).
+	// nil means defaults (config.DefaultIntelligenceConfig()).
+	Intelligence *IntelligenceConfig `yaml:"intelligence"`
 }
 
 // DriftConfig declares the architecture invariants checked by `gmb drift`.
@@ -167,5 +170,8 @@ func mergeYAML(path string, cfg *Config) {
 	}
 	if temp.Drift.Layers != nil || temp.Drift.ForbiddenDeps != nil {
 		cfg.Drift = temp.Drift
+	}
+	if temp.Intelligence != nil {
+		cfg.Intelligence = temp.Intelligence
 	}
 }

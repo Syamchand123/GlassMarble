@@ -128,7 +128,7 @@ var visualizeCmd = &cobra.Command{
 		if renderFlag == "" && tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout()) {
 			return visualizeprog.Run(visualizeprog.Config{
 				DiagType:    diagType,
-				StatePath:     statePath,
+				StatePath:   statePath,
 				Opts:        opts,
 				SaveFile:    saveFile,
 				OutputFlag:  outputFlag,
@@ -151,7 +151,7 @@ var visualizeCmd = &cobra.Command{
 
 		// Generate Diagram Markup (Marble) via unified pipeline entry (V-11 / 11.1)
 		req := product.BuildDiagramRequest{
-			StatePath:     statePath,
+			StatePath:   statePath,
 			ParseFn:     akg.ParseGraphForQuery,
 			DiagramType: diagType,
 			Format:      formatFlag,
@@ -499,7 +499,7 @@ func printDiagramTypeCheck(cmd *cobra.Command, name string) error {
 
 	if _, statErr := os.Stat(statePath); statErr == nil {
 		req := product.BuildDiagramRequest{
-			StatePath:     statePath,
+			StatePath:   statePath,
 			ParseFn:     akg.ParseGraphForQuery,
 			DiagramType: dt,
 			Format:      "mermaid",
@@ -543,4 +543,3 @@ func init() {
 
 	rootCmd.AddCommand(visualizeCmd)
 }
-

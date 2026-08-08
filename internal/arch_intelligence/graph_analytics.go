@@ -2,133 +2,281 @@ package arch_intelligence
 
 import (
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
 )
 
-// isStructuralEdge returns true if the edge represents a high-level architectural dependency
-// (as opposed to CFG/DFG low-level details).
+// isStructuralEdge returns true if the edge represents a high-level architectural
+// dependency (as opposed to CFG/DFG low-level details).
 func isStructuralEdge(edgeType stage4.RelationshipType) bool {
 	switch edgeType {
 	case stage4.EdgeDependsOn, stage4.EdgeCalls, stage4.EdgeImplements,
 		stage4.EdgeExtends, stage4.EdgeContains, stage4.EdgeComposes,
 		stage4.EdgeReferences, stage4.EdgeNetworkCall, stage4.EdgeQueriesDB,
-		stage4.EdgeCallsCloudAPI, stage4.EdgePublishes, stage4.EdgeSubscribes:
+		stage4.EdgeCallsCloudAPI, stage4.EdgePublishes, stage4.EdgeSubscribes,
+		stage4.EdgeSendsTo, stage4.EdgeReceivesFrom, stage4.EdgeDispatchesEvent:
 		return true
 	default:
 		return false
 	}
 }
 
-// SCC finds all strongly connected components in the AKG over structural edges.
-// A SCC with >1 node means circular dependencies.
-func SCC(graph *akg.CodePropertyGraph) [][]string {
-	var index int
-	indices := make(map[string]int)
-	lowlink := make(map[string]int)
-	onStack := make(map[string]bool)
-	var stack []string
-	var cycles [][]string
+// GraphSnapshot is an immutable, lock-free copy of the CPG taken once before
+// analytics run. All analytics functions operate on the snapshot so repeated
+// reads never touch the live (mutex-guarded) AKG and every phase sees a
+// consistent view of the graph.
+type GraphSnapshot struct {
+	// NodeIDs is the sorted node id list — iteration order is deterministic.
+	NodeIDs []string
+	Nodes   map[string]*stage4.ResolvedNode
+	// Outbound and Inbound hold the per-node edge lists with stable ordering
+	// (sorted by type, then target/source id).
+	Outbound    map[string][]stage4.ResolvedEdge
+	Inbound     map[string][]stage4.ResolvedEdge
+	Entrypoints []string
+	EdgeCount   int
+}
 
-	var strongconnect func(string)
-	strongconnect = func(v string) {
+// NewGraphSnapshot captures the current CPG state into a GraphSnapshot.
+func NewGraphSnapshot(graph *akg.CodePropertyGraph) *GraphSnapshot {
+	snap := &GraphSnapshot{
+		Nodes:       make(map[string]*stage4.ResolvedNode),
+		Outbound:    make(map[string][]stage4.ResolvedEdge),
+		Inbound:     make(map[string][]stage4.ResolvedEdge),
+		Entrypoints: nil,
+	}
+	if graph == nil {
+		return snap
+	}
+	if graph.Entrypoints != nil {
+		snap.Entrypoints = append([]string(nil), graph.Entrypoints...)
+	}
+	if graph.Nodes != nil {
+		graph.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
+			snap.Nodes[id] = node
+			snap.NodeIDs = append(snap.NodeIDs, id)
+			snap.Outbound[id] = graph.SafeGetOutboundEdges(id)
+			snap.Inbound[id] = graph.SafeGetInboundEdges(id)
+		})
+	}
+	sort.Strings(snap.NodeIDs)
+	for id := range snap.Outbound {
+		sortEdges(snap.Outbound[id])
+	}
+	for id := range snap.Inbound {
+		sortEdges(snap.Inbound[id])
+	}
+	for _, edges := range snap.Outbound {
+		snap.EdgeCount += len(edges)
+	}
+	return snap
+}
+
+func sortEdges(edges []stage4.ResolvedEdge) {
+	sort.SliceStable(edges, func(i, j int) bool {
+		a, b := edges[i], edges[j]
+		if a.Type != b.Type {
+			return a.Type < b.Type
+		}
+		return a.TargetID < b.TargetID
+	})
+}
+
+// Node returns the node with the given id, or nil.
+func (s *GraphSnapshot) Node(id string) *stage4.ResolvedNode {
+	return s.Nodes[id]
+}
+
+// OutEdges returns the structural outbound edges of id, sorted.
+func (s *GraphSnapshot) OutEdges(id string) []stage4.ResolvedEdge {
+	return s.Outbound[id]
+}
+
+// InEdges returns the structural inbound edges of id, sorted.
+func (s *GraphSnapshot) InEdges(id string) []stage4.ResolvedEdge {
+	return s.Inbound[id]
+}
+
+// Len returns the number of nodes in the snapshot.
+func (s *GraphSnapshot) Len() int {
+	return len(s.NodeIDs)
+}
+
+// structuralOutbound filters the outbound edges of id to structural edges
+// whose target exists in the snapshot (dangling edges are ignored).
+func (s *GraphSnapshot) structuralOutbound(id string) []stage4.ResolvedEdge {
+	edges := s.Outbound[id]
+	out := make([]stage4.ResolvedEdge, 0, len(edges))
+	for _, e := range edges {
+		if isStructuralEdge(e.Type) {
+			if _, ok := s.Nodes[e.TargetID]; ok {
+				out = append(out, e)
+			}
+		}
+	}
+	return out
+}
+
+// SCC finds all strongly connected components over structural edges using an
+// iterative Tarjan implementation (no recursion — safe for very deep graphs).
+// Nodes are visited in sorted order and edges in sorted order, so the result
+// is deterministic. A component with >1 node is a circular dependency.
+func SCC(graph *akg.CodePropertyGraph) [][]string {
+	if graph == nil {
+		return nil
+	}
+	return SCCIterative(NewGraphSnapshot(graph))
+}
+
+// SCCIterative is the snapshot-based iterative Tarjan.
+func SCCIterative(snap *GraphSnapshot) [][]string {
+	if snap == nil || snap.Len() == 0 {
+		return nil
+	}
+
+	index := 0
+	indices := make(map[string]int, snap.Len())
+	lowlink := make(map[string]int, snap.Len())
+	onStack := make(map[string]bool, snap.Len())
+	var stack []string
+	var result [][]string
+
+	type frame struct {
+		v     string
+		edges []stage4.ResolvedEdge
+		next  int
+	}
+
+	push := func(v string) *frame {
 		indices[v] = index
 		lowlink[v] = index
 		index++
 		stack = append(stack, v)
 		onStack[v] = true
+		return &frame{v: v, edges: snap.structuralOutbound(v)}
+	}
 
-		for _, edge := range graph.SafeGetOutboundEdges(v) {
-			if !isStructuralEdge(edge.Type) {
+	for _, start := range snap.NodeIDs {
+		if _, seen := indices[start]; seen {
+			continue
+		}
+		var frames []*frame
+		frames = append(frames, push(start))
+
+		for len(frames) > 0 {
+			f := frames[len(frames)-1]
+			if f.next < len(f.edges) {
+				e := f.edges[f.next]
+				f.next++
+				w := e.TargetID
+				if _, unvisited := indices[w]; !unvisited {
+					frames = append(frames, push(w))
+				} else if onStack[w] {
+					if indices[w] < lowlink[f.v] {
+						lowlink[f.v] = indices[w]
+					}
+				}
 				continue
 			}
-			w := edge.TargetID
-			if _, ok := indices[w]; !ok {
-				strongconnect(w)
-				if lowlink[w] < lowlink[v] {
-					lowlink[v] = lowlink[w]
-				}
-			} else if onStack[w] {
-				if indices[w] < lowlink[v] {
-					lowlink[v] = indices[w]
-				}
-			}
-		}
 
-		if lowlink[v] == indices[v] {
-			var component []string
-			for {
-				w := stack[len(stack)-1]
-				stack = stack[:len(stack)-1]
-				onStack[w] = false
-				component = append(component, w)
-				if w == v {
-					break
+			// Finish node f.v.
+			v := f.v
+			frames = frames[:len(frames)-1]
+			if len(frames) > 0 {
+				parent := frames[len(frames)-1]
+				if lowlink[v] < lowlink[parent.v] {
+					lowlink[parent.v] = lowlink[v]
 				}
 			}
-			if len(component) > 0 { // In SCC we return all components to compute metrics correctly, cycle if > 1
-				cycles = append(cycles, component)
+			if lowlink[v] == indices[v] {
+				var component []string
+				for {
+					w := stack[len(stack)-1]
+					stack = stack[:len(stack)-1]
+					onStack[w] = false
+					component = append(component, w)
+					if w == v {
+						break
+					}
+				}
+				result = append(result, component)
 			}
 		}
 	}
-
-	graph.Nodes.Iterate(func(v string, _ *stage4.ResolvedNode) {
-		if _, ok := indices[v]; !ok {
-			strongconnect(v)
-		}
-	})
-
-	return cycles
+	return result
 }
 
-// PageRank computes centrality scores across structural edges.
-// High PageRank = architectural hotspot (lots of things depend on it).
+// PageRank computes centrality scores across structural edges using the
+// dangling-mass-corrected formula, then normalizes the result so ranks sum to
+// 1. High PageRank = architectural hotspot. Deterministic: nodes and edges are
+// visited in sorted order.
 func PageRank(graph *akg.CodePropertyGraph, iterations int, damping float64) map[string]float64 {
+	if graph == nil {
+		return nil
+	}
+	return PageRankSnapshot(NewGraphSnapshot(graph), iterations, damping)
+}
+
+// PageRankSnapshot is the snapshot-based PageRank.
+func PageRankSnapshot(snap *GraphSnapshot, iterations int, damping float64) map[string]float64 {
 	ranks := make(map[string]float64)
-	numNodes := float64(graph.Nodes.Len())
-	if numNodes == 0 {
+	if snap == nil {
 		return ranks
 	}
+	n := snap.Len()
+	if n == 0 || iterations <= 0 {
+		return ranks
+	}
+	if damping <= 0 || damping >= 1 {
+		damping = 0.85
+	}
 
-	initialRank := 1.0 / numNodes
-	outDegree := make(map[string]int)
+	initial := 1.0 / float64(n)
+	outDegree := make(map[string]int, n)
+	for _, id := range snap.NodeIDs {
+		ranks[id] = initial
+		outDegree[id] = len(snap.structuralOutbound(id))
+	}
 
-	graph.Nodes.Iterate(func(id string, _ *stage4.ResolvedNode) {
-		ranks[id] = initialRank
-		deg := 0
-		for _, e := range graph.SafeGetOutboundEdges(id) {
-			if isStructuralEdge(e.Type) {
-				deg++
-			}
-		}
-		outDegree[id] = deg
-	})
-
-	for i := 0; i < iterations; i++ {
-		newRanks := make(map[string]float64)
-
+	for it := 0; it < iterations; it++ {
+		newRanks := make(map[string]float64, n)
 		var danglingSum float64
-		for id, deg := range outDegree {
-			if deg == 0 {
+		for _, id := range snap.NodeIDs {
+			if outDegree[id] == 0 {
 				danglingSum += ranks[id]
 			}
 		}
-		danglingContrib := damping * danglingSum / numNodes
+		danglingContrib := damping * danglingSum / float64(n)
 
-		graph.Nodes.Iterate(func(id string, _ *stage4.ResolvedNode) {
-			rank := (1.0-damping)/numNodes + danglingContrib
-			for _, edge := range graph.SafeGetInboundEdges(id) {
-				if isStructuralEdge(edge.Type) {
-					outDeg := outDegree[edge.SourceID]
-					if outDeg > 0 {
-						rank += damping * (ranks[edge.SourceID] / float64(outDeg))
-					}
+		for _, id := range snap.NodeIDs {
+			rank := (1.0-damping)/float64(n) + danglingContrib
+			for _, e := range snap.Inbound[id] {
+				if !isStructuralEdge(e.Type) {
+					continue
+				}
+				if _, ok := snap.Nodes[e.SourceID]; !ok {
+					continue
+				}
+				if deg := outDegree[e.SourceID]; deg > 0 {
+					rank += damping * ranks[e.SourceID] / float64(deg)
 				}
 			}
 			newRanks[id] = rank
-		})
+		}
 		ranks = newRanks
+	}
+
+	var total float64
+	for _, id := range snap.NodeIDs {
+		total += ranks[id]
+	}
+	if total > 0 {
+		for _, id := range snap.NodeIDs {
+			ranks[id] /= total
+		}
 	}
 	return ranks
 }
@@ -139,229 +287,544 @@ type NodeCouplingMetrics struct {
 	FanOut int
 }
 
-// NodeMetrics computes per-node coupling metrics (FanIn/FanOut over structural edges).
+// NodeMetrics computes per-node coupling metrics (FanIn/FanOut over distinct
+// structural edge endpoints).
 func NodeMetrics(graph *akg.CodePropertyGraph) map[string]NodeCouplingMetrics {
+	if graph == nil {
+		return nil
+	}
+	return NodeMetricsSnapshot(NewGraphSnapshot(graph))
+}
+
+// NodeMetricsSnapshot is the snapshot-based per-node coupling.
+func NodeMetricsSnapshot(snap *GraphSnapshot) map[string]NodeCouplingMetrics {
 	metrics := make(map[string]NodeCouplingMetrics)
+	if snap == nil {
+		return metrics
+	}
 
-	// We want DISTINCT source/target nodes for fan-in/fan-out
-	inboundSet := make(map[string]map[string]bool)
-	outboundSet := make(map[string]map[string]bool)
-
-	graph.Nodes.Iterate(func(id string, _ *stage4.ResolvedNode) {
+	inboundSet := make(map[string]map[string]bool, snap.Len())
+	outboundSet := make(map[string]map[string]bool, snap.Len())
+	for _, id := range snap.NodeIDs {
 		inboundSet[id] = make(map[string]bool)
 		outboundSet[id] = make(map[string]bool)
-	})
-
-	graph.Nodes.Iterate(func(id string, _ *stage4.ResolvedNode) {
-		for _, e := range graph.SafeGetOutboundEdges(id) {
-			if isStructuralEdge(e.Type) {
-				if outMap, ok := outboundSet[id]; ok {
-					outMap[e.TargetID] = true
-				}
-				if inMap, ok := inboundSet[e.TargetID]; ok {
-					inMap[id] = true
-				}
+	}
+	for _, id := range snap.NodeIDs {
+		for _, e := range snap.structuralOutbound(id) {
+			if outMap, ok := outboundSet[id]; ok {
+				outMap[e.TargetID] = true
+			}
+			if inMap, ok := inboundSet[e.TargetID]; ok {
+				inMap[id] = true
 			}
 		}
-	})
-
-	graph.Nodes.Iterate(func(id string, _ *stage4.ResolvedNode) {
+	}
+	for _, id := range snap.NodeIDs {
 		metrics[id] = NodeCouplingMetrics{
 			FanIn:  len(inboundSet[id]),
 			FanOut: len(outboundSet[id]),
 		}
-	})
-
+	}
 	return metrics
 }
 
-// LCOM4 calculates Lack of Cohesion of Methods for struct/class nodes.
+// LCOM4 calculates Lack of Cohesion of Methods for a struct/class node.
+// Methods are the only vertices; two methods are connected when they share
+// field access or call each other. LCOM4 = number of connected components.
 func LCOM4(node *stage4.ResolvedNode, graph *akg.CodePropertyGraph) float64 {
-	// 1. Get all method nodes in this class via EdgeContains/EdgeBelongsTo (for methods)
-	// and fields via EdgeHasField. Wait, graph.GetOutboundEdges(node.ID).
+	if graph == nil {
+		return 0
+	}
+	return LCOM4Snapshot(node, NewGraphSnapshot(graph))
+}
+
+// LCOM4Snapshot is the snapshot-based LCOM4.
+func LCOM4Snapshot(node *stage4.ResolvedNode, snap *GraphSnapshot) float64 {
+	if node == nil || snap == nil {
+		return 0
+	}
 	methods := make(map[string]bool)
 	fields := make(map[string]bool)
-
-	for _, e := range graph.SafeGetOutboundEdges(node.ID) {
+	for _, e := range snap.Outbound[node.ID] {
 		if e.Type == stage4.EdgeHasField {
 			fields[e.TargetID] = true
 		} else if e.Type == stage4.EdgeContains || e.Type == stage4.EdgeHasReceiver {
-			if target, ok := graph.SafeGetNode(e.TargetID); ok && target.Kind == "FUNCTION" {
-				methods[target.ID] = true
+			if t, ok := snap.Nodes[e.TargetID]; ok && t.Kind == "FUNCTION" {
+				methods[e.TargetID] = true
 			}
 		}
 	}
-
-	// If it doesn't have methods or fields, LCOM4 is 0
 	if len(methods) == 0 {
-		return 0.0
+		return 0
 	}
 
-	// 2. Build bipartite graph of methods ↔ fields accessed
-	// Actually we just need connected components of methods.
-	// Two methods are connected if they access the same field or call each other.
-	adj := make(map[string][]string)
+	ordered := make([]string, 0, len(methods))
 	for m := range methods {
-		adj[m] = []string{}
-		for _, e := range graph.SafeGetOutboundEdges(m) {
-			if e.Type == stage4.EdgeCalls && methods[e.TargetID] {
-				adj[m] = append(adj[m], e.TargetID)
-			}
+		ordered = append(ordered, m)
+	}
+	sort.Strings(ordered)
+
+	// Method -> set of fields it accesses (any outbound edge to a field node).
+	fieldAccess := make(map[string]map[string]bool, len(ordered))
+	for _, m := range ordered {
+		access := make(map[string]bool)
+		for _, e := range snap.Outbound[m] {
 			if fields[e.TargetID] {
-				// Method uses field. Connect method to field (and field to method).
-				adj[m] = append(adj[m], e.TargetID)
-				adj[e.TargetID] = append(adj[e.TargetID], m)
+				access[e.TargetID] = true
+			}
+		}
+		fieldAccess[m] = access
+	}
+
+	// Build the method-level connectivity graph.
+	adj := make(map[string]map[string]bool, len(ordered))
+	for _, m := range ordered {
+		adj[m] = make(map[string]bool)
+	}
+	for i := 0; i < len(ordered); i++ {
+		for j := i + 1; j < len(ordered); j++ {
+			a, b := ordered[i], ordered[j]
+			connected := false
+			for f := range fieldAccess[a] {
+				if fieldAccess[b][f] {
+					connected = true
+					break
+				}
+			}
+			if !connected && methodsCallEachOther(snap, a, b) {
+				connected = true
+			}
+			if connected {
+				adj[a][b] = true
+				adj[b][a] = true
 			}
 		}
 	}
 
-	// 3. Count connected components
-	visited := make(map[string]bool)
+	visited := make(map[string]bool, len(ordered))
 	components := 0
-
-	var bfs func(string)
-	bfs = func(start string) {
-		q := []string{start}
-		visited[start] = true
-		for len(q) > 0 {
-			curr := q[0]
-			q = q[1:]
-			for _, neighbor := range adj[curr] {
-				if !visited[neighbor] {
-					visited[neighbor] = true
-					q = append(q, neighbor)
+	for _, m := range ordered {
+		if visited[m] {
+			continue
+		}
+		components++
+		queue := []string{m}
+		visited[m] = true
+		for len(queue) > 0 {
+			cur := queue[0]
+			queue = queue[1:]
+			for nbr := range adj[cur] {
+				if !visited[nbr] {
+					visited[nbr] = true
+					queue = append(queue, nbr)
 				}
 			}
 		}
 	}
-
-	for m := range methods {
-		if !visited[m] {
-			components++
-			bfs(m)
-		}
-	}
-
-	if components == 0 {
-		return 0.0
-	}
-	// LCOM4 = number of connected components of methods
 	return float64(components)
 }
 
-// DeadCodeNodes finds nodes unreachable from any entrypoint.
-func DeadCodeNodes(graph *akg.CodePropertyGraph) []string {
-	visited := make(map[string]bool)
-	var q []string
-
-	for _, ep := range graph.Entrypoints {
-		visited[ep] = true
-		q = append(q, ep)
+// methodsCallEachOther reports whether a and b have a direct CALLS edge in
+// either direction.
+func methodsCallEachOther(snap *GraphSnapshot, a, b string) bool {
+	for _, e := range snap.Outbound[a] {
+		if e.Type == stage4.EdgeCalls && e.TargetID == b {
+			return true
+		}
 	}
+	for _, e := range snap.Outbound[b] {
+		if e.Type == stage4.EdgeCalls && e.TargetID == a {
+			return true
+		}
+	}
+	return false
+}
 
-	// Also treat standard library imports or external deps as roots if necessary,
-	// but generally entrypoints cover mains and exported APIs.
+// isExcludedPath reports whether a file path should be excluded from
+// dead-code and component analysis (tests, mocks, vendored/generated code).
+func isExcludedPath(p string) bool {
+	clean := strings.ReplaceAll(p, "\\", "/")
+	lower := strings.ToLower(clean)
+	if strings.HasSuffix(lower, "_test.go") {
+		return true
+	}
+	if strings.Contains(lower, "/vendor/") || strings.HasPrefix(lower, "vendor/") {
+		return true
+	}
+	for _, marker := range []string{"/mock", "mock/", "mocks/", "/generated", "generated/"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
 
-	for len(q) > 0 {
-		curr := q[0]
-		q = q[1:]
+// isExportedName reports whether a node name looks like exported API surface
+// (first rune uppercase). Non-identifier names are not treated as exported.
+func isExportedName(name string) bool {
+	if name == "" {
+		return false
+	}
+	r := []rune(name)[0]
+	return r >= 'A' && r <= 'Z'
+}
 
-		for _, e := range graph.SafeGetOutboundEdges(curr) {
-			// Traverse calls, contains, implements, etc.
-			if isStructuralEdge(e.Type) {
-				if !visited[e.TargetID] {
-					visited[e.TargetID] = true
-					q = append(q, e.TargetID)
-				}
+// isAPISurface reports whether a node is part of the exported public API:
+// an exported symbol with no inbound edges. Such nodes are library roots, not
+// dead code.
+func isAPISurface(snap *GraphSnapshot, id string) bool {
+	node := snap.Nodes[id]
+	if node == nil || node.Name == "" {
+		return false
+	}
+	if len(snap.Inbound[id]) > 0 {
+		return false
+	}
+	return isExportedName(node.Name)
+}
+
+// DeadCodeNodes finds nodes unreachable from any entrypoint. Exported symbols
+// with no inbound edges (library API surface) and nodes in test/mock/vendored
+// paths are excluded. With no entrypoints at all the result is empty, because
+// there is no evidence of deadness.
+func DeadCodeNodes(graph *akg.CodePropertyGraph) []string {
+	if graph == nil {
+		return nil
+	}
+	return DeadCodeNodesSnapshot(NewGraphSnapshot(graph))
+}
+
+// DeadCodeNodesSnapshot is the snapshot-based dead code analysis.
+func DeadCodeNodesSnapshot(snap *GraphSnapshot) []string {
+	if snap == nil || len(snap.Entrypoints) == 0 {
+		return nil
+	}
+	reachable := make(map[string]bool, snap.Len())
+	var queue []string
+	for _, ep := range snap.Entrypoints {
+		if _, ok := snap.Nodes[ep]; ok && !reachable[ep] {
+			reachable[ep] = true
+			queue = append(queue, ep)
+		}
+	}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, e := range snap.structuralOutbound(cur) {
+			if !reachable[e.TargetID] {
+				reachable[e.TargetID] = true
+				queue = append(queue, e.TargetID)
 			}
 		}
 	}
 
 	var dead []string
-	graph.Nodes.Iterate(func(id string, _ *stage4.ResolvedNode) {
-		if !visited[id] {
-			dead = append(dead, id)
+	for _, id := range snap.NodeIDs {
+		if reachable[id] {
+			continue
 		}
-	})
-
-	return dead
-}
-
-// CyclomaticComplexity approximates McCabe complexity.
-func CyclomaticComplexity(graph *akg.CodePropertyGraph) map[string]int {
-	complexity := make(map[string]int)
-
-	graph.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
-		if node.Kind == "FUNCTION" {
-			comp := 1
-			for _, e := range graph.SafeGetOutboundEdges(id) {
-				if e.Type == stage4.EdgeConditionalBranch ||
-					e.Type == stage4.EdgeLoopBranch ||
-					e.Type == stage4.EdgeSwitchBranch {
-					comp++
-				}
-			}
-			complexity[id] = comp
+		node := snap.Nodes[id]
+		if node == nil || isExcludedPath(node.FileSpec.Path) {
+			continue
 		}
-	})
-
-	return complexity
-}
-
-// LouvainCommunityDetection partitions the graph into communities maximizing modularity.
-// Output: map[string]string — nodeID → communityID
-func LouvainCommunityDetection(graph *akg.CodePropertyGraph) map[string]string {
-	community := make(map[string]string)
-
-	// Fast deterministic simplified heuristic for Louvain
-	// 1. Initial assignment: each node in its own community = its nodeID
-	nodes := []string{}
-	graph.Nodes.Iterate(func(id string, _ *stage4.ResolvedNode) {
-		community[id] = id
-		nodes = append(nodes, id)
-	})
-
-	// Sort nodes deterministically
-	sort.Strings(nodes)
-
-	// 2. Iterations
-	changed := true
-	for iter := 0; iter < 10 && changed; iter++ {
-		changed = false
-		for _, id := range nodes {
-			// Count edges to neighboring communities
-			neighborComms := make(map[string]int)
-			bestComm := community[id]
-			bestCount := 0
-
-			for _, e := range graph.SafeGetOutboundEdges(id) {
-				if isStructuralEdge(e.Type) {
-					c := community[e.TargetID]
-					neighborComms[c]++
-					if neighborComms[c] > bestCount {
-						bestCount = neighborComms[c]
-						bestComm = c
-					}
-				}
-			}
-			for _, e := range graph.SafeGetInboundEdges(id) {
-				if isStructuralEdge(e.Type) {
-					c := community[e.SourceID]
-					neighborComms[c]++
-					if neighborComms[c] > bestCount {
-						bestCount = neighborComms[c]
-						bestComm = c
-					}
-				}
-			}
-
-			// If a tie, pick lexicographically smaller community ID for determinism
-			if bestComm != community[id] && bestCount > 0 {
-				community[id] = bestComm
-				changed = true
+		switch node.Kind {
+		case "FUNCTION", "METHOD", "STRUCT", "CLASS", "INTERFACE", "MODULE":
+			if !isAPISurface(snap, id) {
+				dead = append(dead, id)
 			}
 		}
 	}
+	return dead
+}
 
-	return community
+// CyclomaticComplexity approximates McCabe complexity per function node.
+func CyclomaticComplexity(graph *akg.CodePropertyGraph) map[string]int {
+	if graph == nil {
+		return nil
+	}
+	return CyclomaticComplexitySnapshot(NewGraphSnapshot(graph))
+}
+
+// CyclomaticComplexitySnapshot is the snapshot-based cyclomatic complexity.
+func CyclomaticComplexitySnapshot(snap *GraphSnapshot) map[string]int {
+	complexity := make(map[string]int)
+	if snap == nil {
+		return complexity
+	}
+	for _, id := range snap.NodeIDs {
+		node := snap.Nodes[id]
+		if node == nil || node.Kind != "FUNCTION" {
+			continue
+		}
+		comp := 1
+		for _, e := range snap.Outbound[id] {
+			if e.Type == stage4.EdgeConditionalBranch ||
+				e.Type == stage4.EdgeLoopBranch ||
+				e.Type == stage4.EdgeSwitchBranch {
+				comp++
+			}
+		}
+		complexity[id] = comp
+	}
+	return complexity
+}
+
+// LouvainCommunityDetection partitions the graph into communities maximizing
+// modularity (Blondel et al.). Deterministic: nodes are processed in sorted
+// order and ties break toward the lexicographically smallest community.
+func LouvainCommunityDetection(graph *akg.CodePropertyGraph) map[string]string {
+	if graph == nil {
+		return nil
+	}
+	return LouvainCommunityDetectionSnapshot(NewGraphSnapshot(graph), 4, 10)
+}
+
+// louvainEdge is a weighted undirected adjacency entry.
+type louvainEdge struct {
+	to int
+	w  int
+}
+
+// louvainGraph is the symmetrized weighted graph used by Louvain.
+type louvainGraph struct {
+	size  int            // number of vertices (nodes is nil for aggregated levels)
+	nodes []string       // original node ids, sorted (level 0 only)
+	idx   map[string]int // node id -> index (level 0 only)
+	adj   [][]louvainEdge
+	deg   []int // total incident weight, excluding self-loops
+	m     int   // total edge weight (each structural edge counts once)
+}
+
+func buildLouvainGraph(snap *GraphSnapshot) *louvainGraph {
+	g := &louvainGraph{
+		size:  snap.Len(),
+		nodes: snap.NodeIDs,
+		idx:   make(map[string]int, snap.Len()),
+		adj:   make([][]louvainEdge, snap.Len()),
+		deg:   make([]int, snap.Len()),
+	}
+	for i, id := range snap.NodeIDs {
+		g.idx[id] = i
+	}
+	seen := make(map[string]int) // "min\x00max" -> weight (symmetrized edges counted once)
+	for i, id := range snap.NodeIDs {
+		for _, e := range snap.structuralOutbound(id) {
+			j, ok := g.idx[e.TargetID]
+			if !ok || i == j {
+				continue
+			}
+			a, b := i, j
+			if a > b {
+				a, b = b, a
+			}
+			key := strconv.Itoa(a) + "\x00" + strconv.Itoa(b)
+			seen[key]++
+		}
+	}
+	for key, w := range seen {
+		parts := strings.Split(key, "\x00")
+		if len(parts) != 2 {
+			continue
+		}
+		a, errA := strconv.Atoi(parts[0])
+		b, errB := strconv.Atoi(parts[1])
+		if errA != nil || errB != nil {
+			continue
+		}
+		g.adj[a] = append(g.adj[a], louvainEdge{to: b, w: w})
+		g.adj[b] = append(g.adj[b], louvainEdge{to: a, w: w})
+		g.m += w
+		g.deg[a] += w
+		g.deg[b] += w
+	}
+	// Sort adjacency deterministically.
+	for i := range g.adj {
+		sort.Slice(g.adj[i], func(x, y int) bool { return g.adj[i][x].to < g.adj[i][y].to })
+	}
+	return g
+}
+
+// louvainDeltaQ is the exact modularity gain of moving node i (weighted
+// degree kI) into a community with total degree sumTot, where kIn is the
+// weight of edges between i and that community.
+func louvainDeltaQ(kIn, sumTot, kI, m float64) float64 {
+	inv2m := 1.0 / (2 * m)
+	qNew := (sumTot+kIn)*inv2m - (sumTot+kI)*inv2m*(sumTot+kI)*inv2m
+	qOld := sumTot*inv2m - sumTot*inv2m*sumTot*inv2m - kI*inv2m*kI*inv2m
+	return qNew - qOld
+}
+
+// louvainPhase1 runs the local-moving phase; returns true if any node moved.
+func louvainPhase1(g *louvainGraph, comm []int, maxPasses int) bool {
+	if g.m == 0 {
+		return false
+	}
+	m := float64(g.m)
+	commDegree := make([]int, g.size)
+	for i, c := range comm {
+		commDegree[c] += g.deg[i]
+	}
+	changed := false
+	for pass := 0; pass < maxPasses; pass++ {
+		moved := false
+		for i := 0; i < g.size; i++ {
+			cur := comm[i]
+			if g.deg[i] == 0 {
+				continue
+			}
+			// k_i_in per neighbor community (self-loops excluded).
+			gains := make(map[int]int)
+			for _, e := range g.adj[i] {
+				if e.to != i {
+					gains[comm[e.to]] += e.w
+				}
+			}
+			best := cur
+			bestGain := 0.0
+			for c, kIn := range gains {
+				if c == cur {
+					continue
+				}
+				gain := louvainDeltaQ(float64(kIn), float64(commDegree[c]), float64(g.deg[i]), m)
+				if gain > bestGain+1e-12 {
+					bestGain = gain
+					best = c
+				} else if gain > bestGain-1e-12 && c < best {
+					// Tie: prefer the lexicographically smallest community id.
+					bestGain = gain
+					best = c
+				}
+			}
+			if best != cur {
+				comm[i] = best
+				commDegree[cur] -= g.deg[i]
+				commDegree[best] += g.deg[i]
+				moved = true
+			}
+		}
+		if !moved {
+			break
+		}
+		changed = true
+	}
+	return changed
+}
+
+// louvainAggregate builds the next-level graph from a community assignment.
+// Returns the new graph and the relabeling (old community -> new vertex).
+func louvainAggregate(g *louvainGraph, comm []int) (*louvainGraph, map[int]int) {
+	relabel := make(map[int]int)
+	order := make([]int, 0, len(g.nodes))
+	for _, c := range comm {
+		if _, ok := relabel[c]; !ok {
+			relabel[c] = len(relabel)
+			order = append(order, c)
+		}
+	}
+	sort.Ints(order) // deterministic vertex order: ascending old community id
+
+	newIdx := make(map[int]int, len(order))
+	for k, c := range order {
+		newIdx[c] = k
+	}
+
+	ng := &louvainGraph{
+		size: len(order),
+		adj:  make([][]louvainEdge, len(order)),
+		deg:  make([]int, len(order)),
+	}
+	for i, c := range comm {
+		nc := newIdx[c]
+		ng.deg[nc] += g.deg[i]
+		for _, e := range g.adj[i] {
+			nc2 := newIdx[comm[e.to]]
+			ng.adj[nc] = append(ng.adj[nc], louvainEdge{to: nc2, w: e.w})
+		}
+	}
+	ng.m = g.m
+	// Deduplicate aggregated adjacency (sum parallel edges).
+	for i := range ng.adj {
+		wmap := make(map[int]int)
+		for _, e := range ng.adj[i] {
+			wmap[e.to] += e.w
+		}
+		merged := make([]louvainEdge, 0, len(wmap))
+		for to, w := range wmap {
+			merged = append(merged, louvainEdge{to: to, w: w})
+		}
+		sort.Slice(merged, func(x, y int) bool { return merged[x].to < merged[y].to })
+		ng.adj[i] = merged
+	}
+	return ng, relabel
+}
+
+// LouvainCommunityDetectionSnapshot runs the real Louvain algorithm on the
+// snapshot with deterministic tie-breaking. maxLevels caps aggregation levels,
+// maxPasses caps the local-moving passes per level.
+func LouvainCommunityDetectionSnapshot(snap *GraphSnapshot, maxLevels, maxPasses int) map[string]string {
+	result := make(map[string]string)
+	if snap == nil || snap.Len() == 0 {
+		return result
+	}
+	if snap.Len() == 1 {
+		result[snap.NodeIDs[0]] = "0"
+		return result
+	}
+	if maxLevels <= 0 {
+		maxLevels = 4
+	}
+	if maxPasses <= 0 {
+		maxPasses = 10
+	}
+
+	g := buildLouvainGraph(snap)
+	n := len(g.nodes)
+	comm := make([]int, n)
+	for i := range comm {
+		comm[i] = i
+	}
+	// orig[i] = community (current graph vertex) of original node i.
+	orig := make([]int, n)
+	for i := range orig {
+		orig[i] = i
+	}
+
+	for level := 0; level < maxLevels; level++ {
+		changed := louvainPhase1(g, comm, maxPasses)
+		// Fold the current partition into the original-node assignment.
+		for i := range orig {
+			orig[i] = comm[orig[i]]
+		}
+		if !changed || len(comm) <= 1 {
+			break
+		}
+		// Relabel communities to contiguous ids (sorted order — must match
+		// the vertex ordering louvainAggregate produces) and aggregate.
+		seen := make(map[int]bool)
+		order := make([]int, 0, len(comm))
+		for _, c := range comm {
+			if !seen[c] {
+				seen[c] = true
+				order = append(order, c)
+			}
+		}
+		sort.Ints(order)
+		relabel := make(map[int]int, len(order))
+		for k, c := range order {
+			relabel[c] = k
+		}
+		for i := range orig {
+			orig[i] = relabel[orig[i]]
+		}
+		g, _ = louvainAggregate(g, comm)
+		comm = make([]int, g.size)
+		for i := range comm {
+			comm[i] = i
+		}
+	}
+
+	for i, id := range snap.NodeIDs {
+		result[id] = strconv.Itoa(orig[i])
+	}
+	return result
 }

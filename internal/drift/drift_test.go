@@ -128,7 +128,7 @@ func TestAnalyzeNilGraph(t *testing.T) {
 }
 
 func TestLayerIndexAssign(t *testing.T) {
-	li := &layerIndex{layers: defaultConfig().Layers}
+	li := &LayerIndex{Layers: defaultConfig().Layers}
 	cases := map[string]string{
 		"cmd/web/handler.go":    "web",
 		"cmd/web/sub/page.go":   "web",
@@ -139,8 +139,8 @@ func TestLayerIndexAssign(t *testing.T) {
 		"not/a/match.go":        "",
 	}
 	for in, want := range cases {
-		if got := li.Assign(in); got != want {
-			t.Errorf("Assign(%q) = %q, want %q", in, got, want)
+		if got := li.AssignLayer(in); got != want {
+			t.Errorf("AssignLayer(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

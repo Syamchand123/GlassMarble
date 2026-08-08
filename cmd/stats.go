@@ -5,13 +5,17 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Syamchand123/GlassMarble/internal/arch_intelligence"
+	"github.com/Syamchand123/GlassMarble/internal/config"
 	"github.com/Syamchand123/GlassMarble/internal/product"
+	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/spf13/cobra"
 )
 
 var (
 	statsLast  bool
 	statsBench bool
+	statsArch  bool
 )
 
 var statsCmd = &cobra.Command{
@@ -24,6 +28,10 @@ var statsCmd = &cobra.Command{
 			dir = "."
 		}
 		storageDir := filepath.Join(dir, ".glassmarble")
+
+		if statsArch {
+			return runArchStats(storageDir, cmd)
+		}
 
 		if statsBench {
 			fmt.Println("=== GlassMarble Pipeline Benchmark Gate (Phase 8 / §12.0) ===")
@@ -86,6 +94,72 @@ var statsCmd = &cobra.Command{
 func init() {
 	statsCmd.Flags().BoolVar(&statsLast, "last", true, "Display telemetry spans for the last pipeline execution")
 	statsCmd.Flags().BoolVar(&statsBench, "bench", false, "Display pipeline benchmark gates and budget status")
+	statsCmd.Flags().BoolVar(&statsArch, "arch", false, "Display architecture health: component coupling (Ca/Ce/Instability) from Stage 5")
 	statsCmd.Flags().String("dir", ".", "Directory path containing the .glassmarble/ database folder")
 	rootCmd.AddCommand(statsCmd)
+}
+
+// runArchStats runs Stage 5 against the committed AKG and prints the
+// component-level coupling table (Ca, Ce, Instability, stability status).
+func runArchStats(storageDir string, cmd *cobra.Command) error {
+	tm, err := newAKGManager(storageDir, cmd)
+	if err != nil {
+		return fmt.Errorf("failed to open AKG database: %w", err)
+	}
+	defer tm.Close()
+
+	graph := tm.GetActiveSnapshot()
+	if graph == nil || graph.Nodes == nil || graph.Nodes.Len() == 0 {
+		return producterrs.Tagged(fmt.Sprintf("AKG database is empty -- run 'glassmarble analyze' first"), producterrs.ErrEmptySubgraph)
+	}
+
+	cfg := config.DefaultIntelligenceConfig()
+	if local, lerr := loadIntelligenceConfig(storageDir); lerr == nil {
+		cfg = local
+	}
+	engine := arch_intelligence.NewEngineWithOptions(graph,
+		arch_intelligence.WithConfig(cfg),
+		arch_intelligence.WithLayerForbidden(cfgForbiddenPairs(storageDir)))
+	res := engine.Run()
+
+	fmt.Println("=== Architecture Health (Stage 5) ===")
+	fmt.Println("")
+	fmt.Printf("Nodes: %d | Edges: %d | Components: %d | Cycles: %d | Layer violations: %d\n",
+		res.Metrics.TotalNodes, res.Metrics.TotalEdges, len(res.Components),
+		res.Metrics.CycleCount, res.Metrics.LayerViolationCount)
+	fmt.Println("")
+	fmt.Printf("%-48s %-8s %-8s %-8s %-8s %s\n", "Component", "Nodes", "Ca", "Ce", "Instab.", "Status")
+	fmt.Println("----------------------------------------------------------------------------")
+	stableWeight := 0
+	totalWeight := 0
+	for _, cc := range res.ComponentCoupling {
+		totalWeight += cc.Weight
+		status := "STABLE"
+		if cc.Instability > cfg.UnstableThreshold {
+			status = "UNSTABLE"
+		} else {
+			stableWeight += cc.Weight
+		}
+		fmt.Printf("%-48s %-8d %-8d %-8d %-8.2f %s\n", cc.Name, cc.Weight, cc.Ca, cc.Ce, cc.Instability, status)
+	}
+	fmt.Println("----------------------------------------------------------------------------")
+	if totalWeight > 0 {
+		fmt.Printf("Stable component weight: %.0f%% (threshold %.0f%%)\n",
+			float64(stableWeight)/float64(totalWeight)*100, cfg.StableComponentsThreshold*100)
+	}
+	if len(res.Patterns) > 0 {
+		fmt.Println("")
+		fmt.Println("Patterns:")
+		for _, p := range res.Patterns {
+			fmt.Printf("  %-12s confidence=%.2f\n", p.Kind, p.Confidence)
+		}
+	}
+	if len(res.Smells) > 0 {
+		fmt.Println("")
+		fmt.Println("Smells:")
+		for _, s := range res.Smells {
+			fmt.Printf("  [%s] %s\n", s.Severity, s.Title)
+		}
+	}
+	return nil
 }

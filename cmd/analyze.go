@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
+	"github.com/Syamchand123/GlassMarble/internal/arch_intelligence"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage1"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage2"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage3"
@@ -38,6 +39,7 @@ var analyzeCmd = &cobra.Command{
 		asJSON, _ := cmd.Flags().GetBool("json")
 		storeCode, _ := cmd.Flags().GetBool("store-code")
 		isBench, _ := cmd.Flags().GetBool("bench")
+		stage5, _ := cmd.Flags().GetBool("stage5")
 		if targetDir == "" {
 			targetDir = "."
 		}
@@ -54,6 +56,7 @@ var analyzeCmd = &cobra.Command{
 			abortOnLimit:   abortOnLimit,
 			json:           asJSON,
 			bench:          isBench,
+			stage5:         stage5,
 		}
 		if isBench {
 			return runAnalysisBenchmark(cmd, opts)
@@ -90,6 +93,9 @@ type runAnalysisOptions struct {
 	// onSummary, when non-nil, receives the QA numbers of a completed run so
 	// the TUI layer can render its own styled summary card.
 	onSummary func(s analysisSummary)
+	// stage5 controls whether Stage 5 architectural intelligence runs after
+	// the graph is committed (human output only).
+	stage5 bool
 }
 
 // analysisSummary carries the QA numbers of a completed analysis run for the
@@ -386,6 +392,11 @@ func runAnalysis(opts runAnalysisOptions) error {
 	if q.DanglingEdges > 0 {
 		fmt.Printf("WARNING: %d edges reference missing nodes (dangling). Run `gmb analyze --full` to rebuild.\n", q.DanglingEdges)
 	}
+	// Stage 5 architectural intelligence summary (human mode only; the JSON
+	// contract above must stay stable for machine consumers).
+	if opts.stage5 {
+		printStage5Summary(storageDir, tm, verbose)
+	}
 	// Surface files that were skipped (oversized, unknown grammar) or that
 	// produced warnings so silent data loss stays visible (AUDIT Issue 1
 	// Phase 1C-10: skipped/warnings were collected but never printed).
@@ -452,6 +463,37 @@ func akgStateSize(storageDir string) int64 {
 	return 0
 }
 
+// printStage5Summary runs Stage 5 architectural intelligence on the committed
+// graph and prints a compact insight summary.
+func printStage5Summary(storageDir string, tm *akg.AKGTransactionManager, verbose bool) {
+	graph := tm.GetActiveGraph()
+	if graph == nil || graph.Nodes == nil || graph.Nodes.Len() == 0 {
+		return
+	}
+	cfg := config.DefaultIntelligenceConfig()
+	if local, lerr := loadIntelligenceConfig(storageDir); lerr == nil {
+		cfg = local
+	}
+	opts := []arch_intelligence.EngineOption{
+		arch_intelligence.WithConfig(cfg),
+		arch_intelligence.WithLayerForbidden(cfgForbiddenPairs(storageDir)),
+	}
+	if verbose {
+		opts = append(opts, arch_intelligence.WithLogger(func(format string, args ...any) {
+			fmt.Printf(format+"\n", args...)
+		}))
+	}
+	res := arch_intelligence.NewEngineWithOptions(graph, opts...).Run()
+	fmt.Printf("Stage 5: %d components | %d patterns | %d smells | %d cycles | %d layer violations\n",
+		len(res.Components), len(res.Patterns), len(res.Smells), res.Metrics.CycleCount, res.Metrics.LayerViolationCount)
+	for _, p := range res.Patterns {
+		fmt.Printf("  pattern: %s (confidence %.2f)\n", p.Name, p.Confidence)
+	}
+	for _, s := range res.Smells {
+		fmt.Printf("  smell: [%s] %s\n", s.Severity, s.Title)
+	}
+}
+
 // humanBytes renders a byte count for the QA report.
 func humanBytes(b int64) string {
 	switch {
@@ -470,6 +512,9 @@ func runAnalysisBenchmark(cmd *cobra.Command, opts runAnalysisOptions) error {
 	out := cmd.OutOrStdout()
 	fmt.Fprintln(out, "=== GlassMarble Pipeline Benchmark Gate (Phase 8 / §12.0) ===")
 	fmt.Fprintln(out, "")
+
+	// Stage 5 adds analysis time that would skew the benchmark gates; skip it.
+	opts.stage5 = false
 
 	var commitMS float64
 	var totalDuration time.Duration
@@ -539,5 +584,6 @@ func init() {
 	analyzeCmd.Flags().Bool("store-code", false, "Store source code content snippets in AKG nodes (default: false)")
 	analyzeCmd.Flags().Bool("json", false, "Emit machine-readable JSON instead of the human summary")
 	analyzeCmd.Flags().Bool("bench", false, "Run analysis benchmark battery and verify performance against budget gates")
+	analyzeCmd.Flags().Bool("stage5", true, "Run Stage 5 architectural intelligence after committing the graph (human output only)")
 	rootCmd.AddCommand(analyzeCmd)
 }

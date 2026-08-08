@@ -42,7 +42,7 @@ var rebaseGoldensCmd = &cobra.Command{
 		for _, dtype := range diagramTypes {
 			for _, fmtStr := range formats {
 				req := product.BuildDiagramRequest{
-					StatePath:     filepath.Join(targetDir, ".glassmarble", "akg.json"),
+					StatePath:   filepath.Join(targetDir, ".glassmarble", "akg.json"),
 					ParseFn:     akg.ParseGraphForQuery,
 					DiagramType: dtype,
 					Format:      fmtStr,

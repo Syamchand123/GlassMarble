@@ -1,4 +1,4 @@
-﻿package cmd_test
+package cmd_test
 
 import (
 	"strings"

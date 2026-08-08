@@ -2,152 +2,251 @@ package arch_intelligence
 
 import (
 	"sort"
-	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
 )
 
+// ComponentCoupling holds afferent/efferent coupling for one component.
+type ComponentCoupling struct {
+	ComponentID string  `json:"component_id"`
+	Name        string  `json:"name"`
+	Ca          int     `json:"ca"` // distinct components depending on this one
+	Ce          int     `json:"ce"` // distinct components this one depends on
+	Instability float64 `json:"instability"`
+	Weight      int     `json:"weight"` // node count
+}
+
 // CalculateMetrics runs all graph analytics and produces ArchMetrics.
+// Compatibility wrapper for graph callers.
 func CalculateMetrics(graph *akg.CodePropertyGraph) archmodel.ArchMetrics {
+	if graph == nil {
+		return archmodel.ArchMetrics{}
+	}
+	return CalculateMetricsFromSnapshot(NewGraphSnapshot(graph))
+}
+
+// CalculateMetricsFromSnapshot computes global architecture metrics on a
+// snapshot. Deterministic: node iteration follows sorted IDs.
+func CalculateMetricsFromSnapshot(snap *GraphSnapshot) archmodel.ArchMetrics {
 	metrics := archmodel.ArchMetrics{
-		TotalNodes: graph.Nodes.Len(),
+		TotalNodes: snap.Len(),
+		TotalEdges: snap.EdgeCount,
+	}
+	if snap.Len() <= 1 {
+		return metrics
 	}
 
-	edgeCount := 0
-	graph.OutboundEdges.Iterate(func(_ string, edges []stage4.ResolvedEdge) {
-		edgeCount += len(edges)
-	})
-	metrics.TotalEdges = edgeCount
+	maxEdges := float64(snap.Len() * (snap.Len() - 1))
+	metrics.GraphDensity = float64(snap.EdgeCount) / maxEdges
 
-	if metrics.TotalNodes > 1 {
-		maxEdges := float64(metrics.TotalNodes * (metrics.TotalNodes - 1))
-		metrics.GraphDensity = float64(edgeCount) / maxEdges
-	}
-
-	// 1. Fan-In / Fan-Out
-	coupling := NodeMetrics(graph)
+	// 1. Per-node fan-in / fan-out (distinct structural endpoints).
+	coupling := NodeMetricsSnapshot(snap)
 	totalFanIn := 0
 	totalFanOut := 0
-	maxFanIn := 0
-	maxFanOut := 0
-
-	for _, c := range coupling {
+	for _, id := range snap.NodeIDs {
+		c := coupling[id]
 		totalFanIn += c.FanIn
 		totalFanOut += c.FanOut
-		if c.FanIn > maxFanIn {
-			maxFanIn = c.FanIn
+		if c.FanIn > metrics.MaxFanIn {
+			metrics.MaxFanIn = c.FanIn
 		}
-		if c.FanOut > maxFanOut {
-			maxFanOut = c.FanOut
+		if c.FanOut > metrics.MaxFanOut {
+			metrics.MaxFanOut = c.FanOut
 		}
 	}
-	metrics.MaxFanIn = maxFanIn
-	metrics.MaxFanOut = maxFanOut
-	if metrics.TotalNodes > 0 {
-		metrics.AvgFanIn = float64(totalFanIn) / float64(metrics.TotalNodes)
-		metrics.AvgFanOut = float64(totalFanOut) / float64(metrics.TotalNodes)
-	}
+	metrics.AvgFanIn = float64(totalFanIn) / float64(snap.Len())
+	metrics.AvgFanOut = float64(totalFanOut) / float64(snap.Len())
 
-	// Afferent/Efferent mapping to Fan-In/Fan-Out
-	metrics.AfferentCoupling = float64(totalFanIn)
-	metrics.EfferentCoupling = float64(totalFanOut)
-	if totalFanIn+totalFanOut > 0 {
-		metrics.Instability = float64(totalFanOut) / float64(totalFanIn+totalFanOut)
-	}
-
-	// 2. LCOM4
+	// 2. LCOM4 (mean over STRUCT/CLASS nodes).
 	var totalLCOM4 float64
 	var classCount int
-	graph.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
-		if node.Kind == "STRUCT" || node.Kind == "CLASS" {
-			lcom := LCOM4(node, graph)
-			totalLCOM4 += lcom
-			classCount++
+	for _, id := range snap.NodeIDs {
+		node := snap.Nodes[id]
+		if node == nil || (node.Kind != "STRUCT" && node.Kind != "CLASS") {
+			continue
 		}
-	})
+		totalLCOM4 += LCOM4Snapshot(node, snap)
+		classCount++
+	}
 	if classCount > 0 {
 		metrics.LCOM4 = totalLCOM4 / float64(classCount)
 	}
 
-	// 3. Cyclomatic Complexity
-	complexities := CyclomaticComplexity(graph)
-	var totalCC int
-	var maxCC int
+	// 3. Cyclomatic complexity.
+	complexities := CyclomaticComplexitySnapshot(snap)
+	totalCC := 0
 	for _, cc := range complexities {
 		totalCC += cc
-		if cc > maxCC {
-			maxCC = cc
+		if cc > metrics.CyclomaticMax {
+			metrics.CyclomaticMax = cc
 		}
 	}
-	metrics.CyclomaticMax = maxCC
 	if len(complexities) > 0 {
 		metrics.CyclomaticAvg = float64(totalCC) / float64(len(complexities))
 	}
 
-	// 4. SCC & Cycles
-	sccs := SCC(graph)
+	// 4. SCCs and cycles.
+	sccs := SCCIterative(snap)
 	metrics.StronglyConnectedComponents = len(sccs)
-	cycleCount := 0
-	maxCycle := 0
 	for _, scc := range sccs {
 		if len(scc) > 1 {
-			cycleCount++
-			if len(scc) > maxCycle {
-				maxCycle = len(scc)
+			metrics.CycleCount++
+			if len(scc) > metrics.MaxCycleLength {
+				metrics.MaxCycleLength = len(scc)
 			}
 		}
 	}
-	metrics.CycleCount = cycleCount
-	metrics.MaxCycleLength = maxCycle
 
-	// 5. Dead Code
-	dead := DeadCodeNodes(graph)
-	// Filter out test files and generated files from dead code count
-	deadCount := 0
-	for _, id := range dead {
-		if node, ok := graph.SafeGetNode(id); ok {
-			if !strings.HasSuffix(node.FileSpec.Path, "_test.go") && !strings.Contains(node.FileSpec.Path, "mock") {
-				deadCount++
-			}
-		}
-	}
-	metrics.DeadCodeNodeCount = deadCount
-
-	if metrics.TotalNodes > 0 {
-		reachable := metrics.TotalNodes - deadCount
-		metrics.ReachableFromEntrypoints = float64(reachable) / float64(metrics.TotalNodes)
+	// 5. Dead code.
+	dead := DeadCodeNodesSnapshot(snap)
+	metrics.DeadCodeNodeCount = len(dead)
+	if snap.Len() > 0 {
+		metrics.ReachableFromEntrypoints = 1.0 - float64(len(dead))/float64(snap.Len())
 	}
 
-	// 6. PageRank Hotspots
-	ranks := PageRank(graph, 20, 0.85)
+	// 6. PageRank hotspots (top 10 non-function nodes).
+	ranks := PageRankSnapshot(snap, 20, 0.85)
 	var hotspots []archmodel.HotspotEntry
-	for id, rank := range ranks {
-		if node, ok := graph.SafeGetNode(id); ok {
-			if node.Kind != "FUNCTION" && node.Kind != "VARIABLE" {
-				c := coupling[id]
-				hotspots = append(hotspots, archmodel.HotspotEntry{
-					NodeID:   id,
-					Name:     node.Name,
-					PageRank: rank,
-					FanIn:    c.FanIn,
-					FanOut:   c.FanOut,
-				})
-			}
+	for _, id := range snap.NodeIDs {
+		rank := ranks[id]
+		node := snap.Nodes[id]
+		if node == nil {
+			continue
 		}
+		if node.Kind == "FUNCTION" || node.Kind == "VARIABLE" {
+			continue
+		}
+		c := coupling[id]
+		hotspots = append(hotspots, archmodel.HotspotEntry{
+			NodeID:   id,
+			Name:     node.Name,
+			PageRank: rank,
+			FanIn:    c.FanIn,
+			FanOut:   c.FanOut,
+		})
 	}
-
-	// Sort by PageRank descending
 	sort.Slice(hotspots, func(i, j int) bool {
-		return hotspots[i].PageRank > hotspots[j].PageRank
+		if hotspots[i].PageRank != hotspots[j].PageRank {
+			return hotspots[i].PageRank > hotspots[j].PageRank
+		}
+		return hotspots[i].NodeID < hotspots[j].NodeID
 	})
-
 	if len(hotspots) > 10 {
-		metrics.TopHotspots = hotspots[:10]
-	} else {
-		metrics.TopHotspots = hotspots
+		hotspots = hotspots[:10]
 	}
+	metrics.TopHotspots = hotspots
 
 	return metrics
+}
+
+// ComputeComponentCoupling computes per-component afferent/efferent coupling
+// and instability over distinct structural edges between components. Also
+// returns the global afferent/efferent coupling and instability summed over
+// the component graph. The result is sorted by component ID.
+func ComputeComponentCoupling(snap *GraphSnapshot, components []archmodel.DetectedComponent) ([]ComponentCoupling, float64, float64, float64) {
+	if snap == nil {
+		return nil, 0, 0, 0
+	}
+	nodeToComp := make(map[string]int, snap.Len())
+	for i, c := range components {
+		for _, id := range c.NodeIDs {
+			nodeToComp[id] = i
+		}
+	}
+	compCount := len(components)
+	// depMatrix[src][tgt] = true for distinct component-level edges.
+	depMatrix := make([]map[int]bool, compCount)
+	for i := range depMatrix {
+		depMatrix[i] = make(map[int]bool)
+	}
+	for _, id := range snap.NodeIDs {
+		srcIdx, ok := nodeToComp[id]
+		if !ok {
+			continue
+		}
+		for _, e := range snap.structuralOutbound(id) {
+			tgtIdx, ok := nodeToComp[e.TargetID]
+			if !ok || tgtIdx == srcIdx {
+				continue
+			}
+			depMatrix[srcIdx][tgtIdx] = true
+		}
+	}
+
+	couplings := make([]ComponentCoupling, 0, compCount)
+	var totalCa, totalCe int
+	for i, c := range components {
+		ca := 0
+		for j := 0; j < compCount; j++ {
+			if depMatrix[j][i] {
+				ca++
+			}
+		}
+		ce := len(depMatrix[i])
+		instability := 0.0
+		if ca+ce > 0 {
+			instability = float64(ce) / float64(ca+ce)
+		}
+		totalCa += ca
+		totalCe += ce
+		couplings = append(couplings, ComponentCoupling{
+			ComponentID: c.ID,
+			Name:        c.Name,
+			Ca:          ca,
+			Ce:          ce,
+			Instability: instability,
+			Weight:      len(c.NodeIDs),
+		})
+	}
+	sort.Slice(couplings, func(i, j int) bool { return couplings[i].ComponentID < couplings[j].ComponentID })
+
+	globalInstability := 0.0
+	if totalCa+totalCe > 0 {
+		globalInstability = float64(totalCe) / float64(totalCa+totalCe)
+	}
+	return couplings, float64(totalCa), float64(totalCe), globalInstability
+}
+
+// applyComponentMetrics folds component-level coupling into the global
+// ArchMetrics so AfferentCoupling/EfferentCoupling/Instability reflect the
+// component graph rather than raw node counts.
+func applyComponentMetrics(metrics *archmodel.ArchMetrics, ca, ce, instability float64) {
+	metrics.AfferentCoupling = ca
+	metrics.EfferentCoupling = ce
+	metrics.Instability = instability
+}
+
+// countLayerViolations counts structural edges that cross declared layers
+// against the layer order (upward edges) or that match forbidden pairs.
+// Returns the violation edge count.
+func countLayerViolations(snap *GraphSnapshot, layerIndex *LayerAssigner) int {
+	if snap == nil || layerIndex == nil || !layerIndex.Configured() {
+		return 0
+	}
+	nodeLayer := make(map[string]string, snap.Len())
+	for _, id := range snap.NodeIDs {
+		node := snap.Nodes[id]
+		if node != nil {
+			nodeLayer[id] = layerIndex.Assign(node.FileSpec.Path)
+		}
+	}
+	violations := 0
+	for _, id := range snap.NodeIDs {
+		srcLayer := nodeLayer[id]
+		if srcLayer == "" {
+			continue
+		}
+		for _, e := range snap.structuralOutbound(id) {
+			tgtLayer := nodeLayer[e.TargetID]
+			if tgtLayer == "" || tgtLayer == srcLayer {
+				continue
+			}
+			if layerIndex.IsForbidden(srcLayer, tgtLayer) ||
+				layerIndex.IsUpward(srcLayer, tgtLayer) {
+				violations++
+			}
+		}
+	}
+	return violations
 }

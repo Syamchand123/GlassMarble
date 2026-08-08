@@ -14,10 +14,10 @@ func TestRunPatternDetection(t *testing.T) {
 		ID:   "n1",
 		Name: "UserRepository",
 	})
-	
+
 	metrics := archmodel.ArchMetrics{}
 	patterns := RunPatternDetection(graph, metrics)
-	
+
 	if len(patterns) != 0 {
 		t.Errorf("Expected 0 Patterns in mock graph")
 	}

@@ -50,10 +50,17 @@ type layerIndex struct {
 	layers []config.DriftLayer
 }
 
-// Assign returns the name of the first layer whose glob matches relPath, or "".
-func (li *layerIndex) Assign(relPath string) string {
+// LayerIndex assigns nodes to layers by path glob. It is exported so Stage 5
+// (architectural intelligence) can reuse the same layering rules.
+type LayerIndex struct {
+	Layers []config.DriftLayer
+}
+
+// AssignLayer returns the name of the first layer whose glob matches relPath,
+// or "". Layer assignment is deterministic: earlier layers win.
+func (li *LayerIndex) AssignLayer(relPath string) string {
 	clean := path.Clean(strings.ReplaceAll(relPath, "\\", "/"))
-	for _, layer := range li.layers {
+	for _, layer := range li.Layers {
 		for _, pat := range layer.Paths {
 			if matched, err := path.Match(pat, clean); err == nil && matched {
 				return layer.Name
@@ -71,6 +78,11 @@ func (li *layerIndex) Assign(relPath string) string {
 	return ""
 }
 
+// Assign is the unexported convenience wrapper used inside this package.
+func (li *LayerIndex) Assign(relPath string) string {
+	return li.AssignLayer(relPath)
+}
+
 // Analyze evaluates the snapshot against the declared drift configuration.
 func Analyze(graph *akg.CodePropertyGraph, driftCfg config.DriftConfig) *Report {
 	rep := &Report{
@@ -81,7 +93,7 @@ func Analyze(graph *akg.CodePropertyGraph, driftCfg config.DriftConfig) *Report 
 		return rep
 	}
 
-	li := &layerIndex{layers: driftCfg.Layers}
+	li := &LayerIndex{Layers: driftCfg.Layers}
 
 	// nodeLayer caches file->layer assignment per node id. Node file paths are
 	// absolute on disk; strip any project prefix by matching the trailing path.

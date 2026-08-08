@@ -100,6 +100,15 @@ type DetectedComponent struct {
 	Directories []string        `json:"directories"`
 	Evidence    evidence.Bundle `json:"evidence"`
 	Confidence  float64         `json:"confidence"`
+	// Dependencies lists the IDs of the components this one depends on
+	// (distinct structural edges). Filled by Stage 5D; used by event
+	// generation to detect component-level dependency changes.
+	Dependencies []string `json:"dependencies,omitempty"`
+	// Ca and Ce are the component's afferent/efferent coupling in the
+	// component graph; Instability = Ce/(Ca+Ce). Filled by Stage 5A/5D.
+	Ca          int     `json:"ca,omitempty"`
+	Ce          int     `json:"ce,omitempty"`
+	Instability float64 `json:"instability,omitempty"`
 }
 
 // PatternKind identifies a recognised architectural pattern.

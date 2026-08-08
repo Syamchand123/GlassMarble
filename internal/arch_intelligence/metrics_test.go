@@ -9,7 +9,7 @@ import (
 func TestCalculateMetrics(t *testing.T) {
 	graph := akg.NewCodePropertyGraph("test")
 	metrics := CalculateMetrics(graph)
-	
+
 	if metrics.TotalNodes != 0 {
 		t.Errorf("Expected 0 nodes, got %d", metrics.TotalNodes)
 	}
