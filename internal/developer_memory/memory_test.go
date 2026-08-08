@@ -1,29 +1,43 @@
 package developer_memory
 
-import (
-	"encoding/json"
-	"testing"
-	"time"
-)
+import "testing"
 
-func TestDeveloperMemory_JSON(t *testing.T) {
-	mem := DeveloperMemory{
-		ProjectID:   "test-project",
-		LastUpdated: time.Now().Truncate(time.Millisecond),
-		TotalEvents: 1,
+// TestKnowledgeStateValues pins the persisted string values. These are part
+// of the on-disk contract (master plan §1.5) — renaming them corrupts
+// existing memory.
+func TestKnowledgeStateValues(t *testing.T) {
+	tests := map[string]KnowledgeState{
+		"CURRENT":      StateActive,
+		"DEPRECATED":   StateDeprecated,
+		"REMOVED":      StateRemoved,
+		"HISTORICAL":   StateHistorical,
+		"EXPERIMENTAL": StateExperimental,
+		"UNKNOWN":      StateUnknown,
 	}
-
-	data, err := json.Marshal(mem)
-	if err != nil {
-		t.Fatalf("Failed to marshal DeveloperMemory: %v", err)
+	if len(tests) != 6 {
+		t.Fatalf("expected exactly 6 knowledge states, have %d", len(tests))
 	}
-
-	var decoded DeveloperMemory
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("Failed to unmarshal DeveloperMemory: %v", err)
+	for want, state := range tests {
+		if string(state) != want {
+			t.Errorf("state %q persisted as %q", want, string(state))
+		}
 	}
+}
 
-	if decoded.ProjectID != mem.ProjectID {
-		t.Errorf("Expected ProjectID %q, got %q", mem.ProjectID, decoded.ProjectID)
+// TestClaimKindValues pins the persisted ClaimKind strings.
+func TestClaimKindValues(t *testing.T) {
+	tests := map[string]ClaimKind{
+		"FACT":            ClaimFact,
+		"EXPLICIT_REASON": ClaimExplicitReason,
+		"INFERENCE":       ClaimInference,
+		"SPECULATION":     ClaimSpeculation,
+	}
+	if len(tests) != 4 {
+		t.Fatalf("expected exactly 4 claim kinds, have %d", len(tests))
+	}
+	for want, kind := range tests {
+		if string(kind) != want {
+			t.Errorf("claim kind %q persisted as %q", want, string(kind))
+		}
 	}
 }

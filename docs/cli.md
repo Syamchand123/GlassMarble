@@ -10,7 +10,7 @@
 Parses, normalizes, aggregates, and semantic-links source code files into the AKG graph database (`.glassmarble/akg.json`).
 
 ```bash
-gmb analyze [--dir <path>] [--commit <hash>] [--full] [--workers <N>] [--link-level <level>] [--json] [--bench]
+gmb analyze [--dir <path>] [--commit <hash>] [--full] [--workers <N>] [--link-level <level>] [--json] [--bench] [--stage5]
 ```
 
 **Flags:**
@@ -22,6 +22,30 @@ gmb analyze [--dir <path>] [--commit <hash>] [--full] [--workers <N>] [--link-le
 - `--store-code`: Opt-in source snippet storage in AKG nodes.
 - `--json`: Emit machine-readable JSON summary.
 - `--bench`: Run analysis benchmark suite and verify timings/file sizes against performance budget gates.
+- `--stage5`: Run Stage 5 architectural intelligence + Stage 6 developer memory after committing the graph (default `true`, human output only; both stages are non-fatal).
+
+When `--stage5` is enabled, `gmb analyze` also writes:
+- `.glassmarble/intelligence/latest.json` — current Stage 5 state,
+- `.glassmarble/snapshots/` — point-in-time architecture snapshots (skip-written when the topology is unchanged),
+- `.glassmarble/memory/` — the developer memory WALs (`events.jsonl`) and derived aggregates (`memory.json`, `timeline.json`).
+
+Event ingestion is idempotent: re-analyzing the same commit never duplicates memory.
+
+---
+
+### `gmb memory`
+Answers questions about the project's architectural history from the Stage 6 developer memory (`.glassmarble/memory/`). Deterministic retrieval — no LLM.
+
+```bash
+gmb memory [--dir <path>] [--ask "<question>"] [--component <name>] [--json]
+```
+
+- Default: project overview — event count and current components with their temporal states.
+- `--ask "what do we know about Redis?"`: ranked components, claims (labelled FACT / EXPLICIT_REASON / INFERENCE / SPECULATION), events and related timeline.
+- `--component payment`: full history of the matching component (case-insensitive substring) plus its timeline.
+- `--json`: machine-readable document.
+
+Reasons are never invented: without evidence of a reason, no reason claim exists.
 
 ---
 

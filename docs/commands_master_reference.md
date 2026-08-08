@@ -32,6 +32,7 @@
    - [import](#815-gmb-import)
    - [hooks](#816-gmb-hooks)
    - [housekeeping](#817-gmb-housekeeping)
+   - [memory](#821-gmb-memory)
    - [completion](#818-gmb-completion)
    - [version](#819-gmb-version)
    - [ai](#820-gmb-ai-and-subcommands)
@@ -103,6 +104,7 @@ gmb
 ├── import <graph.json>           Replace snapshot from a GraphJSON document
 ├── hooks <install|uninstall>     Manage the git post-commit auto-analyze hook
 ├── housekeeping                  Report & prune .glassmarble working-set storage
+├── memory                        Query the developer memory (what changed, and why)
 ├── completion <shell>            Generate shell completion scripts
 ├── version                       Print version
 └── ai [question]                 Ask the AI Architect about the codebase
@@ -154,6 +156,16 @@ Created by `gmb init` (or on demand). Lives at `<repo>/.glassmarble/` and is aut
 ├── wal/
 │   └── akg_transactions.wal     # Write-ahead log (transaction replay; truncated after each successful commit)
 ├── marbles/                     # Saved diagram markdown files
+├── intelligence/
+│   └── latest.json              # Stage 5 current architectural state (written by `gmb analyze --stage5`)
+├── snapshots/
+│   ├── index.json               # Snapshot index (commit → file)
+│   └── snap_<hash8>.json        # Point-in-time ArchSnapshot (skip-written when topology unchanged)
+├── memory/
+│   ├── events.jsonl             # Append-only event WAL (source of truth for Stage 6)
+│   ├── claims.jsonl             # Append-only claim WAL (source of truth for Stage 6)
+│   ├── memory.json              # Derived DeveloperMemory aggregate (rebuildable from the WALs)
+│   └── timeline.json            # Derived timeline (fast path for queries)
 ├── ai/
 │   ├── ai.yaml                  # Project-scoped AI configuration
 │   ├── sessions/                # Saved chat sessions
@@ -167,6 +179,9 @@ Created by `gmb init` (or on demand). Lives at `<repo>/.glassmarble/` and is aut
 | `wal/akg_transactions.wal` | Crash-safety: every transaction is appended, then truncated after a successful commit | `gmb doctor` staleness check, `housekeeping --prune` |
 | `db.lock` | Mutual exclusion for transactions (30s staleness timeout) | `AcquireLock`/`ReleaseLock` |
 | `marbles/` | Saved diagrams from `visualize --save` and AI artifacts | `housekeeping --prune` |
+| `intelligence/latest.json` | Stage 5 output (current architecture state) | atomic temp+rename write |
+| `snapshots/` | Point-in-time architecture snapshots for event diffing | unchanged-topology skip-write |
+| `memory/` | Stage 6 developer memory: WALs (source of truth) + derived aggregates | corrupt-line tolerance, atomic rebuild |
 | `ai/` | AI answers, project AI config, chat sessions | `housekeeping --prune`, `ai sessions --delete` |
 
 ---
@@ -1141,6 +1156,33 @@ gmb ai configure --provider NAME --model MODEL --key KEY [--scope global|project
 | `--delete` | string | `""` | Delete a saved session by id |
 
 **Behavior:** interactive TTY → session browser with delete; non-TTY → plain list (newest first). `--delete <id>` removes one session and prints confirmation.
+
+---
+
+### 8.21 `gmb memory`
+
+**Purpose:** Query the Stage 6 developer memory — what the system was, what changed, and (where evidence exists) why. Deterministic retrieval, no LLM (master plan §4.4).
+
+**Syntax:** `gmb memory [--dir <path>] [--ask "<question>"] [--component <name>] [--json]`
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--dir` | string | `.` | Directory containing the `.glassmarble/` database |
+| `--ask` | string | `""` | Natural-language-style question answered by ranked retrieval |
+| `--component` | string | `""` | Show the full history of one component (case-insensitive substring match) |
+| `--json` | bool | `false` | Emit the machine-readable document instead of the human report |
+
+**Data source:** `.glassmarble/memory/` — `events.jsonl`/`claims.jsonl` (append-only WALs, source of truth) + derived `memory.json`/`timeline.json`. Populated by `gmb analyze --stage5`; re-runs are idempotent.
+
+**Output (default):** project id, event count, component count, last update, and each component with its temporal state (CURRENT / REMOVED / DEPRECATED / EXPERIMENTAL / HISTORICAL / UNKNOWN).
+
+**Output (`--ask`):** ranked components, knowledge claims (each labelled by how it was established — `FACT`, `EXPLICIT_REASON`, `INFERENCE`, `SPECULATION` — with aggregate confidence), matching events, and the related timeline. Reasons are never invented: an event without a stated reason produces no reason claim.
+
+**Exit codes:** `0` on success; non-zero on load/path failures. An empty memory or a no-match query is a graceful message with exit `0`.
+
+**Use cases:** "what do we know about Redis?", "why was PaymentService added?", onboarding context, pre-refactor impact review.
 
 ---
 

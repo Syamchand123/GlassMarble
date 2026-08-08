@@ -1,121 +1,347 @@
 package developer_memory
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
+	"github.com/Syamchand123/GlassMarble/internal/evidence"
 )
 
-// MemoryBuilder processes ArchEvents and updates DeveloperMemory.
+// MemoryBuilder processes ArchEvents and updates the persistent developer
+// memory. It is the Stage 6 ingestion entry point, called after Stage 5D
+// event generation (and, later, Stage 8 commit reasoning).
+//
+// IDEMPOTENCY: event IDs are deterministic (sha256 of commit + kind +
+// affected ids, computed by the event producers). ProcessEvents appends an
+// event to the WAL only if its ID is not already present, and Rebuild
+// deduplicates by ID as a second line of defense. Re-running analysis on the
+// same commit therefore never duplicates events, claims or timeline entries.
+//
+// VALIDATION: every event must carry a non-empty evidence bundle (empty
+// evidence is a bug — master plan §3.5) and a non-zero timestamp. Violations
+// abort the whole batch before anything is written, so partial application
+// is impossible.
 type MemoryBuilder struct {
-	store *MemoryStore
+	store     *MemoryStore
+	projectID string
 }
 
-// NewMemoryBuilder creates a MemoryBuilder.
+// BuilderOption customizes a MemoryBuilder.
+type BuilderOption func(*MemoryBuilder)
+
+// WithProjectID stamps the repository identifier onto the memory aggregate
+// on first ingestion (sha256 of the absolute repo directory — master plan
+// §1.5). The ID is only set when the aggregate has none, so it survives
+// rebuilds and is never overwritten.
+func WithProjectID(id string) BuilderOption {
+	return func(b *MemoryBuilder) {
+		b.projectID = id
+	}
+}
+
+// NewMemoryBuilder creates a MemoryBuilder with default options.
 func NewMemoryBuilder(store *MemoryStore) *MemoryBuilder {
-	return &MemoryBuilder{store: store}
+	return NewMemoryBuilderWithOptions(store)
+}
+
+// NewMemoryBuilderWithOptions creates a MemoryBuilder with explicit options.
+func NewMemoryBuilderWithOptions(store *MemoryStore, opts ...BuilderOption) *MemoryBuilder {
+	b := &MemoryBuilder{store: store}
+	for _, o := range opts {
+		o(b)
+	}
+	return b
 }
 
 // ProcessEvents ingests new ArchEvents into the memory.
-func (b *MemoryBuilder) ProcessEvents(events []archmodel.ArchEvent) error {
-	mem, err := b.store.LoadMemory()
+//
+// The processing pipeline:
+//
+//  1. Validate every event (evidence, timestamp, id) — fail fast, apply nothing.
+//  2. Append only the events whose ID is not already in the WAL.
+//  3. Rebuild the memory aggregate from the WALs and persist memory.json +
+//     timeline.json atomically.
+//
+// Returns the number of newly-appended events.
+func (b *MemoryBuilder) ProcessEvents(events []archmodel.ArchEvent) (int, error) {
+	if b.store == nil {
+		return 0, fmt.Errorf("developer_memory: nil store")
+	}
+	for i := range events {
+		if err := validateEvent(events[i]); err != nil {
+			return 0, err
+		}
+	}
+
+	existing, err := b.store.LoadEvents()
 	if err != nil {
-		return err
+		return 0, fmt.Errorf("developer_memory: load event WAL: %w", err)
+	}
+	have := make(map[string]bool, len(existing))
+	for _, e := range existing {
+		have[e.ID] = true
 	}
 
-	for _, event := range events {
-		// 1. Append event to events.jsonl
-		if err := b.store.AppendEvent(event); err != nil {
-			return err
+	appended := 0
+	for i := range events {
+		if have[events[i].ID] {
+			continue
 		}
-
-		mem.TotalEvents++
-		if event.Timestamp.After(mem.LastUpdated) {
-			mem.LastUpdated = event.Timestamp
+		if err := b.store.AppendEvent(events[i]); err != nil {
+			return appended, fmt.Errorf("developer_memory: append event %q: %w", events[i].ID, err)
 		}
-
-		// 2. Update component history
-		for _, comp := range event.Components {
-			history, exists := mem.ComponentMemory[comp]
-			if !exists {
-				history = ComponentHistory{
-					Name:      comp,
-					FirstSeen: event.Timestamp,
-					State:     StateActive,
-				}
-			}
-
-			history.Events = append(history.Events, event.ID)
-			history.LastSeen = event.Timestamp
-
-			if event.Kind == archmodel.EventServiceAdded {
-				history.FirstSeen = event.Timestamp
-				history.State = StateActive
-			} else if event.Kind == archmodel.EventServiceRemoved {
-				history.State = StateRemoved
-			}
-
-			mem.ComponentMemory[comp] = history
-		}
-
-		// 3. Extract and store KnowledgeClaims from event
-		claims := b.claimsFromEvent(event)
-		for _, claim := range claims {
-			if err := b.store.AppendClaim(claim); err != nil {
-				return err
-			}
-			mem.GlobalMemory = append(mem.GlobalMemory, claim)
-		}
-
-		// 4. Update timeline
-		entry := archmodel.TimelineEntry{
-			Timestamp:   event.Timestamp,
-			CommitHash:  event.CommitHash,
-			Title:       event.Title,
-			Description: event.Description,
-			EventKind:   event.Kind,
-			Components:  event.Components,
-			Intent:      event.Intent,
-			Tags:        event.Tags,
-		}
-		if err := b.store.AppendTimelineEntry(entry); err != nil {
-			return err
-		}
-		mem.Timeline = append(mem.Timeline, entry)
+		have[events[i].ID] = true
+		appended++
 	}
 
-	return b.store.SaveMemory(mem)
+	mem, err := b.store.Rebuild()
+	if err != nil {
+		return appended, fmt.Errorf("developer_memory: rebuild memory: %w", err)
+	}
+	if mem.ProjectID == "" && b.projectID != "" {
+		mem.ProjectID = b.projectID
+	}
+	if err := b.store.SaveMemoryAndTimeline(mem); err != nil {
+		return appended, fmt.Errorf("developer_memory: persist memory: %w", err)
+	}
+	return appended, nil
 }
 
-func (b *MemoryBuilder) claimsFromEvent(event archmodel.ArchEvent) []KnowledgeClaim {
-	var claims []KnowledgeClaim
-	if len(event.Components) == 0 {
-		return claims
+// validateEvent enforces the Stage 6 evidence discipline. An event without
+// evidence, without an ID, or without a timestamp is rejected before any
+// write happens.
+func validateEvent(e archmodel.ArchEvent) error {
+	if e.ID == "" {
+		return fmt.Errorf("developer_memory: event has empty ID (cannot deduplicate)")
+	}
+	if e.Evidence.IsEmpty() {
+		return fmt.Errorf("developer_memory: event %q has an empty evidence bundle (violates the evidence rule)", e.ID)
+	}
+	if e.Timestamp.IsZero() {
+		return fmt.Errorf("developer_memory: event %q has a zero timestamp", e.ID)
+	}
+	return nil
+}
+
+// applyEvent folds one event into the memory aggregate. It is the single
+// place where events become memory — Rebuild calls it for every event in the
+// WAL, so this function is also what makes the aggregate reproducible.
+func applyEvent(mem *DeveloperMemory, ev archmodel.ArchEvent) {
+	if ev.Timestamp.After(mem.LastUpdated) {
+		mem.LastUpdated = ev.Timestamp
+	}
+	mem.TotalEvents++
+
+	for _, comp := range ev.Components {
+		history, ok := mem.ComponentMemory[comp]
+		if !ok {
+			history = ComponentHistory{Name: comp, State: StateUnknown}
+		}
+		if !containsString(history.Events, ev.ID) {
+			history.Events = append(history.Events, ev.ID)
+		}
+		if history.FirstSeen.IsZero() || ev.Timestamp.Before(history.FirstSeen) {
+			history.FirstSeen = ev.Timestamp
+		}
+		if ev.Timestamp.After(history.LastSeen) {
+			history.LastSeen = ev.Timestamp
+		}
+		switch ev.Kind {
+		case archmodel.EventServiceAdded:
+			history.State = StateActive
+		case archmodel.EventServiceRemoved:
+			history.State = StateRemoved
+		}
+		mem.ComponentMemory[comp] = history
 	}
 
-	for i, comp := range event.Components {
-		claim := KnowledgeClaim{
-			ID:             fmt.Sprintf("claim-%s-%d", event.ID, i),
-			Subject:        comp,
-			Predicate:      "involved_in_event",
-			Object:         string(event.Kind),
-			Evidence:       event.Evidence,
-			State:          StateActive,
-			ValidFrom:      event.Timestamp,
-			FreshnessScore: 1.0,
-		}
+	for _, claim := range claimsFromEvent(ev) {
+		mem.GlobalMemory = append(mem.GlobalMemory, claim)
+	}
 
-		// Optionally enhance predicate based on EventKind
-		if strings.Contains(string(event.Kind), "ADDED") {
-			claim.Predicate = "was_added"
-		} else if strings.Contains(string(event.Kind), "REMOVED") {
-			claim.Predicate = "was_removed"
-			claim.State = StateRemoved
-		}
+	mem.Timeline = append(mem.Timeline, timelineEntryFromEvent(ev))
+}
 
+// timelineEntryFromEvent derives the human-readable timeline row for an event.
+func timelineEntryFromEvent(ev archmodel.ArchEvent) archmodel.TimelineEntry {
+	return archmodel.TimelineEntry{
+		Timestamp:   ev.Timestamp,
+		CommitHash:  ev.CommitHash,
+		Title:       ev.Title,
+		Description: ev.Description,
+		EventKind:   ev.Kind,
+		Components:  ev.Components,
+		Intent:      ev.Intent,
+		Tags:        ev.Tags,
+	}
+}
+
+// claimsFromEvent derives the knowledge claims for one event:
+//
+//   - one FACT claim per mentioned component, with a predicate derived from
+//     the event kind (was_added / was_removed / depends_on / ...), and
+//   - one reason claim when the event carries intent, classified by the
+//     intent source: EXPLICIT_REASON for human-stated sources (git, pr,
+//     docs, issue, user), INFERENCE for LLM/heuristic/rule extraction,
+//     SPECULATION for unknown sources. If the event has no intent, no
+//     reason claim is created — the memory never invents one.
+func claimsFromEvent(ev archmodel.ArchEvent) []KnowledgeClaim {
+	var claims []KnowledgeClaim
+
+	predicate, removed := kindPredicate(ev.Kind)
+	for _, comp := range ev.Components {
+		claim := newClaim(ev, comp, predicate, claimObject(ev, comp), ClaimFact, removed)
 		claims = append(claims, claim)
 	}
 
+	if ev.Intent != "" {
+		subject := "architecture"
+		if len(ev.Components) > 0 {
+			subject = ev.Components[0]
+		}
+		kind := claimKindForSource(ev.IntentSrc)
+		claim := newClaim(ev, subject, "was_changed_because", ev.Intent, kind, false)
+		claims = append(claims, claim)
+	}
 	return claims
+}
+
+// kindPredicate maps an EventKind to the claim predicate it produces.
+// Events whose kind has no meaningful predicate still produce a FACT claim
+// ("involved_in_event") so the change is never lost from memory.
+func kindPredicate(kind archmodel.EventKind) (predicate string, removed bool) {
+	switch kind {
+	case archmodel.EventServiceAdded:
+		return "was_added", false
+	case archmodel.EventServiceRemoved:
+		return "was_removed", true
+	case archmodel.EventServiceSplit:
+		return "was_split", false
+	case archmodel.EventServiceMerged:
+		return "was_merged", false
+	case archmodel.EventDependencyAdded:
+		return "depends_on", false
+	case archmodel.EventDependencyRemoved:
+		return "no_longer_depends_on", true
+	case archmodel.EventPatternDetected:
+		return "pattern_detected", false
+	case archmodel.EventPatternLost:
+		return "pattern_lost", true
+	case archmodel.EventSmellDetected:
+		return "smell_introduced", false
+	case archmodel.EventSmellResolved:
+		return "smell_resolved", true
+	case archmodel.EventCycleIntroduced:
+		return "cycle_introduced", false
+	case archmodel.EventCycleResolved:
+		return "cycle_resolved", true
+	case archmodel.EventCouplingIncreased:
+		return "coupling_increased", false
+	case archmodel.EventCouplingDecreased:
+		return "coupling_decreased", false
+	case archmodel.EventLayerViolation:
+		return "layer_violation", false
+	case archmodel.EventDeadCodeDetected:
+		return "dead_code_detected", false
+	case archmodel.EventCachingAdded:
+		return "caching_added", false
+	case archmodel.EventAsyncIntroduced:
+		return "async_introduced", false
+	case archmodel.EventDataStoreAdded:
+		return "datastore_added", false
+	case archmodel.EventAPIAdded:
+		return "api_added", false
+	case archmodel.EventSecurityAdded:
+		return "security_added", false
+	case archmodel.EventBoundaryCreated:
+		return "boundary_created", false
+	default:
+		return "involved_in_event", false
+	}
+}
+
+// claimObject picks the claim object for a component fact claim. Dependency
+// events carry [source, target] components, so the object is the counterpart.
+func claimObject(ev archmodel.ArchEvent, comp string) string {
+	if len(ev.Components) > 1 {
+		if ev.Components[0] == comp {
+			return ev.Components[1]
+		}
+		if ev.Components[1] == comp {
+			return ev.Components[0]
+		}
+	}
+	if len(ev.AffectedIDs) > 0 {
+		return ev.AffectedIDs[0]
+	}
+	return ""
+}
+
+// newClaim builds a claim with a deterministic ID, full provenance, and the
+// event's evidence bundle. Removal-derived claims are stamped with
+// ValidUntil = event time so the temporal window is explicit.
+func newClaim(ev archmodel.ArchEvent, subject, predicate, object string, kind ClaimKind, removed bool) KnowledgeClaim {
+	claim := KnowledgeClaim{
+		ID:             claimID(ev.ID, subject, predicate, object),
+		Subject:        subject,
+		Predicate:      predicate,
+		Object:         object,
+		ClaimKind:      kind,
+		Evidence:       ev.Evidence,
+		State:          StateActive,
+		ValidFrom:      ev.Timestamp,
+		FreshnessScore: 1.0,
+	}
+	if removed {
+		claim.State = StateRemoved
+		until := ev.Timestamp
+		claim.ValidUntil = &until
+	}
+	return claim
+}
+
+// claimKindForSource classifies a reason claim by where the intent came from.
+// Human-stated sources are EXPLICIT_REASON; derived sources are INFERENCE;
+// unknown sources are SPECULATION (never presented with the weight of fact).
+func claimKindForSource(src evidence.Source) ClaimKind {
+	switch src {
+	case evidence.SourceGit, evidence.SourcePR, evidence.SourceDocs, evidence.SourceIssue, evidence.SourceUser:
+		return ClaimExplicitReason
+	case evidence.SourceLLM, evidence.SourceHeuristic, evidence.SourceRule:
+		return ClaimInference
+	default:
+		return ClaimSpeculation
+	}
+}
+
+// claimID derives a deterministic, stable claim ID so re-processing the same
+// event can never create a duplicate claim.
+func claimID(eventID, subject, predicate, object string) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{eventID, subject, predicate, object}, "\x00")))
+	return "claim_" + hex.EncodeToString(sum[:8])
+}
+
+// containsString reports whether v is present in the slice.
+func containsString(v []string, s string) bool {
+	for _, item := range v {
+		if item == s {
+			return true
+		}
+	}
+	return false
+}
+
+// sortTimeline sorts timeline entries oldest-first, tie-breaking on commit
+// hash for full determinism.
+func sortTimeline(entries []archmodel.TimelineEntry) {
+	sort.SliceStable(entries, func(i, j int) bool {
+		if !entries[i].Timestamp.Equal(entries[j].Timestamp) {
+			return entries[i].Timestamp.Before(entries[j].Timestamp)
+		}
+		return entries[i].CommitHash < entries[j].CommitHash
+	})
 }

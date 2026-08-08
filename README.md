@@ -191,6 +191,27 @@ gmb analyze [--dir <path>] [--full] [--workers <n>] [--commit <hash>] [--verbose
 
 **Incremental mode**: On git repositories with an existing `akg.json`, GlassMarble runs `git diff HEAD` and only re-parses changed files, merging the delta into the persisted graph. On the first run (no state file) or when `--full` is passed, every file is scanned.
 
+With `--stage5` (default `true`, human output only), analysis also runs architectural intelligence, persists the result to `.glassmarble/intelligence/latest.json`, stores snapshots in `.glassmarble/snapshots/`, and folds architectural change events into developer memory (`.glassmarble/memory/`). Re-analyzing the same tree is idempotent — events are never duplicated. These stages are non-fatal: failures warn and the graph commit still succeeds.
+
+---
+
+### `gmb memory`
+
+Query the developer memory: what do we know about the architecture, when did it change, and why.
+
+```bash
+gmb memory [--dir <path>] [--ask "<question>"] [--component <name>] [--json]
+```
+
+| Mode | Description |
+|---|---|
+| (default) | Project overview: event count, component list with temporal states |
+| `--ask` | Deterministic ranked retrieval over components, claims, events and timeline (no LLM) |
+| `--component` | Longitudinal history of one component (substring match) plus its timeline |
+| `--json` | Emit the machine-readable document instead of the human report |
+
+Reasons are never invented: every claim is labelled by how it was established — `FACT` (observed from the graph diff), `EXPLICIT_REASON` (stated by a human in a commit/PR/issue/docs), `INFERENCE` (derived by GlassMarble), or `SPECULATION` (low-confidence guess).
+
 ---
 
 ### `gmb visualize <type>`

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
-	"github.com/Syamchand123/GlassMarble/internal/arch_intelligence"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage1"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage2"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage3"
@@ -392,10 +391,11 @@ func runAnalysis(opts runAnalysisOptions) error {
 	if q.DanglingEdges > 0 {
 		fmt.Printf("WARNING: %d edges reference missing nodes (dangling). Run `gmb analyze --full` to rebuild.\n", q.DanglingEdges)
 	}
-	// Stage 5 architectural intelligence summary (human mode only; the JSON
-	// contract above must stay stable for machine consumers).
+	// Stage 5 architectural intelligence + Stage 6 developer memory
+	// (human mode only; the JSON contract above must stay stable for
+	// machine consumers). Both stages are non-fatal by design.
 	if opts.stage5 {
-		printStage5Summary(storageDir, tm, verbose)
+		runMemoryStage(storageDir, tm, commitHash, verbose)
 	}
 	// Surface files that were skipped (oversized, unknown grammar) or that
 	// produced warnings so silent data loss stays visible (AUDIT Issue 1
@@ -461,37 +461,6 @@ func akgStateSize(storageDir string) int64 {
 		return st.Size()
 	}
 	return 0
-}
-
-// printStage5Summary runs Stage 5 architectural intelligence on the committed
-// graph and prints a compact insight summary.
-func printStage5Summary(storageDir string, tm *akg.AKGTransactionManager, verbose bool) {
-	graph := tm.GetActiveGraph()
-	if graph == nil || graph.Nodes == nil || graph.Nodes.Len() == 0 {
-		return
-	}
-	cfg := config.DefaultIntelligenceConfig()
-	if local, lerr := loadIntelligenceConfig(storageDir); lerr == nil {
-		cfg = local
-	}
-	opts := []arch_intelligence.EngineOption{
-		arch_intelligence.WithConfig(cfg),
-		arch_intelligence.WithLayerForbidden(cfgForbiddenPairs(storageDir)),
-	}
-	if verbose {
-		opts = append(opts, arch_intelligence.WithLogger(func(format string, args ...any) {
-			fmt.Printf(format+"\n", args...)
-		}))
-	}
-	res := arch_intelligence.NewEngineWithOptions(graph, opts...).Run()
-	fmt.Printf("Stage 5: %d components | %d patterns | %d smells | %d cycles | %d layer violations\n",
-		len(res.Components), len(res.Patterns), len(res.Smells), res.Metrics.CycleCount, res.Metrics.LayerViolationCount)
-	for _, p := range res.Patterns {
-		fmt.Printf("  pattern: %s (confidence %.2f)\n", p.Name, p.Confidence)
-	}
-	for _, s := range res.Smells {
-		fmt.Printf("  smell: [%s] %s\n", s.Severity, s.Title)
-	}
 }
 
 // humanBytes renders a byte count for the QA report.
