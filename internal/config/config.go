@@ -20,6 +20,11 @@ type Config struct {
 	// Intelligence holds the Stage 5 thresholds (pattern/smell detection).
 	// nil means defaults (config.DefaultIntelligenceConfig()).
 	Intelligence *IntelligenceConfig `yaml:"intelligence"`
+	// Fusion holds the Stage 9 multi-source knowledge fusion settings
+	// (docs globs, technology lexicon, source adapters). nil means defaults
+	// (config.DefaultFusionConfig()). Whether fusion runs at all is decided
+	// by the `gmb analyze --include-docs` flag, not by this section.
+	Fusion *FusionConfig `yaml:"fusion"`
 }
 
 // DriftConfig declares the architecture invariants checked by `gmb drift`.
@@ -173,5 +178,8 @@ func mergeYAML(path string, cfg *Config) {
 	}
 	if temp.Intelligence != nil {
 		cfg.Intelligence = temp.Intelligence
+	}
+	if temp.Fusion != nil {
+		cfg.Fusion = temp.Fusion
 	}
 }

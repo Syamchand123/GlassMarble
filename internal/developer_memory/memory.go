@@ -191,16 +191,29 @@ type KnowledgeClaim struct {
 	// Stable across rebuilds, which is what makes re-processing idempotent.
 	ID string `json:"id"`
 
-	// Subject is the component/node the claim is about.
+	// Subject is the component/node the claim is about. Always kept
+	// human-readable — entity resolution results live in SubjectID.
 	Subject string `json:"subject"`
+
+	// SubjectID is the AKG node ID the subject resolved to (set by the
+	// Stage 9 entity linker). Empty when the subject is not a graph
+	// entity (e.g. a file that no longer maps to nodes, or the global
+	// "architecture" subject). Additive field — persisted claims without
+	// it remain valid.
+	SubjectID string `json:"subject_id,omitempty"`
 
 	// Predicate is the relationship/assertion ("was_added", "depends_on",
 	// "was_added_because", "involves", ...).
 	Predicate string `json:"predicate"`
 
 	// Object is the value or counterpart ("PaymentService", "redis",
-	// "payment latency exceeded 600ms", ...).
+	// "payment latency exceeded 600ms", ...). Always kept human-readable;
+	// the resolved node ID lives in ObjectID.
 	Object string `json:"object"`
+
+	// ObjectID is the AKG node ID the object resolved to (Stage 9 entity
+	// linking). Empty when the object is not a graph entity.
+	ObjectID string `json:"object_id,omitempty"`
 
 	// ClaimKind classifies how this claim was established (FACT /
 	// EXPLICIT_REASON / INFERENCE / SPECULATION). Never empty for

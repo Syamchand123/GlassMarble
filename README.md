@@ -187,11 +187,14 @@ gmb analyze [--dir <path>] [--full] [--workers <n>] [--commit <hash>] [--verbose
 | `--full` | `false` | Force full re-scan of every file. Default is incremental (git diff). |
 | `--workers` | auto | Number of parallel parser worker goroutines |
 | `--commit` | (working tree) | Git commit hash to associate with this analysis run. Empty (default) diffs the working tree against HEAD; a hash diffs that commit against its parent |
+| `--include-docs` | `false` | Run Stage 9 knowledge fusion (ADR/README/PR claims into developer memory) |
 | `--verbose` | `false` | Print stage-by-stage progress |
 
 **Incremental mode**: On git repositories with an existing `akg.json`, GlassMarble runs `git diff HEAD` and only re-parses changed files, merging the delta into the persisted graph. On the first run (no state file) or when `--full` is passed, every file is scanned.
 
 With `--stage5` (default `true`, human output only), analysis also runs architectural intelligence, persists the result to `.glassmarble/intelligence/latest.json`, stores snapshots in `.glassmarble/snapshots/`, and folds architectural change events into developer memory (`.glassmarble/memory/`). Re-analyzing the same tree is idempotent — events are never duplicated. These stages are non-fatal: failures warn and the graph commit still succeeds.
+
+With `--include-docs` (default `false`, opt-in because doc scanning and git-history walks are not free on large repositories), analysis also runs Stage 9 knowledge fusion: ADR files and READMEs are parsed into knowledge claims, PR/issue references in recent git history become file-level claims, and everything is appended to developer memory — queryable through `gmb memory --ask`. The `fusion:` section of `.glassmarble/config.yaml` tunes the doc globs, technology lexicon and git scan depth; re-analyzing the same tree appends nothing (idempotent).
 
 ---
 

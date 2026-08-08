@@ -39,6 +39,7 @@ var analyzeCmd = &cobra.Command{
 		storeCode, _ := cmd.Flags().GetBool("store-code")
 		isBench, _ := cmd.Flags().GetBool("bench")
 		stage5, _ := cmd.Flags().GetBool("stage5")
+		includeDocs, _ := cmd.Flags().GetBool("include-docs")
 		if targetDir == "" {
 			targetDir = "."
 		}
@@ -56,6 +57,7 @@ var analyzeCmd = &cobra.Command{
 			json:           asJSON,
 			bench:          isBench,
 			stage5:         stage5,
+			includeDocs:    includeDocs,
 		}
 		if isBench {
 			return runAnalysisBenchmark(cmd, opts)
@@ -95,6 +97,10 @@ type runAnalysisOptions struct {
 	// stage5 controls whether Stage 5 architectural intelligence runs after
 	// the graph is committed (human output only).
 	stage5 bool
+	// includeDocs controls whether Stage 9 knowledge fusion (ADR/README/PR
+	// claims) runs after the graph is committed. Opt-in by design — doc
+	// scanning and git-history walks are not free on large repositories.
+	includeDocs bool
 }
 
 // analysisSummary carries the QA numbers of a completed analysis run for the
@@ -397,6 +403,11 @@ func runAnalysis(opts runAnalysisOptions) error {
 	if opts.stage5 {
 		runMemoryStage(storageDir, tm, commitHash, verbose)
 	}
+	// Stage 9 knowledge fusion: ADR/README/PR claims fused into developer
+	// memory. Also human-output-only and non-fatal by design.
+	if opts.includeDocs {
+		runFusionStage(storageDir, tm, verbose)
+	}
 	// Surface files that were skipped (oversized, unknown grammar) or that
 	// produced warnings so silent data loss stays visible (AUDIT Issue 1
 	// Phase 1C-10: skipped/warnings were collected but never printed).
@@ -554,5 +565,6 @@ func init() {
 	analyzeCmd.Flags().Bool("json", false, "Emit machine-readable JSON instead of the human summary")
 	analyzeCmd.Flags().Bool("bench", false, "Run analysis benchmark battery and verify performance against budget gates")
 	analyzeCmd.Flags().Bool("stage5", true, "Run Stage 5 architectural intelligence after committing the graph (human output only)")
+	analyzeCmd.Flags().Bool("include-docs", false, "Run Stage 9 knowledge fusion: fuse ADR/README/PR claims from documentation and git history into developer memory")
 	rootCmd.AddCommand(analyzeCmd)
 }
