@@ -91,9 +91,9 @@ func Schema(props map[string]Prop) map[string]any {
 	return schema
 }
 
-// All returns the full ordered tool registry.
 func All() []Tool {
-	return append(systemTools(), append(akgTools(), append(codeTools(), diagramTools()...)...)...)
+	tools := append(systemTools(), append(akgTools(), append(codeTools(), diagramTools()...)...)...)
+	return append(tools, QueryMemoryTool, TimelineTool, PatternTool)
 }
 
 // Select restricts the registry to the requested tool categories and exact

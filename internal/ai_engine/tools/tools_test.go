@@ -619,8 +619,8 @@ func TestSelectRestriction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Select(mixed): %v", err)
 	}
-	if len(mixed) != 19 {
-		t.Errorf("mixed tools = %d, want 19 (18 akg + system_status)", len(mixed))
+	if len(mixed) != 22 { // 21 akg (was 18 + 3 new) + system_status
+		t.Errorf("mixed tools = %d, want 22 (21 akg + system_status)", len(mixed))
 	}
 
 	if _, err := tools.Select(all, []string{"bogus"}); err == nil || !strings.Contains(err.Error(), "bogus") {
