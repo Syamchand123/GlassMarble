@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Syamchand123/GlassMarble/internal/commit_reasoning"
+	"github.com/Syamchand123/GlassMarble/internal/git"
 )
 
 type Issue struct {
@@ -32,7 +32,7 @@ func (a *LocalGitAdapter) Name() string {
 	return "LocalGitAdapter"
 }
 
-func (a *LocalGitAdapter) fetchFromGit(ctx context.Context, pattern string, refs []string) (map[string]*commit_reasoning.CommitMeta, error) {
+func (a *LocalGitAdapter) fetchFromGit(ctx context.Context, pattern string, refs []string) (map[string]*git.CommitMeta, error) {
 	// If refs provided, build an OR regex for them, else just general pattern
 	grepPattern := pattern
 	if len(refs) > 0 {
@@ -46,13 +46,13 @@ func (a *LocalGitAdapter) fetchFromGit(ctx context.Context, pattern string, refs
 		return nil, err
 	}
 
-	commits := make(map[string]*commit_reasoning.CommitMeta)
+	commits := make(map[string]*git.CommitMeta)
 	hashes := strings.Split(strings.TrimSpace(string(out)), "\n")
 	for _, h := range hashes {
 		if h == "" {
 			continue
 		}
-		meta, err := commit_reasoning.ReadCommit(a.RepoDir, h)
+		meta, err := git.ReadCommit(a.RepoDir, h)
 		if err == nil {
 			commits[h] = meta
 		}

@@ -24,11 +24,24 @@ type CommitMeta struct {
 const defaultCouplingChangePct = 0.2
 
 // eventID derives a deterministic 16-hex event id from the commit, kind and
-// sorted affected ids, so identical changes produce identical events.
+// affected ids, so identical changes produce identical events.
 func eventID(commit string, kind archmodel.EventKind, affected []string) string {
 	parts := append([]string{commit, string(kind)}, affected...)
 	sum := sha256.Sum256([]byte(strings.Join(parts, "|")))
 	return "evt_" + hex.EncodeToString(sum[:8])
+}
+
+// EventID is the exported form of the deterministic event-ID scheme shared by
+// every event producer (Stage 5D snapshot diff and Stage 8 commit reasoning).
+//
+// Stage 8 must produce the exact same ID for the same (commit, kind, affected)
+// tuple so the Stage 6 memory builder can deduplicate the two generators: the
+// Stage 8 event (enriched with intent, PR refs and impact) is appended first
+// and the identical Stage 5D event is dropped. Producers therefore must agree
+// on the canonical ordering of affected IDs — see the classifier contract in
+// internal/commit_reasoning.
+func EventID(commit string, kind archmodel.EventKind, affected []string) string {
+	return eventID(commit, kind, affected)
 }
 
 // newEvent builds an ArchEvent with a deterministic ID and populated evidence.

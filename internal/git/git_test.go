@@ -190,3 +190,188 @@ func TestGetCommitTimestamp(t *testing.T) {
 		t.Error("expected error for an empty ref")
 	}
 }
+
+// commitRepo builds a small git repository with deterministic content:
+//   - root commit "initial" adding a.txt
+//   - tagged commit "add payment service | with pipe" adding b.txt (subject
+//     contains a pipe to prove NUL parsing survives it)
+//   - final commit with a multi-line body mentioning "Fixes #42" and
+//     "PR #12" and a rename of b.txt → c.txt plus a binary file
+func commitRepo(t *testing.T) string {
+	t.Helper()
+	repoDir := setupMockRepo(t)
+	write := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(repoDir, name), []byte(content), 0644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	write("a.txt", "a1\n")
+	runCmd(t, repoDir, "git", "add", "a.txt")
+	runCmd(t, repoDir, "git", "commit", "-m", "initial", "--date", "@1700000000")
+
+	write("b.txt", "b1\nb2\nb3\n")
+	runCmd(t, repoDir, "git", "add", "b.txt")
+	runCmd(t, repoDir, "git", "commit", "-m", "add payment service | with pipe", "--date", "@1700000100")
+	runCmd(t, repoDir, "git", "tag", "v1.0.0")
+
+	write("c.txt", "c1\n")
+	runCmd(t, repoDir, "git", "add", "c.txt")
+	runCmd(t, repoDir, "git", "rm", "-q", "b.txt")
+	binary := make([]byte, 64)
+	for i := range binary {
+		binary[i] = byte(i)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "blob.bin"), binary, 0644); err != nil {
+		t.Fatalf("write blob.bin: %v", err)
+	}
+	runCmd(t, repoDir, "git", "add", "blob.bin")
+	runCmd(t, repoDir, "git", "commit", "-m", "wire up payment\r\n\r\nfixes #42 and references PR #12 because the DB was slow", "--date", "@1700000200")
+	return repoDir
+}
+
+func TestReadCommit(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available in PATH")
+	}
+	repoDir := commitRepo(t)
+	defer os.RemoveAll(repoDir)
+
+	head, err := git.GetHEADCommitHash(repoDir)
+	if err != nil {
+		t.Fatalf("GetHEADCommitHash: %v", err)
+	}
+
+	// Short prefix must resolve to the same commit as the full hash.
+	meta, err := git.ReadCommit(repoDir, head[:8])
+	if err != nil {
+		t.Fatalf("ReadCommit(prefix): %v", err)
+	}
+	if meta.Hash != head {
+		t.Errorf("Hash = %q, want %q", meta.Hash, head)
+	}
+	if meta.Subject != "wire up payment" {
+		t.Errorf("Subject = %q, want %q", meta.Subject, "wire up payment")
+	}
+	if !strings.Contains(meta.Body, "fixes #42") {
+		t.Errorf("Body should contain the full multi-line message, got %q", meta.Body)
+	}
+	if !meta.Timestamp.Equal(time.Unix(1700000200, 0).UTC()) {
+		t.Errorf("Timestamp = %v, want 1700000200", meta.Timestamp)
+	}
+	if len(meta.Parents) != 1 {
+		t.Errorf("Parents = %v, want exactly 1 parent", meta.Parents)
+	}
+	// The commit renames b.txt→c.txt, adds c.txt/blob.bin, deletes b.txt.
+	found := map[string]bool{"c.txt": false, "blob.bin": false}
+	for _, f := range meta.Files {
+		if _, ok := found[f]; ok {
+			found[f] = true
+		}
+	}
+	if !found["c.txt"] {
+		t.Errorf("Files should contain c.txt, got %v", meta.Files)
+	}
+	if !found["blob.bin"] {
+		t.Errorf("Files should contain blob.bin (binary), got %v", meta.Files)
+	}
+	if meta.Insertions <= 0 {
+		t.Errorf("Insertions = %d, want > 0", meta.Insertions)
+	}
+	if meta.Deletions <= 0 {
+		t.Errorf("Deletions = %d, want > 0 (b.txt removed)", meta.Deletions)
+	}
+}
+
+func TestReadCommit_TagsAndBodyPipes(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available in PATH")
+	}
+	repoDir := commitRepo(t)
+	defer os.RemoveAll(repoDir)
+
+	// The middle commit's subject contains a pipe — a "|"-split parse would
+	// truncate it. NUL-separated parsing must survive.
+	byTag, err := git.ResolveRef(repoDir, "v1.0.0")
+	if err != nil {
+		t.Fatalf("ResolveRef(v1.0.0): %v", err)
+	}
+	meta, err := git.ReadCommit(repoDir, byTag)
+	if err != nil {
+		t.Fatalf("ReadCommit(tagged): %v", err)
+	}
+	if meta.Subject != "add payment service | with pipe" {
+		t.Errorf("Subject with pipe = %q", meta.Subject)
+	}
+	if len(meta.Tags) != 1 || meta.Tags[0] != "v1.0.0" {
+		t.Errorf("Tags = %v, want [v1.0.0]", meta.Tags)
+	}
+	if !meta.Timestamp.Equal(time.Unix(1700000100, 0).UTC()) {
+		t.Errorf("Timestamp = %v, want 1700000100", meta.Timestamp)
+	}
+	// Root commit: no parents, no tags.
+	rootMeta, err := git.ReadCommit(repoDir, "HEAD~2")
+	if err != nil {
+		t.Fatalf("ReadCommit(root): %v", err)
+	}
+	if len(rootMeta.Parents) != 0 {
+		t.Errorf("Root commit Parents = %v, want none", rootMeta.Parents)
+	}
+	if len(rootMeta.Tags) != 0 {
+		t.Errorf("Root commit Tags = %v, want none", rootMeta.Tags)
+	}
+}
+
+func TestReadCommit_Errors(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available in PATH")
+	}
+	repoDir := setupMockRepo(t)
+	defer os.RemoveAll(repoDir)
+
+	if _, err := git.ReadCommit(repoDir, "no-such-commit"); err == nil {
+		t.Error("expected error for an unresolvable commit")
+	}
+	if _, err := git.ReadCommit("", "HEAD"); err == nil {
+		t.Error("expected error for an empty repo dir")
+	}
+	if _, err := git.ReadCommit(repoDir, ""); err == nil {
+		t.Error("expected error for an empty ref")
+	}
+}
+
+func TestReadCommitRange(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available in PATH")
+	}
+	repoDir := commitRepo(t)
+	defer os.RemoveAll(repoDir)
+
+	head, err := git.GetHEADCommitHash(repoDir)
+	if err != nil {
+		t.Fatalf("GetHEADCommitHash: %v", err)
+	}
+	root, err := git.ResolveRef(repoDir, "HEAD~2")
+	if err != nil {
+		t.Fatalf("ResolveRef: %v", err)
+	}
+
+	metas, err := git.ReadCommitRange(repoDir, root, head)
+	if err != nil {
+		t.Fatalf("ReadCommitRange: %v", err)
+	}
+	if len(metas) != 2 {
+		t.Fatalf("got %d commits in range, want 2", len(metas))
+	}
+	// Oldest first.
+	if metas[0].Subject != "add payment service | with pipe" {
+		t.Errorf("metas[0].Subject = %q, want the middle commit first", metas[0].Subject)
+	}
+	if metas[1].Subject != "wire up payment" {
+		t.Errorf("metas[1].Subject = %q, want the head commit last", metas[1].Subject)
+	}
+	if !metas[0].Timestamp.Before(metas[1].Timestamp) {
+		t.Error("range commits must be ordered oldest first")
+	}
+}

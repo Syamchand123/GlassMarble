@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/arch_intelligence"
 	"github.com/Syamchand123/GlassMarble/internal/arch_timeline"
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
+	"github.com/Syamchand123/GlassMarble/internal/commit_reasoning"
 	"github.com/Syamchand123/GlassMarble/internal/config"
 	"github.com/Syamchand123/GlassMarble/internal/developer_memory"
 	"github.com/Syamchand123/GlassMarble/internal/git"
@@ -76,13 +78,59 @@ func runMemoryStage(storageDir string, tm *akg.AKGTransactionManager, commitHash
 		return
 	}
 
-	// 3+4. Event generation + memory ingestion.
+	// 3+4. Event generation + memory ingestion. Stage 8 (commit reasoning)
+	// runs FIRST: its events share the 5D event-ID scheme and are enriched
+	// with intent, PR/issue refs and impact, and the memory builder keeps
+	// the first occurrence — so the reasoned events win the dedup and the
+	// identical Stage 5D twins are dropped (master plan §13.1).
 	var events []archmodel.ArchEvent
-	if prevSnap != nil {
-		events = arch_intelligence.GenerateEvents(prevSnap, snap, nil, arch_intelligence.CommitMeta{
+	var graphDiff *akg.GraphDiff
+	if prevSnap != nil && commitHash != "" {
+		cfg := config.DefaultIntelligenceConfig()
+		if local, lerr := loadIntelligenceConfig(storageDir); lerr == nil {
+			cfg = local
+		}
+		extractor := commit_reasoning.NewIntentExtractor()
+		if cfg.LLMIntentEnabled {
+			if llm := newIntentLLM(filepath.Dir(storageDir)); llm != nil {
+				extractor = commit_reasoning.NewIntentExtractor(commit_reasoning.WithLLM(llm))
+			}
+		}
+		reasoner := commit_reasoning.NewReasoner(
+			commit_reasoning.WithConfig(cfg),
+			commit_reasoning.WithLayerForbidden(cfgForbiddenPairs(storageDir)),
+			commit_reasoning.WithIntentExtractor(extractor),
+		)
+		// Replay the previous snapshot's graph so cycle/layer rules have a
+		// base state; nil when the previous snapshot was --no-graph.
+		baseGraph, _ := arch_timeline.Replay(prevSnap)
+		if baseGraph != nil {
+			graphDiff = akg.DiffGraphs(baseGraph, graph)
+		}
+		reasoned, rerr := reasoner.ReasonCommit(context.Background(), commit_reasoning.ReasonInput{
+			RepoDir:    filepath.Dir(storageDir),
+			CommitHash: commitHash,
+			BaseSnap:   prevSnap,
+			HeadSnap:   snap,
+			GraphDiff:  graphDiff,
+			BaseGraph:  baseGraph,
+			HeadGraph:  graph,
+		})
+		if rerr != nil {
+			if verbose {
+				fmt.Printf("warning: Stage 8 commit reasoning failed: %v\n", rerr)
+			}
+		} else {
+			events = append(events, reasoned...)
+			if len(reasoned) > 0 {
+				fmt.Printf("Stage 8: reasoned %d architectural change(s)\n", len(reasoned))
+			}
+		}
+
+		events = append(events, arch_intelligence.GenerateEvents(prevSnap, snap, graphDiff, arch_intelligence.CommitMeta{
 			Hash:      commitHash,
 			Timestamp: snap.Timestamp,
-		})
+		})...)
 	} else if verbose {
 		fmt.Println("Stage 6: no previous snapshot — skipping event generation (first analysis)")
 	}
