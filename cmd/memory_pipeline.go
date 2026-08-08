@@ -15,6 +15,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
 	"github.com/Syamchand123/GlassMarble/internal/config"
 	"github.com/Syamchand123/GlassMarble/internal/developer_memory"
+	"github.com/Syamchand123/GlassMarble/internal/git"
 )
 
 // runMemoryStage is the Stage 5 + Stage 6 wiring point (master plan §13.1).
@@ -38,20 +39,7 @@ func runMemoryStage(storageDir string, tm *akg.AKGTransactionManager, commitHash
 		return
 	}
 
-	cfg := config.DefaultIntelligenceConfig()
-	if local, lerr := loadIntelligenceConfig(storageDir); lerr == nil {
-		cfg = local
-	}
-	opts := []arch_intelligence.EngineOption{
-		arch_intelligence.WithConfig(cfg),
-		arch_intelligence.WithLayerForbidden(cfgForbiddenPairs(storageDir)),
-	}
-	if verbose {
-		opts = append(opts, arch_intelligence.WithLogger(func(format string, args ...any) {
-			fmt.Printf(format+"\n", args...)
-		}))
-	}
-	res := arch_intelligence.NewEngineWithOptions(graph, opts...).Run()
+	res := runIntelligence(graph, storageDir, verbose)
 
 	fmt.Printf("Stage 5: %d components | %d patterns | %d smells | %d cycles | %d layer violations\n",
 		len(res.Components), len(res.Patterns), len(res.Smells), res.Metrics.CycleCount, res.Metrics.LayerViolationCount)
@@ -69,27 +57,23 @@ func runMemoryStage(storageDir string, tm *akg.AKGTransactionManager, commitHash
 	}
 
 	// 2. Snapshot. Failures here are warnings: snapshots and memory are
-	// derived state, not the graph.
-	commitTime := time.Now()
-	prevSnap, _ := arch_timeline.NewSnapshotStore(snapshotDir(storageDir)).Latest()
+	// derived state, not the graph. One store instance for the whole stage —
+	// two instances could disagree on the index mid-run.
+	store, err := arch_timeline.NewSnapshotStore(snapshotDir(storageDir))
+	if err != nil {
+		if verbose {
+			fmt.Printf("warning: snapshot store unavailable: %v\n", err)
+		}
+		return
+	}
+	prevSnap, _ := store.Latest()
 
-	snap, err := arch_timeline.BuildSnapshot(arch_timeline.SnapshotInput{
-		Graph:      graph,
-		CommitHash: commitHash,
-		Timestamp:  commitTime,
-		Components: res.Components,
-		Patterns:   res.Patterns,
-		Smells:     res.Smells,
-		Metrics:    res.Metrics,
-	})
+	snap, _, err := buildAndStoreSnapshot(filepath.Dir(storageDir), graph, commitHash, res, store, false)
 	if err != nil {
 		if verbose {
 			fmt.Printf("warning: snapshot build failed: %v\n", err)
 		}
 		return
-	}
-	if err := arch_timeline.NewSnapshotStore(snapshotDir(storageDir)).Create(snap); err != nil {
-		fmt.Printf("warning: snapshot persist failed: %v\n", err)
 	}
 
 	// 3+4. Event generation + memory ingestion.
@@ -97,16 +81,16 @@ func runMemoryStage(storageDir string, tm *akg.AKGTransactionManager, commitHash
 	if prevSnap != nil {
 		events = arch_intelligence.GenerateEvents(prevSnap, snap, nil, arch_intelligence.CommitMeta{
 			Hash:      commitHash,
-			Timestamp: commitTime,
+			Timestamp: snap.Timestamp,
 		})
 	} else if verbose {
 		fmt.Println("Stage 6: no previous snapshot — skipping event generation (first analysis)")
 	}
 
-	store := developer_memory.NewStoreForRepo(filepath.Dir(storageDir)).WithLogger(func(format string, args ...any) {
+	store6 := developer_memory.NewStoreForRepo(filepath.Dir(storageDir)).WithLogger(func(format string, args ...any) {
 		fmt.Printf("warning: "+format+"\n", args...)
 	})
-	builder := developer_memory.NewMemoryBuilderWithOptions(store,
+	builder := developer_memory.NewMemoryBuilderWithOptions(store6,
 		developer_memory.WithProjectID(projectIDFor(filepath.Dir(storageDir))))
 
 	appended, err := builder.ProcessEvents(events)
@@ -121,6 +105,66 @@ func runMemoryStage(storageDir string, tm *akg.AKGTransactionManager, commitHash
 			fmt.Println("Stage 6: no architectural changes since the previous analysis")
 		}
 	}
+}
+
+// runIntelligence runs the Stage 5 engine once on a committed graph with the
+// repository's intelligence configuration.
+func runIntelligence(graph *akg.CodePropertyGraph, storageDir string, verbose bool) arch_intelligence.Stage5Result {
+	cfg := config.DefaultIntelligenceConfig()
+	if local, lerr := loadIntelligenceConfig(storageDir); lerr == nil {
+		cfg = local
+	}
+	opts := []arch_intelligence.EngineOption{
+		arch_intelligence.WithConfig(cfg),
+		arch_intelligence.WithLayerForbidden(cfgForbiddenPairs(storageDir)),
+	}
+	if verbose {
+		opts = append(opts, arch_intelligence.WithLogger(func(format string, args ...any) {
+			fmt.Printf(format+"\n", args...)
+		}))
+	}
+	return arch_intelligence.NewEngineWithOptions(graph, opts...).Run()
+}
+
+// buildAndStoreSnapshot builds an ArchSnapshot for the committed graph and
+// persists it through store (skip-writing when the topology is unchanged —
+// see SnapshotStore.Create). The snapshot timestamp is the commit's author
+// time (master plan §5.5 / D3), so snapshots and the timeline are ordered by
+// when the change happened, not when analysis ran; uncommitted states (watch
+// mode) fall back to now. The git-history order hint (rev-list --count)
+// keeps same-second commits correctly ordered. Returns the snapshot and
+// whether a file was written.
+func buildAndStoreSnapshot(repoDir string, graph *akg.CodePropertyGraph, commitHash string, res arch_intelligence.Stage5Result, store *arch_timeline.SnapshotStore, noGraph bool) (*archmodel.ArchSnapshot, bool, error) {
+	ts := time.Now().UTC()
+	var order int64
+	if commitHash != "" && repoDir != "" {
+		if ct, err := git.GetCommitTimestamp(repoDir, commitHash); err == nil {
+			ts = ct
+		}
+		if o, err := git.GetCommitOrder(repoDir, commitHash); err == nil {
+			order = o
+		}
+	}
+
+	snap, err := arch_timeline.BuildSnapshot(arch_timeline.SnapshotInput{
+		Graph:      graph,
+		CommitHash: commitHash,
+		Timestamp:  ts,
+		Order:      order,
+		Components: res.Components,
+		Patterns:   res.Patterns,
+		Smells:     res.Smells,
+		Metrics:    res.Metrics,
+		NoGraph:    noGraph,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	wrote, err := store.Create(snap)
+	if err != nil {
+		return nil, false, err
+	}
+	return snap, wrote, nil
 }
 
 // snapshotDir is the .glassmarble/snapshots directory.

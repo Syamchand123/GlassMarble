@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/git"
 )
@@ -114,5 +115,78 @@ func TestGitHelpers(t *testing.T) {
 	count := strings.Count(string(data2), ".glassmarble/")
 	if count != 1 {
 		t.Errorf("Expected exactly one occurrence of '.glassmarble/', got %d", count)
+	}
+}
+
+func TestGetCommitTimestamp(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available in PATH")
+	}
+	repoDir := setupMockRepo(t)
+	defer os.RemoveAll(repoDir)
+
+	// No commits yet → ref cannot be resolved.
+	if _, err := git.GetCommitTimestamp(repoDir, "HEAD"); err == nil {
+		t.Error("expected error resolving HEAD on a repo with no commits")
+	}
+
+	file := filepath.Join(repoDir, "f.txt")
+	if err := os.WriteFile(file, []byte("v1"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	runCmd(t, repoDir, "git", "add", "f.txt")
+	runCmd(t, repoDir, "git", "commit", "-m", "first", "--date", "@1700000000")
+	head, err := git.GetHEADCommitHash(repoDir)
+	if err != nil {
+		t.Fatalf("GetHEADCommitHash: %v", err)
+	}
+
+	// Full hash, short prefix, and the HEAD ref must all resolve, and to the
+	// same instant (author timestamp, UTC).
+	full, err := git.GetCommitTimestamp(repoDir, head)
+	if err != nil {
+		t.Fatalf("GetCommitTimestamp(full): %v", err)
+	}
+	short, err := git.GetCommitTimestamp(repoDir, head[:8])
+	if err != nil {
+		t.Fatalf("GetCommitTimestamp(prefix): %v", err)
+	}
+	byHead, err := git.GetCommitTimestamp(repoDir, "HEAD")
+	if err != nil {
+		t.Fatalf("GetCommitTimestamp(HEAD): %v", err)
+	}
+	if !full.Equal(short) || !full.Equal(byHead) {
+		t.Errorf("timestamps disagree: full=%v prefix=%v HEAD=%v", full, short, byHead)
+	}
+	if !full.Equal(time.Unix(1700000000, 0).UTC()) {
+		t.Errorf("expected the authored time 1700000000, got %v", full)
+	}
+	if full.Location() != time.UTC {
+		t.Errorf("expected UTC, got %v", full.Location())
+	}
+
+	// A second commit authored later must resolve later.
+	runCmd(t, repoDir, "git", "commit", "--allow-empty", "-m", "second", "--date", "@1700001000")
+	second, err := git.GetCommitTimestamp(repoDir, "HEAD")
+	if err != nil {
+		t.Fatalf("GetCommitTimestamp(second): %v", err)
+	}
+	if !second.Equal(time.Unix(1700001000, 0).UTC()) {
+		t.Errorf("second commit timestamp = %v, want 1700001000", second)
+	}
+	if !second.After(full) {
+		t.Errorf("second commit timestamp %v should be after first %v", second, full)
+	}
+
+	// Bogus refs must error.
+	if _, err := git.GetCommitTimestamp(repoDir, "no-such-ref-xyz"); err == nil {
+		t.Error("expected error for an unresolvable ref")
+	}
+	// Empty inputs must error, not run git.
+	if _, err := git.GetCommitTimestamp("", "HEAD"); err == nil {
+		t.Error("expected error for an empty repo dir")
+	}
+	if _, err := git.GetCommitTimestamp(repoDir, ""); err == nil {
+		t.Error("expected error for an empty ref")
 	}
 }

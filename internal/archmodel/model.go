@@ -233,6 +233,11 @@ type ArchSnapshot struct {
 	CommitHash   string              `json:"commit_hash"`
 	Version      string              `json:"version,omitempty"`
 	Timestamp    time.Time           `json:"timestamp"`
+	// Order is the commit's position in git history (git rev-list --count),
+	// used by the snapshot store to order snapshots when several commits
+	// share the same author timestamp (sub-second commit bursts). 0 means
+	// unknown (e.g. uncommitted watch-mode states).
+	Order        int64               `json:"order,omitempty"`
 	NodeCount    int                 `json:"node_count"`
 	EdgeCount    int                 `json:"edge_count"`
 	Components   []DetectedComponent `json:"components"`
