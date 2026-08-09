@@ -147,6 +147,14 @@ func QueryMemoryFromMemory(mem *DeveloperMemory, query string, topK int) *Memory
 	return result
 }
 
+// QueryTerms returns the normalized, stopword-filtered query tokens used by
+// the memory query layer. Exported for consumers that need identical
+// tokenization for their own matching (e.g. Stage 12 evidence retrieval), so
+// entity extraction never drifts from the ranking logic.
+func QueryTerms(query string) []string {
+	return tokenize(query)
+}
+
 // GetComponentTimeline returns all timeline entries mentioning a component,
 // matched case-insensitively by substring (so "redis" finds "RedisCache").
 // Entries are ordered oldest first.

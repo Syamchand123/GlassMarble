@@ -8,9 +8,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine"
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/aiconfig"
-	"github.com/Syamchand123/GlassMarble/internal/ai_engine/akgbridge"
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/provider"
-	"github.com/Syamchand123/GlassMarble/internal/developer_memory"
 )
 
 var whyCmd = &cobra.Command{
@@ -34,22 +32,13 @@ var whyCmd = &cobra.Command{
 			return err
 		}
 
-		bridge := akgbridge.New(rootDir)
-		snap, err := bridge.Snapshot()
-		if err != nil {
-			return fmt.Errorf("no AKG snapshot available: %w", err)
-		}
-
-		memStore := developer_memory.NewMemoryStore(rootDir)
-		mem, _ := memStore.LoadMemory() // It's okay if memory is partial or missing
-		if mem == nil {
-			mem = &developer_memory.DeveloperMemory{}
-		}
-
 		// 1. Retrieve Evidence
 		fmt.Println("Retrieving architectural evidence...")
-		retriever := ai_engine.NewEvidenceRetriever(snap, mem)
-		ctxData := retriever.RetrieveForQuestion(question, 10)
+		retriever := ai_engine.NewRetriever(rootDir)
+		ctxData := retriever.RetrieveForQuestion(question, ai_engine.RetrieveOptions{TopK: 10})
+		if ctxData.Empty() {
+			return fmt.Errorf("no architectural evidence found for %q (run analysis first?)", question)
+		}
 
 		// 2. Build Grounded Prompt
 		groundedPrompt := ctxData.BuildPrompt()
