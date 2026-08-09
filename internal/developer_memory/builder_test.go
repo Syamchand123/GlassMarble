@@ -482,3 +482,96 @@ func TestMemoryAggregateJSONRoundtrip(t *testing.T) {
 		t.Errorf("roundtrip lost timeline/events: %+v", back)
 	}
 }
+
+// TestProcessEvents_StateChangeTransition verifies the Stage 11 STATE_CHANGE
+// event contract: the component state is set from the well-known tag, the
+// claim says "<component> state_changed_to <state>", and a rebuild from the
+// WAL reproduces the transition exactly (reproducibility).
+func TestProcessEvents_StateChangeTransition(t *testing.T) {
+	store := newTestStore(t)
+	builder := NewMemoryBuilder(store)
+
+	t1 := baseTime
+	t2 := baseTime.Add(24 * time.Hour)
+
+	added := testEvent("e1", archmodel.EventServiceAdded, t1, []string{"PaymentService"})
+	transition := testEvent("e2", archmodel.EventStateChanged, t2, []string{"PaymentService"})
+	transition.Tags = []string{"aging", archmodel.StateTag(string(StateDeprecated))}
+
+	if _, err := builder.ProcessEvents([]archmodel.ArchEvent{added, transition}); err != nil {
+		t.Fatalf("ProcessEvents: %v", err)
+	}
+
+	mem, err := store.LoadMemory()
+	if err != nil {
+		t.Fatalf("LoadMemory: %v", err)
+	}
+	history := mem.ComponentMemory["PaymentService"]
+	if history.State != StateDeprecated {
+		t.Errorf("state = %s, want DEPRECATED", history.State)
+	}
+
+	var transitionClaim *KnowledgeClaim
+	for i := range mem.GlobalMemory {
+		c := &mem.GlobalMemory[i]
+		if c.Predicate == "state_changed_to" {
+			transitionClaim = c
+		}
+	}
+	if transitionClaim == nil {
+		t.Fatalf("no state_changed_to claim in global memory")
+	}
+	if transitionClaim.Subject != "PaymentService" || transitionClaim.Object != "DEPRECATED" {
+		t.Errorf("claim = %q state_changed_to %q, want PaymentService -> DEPRECATED",
+			transitionClaim.Subject, transitionClaim.Object)
+	}
+	if transitionClaim.ClaimKind != ClaimFact {
+		t.Errorf("transition claim kind = %s, want FACT", transitionClaim.ClaimKind)
+	}
+	if !transitionClaim.ValidFrom.Equal(t2) {
+		t.Errorf("transition claim ValidFrom = %v, want %v", transitionClaim.ValidFrom, t2)
+	}
+
+	// Timeline carries the transition as a STATE_CHANGE row.
+	foundTimeline := false
+	for _, entry := range mem.Timeline {
+		if entry.EventKind == archmodel.EventStateChanged && entry.Components[0] == "PaymentService" {
+			foundTimeline = true
+		}
+	}
+	if !foundTimeline {
+		t.Errorf("timeline does not contain the STATE_CHANGE row")
+	}
+
+	// Rebuild reproduces the state: fresh aggregate from the WALs only.
+	rebuilt, err := store.Rebuild()
+	if err != nil {
+		t.Fatalf("Rebuild: %v", err)
+	}
+	if rebuilt.ComponentMemory["PaymentService"].State != StateDeprecated {
+		t.Errorf("rebuilt state = %s, want DEPRECATED (WAL replay must reproduce aging)", rebuilt.ComponentMemory["PaymentService"].State)
+	}
+}
+
+// TestProcessEvents_StateChangeMissingTagIsNoOp pins the defensive behavior:
+// a STATE_CHANGE event without the well-known tag changes nothing (a corrupt
+// event must not corrupt memory).
+func TestProcessEvents_StateChangeMissingTagIsNoOp(t *testing.T) {
+	store := newTestStore(t)
+	builder := NewMemoryBuilder(store)
+
+	added := testEvent("e1", archmodel.EventServiceAdded, baseTime, []string{"PaymentService"})
+	bad := testEvent("e2", archmodel.EventStateChanged, baseTime.Add(time.Hour), []string{"PaymentService"})
+	bad.Tags = []string{"aging"} // no state= tag
+
+	if _, err := builder.ProcessEvents([]archmodel.ArchEvent{added, bad}); err != nil {
+		t.Fatalf("ProcessEvents: %v", err)
+	}
+	mem, err := store.LoadMemory()
+	if err != nil {
+		t.Fatalf("LoadMemory: %v", err)
+	}
+	if got := mem.ComponentMemory["PaymentService"].State; got != StateActive {
+		t.Errorf("state = %s, want CURRENT (missing tag must not change state)", got)
+	}
+}

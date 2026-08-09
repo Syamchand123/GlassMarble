@@ -29,6 +29,10 @@ type Config struct {
 	// overlay on queries, deterministic convention extraction). nil means
 	// defaults (config.DefaultLearningConfig()).
 	Learning *LearningConfig `yaml:"learning"`
+	// Aging holds the Stage 11 knowledge-aging settings (freshness decay
+	// half-lives, state-transition thresholds). nil means defaults
+	// (config.DefaultAgingConfig()).
+	Aging *AgingConfig `yaml:"aging"`
 }
 
 // DriftConfig declares the architecture invariants checked by `gmb drift`.
@@ -188,5 +192,8 @@ func mergeYAML(path string, cfg *Config) {
 	}
 	if temp.Learning != nil {
 		cfg.Learning = temp.Learning
+	}
+	if temp.Aging != nil {
+		cfg.Aging = temp.Aging
 	}
 }

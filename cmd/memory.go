@@ -8,8 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Syamchand123/GlassMarble/internal/arch_timeline"
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
 	"github.com/Syamchand123/GlassMarble/internal/developer_memory"
+	"github.com/Syamchand123/GlassMarble/internal/knowledge_aging"
 	"github.com/Syamchand123/GlassMarble/internal/learning"
 	"github.com/spf13/cobra"
 )
@@ -64,6 +66,10 @@ labelled by how they were established (FACT / EXPLICIT_REASON / INFERENCE
 			lcfg = nil
 		}
 		learner := learning.NewLearnerForRepo(absDir, learning.WithConfig(lcfg))
+		// Latest architecture snapshot for the Stage 11 missing-entity
+		// projection; nil when no analysis has run yet (the projection
+		// degrades gracefully to FreshenMemory).
+		snap := latestSnapshotOrNil(absDir)
 
 		switch {
 		case listCorrections:
@@ -71,11 +77,11 @@ labelled by how they were established (FACT / EXPLICIT_REASON / INFERENCE
 		case correct != "":
 			return recordCorrection(cmd, learner, store, correct, kind, value, reason, author, asJSON)
 		case ask != "":
-			return renderQuery(cmd, learner, store, ask, asJSON)
+			return renderQuery(cmd, learner, store, snap, ask, asJSON)
 		case component != "":
-			return renderComponent(cmd, learner, store, component, asJSON)
+			return renderComponent(cmd, learner, store, snap, component, asJSON)
 		default:
-			return renderOverview(cmd, learner, store, asJSON)
+			return renderOverview(cmd, learner, store, snap, asJSON)
 		}
 	},
 }
@@ -95,10 +101,26 @@ func init() {
 	rootCmd.AddCommand(memoryCmd)
 }
 
+// latestSnapshotOrNil loads the most recent architecture snapshot for the
+// Stage 11 missing-entity projection. Absence of a snapshot is absence of
+// information: any failure yields nil and callers degrade gracefully (a nil
+// snapshot behaves exactly like FreshenMemory).
+func latestSnapshotOrNil(absRepoDir string) *archmodel.ArchSnapshot {
+	store, err := arch_timeline.NewSnapshotStore(snapshotDir(filepath.Join(absRepoDir, ".glassmarble")))
+	if err != nil {
+		return nil
+	}
+	snap, err := store.Latest()
+	if err != nil {
+		return nil
+	}
+	return snap
+}
+
 // renderOverview prints the memory stats and current components. JSON mode
 // emits the whole aggregate so machine consumers get everything. Stage 10
 // corrections (e.g. a STATE override) are reflected in the projection.
-func renderOverview(cmd *cobra.Command, learner *learning.Learner, store *developer_memory.MemoryStore, asJSON bool) error {
+func renderOverview(cmd *cobra.Command, learner *learning.Learner, store *developer_memory.MemoryStore, snap *archmodel.ArchSnapshot, asJSON bool) error {
 	mem, err := store.LoadMemory()
 	if err != nil {
 		return fmt.Errorf("failed to load memory: %w", err)
@@ -107,6 +129,10 @@ func renderOverview(cmd *cobra.Command, learner *learning.Learner, store *develo
 	if err != nil {
 		return fmt.Errorf("failed to apply corrections: %w", err)
 	}
+	// Stage 11: recompute freshness live and project temporal states
+	// (including missing-entity marking against the latest snapshot), so
+	// the view always reflects the clock, never a stale persisted score.
+	proj = knowledge_aging.FreshenMemoryWithSnapshot(proj, snap, time.Now(), nil)
 	if asJSON {
 		out, _ := json.MarshalIndent(proj, "", "  ")
 		fmt.Fprintln(cmd.OutOrStdout(), string(out))
@@ -136,7 +162,38 @@ func renderOverview(cmd *cobra.Command, learner *learning.Learner, store *develo
 	if len(applied) > 0 {
 		fmt.Fprintf(cmd.OutOrStdout(), "\n%d correction(s) applied to this view — 'gmb memory --corrections' for the audit trail.\n", appliedCount(applied))
 	}
+	if line := agingSummaryLine(proj); line != "" {
+		fmt.Fprintln(cmd.OutOrStdout(), line)
+	}
 	return nil
+}
+
+// agingSummaryLine renders the Stage 11 freshness summary for the overview
+// (empty when there is nothing to age).
+func agingSummaryLine(mem *developer_memory.DeveloperMemory) string {
+	if mem == nil || mem.TotalEvents == 0 {
+		return ""
+	}
+	avg, claims := averageFreshness(mem, time.Now())
+	if claims == 0 {
+		return ""
+	}
+	var deprecated, removed, historical int
+	for _, h := range mem.ComponentMemory {
+		switch h.State {
+		case developer_memory.StateDeprecated:
+			deprecated++
+		case developer_memory.StateRemoved:
+			removed++
+		case developer_memory.StateHistorical:
+			historical++
+		}
+	}
+	line := fmt.Sprintf("aging: average freshness %.0f%% over %d claim(s)", avg*100, claims)
+	if deprecated > 0 || removed > 0 || historical > 0 {
+		line += fmt.Sprintf(" | %d deprecated, %d removed, %d historical", deprecated, removed, historical)
+	}
+	return line
 }
 
 // appliedCount returns how many audit entries actually took effect (targets
@@ -152,9 +209,17 @@ func appliedCount(applied []learning.AppliedCorrection) int {
 }
 
 // renderQuery runs deterministic ranked retrieval for the user's question,
-// with the Stage 10 correction overlay applied (master plan §8.3).
-func renderQuery(cmd *cobra.Command, learner *learning.Learner, store *developer_memory.MemoryStore, ask string, asJSON bool) error {
-	proj, err := learner.Query(store, ask)
+// with the Stage 10 correction overlay applied (master plan §8.3). Stage 11
+// freshness is recomputed live BEFORE ranking (with missing-entity marking
+// against the latest snapshot), so decayed knowledge sinks in the results
+// without ever being hidden.
+func renderQuery(cmd *cobra.Command, learner *learning.Learner, store *developer_memory.MemoryStore, snap *archmodel.ArchSnapshot, ask string, asJSON bool) error {
+	mem, err := store.LoadMemory()
+	if err != nil {
+		return fmt.Errorf("failed to load memory: %w", err)
+	}
+	freshed := knowledge_aging.FreshenMemoryWithSnapshot(mem, snap, time.Now(), nil)
+	proj, err := learner.OverlayQuery(developer_memory.QueryMemoryFromMemory(freshed, ask, developer_memory.DefaultTopK))
 	if err != nil {
 		return fmt.Errorf("failed to apply corrections: %w", err)
 	}
@@ -184,9 +249,9 @@ func renderQuery(cmd *cobra.Command, learner *learning.Learner, store *developer
 	if len(proj.Claims) > 0 {
 		fmt.Fprintln(out, "Claims (how each was established):")
 		for _, c := range proj.Claims {
-			fmt.Fprintf(out, "  %s %s %s [%s, %.0f%% confidence, state=%s]%s\n",
+			fmt.Fprintf(out, "  %s %s %s [%s, %.0f%% confidence, %.0f%% fresh, state=%s]%s\n",
 				c.Subject, c.Predicate, quoteObject(c.Object), c.ClaimKind, c.Evidence.AggConfidence*100,
-				c.State, flagSuffix(flags, c.ID))
+				c.FreshnessScore*100, c.State, flagSuffix(flags, c.ID))
 		}
 		fmt.Fprintln(out)
 	}
@@ -213,7 +278,7 @@ func renderQuery(cmd *cobra.Command, learner *learning.Learner, store *developer
 
 // renderComponent prints the longitudinal history of one component and the
 // timeline entries that mention it, with corrections applied.
-func renderComponent(cmd *cobra.Command, learner *learning.Learner, store *developer_memory.MemoryStore, component string, asJSON bool) error {
+func renderComponent(cmd *cobra.Command, learner *learning.Learner, store *developer_memory.MemoryStore, snap *archmodel.ArchSnapshot, component string, asJSON bool) error {
 	mem, err := store.LoadMemory()
 	if err != nil {
 		return fmt.Errorf("failed to load memory: %w", err)
@@ -222,6 +287,9 @@ func renderComponent(cmd *cobra.Command, learner *learning.Learner, store *devel
 	if err != nil {
 		return fmt.Errorf("failed to apply corrections: %w", err)
 	}
+	// Stage 11 temporal projection: live freshness + aged claim states +
+	// missing-entity marking against the latest snapshot.
+	proj = knowledge_aging.FreshenMemoryWithSnapshot(proj, snap, time.Now(), nil)
 	history := findComponent(proj, component)
 
 	if asJSON {

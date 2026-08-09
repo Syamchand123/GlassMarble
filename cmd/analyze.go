@@ -413,6 +413,11 @@ func runAnalysis(opts runAnalysisOptions) error {
 	// and the correction log. Corrections themselves are applied at query
 	// time (gmb memory), not here. Non-fatal by design (§15.6).
 	runLearningStage(storageDir, tm, verbose)
+	// Stage 11 knowledge aging: freshness decay on every claim plus
+	// deterministic state transitions, persisted as replayable
+	// STATE_CHANGE events in the memory WAL (master plan §13.1 — aging
+	// runs on every analysis). Non-fatal by design (§15.6).
+	runAgingStage(storageDir, verbose)
 	// Surface files that were skipped (oversized, unknown grammar) or that
 	// produced warnings so silent data loss stays visible (AUDIT Issue 1
 	// Phase 1C-10: skipped/warnings were collected but never printed).

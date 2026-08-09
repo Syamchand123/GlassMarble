@@ -155,6 +155,13 @@ func applyEvent(mem *DeveloperMemory, ev archmodel.ArchEvent) {
 			history.State = StateActive
 		case archmodel.EventServiceRemoved:
 			history.State = StateRemoved
+		case archmodel.EventStateChanged:
+			// Stage 11 aging transitions are replayable: the new state is
+			// carried in the well-known "state=<STATE>" tag, so rebuilding
+			// memory from the WAL reproduces aging states exactly.
+			if s := archmodel.StateFromTags(ev.Tags); s != "" {
+				history.State = KnowledgeState(s)
+			}
 		}
 		mem.ComponentMemory[comp] = history
 	}
@@ -194,7 +201,14 @@ func claimsFromEvent(ev archmodel.ArchEvent) []KnowledgeClaim {
 
 	predicate, removed := kindPredicate(ev.Kind)
 	for _, comp := range ev.Components {
-		claim := newClaim(ev, comp, predicate, claimObject(ev, comp), ClaimFact, removed)
+		object := claimObject(ev, comp)
+		// STATE_CHANGE events assert "X state_changed_to <new state>": the
+		// counterpart is the state carried in the well-known tag, not a
+		// second component.
+		if ev.Kind == archmodel.EventStateChanged {
+			object = archmodel.StateFromTags(ev.Tags)
+		}
+		claim := newClaim(ev, comp, predicate, object, ClaimFact, removed)
 		claims = append(claims, claim)
 	}
 
@@ -259,6 +273,8 @@ func kindPredicate(kind archmodel.EventKind) (predicate string, removed bool) {
 		return "security_added", false
 	case archmodel.EventBoundaryCreated:
 		return "boundary_created", false
+	case archmodel.EventStateChanged:
+		return "state_changed_to", false
 	default:
 		return "involved_in_event", false
 	}

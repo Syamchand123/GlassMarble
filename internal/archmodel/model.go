@@ -55,6 +55,14 @@ const (
 	EventCycleIntroduced   EventKind = "CYCLE_INTRODUCED"
 	EventCycleResolved     EventKind = "CYCLE_RESOLVED"
 	EventLayerViolation    EventKind = "LAYER_VIOLATION"
+	// EventStateChanged marks a knowledge-state transition performed by
+	// Stage 11 (knowledge aging) — e.g. CURRENT → DEPRECATED. The new
+	// state is carried machine-readably in a single well-known tag of the
+	// form "state=<STATE>" (see StateTag / StateFromTags); the description
+	// carries the human-readable reason. Transition events are appended to
+	// events.jsonl so a memory rebuild from the WAL reproduces aging
+	// states exactly (reproducibility principle, master plan §9.4).
+	EventStateChanged EventKind = "STATE_CHANGE"
 )
 
 // ArchEvent is one architectural change event — the fundamental atom of memory.
@@ -76,6 +84,28 @@ type ArchEvent struct {
 	RelatedIssues []string        `json:"related_issues"`
 	ValidFrom     time.Time       `json:"valid_from"`
 	ValidUntil    *time.Time      `json:"valid_until,omitempty"`
+}
+
+// StateTagPrefix is the well-known tag prefix STATE_CHANGE events use to
+// carry the new knowledge state machine-readably ("state=<STATE>"). The
+// state string is the persisted KnowledgeState value ("CURRENT",
+// "DEPRECATED", "REMOVED", "HISTORICAL", "EXPERIMENTAL", "UNKNOWN").
+const StateTagPrefix = "state="
+
+// StateTag builds the well-known state tag for a STATE_CHANGE event.
+func StateTag(state string) string {
+	return StateTagPrefix + state
+}
+
+// StateFromTags extracts the knowledge state carried by a STATE_CHANGE
+// event's tags. Returns "" when no state tag is present.
+func StateFromTags(tags []string) string {
+	for _, t := range tags {
+		if len(t) > len(StateTagPrefix) && t[:len(StateTagPrefix)] == StateTagPrefix {
+			return t[len(StateTagPrefix):]
+		}
+	}
+	return ""
 }
 
 // ComponentKind classifies a detected architectural unit.

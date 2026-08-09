@@ -26,6 +26,13 @@ import (
 // 25,116 edges — a bounded, deliberate addition of real feature code, not
 // a noisy edge producer (confirmed by stashing: the guard passes without
 // those files). Budget = baseline + ~10% so genuine regressions still trip.
+// Recalibrated again at the Stage 11 (knowledge aging) sign-off: the aging
+// layer (internal/knowledge_aging transitions + tests, config aging
+// section, detector fixes) raised the healthy baseline to 26,034 edges —
+// same methodology: an intentional, bounded feature-code addition
+// (confirmed by stashing: the guard passes without those files), NOT a
+// noisy edge producer. The ~3.5% margin (matching the Stage 10 convention)
+// still trips on any genuine noisy pass.
 func TestBloatRegressionGuard(t *testing.T) {
 	repoRoot, err := findRepoRoot()
 	if err != nil {
@@ -81,7 +88,7 @@ func TestBloatRegressionGuard(t *testing.T) {
 
 	const (
 		nodeBudget = 14000
-		edgeBudget = 26000
+		edgeBudget = 27000
 	)
 	if nodes < 1000 {
 		t.Errorf("sanity: expected the pipeline to produce a substantial graph, got %d nodes (pipeline may be broken)", nodes)
