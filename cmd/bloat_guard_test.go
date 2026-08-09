@@ -20,6 +20,12 @@ import (
 // (2,308 nodes / 5,479 edges) to (7,865 nodes / 13,967 edges) — an
 // intentional graph-shape change, not noise. The ~1.8× headroom above the
 // new baseline still trips on any future noisy node-producing pass.
+// Recalibrated again at the Stage 10 (learning overlay) sign-off: the
+// developer-learning subsystem (internal/learning + internal/config +
+// cmd/learning_stage.go + memory overlay) raised the healthy baseline to
+// 25,116 edges — a bounded, deliberate addition of real feature code, not
+// a noisy edge producer (confirmed by stashing: the guard passes without
+// those files). Budget = baseline + ~10% so genuine regressions still trip.
 func TestBloatRegressionGuard(t *testing.T) {
 	repoRoot, err := findRepoRoot()
 	if err != nil {
@@ -75,7 +81,7 @@ func TestBloatRegressionGuard(t *testing.T) {
 
 	const (
 		nodeBudget = 14000
-		edgeBudget = 25000
+		edgeBudget = 26000
 	)
 	if nodes < 1000 {
 		t.Errorf("sanity: expected the pipeline to produce a substantial graph, got %d nodes (pipeline may be broken)", nodes)

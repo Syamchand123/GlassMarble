@@ -37,3 +37,16 @@ All notable changes to the GlassMarble Architectural Knowledge Graph (AKG) and V
 - **Documentation (§14.3):**
   - Published master CLI documentation (`docs/cli.md`).
   - Published master diagram specification (`docs/diagrams.md`).
+
+---
+
+## [Stage 10: Learning & Self-Correction Overlay] - 2026-08-09
+
+Developer memory is now a **self-correcting layer** — human feedback is recorded, audited, and replayed over derived knowledge without touching the source WALs.
+
+- **Correction audit trail** (`internal/learning/correction.go`): append-only `corrections.jsonl`; each entry records target, kind, corrected value, original value (auto-captured from memory), timestamp, and application status. Deterministic replay in recording order — idempotent and rebuild-independent.
+- **Learning overlay** (`internal/learning/overlay.go`): `Project()` projections replace derived values with corrections for `STATE` (component state), `INTENT` (event intent), and `REASON` (claim stated-reason). Applied corrections are flagged in every human view.
+- **Conventions store** (`internal/learning/conventions_store.go` + `conventions.go`): project-wide naming/intent conventions learned from graph-observed facts and stated reasons, persisted to `.glassmarble/conventions/`, refreshed on every `gmb analyze`.
+- **CLI** (`gmb memory --correct <target> --kind STATE|INTENT|REASON --value <value>` and `--corrections`): record corrections with original-value capture and view the audit trail; `gmb analyze` runs the Stage 10 refresh step.
+- **Config** (`learning:` section): `conventionsDir`, `overlayEnabled` (default on), min-confidence and windowed-decay knobs for convention learning.
+- **Bloat guard recalibration** (`cmd/bloat_guard_test.go`): edge budget 25,000 → 26,000 with documented baseline (25,116 edges) — confirmed by stash-diff that the delta is Stage 10 feature code, not a noisy edge producer.

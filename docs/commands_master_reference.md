@@ -1161,9 +1161,9 @@ gmb ai configure --provider NAME --model MODEL --key KEY [--scope global|project
 
 ### 8.21 `gmb memory`
 
-**Purpose:** Query the Stage 6 developer memory — what the system was, what changed, and (where evidence exists) why. Deterministic retrieval, no LLM (master plan §4.4).
+**Purpose:** Query the Stage 6 developer memory — what the system was, what changed, and (where evidence exists) why. Deterministic retrieval, no LLM (master plan §4.4). Since Stage 10, memory is also a **self-correcting layer**: `--correct` records human corrections about components, intents, or stated reasons, and the learning overlay replays them on every view (`--ask`, `--component`, overview) so corrections are never lost when aggregates rebuild.
 
-**Syntax:** `gmb memory [--dir <path>] [--ask "<question>"] [--component <name>] [--json]`
+**Syntax:** `gmb memory [--dir <path>] [--ask "<question>"] [--component <name>] [--json] [--correct <target> --kind <kind> --value <value>] [--corrections]`
 
 **Flags:**
 
@@ -1173,16 +1173,22 @@ gmb ai configure --provider NAME --model MODEL --key KEY [--scope global|project
 | `--ask` | string | `""` | Natural-language-style question answered by ranked retrieval |
 | `--component` | string | `""` | Show the full history of one component (case-insensitive substring match) |
 | `--json` | bool | `false` | Emit the machine-readable document instead of the human report |
+| `--correct` | string | `""` | Record a learning correction (Stage 10). Target is a component name, an event ID, or a claim ID |
+| `--kind` | string | `"STATE"` | What to correct: `STATE` (component state), `INTENT` (event intent), `REASON` (claim stated-reason) |
+| `--value` | string | `""` | The corrected value |
+| `--corrections` | bool | `false` | Show the audit trail of all recorded corrections instead of the overview |
 
-**Data source:** `.glassmarble/memory/` — `events.jsonl`/`claims.jsonl` (append-only WALs, source of truth) + derived `memory.json`/`timeline.json`. Populated by `gmb analyze --stage5`; re-runs are idempotent.
+**Data source:** `.glassmarble/memory/` — `events.jsonl`/`claims.jsonl` (append-only WALs, source of truth) + derived `memory.json`/`timeline.json`. Populated by `gmb analyze --stage5`; re-runs are idempotent. Corrections are appended to `.glassmarble/memory/corrections.jsonl` (append-only audit trail) and replayed in memory order — deterministic, idempotent, and never merged into the WALs.
 
-**Output (default):** project id, event count, component count, last update, and each component with its temporal state (CURRENT / REMOVED / DEPRECATED / EXPERIMENTAL / HISTORICAL / UNKNOWN).
+**Output (default):** project id, event count, component count, last update, and each component with its temporal state (CURRENT / REMOVED / DEPRECATED / EXPERIMENTAL / HISTORICAL / UNKNOWN). Component states are the learning overlay projection: corrected states replace the derived state and are flagged in the report.
 
-**Output (`--ask`):** ranked components, knowledge claims (each labelled by how it was established — `FACT`, `EXPLICIT_REASON`, `INFERENCE`, `SPECULATION` — with aggregate confidence), matching events, and the related timeline. Reasons are never invented: an event without a stated reason produces no reason claim.
+**Output (`--ask`):** ranked components, knowledge claims (each labelled by how it was established — `FACT`, `EXPLICIT_REASON`, `INFERENCE`, `SPECULATION` — with aggregate confidence), matching events, and the related timeline. Reasons are never invented: an event without a stated reason produces no reason claim. Intents and claim reasons shown are overlay-projected; a footnote reports how many corrections were applied to the view.
+
+**Output (`--correct`):** audit confirmation showing `"<original>" -> "<corrected>"`; original values are captured automatically from memory where resolvable.
 
 **Exit codes:** `0` on success; non-zero on load/path failures. An empty memory or a no-match query is a graceful message with exit `0`.
 
-**Use cases:** "what do we know about Redis?", "why was PaymentService added?", onboarding context, pre-refactor impact review.
+**Use cases:** "what do we know about Redis?", "why was PaymentService added?", onboarding context, pre-refactor impact review, fixing a wrong derived intent/state without re-analyzing.
 
 ---
 

@@ -408,6 +408,11 @@ func runAnalysis(opts runAnalysisOptions) error {
 	if opts.includeDocs {
 		runFusionStage(storageDir, tm, verbose)
 	}
+	// Stage 10 learning layer: refresh the project conventions
+	// (.glassmarble/memory/conventions.json) from the graph, the memory
+	// and the correction log. Corrections themselves are applied at query
+	// time (gmb memory), not here. Non-fatal by design (§15.6).
+	runLearningStage(storageDir, tm, verbose)
 	// Surface files that were skipped (oversized, unknown grammar) or that
 	// produced warnings so silent data loss stays visible (AUDIT Issue 1
 	// Phase 1C-10: skipped/warnings were collected but never printed).

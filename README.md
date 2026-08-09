@@ -196,6 +196,8 @@ With `--stage5` (default `true`, human output only), analysis also runs architec
 
 With `--include-docs` (default `false`, opt-in because doc scanning and git-history walks are not free on large repositories), analysis also runs Stage 9 knowledge fusion: ADR files and READMEs are parsed into knowledge claims, PR/issue references in recent git history become file-level claims, and everything is appended to developer memory — queryable through `gmb memory --ask`. The `fusion:` section of `.glassmarble/config.yaml` tunes the doc globs, technology lexicon and git scan depth; re-analyzing the same tree appends nothing (idempotent).
 
+After analysis, the Stage 10 learning layer refreshes the **project conventions store** (`.glassmarble/conventions/`): it replays all recorded corrections against the new memory state so every view stays self-corrected, and learns project-wide naming and intent conventions (configurable under `learning:` in `.glassmarble/config.yaml`). Corrections recorded with `gmb memory --correct` are the human feedback loop — see the `gmb memory` section below.
+
 ---
 
 ### `gmb memory`
@@ -204,6 +206,7 @@ Query the developer memory: what do we know about the architecture, when did it 
 
 ```bash
 gmb memory [--dir <path>] [--ask "<question>"] [--component <name>] [--json]
+          [--correct <target> --kind STATE|INTENT|REASON --value <value>] [--corrections]
 ```
 
 | Mode | Description |
@@ -212,8 +215,12 @@ gmb memory [--dir <path>] [--ask "<question>"] [--component <name>] [--json]
 | `--ask` | Deterministic ranked retrieval over components, claims, events and timeline (no LLM) |
 | `--component` | Longitudinal history of one component (substring match) plus its timeline |
 | `--json` | Emit the machine-readable document instead of the human report |
+| `--correct` | Record a Stage 10 learning correction (component state, event intent, or claim reason). The original value is captured automatically and appended to the `.glassmarble/memory/corrections.jsonl` audit trail |
+| `--corrections` | Show the correction audit trail |
 
 Reasons are never invented: every claim is labelled by how it was established — `FACT` (observed from the graph diff), `EXPLICIT_REASON` (stated by a human in a commit/PR/issue/docs), `INFERENCE` (derived by GlassMarble), or `SPECULATION` (low-confidence guess).
+
+Corrections are replayed as an **overlay** on every view (overview, `--ask`, `--component`, `--json`) in recording order — deterministic, idempotent, and untouched by aggregate rebuilds. Corrected entries are flagged in the report so the human view of memory is always the corrected one.
 
 ---
 

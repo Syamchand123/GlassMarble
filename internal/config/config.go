@@ -25,6 +25,10 @@ type Config struct {
 	// (config.DefaultFusionConfig()). Whether fusion runs at all is decided
 	// by the `gmb analyze --include-docs` flag, not by this section.
 	Fusion *FusionConfig `yaml:"fusion"`
+	// Learning holds the Stage 10 learning-layer settings (correction
+	// overlay on queries, deterministic convention extraction). nil means
+	// defaults (config.DefaultLearningConfig()).
+	Learning *LearningConfig `yaml:"learning"`
 }
 
 // DriftConfig declares the architecture invariants checked by `gmb drift`.
@@ -181,5 +185,8 @@ func mergeYAML(path string, cfg *Config) {
 	}
 	if temp.Fusion != nil {
 		cfg.Fusion = temp.Fusion
+	}
+	if temp.Learning != nil {
+		cfg.Learning = temp.Learning
 	}
 }

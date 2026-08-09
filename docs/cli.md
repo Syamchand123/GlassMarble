@@ -34,18 +34,21 @@ Event ingestion is idempotent: re-analyzing the same commit never duplicates mem
 ---
 
 ### `gmb memory`
-Answers questions about the project's architectural history from the Stage 6 developer memory (`.glassmarble/memory/`). Deterministic retrieval — no LLM.
+Answers questions about the project's architectural history from the Stage 6 developer memory (`.glassmarble/memory/`). Deterministic retrieval — no LLM. Since Stage 10, a learning overlay lets you correct wrong derived facts and replays them on every view.
 
 ```bash
 gmb memory [--dir <path>] [--ask "<question>"] [--component <name>] [--json]
+          [--correct <target> --kind STATE|INTENT|REASON --value <value>] [--corrections]
 ```
 
 - Default: project overview — event count and current components with their temporal states.
 - `--ask "what do we know about Redis?"`: ranked components, claims (labelled FACT / EXPLICIT_REASON / INFERENCE / SPECULATION), events and related timeline.
 - `--component payment`: full history of the matching component (case-insensitive substring) plus its timeline.
 - `--json`: machine-readable document.
+- `--correct <target> --kind <k> --value <v>`: record a correction (target = component name, event ID, or claim ID). Original value is captured automatically and the audit entry is appended to `.glassmarble/memory/corrections.jsonl`.
+- `--corrections`: show the correction audit trail.
 
-Reasons are never invented: without evidence of a reason, no reason claim exists.
+Reasons are never invented: without evidence of a reason, no reason claim exists. Corrections are replayed in order on every view — deterministic, idempotent, and independent of aggregate rebuilds.
 
 ---
 
