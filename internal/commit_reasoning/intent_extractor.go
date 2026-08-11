@@ -95,6 +95,13 @@ func NewIntentExtractor(opts ...IntentExtractorOption) *IntentExtractor {
 // evidence is EXPLICIT_REASON, keyword and LLM evidence are INFERENCE — a
 // keyword guess must never masquerade as an explicit git fact.
 var (
+	// mergePrSubjectRegex matches the subject of a squash- or merge-committed
+	// pull request ("Merge pull request #123 from acme/cache-fix"). The
+	// subject is then just the branch name — an unreliable intent signal —
+	// so keyword rules run against the body + PR description first and only
+	// fall back to the full message when the body carries no signal.
+	mergePrSubjectRegex = regexp.MustCompile(`(?i)^merge\s+(pull\s+request|pull-?request|branch)\b`)
+
 	levelConfidence = map[IntentLevel]float64{
 		IntentLevelStructural: 0.85,
 		IntentLevelKeyword:    0.75,
@@ -152,6 +159,10 @@ var keywordRules = []struct {
 // Levels, in order:
 //  1. Structural — every touched file matches a structural rule.
 //  2. Keyword    — first keyword rule matching subject+body+PR description.
+//     A squash-merged PR whose subject is a bare "Merge pull request #N
+//     from <branch>" marker runs the keyword rules against the body + PR
+//     description first: the branch name is noise, the body is the author's
+//     message.
 //  3. LLM        — only when an IntentLLMFunc is configured; errors degrade
 //     to Level 2 with a log line, never to silence.
 //  4. Unknown    — nothing matched; still carries a source so the memory
@@ -166,7 +177,7 @@ func (e *IntentExtractor) Extract(ctx context.Context, meta *git.CommitMeta, prD
 		}
 	}
 	if meta != nil {
-		if r, ok := e.extractKeyword(meta, prDescription); ok {
+		if r, ok := e.keywordPriorityText(meta, prDescription); ok {
 			return r
 		}
 	}
@@ -227,6 +238,26 @@ func ruleForFile(file string) Intent {
 	return IntentUnknown
 }
 
+// keywordPriorityText runs the keyword rules against the best available
+// text for the commit: for a merge-PR subject (a bare branch-name marker)
+// the body + PR description is tried first, and only when it carries no
+// signal does the full message win.
+func (e *IntentExtractor) keywordPriorityText(meta *git.CommitMeta, prDescription string) (IntentResult, bool) {
+	body := strings.TrimSpace(meta.Body)
+	if prDescription != "" {
+		if body != "" {
+			body += "\n"
+		}
+		body += prDescription
+	}
+	if mergePrSubjectRegex.MatchString(meta.Subject) && body != "" {
+		if r, ok := matchKeywordText(body); ok {
+			return r, true
+		}
+	}
+	return e.extractKeyword(meta, prDescription)
+}
+
 // extractKeyword runs the ordered keyword rules against the raw message.
 // The excerpt is the original (case-preserved) line containing the match.
 func (e *IntentExtractor) extractKeyword(meta *git.CommitMeta, prDescription string) (IntentResult, bool) {
@@ -234,6 +265,12 @@ func (e *IntentExtractor) extractKeyword(meta *git.CommitMeta, prDescription str
 	if prDescription != "" {
 		msg += "\n" + prDescription
 	}
+	return matchKeywordText(msg)
+}
+
+// matchKeywordText applies the ordered keyword rules to one text blob,
+// returning the first (most specific) match.
+func matchKeywordText(msg string) (IntentResult, bool) {
 	for _, rule := range keywordRules {
 		loc := rule.pattern.FindStringIndex(msg)
 		if loc == nil {

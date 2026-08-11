@@ -3,6 +3,7 @@ package arch_intelligence
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"sort"
 	"strings"
@@ -51,8 +52,34 @@ func NewEngine(graph *akg.CodePropertyGraph) *Engine {
 	return &Engine{
 		graph: graph,
 		cfg:   config.DefaultIntelligenceConfig(),
-		clock: time.Now,
+		clock: analysisClock(graph),
 		logf:  func(string, ...any) {},
+	}
+}
+
+// analysisClock returns a deterministic clock for the given graph. Evidence
+// timestamps are anchored to the analyzed commit (stable bytes of the commit
+// hash), so analyzing an identical graph produces byte-identical output —
+// the reproducibility contract Stage 5 artifacts must satisfy. The derived
+// instant is kept inside a sane window (a hash cannot be a real date). A
+// graph without a commit hash anchors to the zero time. The wall clock is
+// never used implicitly: callers that need real observation times inject
+// WithClock.
+func analysisClock(graph *akg.CodePropertyGraph) func() time.Time {
+	if graph == nil {
+		return func() time.Time { return time.Time{} }
+	}
+	hash := graph.CommitHash
+	return func() time.Time {
+		if hash == "" {
+			return time.Time{}
+		}
+		sum := sha256.Sum256([]byte(hash))
+		secs := binary.BigEndian.Uint64(sum[:8])
+		// Anchor inside [2020-01-01, 2051-10-09]: far enough in the past to
+		// read as a normal analysis time, far enough out to stay valid.
+		const window = uint64(1_000_000_000)
+		return time.Unix(int64(1_577_836_800+secs%window), 0).UTC()
 	}
 }
 

@@ -381,15 +381,15 @@ func reparentMethods(root *GASTNode) {
 func detectPackageName(res *stage1.IngestionResult, nodes []*GASTNode) string {
 	for i, tok := range res.RichTokens {
 		node := nodes[i]
-		if node.Type == GASTNamespace {
-			return node.Name
-		}
 		if tok.Type == "package_clause" || tok.Type == "package_declaration" || tok.Type == "namespace_declaration" {
 			parts := strings.Fields(tok.Content)
 			if len(parts) >= 2 {
 				name := strings.Trim(parts[1], ";\"{}`")
 				return name
 			}
+		}
+		if node.Type == GASTNamespace {
+			return node.Name
 		}
 	}
 	dir := filepath.ToSlash(filepath.Dir(res.RelPath))

@@ -180,6 +180,7 @@ func streamTasks(pathCh <-chan string, errorCh <-chan error, skipWarnCh <-chan s
 			if err != nil {
 				rel = p
 			}
+			rel = filepath.ToSlash(rel)
 			taskCh <- indexTask{
 				idx: idx,
 				task: FileTask{

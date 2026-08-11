@@ -20,7 +20,14 @@ func CollectGitDiff(rootDir string, commitHash string) ([]FileTask, error) {
 
 	var cmd *exec.Cmd
 	if commitHash != "" {
-		cmd = exec.Command("git", "diff-tree", "-r", "--no-commit-id", "--name-status", commitHash)
+		args := []string{"diff-tree", "-r", "--no-commit-id", "--name-status"}
+		// A root commit has no parent, so diff-tree would report nothing;
+		// --root makes it diff against the empty tree.
+		if _, err := exec.Command("git", "rev-parse", commitHash+"^").Output(); err != nil {
+			args = append(args, "--root")
+		}
+		args = append(args, commitHash)
+		cmd = exec.Command("git", args...)
 	} else {
 		cmd = exec.Command("git", "diff", "--name-status", "HEAD")
 	}
@@ -53,6 +60,9 @@ func CollectGitDiff(rootDir string, commitHash string) ([]FileTask, error) {
 
 		lang, _, ok := DetectLanguage(fullPath, reg)
 		if !ok {
+			continue
+		}
+		if deltaPathFiltered(relPath) {
 			continue
 		}
 
@@ -101,6 +111,26 @@ func GitCommandOutput(rootDir string, args ...string) (string, error) {
 	return strings.TrimSpace(out.String()), nil
 }
 
+// deltaPathFiltered reports whether a git-derived path must be excluded
+// from delta ingestion: generated files, hidden paths, and skip-list
+// directories (vendor, node_modules, ...). The full-scan walker applies the
+// same filters, so delta and full ingestion must agree on what counts as
+// analyzable source (a mismatch would re-add excluded files on re-analysis).
+func deltaPathFiltered(relPath string) bool {
+	for _, seg := range strings.Split(filepath.ToSlash(relPath), "/") {
+		if seg == "" {
+			continue
+		}
+		if strings.HasPrefix(seg, ".") {
+			return true
+		}
+		if _, skip := defaultSkipDirs[seg]; skip {
+			return true
+		}
+	}
+	return isGeneratedFile(filepath.Base(relPath))
+}
+
 func collectGitStatus(absRoot string) ([]FileTask, error) {
 	cmd := exec.Command("git", "status", "--porcelain")
 	cmd.Dir = absRoot
@@ -125,6 +155,9 @@ func collectGitStatus(absRoot string) ([]FileTask, error) {
 
 		lang, _, ok := DetectLanguage(fullPath, reg)
 		if !ok {
+			continue
+		}
+		if deltaPathFiltered(relPath) {
 			continue
 		}
 

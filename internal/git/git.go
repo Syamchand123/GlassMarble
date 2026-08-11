@@ -34,6 +34,19 @@ func GetHEADCommitHash(repoDir string) (string, error) {
 	return runGitCommand(repoDir, "rev-parse", "HEAD")
 }
 
+// IsRootCommit reports whether ref has no parent commit (i.e. it is the
+// repository's initial commit). The diff of a root commit covers the entire
+// tree, so callers must not treat it as an incremental delta.
+func IsRootCommit(repoDir, ref string) (bool, error) {
+	if repoDir == "" || ref == "" {
+		return false, fmt.Errorf("repo dir and ref are required")
+	}
+	if _, err := runGitCommand(repoDir, "rev-parse", ref+"^"); err != nil {
+		return true, nil
+	}
+	return false, nil
+}
+
 // GetCommitTimestamp resolves ref (a commit hash, prefix, tag, branch or HEAD)
 // to its author timestamp in UTC. Used by the snapshot engine so that
 // snapshots and timeline entries are ordered by when commits were actually

@@ -197,12 +197,13 @@ func runAnalysis(opts runAnalysisOptions) error {
 		}
 	}
 
-	// A full rescan (--full, no base state, empty git diff, or diff error)
-	// re-ingests every file. The delta linkers must then not deduplicate
-	// against the persisted base graph: they only re-emit "new" nodes, and
-	// the commit sweep removes every modified-file node missing from the
-	// delta, so deduplicating would silently delete untouched derived
-	// nodes. Stage 4 therefore links full rescans against an empty base.
+	// A full rescan (--full, no base state, empty git diff, diff error, or a
+	// root-commit "diff" that spans the entire tree) re-ingests every file.
+	// The delta linkers must then not deduplicate against the persisted base
+	// graph: they only re-emit "new" nodes, and the commit sweep removes every
+	// modified-file node missing from the delta, so deduplicating would
+	// silently delete untouched derived nodes. Stage 4 therefore links full
+	// rescans against an empty base.
 	fullRescan := full
 	var stage1Out *stage1.StageOutput
 	doneParse := product.StartSpan("parse")
@@ -220,8 +221,11 @@ func runAnalysis(opts runAnalysisOptions) error {
 		}); err != nil {
 			hasBaseState = false
 		}
+		// A root commit has no parent, so its "diff" is the whole tree —
+		// not an incremental delta. Treat it as a full rescan.
+		isRoot, rootErr := git.IsRootCommit(absDir, commitHash)
 		diff, diffErr := stage1.CollectGitDiff(absDir, commitHash)
-		if hasBaseState && diffErr == nil && len(diff) > 0 {
+		if hasBaseState && diffErr == nil && !(rootErr == nil && isRoot) && len(diff) > 0 {
 			stage1Out, err = stage1.RunIngestionForDelta(cfg, diff)
 			if err == nil {
 				if verbose {

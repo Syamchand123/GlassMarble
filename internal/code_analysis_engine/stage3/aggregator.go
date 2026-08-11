@@ -2,6 +2,7 @@ package stage3
 
 import (
 	"log"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -162,10 +163,19 @@ func Aggregate(payload *stage2.Stage2Payload, existingState *Stage3Output, rootD
 			output.LocalTables[res.relPath] = res.symTable
 			output.FileToCalls[res.relPath] = extractCallsFromFile(res.relPath, res.symTable)
 		}
-		output.FileToSymbols[res.relPath] = res.localSyms
+		// FileToSymbols carries the per-file symbol list, extended with the
+		// bare method names (simple_name) so symbol lookup finds them.
+		syms := res.localSyms
+		for _, idxNode := range res.nodes {
+			if sn := idxNode.Node.Properties["simple_name"]; sn != "" {
+				syms = append(syms, sn)
+			}
+		}
+		output.FileToSymbols[res.relPath] = syms
 		// v2 (W1-10, §5.3.4): per-file member list for real file→symbol
 		// containment edges (A-12). Contains the same resolution keys as
-		// the global index (canonical IDs when present, else FQNs).
+		// the global index (canonical IDs when present, else FQNs) — every
+		// member must be resolvable there.
 		output.FileToMembers[res.relPath] = dedupeStrings(res.localSyms)
 		for _, idxNode := range res.nodes {
 			output.GlobalDefinitionIndex[idxNode.Key] = append(output.GlobalDefinitionIndex[idxNode.Key], idxNode.Node)
@@ -359,7 +369,7 @@ func collectExportedGASTNodes(node *stage2.GASTNode, fileRelPath string, out *[]
 			}
 		}
 		// Fallback: path-based FQN
-		dir := strings.ReplaceAll(filepath.Dir(fileRelPath), "/", ".")
+		dir := strings.ReplaceAll(path.Dir(fileRelPath), "/", ".")
 		if dir != "." && dir != "" {
 			pathSym := dir + "." + node.Name
 			if out != nil {

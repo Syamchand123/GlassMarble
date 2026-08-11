@@ -146,6 +146,17 @@ func ExportGraphJSON(graph *CodePropertyGraph, w io.Writer) error {
 		})
 	}
 
+	// Empty graphs must serialize as arrays, not JSON null: consumers like
+	// the streaming stats reader (lazy.go) and downstream tooling reject
+	// `"nodes": null`. A string/number state with zero nodes or edges (e.g.
+	// `gmb init`, empty-repo commits) would otherwise be unreadable.
+	if doc.Nodes == nil {
+		doc.Nodes = make([]GraphNodeJSON, 0)
+	}
+	if doc.Edges == nil {
+		doc.Edges = make([]GraphEdgeJSON, 0)
+	}
+
 	sort.Slice(doc.Nodes, func(i, j int) bool { return doc.Nodes[i].ID < doc.Nodes[j].ID })
 	sort.Slice(doc.Edges, func(i, j int) bool {
 		if doc.Edges[i].SourceID != doc.Edges[j].SourceID {

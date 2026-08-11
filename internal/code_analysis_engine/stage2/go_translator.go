@@ -60,6 +60,7 @@ func (t *GoTranslator) CoerceToken(tok stage1.RichToken, parent *stage1.RichToke
 				node.Kind = "method"
 				node.ID = tok.Name
 				node.Name = node.ID
+				node.Properties["simple_name"] = tok.Name
 				node.Properties["fully_qualified_name"] = pkgPrefix + "." + node.ID
 			} else {
 				node.Kind = "function"
@@ -83,6 +84,7 @@ func (t *GoTranslator) CoerceToken(tok stage1.RichToken, parent *stage1.RichToke
 					// ID/Name: bare Receiver.Method (pkg-qualified FQN kept in properties)
 					node.ID = receiver + "." + tok.Name
 					node.Name = node.ID
+					node.Properties["simple_name"] = tok.Name
 					node.Properties["fully_qualified_name"] = pkgPrefix + "." + node.ID
 				} else {
 					// ID/Name: bare function name (pkg-qualified FQN kept in properties)
