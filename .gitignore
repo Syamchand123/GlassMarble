@@ -122,3 +122,5 @@ docker-compose.override.yml
 miscellaneous/
 .kilo/
 Scripts/
+manual_testing_findings.md
+MANUAL_TESTING_PLAN.md

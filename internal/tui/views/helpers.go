@@ -84,6 +84,67 @@ func truncateLeft(s string, max int) string {
 	return "..." + s[len(s)-max+3:]
 }
 
+// wrapText word-wraps s to the given display width (runes counted by
+// lipgloss.Width), splitting on spaces and hard-breaking over-long tokens.
+// Used where full message text must stay visible inside a card instead of
+// being truncated away (e.g. `gmb ai doctor` problem details).
+func wrapText(s string, width int) []string {
+	if width <= 0 {
+		return []string{s}
+	}
+	var lines []string
+	cur := ""
+	curW := 0
+	flush := func() {
+		if cur != "" {
+			lines = append(lines, strings.TrimRight(cur, " "))
+			cur = ""
+			curW = 0
+		}
+	}
+	for _, word := range strings.Fields(s) {
+		w := 0
+		for _, r := range word {
+			w += lipgloss.Width(string(r))
+		}
+		if curW > 0 && curW+1+w > width {
+			flush()
+		}
+		if w > width {
+			// Hard-break a single over-long token.
+			if cur != "" {
+				flush()
+			}
+			runes := []rune(word)
+			seg := ""
+			segW := 0
+			for _, r := range runes {
+				rw := lipgloss.Width(string(r))
+				if segW+rw > width {
+					lines = append(lines, seg)
+					seg = ""
+					segW = 0
+				}
+				seg += string(r)
+				segW += rw
+			}
+			if seg != "" {
+				cur = seg
+				curW = segW
+			}
+			continue
+		}
+		if cur == "" {
+			cur = word
+		} else {
+			cur += " " + word
+		}
+		curW += 1 + w
+	}
+	flush()
+	return lines
+}
+
 // maxCardLine is the longest rendered line allowed inside a styled card. Cards
 // must not auto-size to an over-long line (e.g. a long absolute path), since a
 // width that large inflates every padded line and can blow past the Windows

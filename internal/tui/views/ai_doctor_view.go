@@ -22,7 +22,7 @@ func RenderAIDoctor(rep *ai_engine.DoctorReport, maskedKey string) string {
 		"  " + tui.Divider("Checks", 56),
 	}
 
-	if len(rep.Problems) == 0 {
+	if rep.ConfigValid {
 		rows = append(rows, tui.BadgeOK.Render(" PASS ")+"  Config valid")
 	} else {
 		rows = append(rows, tui.BadgeError.Render(" FAIL ")+"  Config valid")
@@ -49,7 +49,19 @@ func RenderAIDoctor(rep *ai_engine.DoctorReport, maskedKey string) string {
 	} else {
 		rows = append(rows, tui.BadgeError.Render(fmt.Sprintf("  ● %d problem(s) found  ", len(rep.Problems))))
 		for _, p := range rep.Problems {
-			rows = append(rows, "    - "+tui.StyleError.Render(p))
+			// Full error text must stay visible: wrap instead of truncating
+			// so the card keeps bounded width while the cause (e.g. a
+			// context deadline) is never hidden behind an ellipsis. Only the
+			// first wrapped line carries the bullet; continuations are
+			// indented under it.
+			wrapped := wrapText(p, maxCardLine-10)
+			for i, line := range wrapped {
+				if i == 0 {
+					rows = append(rows, "    - "+tui.StyleError.Render(line))
+				} else {
+					rows = append(rows, "      "+tui.StyleError.Render(line))
+				}
+			}
 		}
 	}
 	return tui.StyleCard.Render("  " + joinLines(rows))

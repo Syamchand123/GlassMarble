@@ -218,6 +218,11 @@ type DoctorReport struct {
 	KeyRequired  bool
 	KeySet       bool
 	KeySource    string
+	// ConfigValid distinguishes configuration problems (unknown provider,
+	// missing key/model, missing base URL) from runtime failures such as a
+	// connectivity ping timeout. Connectivity failures append to Problems
+	// but must not mark an otherwise-valid configuration as invalid.
+	ConfigValid  bool
 	Problems     []string
 	PingStatus   string
 	PingDuration time.Duration
@@ -268,14 +273,16 @@ func Doctor(ctx context.Context, cfg *aiconfig.Config, rootDir string) *DoctorRe
 	if cfg.Model == "" {
 		rep.Problems = append(rep.Problems, "no model configured — run `gmb ai configure`")
 	}
+	rep.ConfigValid = len(rep.Problems) == 0
 
 	// Connectivity ping, independent of AKG state but only when the
-	// configuration itself is sane.
+	// configuration itself is sane. The ping honors the configured
+	// timeout (180s default): large reasoning models (e.g. NVIDIA NIM
+	// 120B-class) frequently take longer than 15s to emit the first
+	// token, and the historical hard 15s cap produced false "Ping
+	// failed" reports on healthy setups.
 	if len(rep.Problems) == 0 {
-		timeout := time.Duration(cfg.TimeoutSec) * time.Second
-		if timeout > 15*time.Second {
-			timeout = 15 * time.Second
-		}
+		timeout := pingTimeout(cfg)
 		pingCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 
@@ -313,6 +320,15 @@ func Doctor(ctx context.Context, cfg *aiconfig.Config, rootDir string) *DoctorRe
 	}
 
 	return rep
+}
+
+// pingTimeout returns the connectivity-ping budget: the configured request
+// timeout, defaulting to 180s when unset. The historical hard 15s cap was
+// removed because large reasoning models (e.g. NVIDIA NIM 120B-class) can
+// routinely take longer than 15s to emit the first token, which made the
+// doctor report healthy setups as "Ping failed".
+func pingTimeout(cfg *aiconfig.Config) time.Duration {
+	return provider.DurationFor(time.Duration(cfg.TimeoutSec) * time.Second)
 }
 
 // MaskAPIKey renders a key for display, showing only the first 4 and last 4

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/aiconfig"
 )
@@ -248,5 +249,105 @@ func TestMaskAPIKey(t *testing.T) {
 	}
 	if got := MaskAPIKey("sk-abcdefghijklmnop"); got != "sk-a...mnop" {
 		t.Errorf("masked = %q", got)
+	}
+}
+
+// TestPingTimeoutHonorsConfiguredTimeout is the regression test for the
+// "gmb ai doctor" false failure on slow reasoning models: the ping budget
+// must follow the configured timeout_sec (180s default), not a hard 15s cap.
+func TestPingTimeoutHonorsConfiguredTimeout(t *testing.T) {
+	cfg := &aiconfig.Config{TimeoutSec: 180}
+	if got := pingTimeout(cfg); got != 180*time.Second {
+		t.Errorf("pingTimeout(180) = %v, want 180s", got)
+	}
+	if got := pingTimeout(&aiconfig.Config{}); got != 180*time.Second {
+		t.Errorf("pingTimeout(0) = %v, want 180s default", got)
+	}
+	if got := pingTimeout(&aiconfig.Config{TimeoutSec: 30}); got != 30*time.Second {
+		t.Errorf("pingTimeout(30) = %v, want 30s", got)
+	}
+}
+
+// TestDoctorPingSlowServerNoFalseFailure verifies Doctor's ping tolerates a
+// provider whose first token arrives well after the old 15s budget — the
+// endpoint, key, model and config are otherwise healthy.
+func TestDoctorPingSlowServerNoFalseFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(16 * time.Second)
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"OK"}}],"usage":{}}`)
+	}))
+	defer srv.Close()
+
+	rootDir := t.TempDir()
+	ttlDir := filepath.Join(rootDir, ".glassmarble")
+	if err := os.MkdirAll(ttlDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ttlDir, "akg.json"), []byte(`{"schema_version":3,"commit_hash":"test","version":0,"nodes":[],"edges":[]}`), 0o644); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	rep := Doctor(context.Background(), &aiconfig.Config{
+		Provider:   "custom",
+		Model:      "slow-sim",
+		BaseURL:    srv.URL,
+		TimeoutSec: 60,
+	}, rootDir)
+
+	if len(rep.Problems) != 0 {
+		t.Errorf("problems = %v, want none (slow-but-healthy provider must not fail)", rep.Problems)
+	}
+	if rep.PingStatus != "ok" {
+		t.Errorf("ping status = %q, want ok (server answered within the configured 60s timeout)", rep.PingStatus)
+	}
+	if !rep.ConfigValid {
+		t.Error("config must remain valid when only the ping is slow")
+	}
+}
+
+// TestDoctorPingRespectsShortTimeout verifies an explicit short timeout is
+// still honored (no inflation of the configured budget).
+func TestDoctorPingRespectsShortTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(3 * time.Second)
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"OK"}}],"usage":{}}`)
+	}))
+	defer srv.Close()
+
+	rep := Doctor(context.Background(), &aiconfig.Config{
+		Provider:   "custom",
+		Model:      "slow-sim",
+		BaseURL:    srv.URL,
+		TimeoutSec: 1,
+	}, ".")
+
+	if rep.PingStatus == "ok" {
+		t.Error("ping must fail under a 1s budget against a 3s server")
+	}
+}
+
+// TestDoctorConfigValidSeparateFromPing verifies ConfigValid reflects the
+// configuration only: a ping failure (bad endpoint) must not flip
+// ConfigValid to false.
+func TestDoctorConfigValidSeparateFromPing(t *testing.T) {
+	rep := Doctor(context.Background(), &aiconfig.Config{
+		Provider:   "custom",
+		Model:      "m",
+		BaseURL:    "http://127.0.0.1:1", // unreachable
+		TimeoutSec: 1,
+	}, ".")
+
+	if !rep.ConfigValid {
+		t.Error("ConfigValid must stay true (provider/model/base URL are set; only connectivity failed)")
+	}
+	if len(rep.Problems) == 0 {
+		t.Error("expected a connectivity problem for the unreachable endpoint")
+	}
+	if rep.PingStatus != "failed" {
+		t.Errorf("ping status = %q, want failed", rep.PingStatus)
 	}
 }

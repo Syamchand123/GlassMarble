@@ -243,6 +243,7 @@ func TestGoldenAIDoctor(t *testing.T) {
 		KeyRequired: false,
 		KeySet:      true,
 		KeySource:   "config",
+		ConfigValid: true,
 		Problems:    nil,
 		AKGExists:   true,
 	}
