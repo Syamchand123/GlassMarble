@@ -121,6 +121,12 @@ func indexPresentEntities(snap *archmodel.ArchSnapshot) presentEntities {
 		if comp.Name != "" {
 			p.components[comp.Name] = struct{}{}
 		}
+		// Memory keys are canonical component IDs (Stage 5D/8 events use
+		// them for every kind); index the ID too so ID-keyed memory is
+		// never mis-flagged as stale or missing.
+		if comp.ID != "" {
+			p.components[comp.ID] = struct{}{}
+		}
 		for _, nid := range comp.NodeIDs {
 			if nid != "" {
 				p.nodes[nid] = struct{}{}

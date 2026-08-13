@@ -104,6 +104,8 @@ func ClassifyChange(in ClassifyInput) []ClassifiedChange {
 // events. affected IDs replicate arch_intelligence.GenerateEvents exactly
 // (component IDs; dependency pairs source-first), so deduplication in the
 // memory builder keeps the enriched Stage 8 event and drops the 5D twin.
+// Components (the memory key space) are likewise the canonical component
+// IDs — one component, one key — matching the 5D convention.
 func componentPass(in ClassifyInput) []ClassifiedChange {
 	var changes []ClassifiedChange
 	diff := in.Diff
@@ -122,7 +124,7 @@ func componentPass(in ClassifyInput) []ClassifiedChange {
 			continue
 		}
 		changes = append(changes, newClassified(in, archmodel.EventServiceAdded,
-			[]string{c.ID}, []string{c.Name},
+			[]string{c.ID}, []string{c.ID},
 			"Component "+c.Name+" first appeared in the architecture.", 0.95,
 			evItem(evidence.SourceGit, in.Meta.Hash, "added component: "+c.Name, 0.95, t)))
 	}
@@ -132,7 +134,7 @@ func componentPass(in ClassifyInput) []ClassifiedChange {
 			continue
 		}
 		changes = append(changes, newClassified(in, archmodel.EventServiceRemoved,
-			[]string{c.ID}, []string{c.Name},
+			[]string{c.ID}, []string{c.ID},
 			"Component "+c.Name+" no longer exists in the architecture.", 0.95,
 			evItem(evidence.SourceGit, in.Meta.Hash, "removed component: "+c.Name, 0.95, t)))
 	}

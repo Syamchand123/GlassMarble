@@ -342,6 +342,9 @@ func runAnalysis(opts runAnalysisOptions) error {
 	if opts.progress != nil {
 		opts.progress(5, "Committing graph", 0, 1)
 	}
+	// Baseline quality BEFORE the delta commits: the final report measures
+	// the merged graph, so the delta is this-run minus this baseline.
+	baseQ := akg.MeasureGraphQuality(tm.GetActiveGraph())
 	doneCommit := product.StartSpan("akg-commit")
 	if err := tm.ExecuteDeltaTransaction(cpg, modifiedFiles); err != nil {
 		doneCommit()
@@ -396,8 +399,11 @@ func runAnalysis(opts runAnalysisOptions) error {
 		return nil
 	}
 
-	fmt.Printf("Analyzed %d files | %d nodes | %d edges | %d virtual | %d dangling | state=%s | %.1fs\n",
-		len(stage1Out.Updated), q.TotalNodes, q.TotalEdges, q.VirtualNodes, q.DanglingEdges, humanBytes(stateSize), duration.Seconds())
+	fmt.Printf("Analyzed %d files | %d nodes (+%d) | %d edges (+%d) | %d virtual (+%d) | %d dangling | state=%s | %.1fs\n",
+		len(stage1Out.Updated), q.TotalNodes, q.TotalNodes-baseQ.TotalNodes,
+		q.TotalEdges, q.TotalEdges-baseQ.TotalEdges,
+		q.VirtualNodes, q.VirtualNodes-baseQ.VirtualNodes,
+		q.DanglingEdges, humanBytes(stateSize), duration.Seconds())
 	if q.DanglingEdges > 0 {
 		fmt.Printf("WARNING: %d edges reference missing nodes (dangling). Run `gmb analyze --full` to rebuild.\n", q.DanglingEdges)
 	}

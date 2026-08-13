@@ -88,6 +88,38 @@ func trimSpace(s string) string {
 	return s[start:end]
 }
 
+// TestProcessEvents_CanonicalKeyFold pins the memory contract: a component
+// referenced by dependency, coupling, added and removed events under ONE
+// canonical key (its ID) folds into a single ComponentHistory carrying every
+// event ID — never one entry per event kind.
+func TestProcessEvents_CanonicalKeyFold(t *testing.T) {
+	store := newTestStore(t)
+	builder := NewMemoryBuilder(store)
+
+	events := []archmodel.ArchEvent{
+		testEvent("e1", archmodel.EventDependencyAdded, baseTime, []string{"comp_svc", "comp_db"}),
+		testEvent("e2", archmodel.EventCouplingDecreased, baseTime.Add(time.Hour), []string{"comp_svc"}),
+	}
+	if _, err := builder.ProcessEvents(events); err != nil {
+		t.Fatalf("ProcessEvents: %v", err)
+	}
+
+	mem, err := store.LoadMemory()
+	if err != nil {
+		t.Fatalf("LoadMemory: %v", err)
+	}
+	if len(mem.ComponentMemory) != 2 {
+		t.Fatalf("components = %d, want 2 (comp_svc, comp_db)", len(mem.ComponentMemory))
+	}
+	svc, ok := mem.ComponentMemory["comp_svc"]
+	if !ok {
+		t.Fatalf("comp_svc missing from memory: %v", mem.ComponentMemory)
+	}
+	if len(svc.Events) != 2 {
+		t.Errorf("comp_svc events = %v, want both e1 and e2", svc.Events)
+	}
+}
+
 func TestProcessEvents_AppendsAndRebuilds(t *testing.T) {
 	store := newTestStore(t)
 	builder := NewMemoryBuilder(store)

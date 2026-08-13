@@ -142,12 +142,12 @@ func GenerateEvents(
 	sort.Slice(removed, func(i, j int) bool { return removed[i].Name < removed[j].Name })
 	for _, c := range added {
 		events = append(events, newEvent(commitMeta, archmodel.EventServiceAdded,
-			"Component Added: "+c.Name, []string{c.Name}, []string{c.ID},
+			"Component Added: "+c.Name, []string{compKey(c)}, []string{c.ID},
 			"Component "+c.Name+" first appeared in the architecture.", 0.95))
 	}
 	for _, c := range removed {
 		events = append(events, newEvent(commitMeta, archmodel.EventServiceRemoved,
-			"Component Removed: "+c.Name, []string{c.Name}, []string{c.ID},
+			"Component Removed: "+c.Name, []string{compKey(c)}, []string{c.ID},
 			"Component "+c.Name+" no longer exists in the architecture.", 0.95))
 	}
 
@@ -295,11 +295,11 @@ func GenerateEvents(
 		delta := headInst - baseInst
 		if delta > defaultCouplingChangePct {
 			events = append(events, newEvent(commitMeta, archmodel.EventCouplingIncreased,
-				"Coupling Increased: "+hc.Name, []string{hc.Name}, []string{hc.ID},
+				"Coupling Increased: "+hc.Name, []string{compKey(hc)}, []string{hc.ID},
 				"Instability of "+hc.Name+" increased by "+fmtFloat(delta), 0.85))
 		} else if delta < -defaultCouplingChangePct {
 			events = append(events, newEvent(commitMeta, archmodel.EventCouplingDecreased,
-				"Coupling Decreased: "+hc.Name, []string{hc.Name}, []string{hc.ID},
+				"Coupling Decreased: "+hc.Name, []string{compKey(hc)}, []string{hc.ID},
 				"Instability of "+hc.Name+" decreased by "+fmtFloat(-delta), 0.85))
 		}
 	}
@@ -312,6 +312,18 @@ func GenerateEvents(
 		return events[i].Title < events[j].Title
 	})
 	return events
+}
+
+// compKey returns the canonical component key for memory events: the stable
+// component ID (the single key space memory uses — dependency, coupling,
+// added and removed events must all reference the same space or one
+// component splits into several memory entries), falling back to the name
+// for snapshots built before stable IDs existed.
+func compKey(c archmodel.DetectedComponent) string {
+	if c.ID != "" {
+		return c.ID
+	}
+	return c.Name
 }
 
 // componentInstability returns the instability recorded on a component,

@@ -65,6 +65,56 @@ func TestDetectStaleEntities_Components(t *testing.T) {
 	}
 }
 
+// TestDetectStaleEntities_CanonicalIDKeys pins that memory keyed by the
+// canonical component ID (the Stage 5D/8 convention for every event kind)
+// is matched against the snapshot's component IDs, not just its names.
+func TestDetectStaleEntities_CanonicalIDKeys(t *testing.T) {
+	snap := &archmodel.ArchSnapshot{
+		Components: []archmodel.DetectedComponent{
+			{ID: "comp_svc", Name: "internal/service"},
+			{ID: "comp_db", Name: "internal/db"},
+		},
+	}
+	mem := memoryWith(map[string]developer_memory.KnowledgeState{
+		"comp_svc": developer_memory.StateActive,          // ID-keyed: present
+		"internal/db": developer_memory.StateActive,       // name-keyed: present
+		"comp_gone": developer_memory.StateActive,         // ID-keyed: missing
+	})
+
+	stale := DetectStaleEntities(snap, mem)
+	if len(stale) != 1 {
+		t.Fatalf("stale = %v, want exactly comp_gone", stale)
+	}
+	if stale[0].Name != "comp_gone" {
+		t.Errorf("stale[0].Name = %q, want comp_gone", stale[0].Name)
+	}
+	if !snapshotHasComponent(snap, "comp_svc") {
+		t.Errorf("snapshotHasComponent must resolve component IDs")
+	}
+}
+
+// TestMissingEntityClaims_CanonicalIDKeys pins the claim-level presence
+// check against ID-keyed claim subjects.
+func TestMissingEntityClaims_CanonicalIDKeys(t *testing.T) {
+	now := baseNow
+	mem := &developer_memory.DeveloperMemory{
+		GlobalMemory: []developer_memory.KnowledgeClaim{
+			{ID: "c_present", Subject: "comp_svc", Predicate: "was_added", State: developer_memory.StateActive, ValidFrom: now},
+			{ID: "c_missing", Subject: "comp_gone", Predicate: "was_added", State: developer_memory.StateActive, ValidFrom: now},
+		},
+	}
+	snap := &archmodel.ArchSnapshot{
+		Components: []archmodel.DetectedComponent{
+			{ID: "comp_svc", Name: "internal/service"},
+		},
+	}
+
+	missing := MissingEntityClaims(snap, mem)
+	if len(missing) != 1 || missing[0] != "c_missing" {
+		t.Errorf("missing = %v, want exactly [c_missing]", missing)
+	}
+}
+
 // TestDetectStaleEntities_PatternMembers pins that pattern members count as
 // present even when not detected as components.
 func TestDetectStaleEntities_PatternMembers(t *testing.T) {

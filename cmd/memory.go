@@ -22,13 +22,14 @@ import (
 // involved (master plan §4.4). Corrections recorded with --correct are
 // overlaid onto every query result immediately (master plan §8.3).
 var memoryCmd = &cobra.Command{
-	Use:   "memory",
+	Use:   "memory [query]",
 	Short: "Query the developer memory: what do we know, when did it change, and why",
 	Long: `Reads the Stage 6 developer memory (.glassmarble/memory/) and answers
 questions like "what do we know about Redis?" and "why was PaymentService added?".
 
 Modes:
   (default)        project overview: memory stats and current components
+  memory QUERY     ranked retrieval — a positional query is shorthand for --ask
   --ask "query"    ranked knowledge retrieval (components, claims, events, timeline)
   --component NAME longitudinal history of one component plus its timeline
   --correct ID     record a developer correction (Stage 10 learning layer):
@@ -45,6 +46,9 @@ labelled by how they were established (FACT / EXPLICIT_REASON / INFERENCE
 			dir = "."
 		}
 		ask, _ := cmd.Flags().GetString("ask")
+		if ask == "" && len(args) > 0 {
+			ask = strings.Join(args, " ")
+		}
 		component, _ := cmd.Flags().GetString("component")
 		asJSON, _ := cmd.Flags().GetBool("json")
 		correct, _ := cmd.Flags().GetString("correct")
