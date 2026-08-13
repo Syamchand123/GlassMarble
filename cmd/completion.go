@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -26,7 +27,7 @@ var completionCmd = &cobra.Command{
 		case "powershell":
 			return rootCmd.GenPowerShellCompletionWithDesc(os.Stdout)
 		default:
-			return cmd.Help()
+			return producterrs.Tagged(fmt.Sprintf("unknown completion shell %q (supported: bash, zsh, fish, powershell)", args[0]), producterrs.ErrValidation)
 		}
 	},
 }

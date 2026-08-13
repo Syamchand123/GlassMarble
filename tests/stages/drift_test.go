@@ -19,6 +19,9 @@ package stages_test
 //   - Nodes whose paths match no layer (or whose edge stays within one
 //     layer) are silently ignored; unassigned targets never violate
 //     (drift.go:112).
+//   - ForbiddenDeps rules match exact layer pairs (drift.go:131-138): a rule
+//     {api, internal} does NOT cover the distinct "private" sub-layer. An
+//     architect must declare one rule per named layer (see INF-0002).
 
 import (
 	"fmt"
@@ -86,12 +89,14 @@ func s12layers() []config.DriftLayer {
 // TestDriftAnalyzeForbiddenDependency asserts the api→internal boundary is
 // enforced: both the main→service and the main→private CALLS edges cross it
 // and must surface as FORBIDDEN_DEPENDENCY violations naming their layers.
+// Rules are exact layer pairs, so the private sub-layer needs its own rule.
 func TestDriftAnalyzeForbiddenDependency(t *testing.T) {
 	graph := s12importDriftGraph(t, true)
 	cfg := config.DriftConfig{
 		Layers: s12layers(),
 		ForbiddenDeps: []config.ForbiddenDepRule{
 			{Source: "api", Target: "internal", Reason: "api must not reach internal"},
+			{Source: "api", Target: "private", Reason: "api must not reach private"},
 		},
 	}
 
@@ -110,17 +115,20 @@ func TestDriftAnalyzeForbiddenDependency(t *testing.T) {
 		if v.Kind != drift.KindForbiddenDep {
 			t.Errorf("violation kind = %q, want %q", v.Kind, drift.KindForbiddenDep)
 		}
-		if v.SourceLayer != "api" || v.TargetLayer != "internal" {
-			t.Errorf("violation layers = %q→%q, want api→internal", v.SourceLayer, v.TargetLayer)
+		if v.SourceLayer != "api" {
+			t.Errorf("violation source layer = %q, want api", v.SourceLayer)
 		}
 		if v.EdgeType != "CALLS" {
 			t.Errorf("violation edge type = %q, want CALLS", v.EdgeType)
 		}
-		if !strings.Contains(v.Message, "api") || !strings.Contains(v.Message, "internal") {
-			t.Errorf("violation message %q must name both layers", v.Message)
+		if !strings.Contains(v.Message, "api") {
+			t.Errorf("violation message %q must name the source layer", v.Message)
 		}
 		if v.TargetID == "internal/private/secret.go::Secret" {
 			sawPrivate = true
+			if v.TargetLayer != "private" {
+				t.Errorf("violation target layer = %q, want private", v.TargetLayer)
+			}
 		}
 	}
 	if !sawPrivate {

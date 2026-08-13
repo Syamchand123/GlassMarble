@@ -134,7 +134,9 @@ func TestGoldenDiff(t *testing.T) {
 	out := views.RenderDiff("abcdef1234567890", 3, 7, []views.DiffEntry{
 		{Status: "COMMITTED", NodesAdded: 2, EdgesAdded: 1, ModifiedFiles: 1, HasPayload: true},
 	})
-	for _, want := range []string{"abcdef1234", "COMMITTED"} {
+	// RenderDiff normalizes both "COMMITTED" and "committed" inputs to the
+	// same lowercase badge (diff_view.go:42-44); pin the rendered text.
+	for _, want := range []string{"abcdef1234", "committed"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("diff missing %q:\n%s", want, out)
 		}

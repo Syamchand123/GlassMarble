@@ -187,12 +187,13 @@ func TestImportSchemaV1Rejected(t *testing.T) {
 
 // TestVisualizeExitCodes exercises the real binary and asserts the exit
 // contract: success exits 0, every failure mode exits non-zero with a
-// diagnostic on stderr.
+// diagnostic on stderr, and the failure classes map to the exit codes
+// documented in cmd/visualize.go (1 validation, 2 entry missing, 3 empty
+// subgraph, 4 render limit — main.go dispatches via errors.Is on the
+// producterrs taxonomy).
 //
-// Discrepancy: visualize.go documents exit codes 2/3/4 for validation /
-// missing entry / empty subgraph, but main.go exits 1 for every error —
-// fang.Execute renders the error to stderr and the sentinel type is never
-// mapped to an exit code.
+// The stderr pins match case-insensitively: Fang's styled error skin
+// capitalizes the first letter and appends a trailing period.
 func TestVisualizeExitCodes(t *testing.T) {
 	bin := harness.BuildBinary(t)
 	sb := harness.NewSandbox(t)
@@ -204,13 +205,14 @@ func TestVisualizeExitCodes(t *testing.T) {
 	}
 
 	cases := []struct {
-		name string
-		args []string
-		want string
+		name     string
+		args     []string
+		want     string
+		wantCode int
 	}{
-		{"unsupported diagram", []string{"visualize", "bogus", "--dir", "."}, "unsupported diagram type"},
-		{"sequence without entry", []string{"visualize", "sequence", "--dir", "."}, "entry point ID (--entry) is mandatory"},
-		{"package empty subgraph", []string{"visualize", "package", "--dir", "."}, "empty subgraph"},
+		{"unsupported diagram", []string{"visualize", "bogus", "--dir", "."}, "unsupported diagram type", 1},
+		{"sequence without entry", []string{"visualize", "sequence", "--dir", "."}, "entry point ID (--entry) is mandatory", 2},
+		{"package empty subgraph", []string{"visualize", "package", "--dir", "."}, "empty subgraph", 3},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -218,7 +220,10 @@ func TestVisualizeExitCodes(t *testing.T) {
 			if code == 0 {
 				t.Fatalf("expected non-zero exit\n%s", stderr)
 			}
-			if !strings.Contains(stderr, tc.want) {
+			if code != tc.wantCode {
+				t.Errorf("exit = %d, want %d (documented in cmd/visualize.go)\n%s", code, tc.wantCode, stderr)
+			}
+			if !strings.Contains(strings.ToLower(stderr), strings.ToLower(tc.want)) {
 				t.Errorf("stderr missing %q:\n%s", tc.want, stderr)
 			}
 		})

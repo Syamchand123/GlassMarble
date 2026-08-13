@@ -17,12 +17,12 @@ package edgecases_test
 //  4. `visualize` rejects unknown diagram types, requires --entry for
 //     sequence diagrams, and reports a missing state file.
 //  5. `memory --correct` validates kinds and requires a value.
-//  6. `completion` accepts bash|zsh|fish|powershell; anything else re-prints
-//     the plain help (no error); zero args is a cobra arg-count error.
+//  6. `completion` accepts bash|zsh|fish|powershell; anything else is
+//     rejected with a validation error (non-zero exit, §12); zero args is a
+//     cobra arg-count error.
 //  7. `hooks` validates the verb (install|uninstall) and the arg count.
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/Syamchand123/GlassMarble/tests/harness"
@@ -152,14 +152,11 @@ func TestMemoryInvalidKind(t *testing.T) {
 	mustFailContains(t, sb, []string{"unknown correction kind \"BOGUS\""}, "memory", "--correct", "foo", "--kind", "BOGUS")
 }
 
-// TestCompletionBadShellShowsHelp: an unsupported shell re-prints the plain
-// help and exits 0 (Fang is bypassed so the output stays ANSI-free).
-func TestCompletionBadShellShowsHelp(t *testing.T) {
+// TestCompletionBadShellRejected: an unsupported shell is a validation error
+// (§12, E2E-0001) — non-zero exit naming the shell and the supported list.
+func TestCompletionBadShellRejected(t *testing.T) {
 	sb := harness.NewSandbox(t)
-	out := mustRunContains(t, sb, []string{"Shells:", "bash"}, "completion", "elvish")
-	if strings.Contains(out, "\x1b[") {
-		t.Errorf("completion help leaked ANSI escapes:\n%q", out)
-	}
+	mustFailContains(t, sb, []string{"unknown completion shell \"elvish\"", "bash, zsh, fish, powershell"}, "completion", "elvish")
 }
 
 // TestCompletionNoArgs: `completion` with zero arguments is a cobra

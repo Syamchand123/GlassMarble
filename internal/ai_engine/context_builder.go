@@ -202,7 +202,10 @@ func sectionBudget(name string, maxTokens int) int {
 	}
 	b := maxTokens * share / 100
 	if b < 64 {
-		b = 64 // floor: never render a section with fewer tokens than one item
+		// floor: never render a section with fewer tokens than one item,
+		// capped at the caller's budget so tiny budgets are honored instead
+		// of being silently overridden.
+		b = min(64, maxTokens)
 	}
 	return b
 }
@@ -225,6 +228,11 @@ func trimSection[T any](items []T, budget int, render func(T) string) []T {
 	for i, it := range items {
 		total += len(render(it)) + 1
 		if total > chars {
+			if i == 0 {
+				// floor: a budget too small to fit one item still keeps the
+				// section's top item so non-empty sections never render empty.
+				return items[:1]
+			}
 			return items[:i]
 		}
 	}

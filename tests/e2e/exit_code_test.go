@@ -2,18 +2,19 @@ package e2e_test
 
 // TestExitCodeContractViaRealBinary drives the REAL compiled gmb binary
 // (separate process, real main.go exit handling) and pins the documented
-// exit-code contract from docs/exit-code-contract.md:
+// exit-code contract from docs/commands_master_reference.md §12:
 //
 //   - every successful command exits 0;
-//   - every failing command exits non-zero (main.go currently exits 1 on any
-//     error and does NOT implement the distinct per-error codes that the
-//     visualize command documents — the contract on disk is 0-vs-nonzero);
+//   - every failing command exits non-zero (main.go maps the producterrs
+//     taxonomy to distinct codes: 1 validation, 2 entry missing/not found,
+//     3 empty subgraph, 4 render limit — everything else 1);
 //   - the 0-vs-nonzero split of each documented case must match reality, so
 //     any behavioural regression flips these assertions.
 //
-// Two documented cases intentionally do NOT match the docs and are asserted
-// by their real behaviour (see the inline comments): `gmb completion bogus`
-// and `gmb analyze` on an empty repository.
+// One documented case intentionally does NOT match the docs and is asserted
+// by its real behaviour (see the inline comment): `gmb analyze` on an empty
+// repository — §12 says analyze exits non-zero only when a stage fails or the
+// commit is rejected, and an empty repository commits a healthy empty graph.
 
 import (
 	"strings"
@@ -127,21 +128,17 @@ func TestExitCodeContractViaRealBinary(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			// DOCUMENTED DISCREPANCY: docs/exit-code-contract.md says an
-			// unknown completion target exits 1. In reality the completion
-			// command falls through to its help text and returns nil, so the
-			// process exits 0. The contract we can uphold is that this never
-			// crashes; assert the real behaviour so a future fix flips this
-			// test deliberately.
-			name: "completion bogus exits 0 (documented as 1 — see comment)",
-			args: []string{"completion", "bogus"},
+			// §12: `completion` exits non-zero when the shell is unknown.
+			// The unknown-shell path returns a validation error (exit 1).
+			name:    "completion bogus exits non-zero (unknown shell)",
+			args:    []string{"completion", "bogus"},
+			wantErr: true,
 		},
 		{
-			// DOCUMENTED DISCREPANCY: docs/exit-code-contract.md says analyze
-			// on a repository with no Go files exits 1. In reality analyze
-			// has no hard error path for an empty repo: it analyzes zero
-			// files, completes the pipeline and exits 0.
-			name: "analyze on empty repository exits 0 (documented as 1 — see comment)",
+			// §12: `analyze` exits non-zero only when a stage fails or the
+			// commit is rejected. An empty repository commits a healthy
+			// empty graph, so exit 0 is the documented behaviour here.
+			name: "analyze on empty repository exits 0 (healthy empty commit)",
 			args: []string{"analyze"},
 		},
 	}

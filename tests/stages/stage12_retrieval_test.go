@@ -17,8 +17,9 @@ package stages_test
 //     (evidence_retriever.go:344). Rejection only takes effect while another
 //     non-rejected pattern matches the query (the rejected item stays in the
 //     fallback pool otherwise). The correction test encodes both facts.
-//   - sectionBudget floors every section at 64 tokens (context_builder.go:204),
-//     so MaxTokens=1 still keeps one item per section.
+//   - sectionBudget floors every section at 64 tokens but caps the floor at
+//     the caller's budget (context_builder.go:204), so MaxTokens=1 keeps
+//     exactly the top item per section and tiny budgets are honored.
 //   - EvidenceContext.Timeline comes from the memory aggregate's Timeline
 //     field, not from memory/timeline.json (the retriever queries the
 //     aggregate; timeline.json is only a derived artifact).
@@ -270,8 +271,9 @@ func TestStage12TopKCapsSections(t *testing.T) {
 }
 
 // TestStage12TokenBudgetTrim asserts TrimToBudget pulls the rendered prompt
-// back toward the budget (the 64-token per-section floor allows slack) and
-// still works for absurdly small budgets.
+// back toward the budget: the per-section floor (64 tokens, capped at the
+// caller's budget) guarantees every non-empty section keeps its top item,
+// and tiny budgets shrink the prompt instead of being silently overridden.
 func TestStage12TokenBudgetTrim(t *testing.T) {
 	sb := harness.NewSandbox(t)
 	analyzeProject(t, sb)
@@ -292,6 +294,12 @@ func TestStage12TokenBudgetTrim(t *testing.T) {
 	if tiny.TokenCount <= 0 {
 		t.Errorf("MaxTokens=1 TokenCount = %d, want > 0", tiny.TokenCount)
 	}
+	// A tiny budget is honored: the per-section floor is capped at the
+	// caller's budget, so the MaxTokens=1 prompt is strictly smaller than
+	// the MaxTokens=100 prompt.
+	if tiny.TokenCount >= ctx.TokenCount {
+		t.Errorf("MaxTokens=1 TokenCount = %d, want < MaxTokens=100 TokenCount %d", tiny.TokenCount, ctx.TokenCount)
+	}
 	for _, sec := range []struct {
 		name string
 		got  int
@@ -304,7 +312,24 @@ func TestStage12TokenBudgetTrim(t *testing.T) {
 		{"components", len(tiny.Components)},
 	} {
 		if sec.got > 1 {
-			t.Errorf("MaxTokens=1 section %s has %d items, want <= 1", sec.name, sec.got)
+			t.Errorf("MaxTokens=1 section %s has %d items, want <= 1 (the floor is one item)", sec.name, sec.got)
+		}
+	}
+	// The floor guarantee: a section that had evidence never renders empty.
+	for _, sec := range []struct {
+		name string
+		had  int
+		got  int
+	}{
+		{"nodes", len(ctx.Nodes), len(tiny.Nodes)},
+		{"claims", len(ctx.Claims), len(tiny.Claims)},
+		{"timeline", len(ctx.Timeline), len(tiny.Timeline)},
+		{"patterns", len(ctx.Patterns), len(tiny.Patterns)},
+		{"smells", len(ctx.Smells), len(tiny.Smells)},
+		{"components", len(ctx.Components), len(tiny.Components)},
+	} {
+		if sec.had > 0 && sec.got != 1 {
+			t.Errorf("MaxTokens=1 section %s kept %d items, want the top item (had %d at budget 100)", sec.name, sec.got, sec.had)
 		}
 	}
 }
