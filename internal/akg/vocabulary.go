@@ -3,7 +3,7 @@ package akg
 import (
 	"strings"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 )
 
@@ -14,110 +14,110 @@ import (
 // no RDF machinery is involved (v3 JSON store plan §3/§4.6).
 
 // mapKindToClass converts an internal node kind to its canonical
-// vocabulary class name (stage4.KindToClass).
+// vocabulary class name (link.KindToClass).
 func mapKindToClass(kind string) string {
-	return stage4.KindToClass(kind)
+	return link.KindToClass(kind)
 }
 
 // mapClassToKind is the inverse of mapKindToClass. It reconstructs an
 // internal node kind from a class name so that graphs restored from
 // legacy Turtle keep their kinds across restore cycles.
 func mapClassToKind(class string) string {
-	return stage4.ClassToKind(class)
+	return link.ClassToKind(class)
 }
 
 // mapEdgeTypeToPredicate converts a canonical RelationshipType constant
 // to the predicate key emitted for it. Unknown edge types map to "" and
 // are not emitted at all (no silent stand-in vocabulary).
-func mapEdgeTypeToPredicate(edgeType stage4.RelationshipType) string {
+func mapEdgeTypeToPredicate(edgeType link.RelationshipType) string {
 	switch edgeType {
-	case stage4.EdgeCalls:
+	case link.EdgeCalls:
 		return ont.PredCalls
-	case stage4.EdgeImplements:
+	case link.EdgeImplements:
 		return ont.PredInheritsFrom
-	case stage4.EdgeExtends:
+	case link.EdgeExtends:
 		return ont.PredExtends
-	case stage4.EdgeComposes:
+	case link.EdgeComposes:
 		return ont.PredComposes
-	case stage4.EdgeReferences:
+	case link.EdgeReferences:
 		return ont.PredReferences
-	case stage4.EdgeThrows:
+	case link.EdgeThrows:
 		return ont.PredThrows
-	case stage4.EdgeSpawnsConcurrent:
+	case link.EdgeSpawnsConcurrent:
 		return ont.PredSpawnsConcurrent
-	case stage4.EdgeDispatchesEvent:
+	case link.EdgeDispatchesEvent:
 		return ont.PredDispatchesEvent
-	case stage4.EdgeExposesEndpoint:
+	case link.EdgeExposesEndpoint:
 		return ont.PredExposesEndpoint
-	case stage4.EdgeSecuritySink:
+	case link.EdgeSecuritySink:
 		return ont.PredSecuritySink
-	case stage4.EdgeConsumesResource:
+	case link.EdgeConsumesResource:
 		return ont.PredConsumesResource
-	case stage4.EdgeMutatesGlobal:
+	case link.EdgeMutatesGlobal:
 		return ont.PredMutatesGlobal
-	case stage4.EdgeAliasesType:
+	case link.EdgeAliasesType:
 		return ont.PredAliasesType
-	case stage4.EdgeControlFlow, stage4.EdgeConditionalBranch, stage4.EdgeLoopBranch, stage4.EdgeSwitchBranch:
+	case link.EdgeControlFlow, link.EdgeConditionalBranch, link.EdgeLoopBranch, link.EdgeSwitchBranch:
 		return ont.PredControlFlowTo
-	case stage4.EdgeDataFlow:
+	case link.EdgeDataFlow:
 		return ont.PredDataFlowTo
-	case stage4.EdgeAliases:
+	case link.EdgeAliases:
 		return ont.PredAliasesPointer
-	case stage4.EdgeVulnerable:
+	case link.EdgeVulnerable:
 		return ont.PredVulnerableTaint
-	case stage4.EdgeInstantiates:
+	case link.EdgeInstantiates:
 		return ont.PredInstantiatesGeneric
-	case stage4.EdgeVirtualContext:
+	case link.EdgeVirtualContext:
 		return ont.PredVirtualContextLink
-	case stage4.EdgeSendsTo:
+	case link.EdgeSendsTo:
 		return ont.PredSendsMessage
-	case stage4.EdgeReceivesFrom:
+	case link.EdgeReceivesFrom:
 		return ont.PredReceivesMessage
-	case stage4.EdgeCyclic:
+	case link.EdgeCyclic:
 		return ont.PredCyclicDependency
-	case stage4.EdgeNetworkCall:
+	case link.EdgeNetworkCall:
 		return ont.PredNetworkCall
-	case stage4.EdgeQueriesDB:
+	case link.EdgeQueriesDB:
 		return ont.PredQueriesDatabase
-	case stage4.EdgeCallsCloudAPI:
+	case link.EdgeCallsCloudAPI:
 		return ont.PredCallsCloudAPI
-	case stage4.EdgeCatches:
+	case link.EdgeCatches:
 		return ont.PredCatchesException
-	case stage4.EdgeDefers:
+	case link.EdgeDefers:
 		return ont.PredDefersExecution
-	case stage4.EdgeBelongsTo:
+	case link.EdgeBelongsTo:
 		return ont.PredBelongsTo
-	case stage4.EdgeDependsOn:
+	case link.EdgeDependsOn:
 		return ont.PredDependsOn
-	case stage4.EdgeContains:
+	case link.EdgeContains:
 		return ont.PredContains
-	case stage4.EdgeMixes:
+	case link.EdgeMixes:
 		return ont.PredMixes
-	case stage4.EdgeHasField:
+	case link.EdgeHasField:
 		return ont.PredHasField
-	case stage4.EdgeHasParam:
+	case link.EdgeHasParam:
 		return ont.PredHasParam
-	case stage4.EdgeReturns:
+	case link.EdgeReturns:
 		return ont.PredReturns
-	case stage4.EdgeHasReceiver:
+	case link.EdgeHasReceiver:
 		return ont.PredHasReceiver
-	case stage4.EdgeContextCall:
+	case link.EdgeContextCall:
 		return ont.PredContextualCall
-	case stage4.EdgePointsTo:
+	case link.EdgePointsTo:
 		return ont.PredPointsTo
-	case stage4.EdgeHeapAlias:
+	case link.EdgeHeapAlias:
 		return ont.PredHeapAlias
-	case stage4.EdgeConstraint:
+	case link.EdgeConstraint:
 		return ont.PredBranchConstraint
-	case stage4.EdgeFFICall:
+	case link.EdgeFFICall:
 		return ont.PredFfiCall
-	case stage4.EdgePublishes:
+	case link.EdgePublishes:
 		return ont.PredPublishesEvent
-	case stage4.EdgeSubscribes:
+	case link.EdgeSubscribes:
 		return ont.PredSubscribesEvent
-	case stage4.EdgeInjects:
+	case link.EdgeInjects:
 		return ont.PredDiInjects
-	case stage4.EdgeEscapesToHeap:
+	case link.EdgeEscapesToHeap:
 		return ont.PredEscapesToHeap
 	default:
 		return ""
@@ -127,108 +127,108 @@ func mapEdgeTypeToPredicate(edgeType stage4.RelationshipType) string {
 // mapPredicateToEdgeType is the inverse of mapEdgeTypeToPredicate. It
 // reconstructs canonical RelationshipType constants from serialized
 // predicate keys so that restored edges keep their exact types.
-func mapPredicateToEdgeType(pred string) stage4.RelationshipType {
+func mapPredicateToEdgeType(pred string) link.RelationshipType {
 	switch pred {
 	case ont.PredCalls:
-		return stage4.EdgeCalls
+		return link.EdgeCalls
 	case ont.PredInheritsFrom:
-		return stage4.EdgeImplements
+		return link.EdgeImplements
 	case ont.PredExtends:
-		return stage4.EdgeExtends
+		return link.EdgeExtends
 	case ont.PredComposes:
-		return stage4.EdgeComposes
+		return link.EdgeComposes
 	case ont.PredReferences:
-		return stage4.EdgeReferences
+		return link.EdgeReferences
 	case ont.PredThrows:
-		return stage4.EdgeThrows
+		return link.EdgeThrows
 	case ont.PredSpawnsConcurrent:
-		return stage4.EdgeSpawnsConcurrent
+		return link.EdgeSpawnsConcurrent
 	case ont.PredDispatchesEvent:
-		return stage4.EdgeDispatchesEvent
+		return link.EdgeDispatchesEvent
 	case ont.PredExposesEndpoint:
-		return stage4.EdgeExposesEndpoint
+		return link.EdgeExposesEndpoint
 	case ont.PredSecuritySink:
-		return stage4.EdgeSecuritySink
+		return link.EdgeSecuritySink
 	case ont.PredConsumesResource:
-		return stage4.EdgeConsumesResource
+		return link.EdgeConsumesResource
 	case ont.PredMutatesGlobal:
-		return stage4.EdgeMutatesGlobal
+		return link.EdgeMutatesGlobal
 	case ont.PredAliasesType:
-		return stage4.EdgeAliasesType
+		return link.EdgeAliasesType
 	case ont.PredControlFlowTo:
-		return stage4.EdgeControlFlow
+		return link.EdgeControlFlow
 	case ont.PredDataFlowTo:
-		return stage4.EdgeDataFlow
+		return link.EdgeDataFlow
 	case ont.PredAliasesPointer:
-		return stage4.EdgeAliases
+		return link.EdgeAliases
 	case ont.PredVulnerableTaint:
-		return stage4.EdgeVulnerable
+		return link.EdgeVulnerable
 	case ont.PredInstantiatesGeneric:
-		return stage4.EdgeInstantiates
+		return link.EdgeInstantiates
 	case ont.PredVirtualContextLink:
-		return stage4.EdgeVirtualContext
+		return link.EdgeVirtualContext
 	case ont.PredSendsMessage:
-		return stage4.EdgeSendsTo
+		return link.EdgeSendsTo
 	case ont.PredReceivesMessage:
-		return stage4.EdgeReceivesFrom
+		return link.EdgeReceivesFrom
 	case ont.PredCyclicDependency:
-		return stage4.EdgeCyclic
+		return link.EdgeCyclic
 	case ont.PredNetworkCall:
-		return stage4.EdgeNetworkCall
+		return link.EdgeNetworkCall
 	case ont.PredQueriesDatabase:
-		return stage4.EdgeQueriesDB
+		return link.EdgeQueriesDB
 	case ont.PredCallsCloudAPI:
-		return stage4.EdgeCallsCloudAPI
+		return link.EdgeCallsCloudAPI
 	case ont.PredCatchesException:
-		return stage4.EdgeCatches
+		return link.EdgeCatches
 	case ont.PredDefersExecution:
-		return stage4.EdgeDefers
+		return link.EdgeDefers
 	case ont.PredBelongsTo:
-		return stage4.EdgeBelongsTo
+		return link.EdgeBelongsTo
 	case ont.PredDependsOn:
-		return stage4.EdgeDependsOn
+		return link.EdgeDependsOn
 	case ont.PredContains:
-		return stage4.EdgeContains
+		return link.EdgeContains
 	case ont.PredMixes:
-		return stage4.EdgeMixes
+		return link.EdgeMixes
 	case ont.PredHasField:
-		return stage4.EdgeHasField
+		return link.EdgeHasField
 	case ont.PredHasParam:
-		return stage4.EdgeHasParam
+		return link.EdgeHasParam
 	case ont.PredReturns:
-		return stage4.EdgeReturns
+		return link.EdgeReturns
 	case ont.PredHasReceiver:
-		return stage4.EdgeHasReceiver
+		return link.EdgeHasReceiver
 	case ont.PredContextualCall:
-		return stage4.EdgeContextCall
+		return link.EdgeContextCall
 	case ont.PredPointsTo:
-		return stage4.EdgePointsTo
+		return link.EdgePointsTo
 	case ont.PredHeapAlias:
-		return stage4.EdgeHeapAlias
+		return link.EdgeHeapAlias
 	case ont.PredBranchConstraint:
-		return stage4.EdgeConstraint
+		return link.EdgeConstraint
 	case ont.PredFfiCall:
-		return stage4.EdgeFFICall
+		return link.EdgeFFICall
 	case ont.PredPublishesEvent:
-		return stage4.EdgePublishes
+		return link.EdgePublishes
 	case ont.PredSubscribesEvent:
-		return stage4.EdgeSubscribes
+		return link.EdgeSubscribes
 	case ont.PredDiInjects:
-		return stage4.EdgeInjects
+		return link.EdgeInjects
 	case ont.PredEscapesToHeap:
-		return stage4.EdgeEscapesToHeap
+		return link.EdgeEscapesToHeap
 	default:
 		// Unknown predicates (e.g. from legacy files): preserve the
 		// predicate name as a RelationshipType string rather than dropping
 		// the edge.
-		return stage4.RelationshipType(strings.ToUpper(strings.TrimPrefix(pred, ont.PrefixGM)))
+		return link.RelationshipType(strings.ToUpper(strings.TrimPrefix(pred, ont.PrefixGM)))
 	}
 }
 
 // EdgeTypeToPredicate is the exported form of mapEdgeTypeToPredicate: it
 // converts a canonical RelationshipType constant to the predicate string
 // consumed by the visualization extraction configs
-// (internal/visualization_engine/stage1).
-func EdgeTypeToPredicate(edgeType stage4.RelationshipType) string {
+// (internal/visualization_engine/extract).
+func EdgeTypeToPredicate(edgeType link.RelationshipType) string {
 	return mapEdgeTypeToPredicate(edgeType)
 }

@@ -10,14 +10,14 @@ func IsSchemaV3Enabled() bool {
 	return v != "0" && v != "false"
 }
 
-// IsNewStage3Enabled returns true unless GMB_NEW_STAGE3 is explicitly set to "0" or "false".
-func IsNewStage3Enabled() bool {
-	v := os.Getenv("GMB_NEW_STAGE3")
+// IsNewAggregatorEnabled returns true unless GMB_NEW_AGGREGATOR is explicitly set to "0" or "false".
+func IsNewAggregatorEnabled() bool {
+	v := os.Getenv("GMB_NEW_AGGREGATOR")
 	return v != "0" && v != "false"
 }
 
-// IsNewStage4Enabled returns true unless GMB_NEW_STAGE4 is explicitly set to "0" or "false".
-func IsNewStage4Enabled() bool {
-	v := os.Getenv("GMB_NEW_STAGE4")
+// IsNewLinkerEnabled returns true unless GMB_NEW_LINKER is explicitly set to "0" or "false".
+func IsNewLinkerEnabled() bool {
+	v := os.Getenv("GMB_NEW_LINKER")
 	return v != "0" && v != "false"
 }

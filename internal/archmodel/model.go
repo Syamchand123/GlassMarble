@@ -1,4 +1,4 @@
-// Package archmodel is the central type registry for all GlassMarble V2 cross-stage types.
+// Package archmodel is the central type registry for all GlassMarble V2 cross-phase types.
 //
 // WHY THIS PACKAGE EXISTS (execution_plan.md §2, Problem P1):
 //   The original design placed ArchEvent in arch_intelligence, ArchSnapshot in
@@ -6,7 +6,7 @@
 //   circular import cycle:
 //       arch_intelligence → arch_timeline → developer_memory → arch_intelligence
 //   The corrected execution plan resolves this by extracting ALL shared types into this
-//   single leaf package. No stage package imports another — they all import archmodel.
+//   single leaf package. No phase package imports another — they all import archmodel.
 //
 // WHAT IS IN HERE:
 //   - ArchEvent + EventKind enum          — one architectural change event
@@ -20,7 +20,7 @@
 //   - StaleEntity                         — component present in memory but gone from graph
 //
 // DEPENDENCY DIRECTION (strict, cycle-free):
-//   evidence (leaf) → archmodel (leaf) → stage packages → cmd/
+//   evidence (leaf) → archmodel (leaf) → phase packages → cmd/
 package archmodel
 
 import (
@@ -56,7 +56,7 @@ const (
 	EventCycleResolved     EventKind = "CYCLE_RESOLVED"
 	EventLayerViolation    EventKind = "LAYER_VIOLATION"
 	// EventStateChanged marks a knowledge-state transition performed by
-	// Stage 11 (knowledge aging) — e.g. CURRENT → DEPRECATED. The new
+	// knowledge aging — e.g. CURRENT → DEPRECATED. The new
 	// state is carried machine-readably in a single well-known tag of the
 	// form "state=<STATE>" (see StateTag / StateFromTags); the description
 	// carries the human-readable reason. Transition events are appended to
@@ -121,7 +121,7 @@ const (
 )
 
 // DetectedComponent is a logical architectural unit inferred from graph topology.
-// Stage 5D: Louvain community detection + directory prefix analysis. No LLM.
+// component inference: Louvain community detection + directory prefix analysis. No LLM.
 type DetectedComponent struct {
 	ID          string          `json:"id"`
 	Name        string          `json:"name"`
@@ -131,11 +131,11 @@ type DetectedComponent struct {
 	Evidence    evidence.Bundle `json:"evidence"`
 	Confidence  float64         `json:"confidence"`
 	// Dependencies lists the IDs of the components this one depends on
-	// (distinct structural edges). Filled by Stage 5D; used by event
+	// (distinct structural edges). Filled by component inference; used by event
 	// generation to detect component-level dependency changes.
 	Dependencies []string `json:"dependencies,omitempty"`
 	// Ca and Ce are the component's afferent/efferent coupling in the
-	// component graph; Instability = Ce/(Ca+Ce). Filled by Stage 5A/5D.
+	// component graph; Instability = Ce/(Ca+Ce). Filled by intelligence metrics/component inference.
 	Ca          int     `json:"ca,omitempty"`
 	Ce          int     `json:"ce,omitempty"`
 	Instability float64 `json:"instability,omitempty"`
@@ -159,7 +159,7 @@ const (
 	PatternSaga              PatternKind = "SAGA"
 )
 
-// DetectedPattern is an architectural pattern matched by Stage 5B.
+// DetectedPattern is an architectural pattern matched by pattern detection.
 // Must carry non-empty Evidence.Bundle.
 type DetectedPattern struct {
 	Kind        PatternKind     `json:"kind"`
@@ -197,7 +197,7 @@ const (
 	SeverityCritical Severity = "CRITICAL"
 )
 
-// ArchSmell is an architectural anti-pattern detected in Stage 5C.
+// ArchSmell is an architectural anti-pattern detected in smell detection.
 // Must carry non-empty Evidence.Bundle.
 type ArchSmell struct {
 	Kind        SmellKind       `json:"kind"`
@@ -217,7 +217,7 @@ type HotspotEntry struct {
 	FanOut   int     `json:"fan_out"`
 }
 
-// ArchMetrics holds quantitative architecture quality measurements from Stage 5A.
+// ArchMetrics holds quantitative architecture quality measurements from architecture intelligenceA.
 // Derived entirely from the CodePropertyGraph — no LLM.
 type ArchMetrics struct {
 	TotalNodes                  int            `json:"total_nodes"`

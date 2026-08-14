@@ -13,9 +13,9 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine"
-	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/stage1"
-	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/stage2"
-	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/stage3"
+	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/extract"
+	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/layout"
+	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/render"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
@@ -80,23 +80,23 @@ func TestPipelineParseExtractRender(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseGraphFileToNative failed: %v", err)
 	}
-	cfg := stage1.GetExtractionConfig(types.UMLClass, types.QueryOptions{EntryPointID: "main.go::Main"})
-	sub, _, err := stage1.ExtractFromSubgraph(native, cfg, types.QueryOptions{EntryPointID: "main.go::Main"})
+	cfg := ingest.GetExtractionConfig(types.UMLClass, types.QueryOptions{EntryPointID: "main.go::Main"})
+	sub, _, err := ingest.ExtractFromSubgraph(native, cfg, types.QueryOptions{EntryPointID: "main.go::Main"})
 	if err != nil {
 		t.Fatalf("ExtractFromSubgraph failed: %v", err)
 	}
 	if len(sub.Nodes) == 0 {
 		t.Fatal("expected at least one extracted node")
 	}
-	metrics := stage2.ComputeAllMetrics(sub)
+	metrics := normalize.ComputeAllMetrics(sub)
 	if metrics == nil {
 		t.Fatal("expected non-nil metrics")
 	}
-	layout := stage2.BuildLayoutTreeEx(sub, metrics, metrics.Communities, types.QueryOptions{}, types.UMLClass)
+	layout := normalize.BuildLayoutTreeEx(sub, metrics, metrics.Communities, types.QueryOptions{}, types.UMLClass)
 	if layout == nil {
 		t.Fatal("expected non-nil layout tree")
 	}
-	markup := stage3.RenderDiagramFormat(layout, types.UMLClass, "mermaid")
+	markup := aggregate.RenderDiagramFormat(layout, types.UMLClass, "mermaid")
 	if markup == "" {
 		t.Error("expected non-empty render output")
 	}
@@ -107,7 +107,7 @@ func TestPipelineParseExtractRender(t *testing.T) {
 // point must keep working so pre-v3 repositories self-heal on first load.
 func TestLegacyTTLFallbackParse(t *testing.T) {
 	path := filepath.Join("testdata", "minimal.ttl")
-	native, err := stage1.ParseTTLFileToNative(path)
+	native, err := ingest.ParseTTLFileToNative(path)
 	if err != nil {
 		t.Fatalf("ParseTTLFileToNative failed: %v", err)
 	}
@@ -282,27 +282,27 @@ func TestProjectDiagramCaching(t *testing.T) {
 func TestProjectDiagramProgressCallback(t *testing.T) {
 	path := filepath.Join("testdata", "minimal.json")
 	ec := newJSONCoordinator(path)
-	var stages []string
+	var steps []string
 	_, err := ec.ProjectDiagram(types.UMLClass, types.QueryOptions{
 		EntryPointID: "main.go::Main",
-		OnProgress: func(stage, detail string) {
-			stages = append(stages, stage)
+		OnProgress: func(step, detail string) {
+			steps = append(steps, step)
 		},
 	})
 	if err != nil {
 		t.Fatalf("ProjectDiagram with progress callback failed: %v", err)
 	}
-	if len(stages) == 0 {
+	if len(steps) == 0 {
 		t.Error("expected at least one progress callback")
 	}
-	// Verify key stages were reported
+	// Verify key steps were reported
 	found := make(map[string]bool)
-	for _, s := range stages {
+	for _, s := range steps {
 		found[s] = true
 	}
-	for _, expected := range []string{"StageParse", "StageExtract", "StageRender"} {
+	for _, expected := range []string{"StepParse", "StepExtract", "StepRender"} {
 		if !found[expected] {
-			t.Errorf("expected stage %q to be reported, got stages: %v", expected, stages)
+			t.Errorf("expected phase %q to be reported, got steps: %v", expected, steps)
 		}
 	}
 }

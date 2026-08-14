@@ -193,7 +193,7 @@ func TestCorruptCorrectionsWALLenient(t *testing.T) {
 }
 
 // TestCorruptLatestIntelligenceIgnored documents a discrepancy: `patterns`
-// runs Stage 5 fresh from the graph and never reads intelligence/latest.json,
+// runs architecture intelligence fresh from the graph and never reads intelligence/latest.json,
 // so a corrupt artifact cannot crash it.
 func TestCorruptLatestIntelligenceIgnored(t *testing.T) {
 	sb := harness.NewSandbox(t)

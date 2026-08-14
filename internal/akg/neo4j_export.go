@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 )
 
@@ -21,7 +21,7 @@ func ExportNeo4jCypher(graph *CodePropertyGraph, w io.Writer) error {
 
 	// Collect and sort nodes deterministically
 	var nodeIDs []string
-	graph.Nodes.Iterate(func(id string, _ *stage4.ResolvedNode) {
+	graph.Nodes.Iterate(func(id string, _ *link.ResolvedNode) {
 		nodeIDs = append(nodeIDs, id)
 	})
 	sort.Strings(nodeIDs)
@@ -67,7 +67,7 @@ func ExportNeo4jCypher(graph *CodePropertyGraph, w io.Writer) error {
 	// Collect and sort outbound edges deterministically
 	var sourceIDs []string
 	if graph.OutboundEdges != nil {
-		graph.OutboundEdges.Iterate(func(srcID string, _ []stage4.ResolvedEdge) {
+		graph.OutboundEdges.Iterate(func(srcID string, _ []link.ResolvedEdge) {
 			sourceIDs = append(sourceIDs, srcID)
 		})
 	}

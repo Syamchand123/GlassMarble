@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/config"
 )
 
@@ -50,7 +50,7 @@ type layerIndex struct {
 	layers []config.DriftLayer
 }
 
-// LayerIndex assigns nodes to layers by path glob. It is exported so Stage 5
+// LayerIndex assigns nodes to layers by path glob. It is exported so Architecture Intelligence
 // (architectural intelligence) can reuse the same layering rules.
 type LayerIndex struct {
 	Layers []config.DriftLayer
@@ -101,11 +101,11 @@ func Analyze(graph *akg.CodePropertyGraph, driftCfg config.DriftConfig) *Report 
 	layerGraph := make(map[string]map[string]bool) // layer -> set of layers it depends on
 	layerEdgeCount := make(map[string]int)         // "src\x00tgt" -> count
 
-	graph.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
+	graph.Nodes.Iterate(func(id string, node *link.ResolvedNode) {
 		nodeLayer[id] = li.Assign(node.FileSpec.Path)
 	})
 
-	graph.OutboundEdges.Iterate(func(srcID string, edges []stage4.ResolvedEdge) {
+	graph.OutboundEdges.Iterate(func(srcID string, edges []link.ResolvedEdge) {
 		for _, e := range edges {
 			srcLayer := nodeLayer[srcID]
 			tgtLayer := nodeLayer[e.TargetID]
@@ -131,7 +131,7 @@ func Analyze(graph *akg.CodePropertyGraph, driftCfg config.DriftConfig) *Report 
 		forbidden[rule.Source+"\x00"+rule.Target] = true
 	}
 
-	graph.OutboundEdges.Iterate(func(srcID string, edges []stage4.ResolvedEdge) {
+	graph.OutboundEdges.Iterate(func(srcID string, edges []link.ResolvedEdge) {
 		srcLayer := nodeLayer[srcID]
 		for _, e := range edges {
 			tgtLayer := nodeLayer[e.TargetID]

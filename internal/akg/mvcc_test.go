@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -13,11 +13,11 @@ import (
 
 func TestDetectCycles_NoCycle(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
-	g.Nodes = g.Nodes.Set("c", &stage4.ResolvedNode{ID: "c", Kind: "FUNCTION", Name: "c"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
+	g.Nodes = g.Nodes.Set("c", &link.ResolvedNode{ID: "c", Kind: "FUNCTION", Name: "c"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: link.EdgeCalls}})
 
 	cycles := g.DetectCycles()
 	if len(cycles) != 0 {
@@ -27,12 +27,12 @@ func TestDetectCycles_NoCycle(t *testing.T) {
 
 func TestDetectCycles_SingleCycle(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
-	g.Nodes = g.Nodes.Set("c", &stage4.ResolvedNode{ID: "c", Kind: "FUNCTION", Name: "c"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("c", []stage4.ResolvedEdge{{SourceID: "c", TargetID: "a", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
+	g.Nodes = g.Nodes.Set("c", &link.ResolvedNode{ID: "c", Kind: "FUNCTION", Name: "c"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("c", []link.ResolvedEdge{{SourceID: "c", TargetID: "a", Type: link.EdgeCalls}})
 
 	cycles := g.DetectCycles()
 	if len(cycles) != 1 {
@@ -53,14 +53,14 @@ func TestDetectCycles_EmptyGraph(t *testing.T) {
 func TestArticulationPoints_SimpleBridge(t *testing.T) {
 	g := NewCodePropertyGraph("test")
 	for _, id := range []string{"a", "b", "c", "d"} {
-		g.Nodes = g.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: "NODE", Name: id})
+		g.Nodes = g.Nodes.Set(id, &link.ResolvedNode{ID: id, Kind: "NODE", Name: id})
 	}
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("c", []stage4.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("c", []stage4.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("d", []stage4.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: stage4.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("c", []link.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("c", []link.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("d", []link.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: link.EdgeCalls}})
 
 	aps := g.FindArticulationPoints()
 	if len(aps) == 0 {
@@ -80,7 +80,7 @@ func TestArticulationPoints_Empty(t *testing.T) {
 
 func TestPageRank_OneNode(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
 	ranks := g.CalculatePageRank(10, 0.85)
 	if len(ranks) != 1 {
 		t.Errorf("expected 1 rank, got %d", len(ranks))
@@ -113,7 +113,7 @@ func TestBetweenness_Empty(t *testing.T) {
 func TestGodObjects_None(t *testing.T) {
 	g := NewCodePropertyGraph("test")
 	for _, id := range []string{"a", "b", "c"} {
-		g.Nodes = g.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: "STRUCT", Name: id})
+		g.Nodes = g.Nodes.Set(id, &link.ResolvedNode{ID: id, Kind: "STRUCT", Name: id})
 	}
 	godObjects := g.DetectGodObjects()
 	if len(godObjects) != 0 {
@@ -143,11 +143,11 @@ func TestIslands_Empty(t *testing.T) {
 
 func TestSimilarity_Identical(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "NODE", Name: "b"})
-	g.Nodes = g.Nodes.Set("x", &stage4.ResolvedNode{ID: "x", Kind: "NODE", Name: "x"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "x", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "b", TargetID: "x", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "NODE", Name: "b"})
+	g.Nodes = g.Nodes.Set("x", &link.ResolvedNode{ID: "x", Kind: "NODE", Name: "x"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "x", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "b", TargetID: "x", Type: link.EdgeCalls}})
 
 	sim := g.GetStructuralSimilarity("a", "b")
 	if sim != 1.0 {
@@ -157,12 +157,12 @@ func TestSimilarity_Identical(t *testing.T) {
 
 func TestSimilarity_NoOverlap(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "NODE", Name: "b"})
-	g.Nodes = g.Nodes.Set("x", &stage4.ResolvedNode{ID: "x", Kind: "NODE", Name: "x"})
-	g.Nodes = g.Nodes.Set("y", &stage4.ResolvedNode{ID: "y", Kind: "NODE", Name: "y"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "x", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "b", TargetID: "y", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "NODE", Name: "b"})
+	g.Nodes = g.Nodes.Set("x", &link.ResolvedNode{ID: "x", Kind: "NODE", Name: "x"})
+	g.Nodes = g.Nodes.Set("y", &link.ResolvedNode{ID: "y", Kind: "NODE", Name: "y"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "x", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "b", TargetID: "y", Type: link.EdgeCalls}})
 
 	sim := g.GetStructuralSimilarity("a", "b")
 	if sim != 0.0 {
@@ -172,8 +172,8 @@ func TestSimilarity_NoOverlap(t *testing.T) {
 
 func TestSimilarity_BothEmpty(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "NODE", Name: "b"})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "NODE", Name: "b"})
 
 	sim := g.GetStructuralSimilarity("a", "b")
 	if sim != 1.0 {
@@ -185,11 +185,11 @@ func TestSimilarity_BothEmpty(t *testing.T) {
 
 func TestTopoSort_DAG(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
-	g.Nodes = g.Nodes.Set("c", &stage4.ResolvedNode{ID: "c", Kind: "FUNCTION", Name: "c"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
+	g.Nodes = g.Nodes.Set("c", &link.ResolvedNode{ID: "c", Kind: "FUNCTION", Name: "c"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: link.EdgeCalls}})
 
 	sorted, ok := g.GetTopologicalSort()
 	if !ok {
@@ -202,12 +202,12 @@ func TestTopoSort_DAG(t *testing.T) {
 
 func TestTopoSort_WithCycle(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
-	g.Nodes = g.Nodes.Set("c", &stage4.ResolvedNode{ID: "c", Kind: "FUNCTION", Name: "c"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("c", []stage4.ResolvedEdge{{SourceID: "c", TargetID: "a", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
+	g.Nodes = g.Nodes.Set("c", &link.ResolvedNode{ID: "c", Kind: "FUNCTION", Name: "c"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("c", []link.ResolvedEdge{{SourceID: "c", TargetID: "a", Type: link.EdgeCalls}})
 
 	_, ok := g.GetTopologicalSort()
 	if ok {
@@ -217,7 +217,7 @@ func TestTopoSort_WithCycle(t *testing.T) {
 
 func TestTopoSort_SingleNode(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
 
 	sorted, ok := g.GetTopologicalSort()
 	if !ok {
@@ -243,11 +243,11 @@ func TestTopoSort_Empty(t *testing.T) {
 
 func TestFindPath_Exists(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
-	g.Nodes = g.Nodes.Set("c", &stage4.ResolvedNode{ID: "c", Kind: "FUNCTION", Name: "c"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
+	g.Nodes = g.Nodes.Set("c", &link.ResolvedNode{ID: "c", Kind: "FUNCTION", Name: "c"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: link.EdgeCalls}})
 
 	path := g.FindPath("a", "c", 10)
 	if len(path) != 3 {
@@ -257,8 +257,8 @@ func TestFindPath_Exists(t *testing.T) {
 
 func TestFindPath_NoPath(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
 
 	path := g.FindPath("a", "b", 10)
 	if path != nil {
@@ -268,7 +268,7 @@ func TestFindPath_NoPath(t *testing.T) {
 
 func TestFindPath_MissingStart(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
 
 	path := g.FindPath("a", "b", 10)
 	if path != nil {
@@ -280,11 +280,11 @@ func TestFindPath_MissingStart(t *testing.T) {
 
 func TestOrphans_Mixed(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
-	g.Nodes = g.Nodes.Set("c", &stage4.ResolvedNode{ID: "c", Kind: "FUNCTION", Name: "c"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
+	g.Nodes = g.Nodes.Set("c", &link.ResolvedNode{ID: "c", Kind: "FUNCTION", Name: "c"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
 	g.Entrypoints = []string{"a"}
 
 	orphans := g.GetOrphanNodes()
@@ -295,7 +295,7 @@ func TestOrphans_Mixed(t *testing.T) {
 
 func TestOrphans_Entrypoint(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "main"})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "main"})
 	g.Entrypoints = []string{"a"}
 
 	orphans := g.GetOrphanNodes()
@@ -308,11 +308,11 @@ func TestOrphans_Entrypoint(t *testing.T) {
 
 func TestInstability_Stable(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
-	g.InboundEdges = g.InboundEdges.Set("a", []stage4.ResolvedEdge{
-		{SourceID: "x", TargetID: "a", Type: stage4.EdgeCalls},
-		{SourceID: "y", TargetID: "a", Type: stage4.EdgeCalls},
-		{SourceID: "z", TargetID: "a", Type: stage4.EdgeCalls},
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.InboundEdges = g.InboundEdges.Set("a", []link.ResolvedEdge{
+		{SourceID: "x", TargetID: "a", Type: link.EdgeCalls},
+		{SourceID: "y", TargetID: "a", Type: link.EdgeCalls},
+		{SourceID: "z", TargetID: "a", Type: link.EdgeCalls},
 	})
 	inst := g.CalculateInstability("a")
 	if inst != 0.0 {
@@ -322,10 +322,10 @@ func TestInstability_Stable(t *testing.T) {
 
 func TestInstability_Unstable(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{
-		{SourceID: "a", TargetID: "x", Type: stage4.EdgeCalls},
-		{SourceID: "a", TargetID: "y", Type: stage4.EdgeCalls},
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{
+		{SourceID: "a", TargetID: "x", Type: link.EdgeCalls},
+		{SourceID: "a", TargetID: "y", Type: link.EdgeCalls},
 	})
 	inst := g.CalculateInstability("a")
 	if inst != 1.0 {
@@ -335,7 +335,7 @@ func TestInstability_Unstable(t *testing.T) {
 
 func TestInstability_Isolated(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
 	inst := g.CalculateInstability("a")
 	if inst != 0.0 {
 		t.Errorf("expected 0.0 instability for isolated node, got %f", inst)
@@ -346,17 +346,17 @@ func TestInstability_Isolated(t *testing.T) {
 
 func TestImpactRadius_Transitive(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("c", &stage4.ResolvedNode{ID: "c", Kind: "FUNCTION", Name: "c"})
-	g.InboundEdges = g.InboundEdges.Set("c", []stage4.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: stage4.EdgeCalls}})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
-	g.InboundEdges = g.InboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("c", &link.ResolvedNode{ID: "c", Kind: "FUNCTION", Name: "c"})
+	g.InboundEdges = g.InboundEdges.Set("c", []link.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: link.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
+	g.InboundEdges = g.InboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
 
 	_ = g.CalculateImpactRadius("c")
 }
 
 func TestImpactRadius_NoDependents(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
 	radius := g.CalculateImpactRadius("a")
 	if radius != 0 {
 		t.Errorf("expected 0 impact for leaf node, got %d", radius)
@@ -367,7 +367,7 @@ func TestImpactRadius_NoDependents(t *testing.T) {
 
 func TestPackageCohesion_NoComponents(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("pkg", &stage4.ResolvedNode{ID: "pkg", Kind: "PACKAGE", Name: "pkg"})
+	g.Nodes = g.Nodes.Set("pkg", &link.ResolvedNode{ID: "pkg", Kind: "PACKAGE", Name: "pkg"})
 
 	cohesion := g.CalculatePackageCohesion("pkg")
 	if cohesion != 0.0 {
@@ -377,10 +377,10 @@ func TestPackageCohesion_NoComponents(t *testing.T) {
 
 func TestPackageCohesion_SingleComponent(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("pkg", &stage4.ResolvedNode{ID: "pkg", Kind: "PACKAGE", Name: "pkg"})
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "CLASS", Name: "A"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "pkg", Type: stage4.EdgeBelongsTo}})
-	g.InboundEdges = g.InboundEdges.Set("pkg", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "pkg", Type: stage4.EdgeBelongsTo}})
+	g.Nodes = g.Nodes.Set("pkg", &link.ResolvedNode{ID: "pkg", Kind: "PACKAGE", Name: "pkg"})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "CLASS", Name: "A"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "pkg", Type: link.EdgeBelongsTo}})
+	g.InboundEdges = g.InboundEdges.Set("pkg", []link.ResolvedEdge{{SourceID: "a", TargetID: "pkg", Type: link.EdgeBelongsTo}})
 
 	cohesion := g.CalculatePackageCohesion("pkg")
 	if cohesion != 0.0 {
@@ -416,18 +416,18 @@ func TestNewCodePropertyGraph_InitializesMaps(t *testing.T) {
 
 func TestDetectCycles_MultipleCycles(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "NODE", Name: "b"})
-	g.Nodes = g.Nodes.Set("c", &stage4.ResolvedNode{ID: "c", Kind: "NODE", Name: "c"})
-	g.Nodes = g.Nodes.Set("d", &stage4.ResolvedNode{ID: "d", Kind: "NODE", Name: "d"})
-	g.Nodes = g.Nodes.Set("e", &stage4.ResolvedNode{ID: "e", Kind: "NODE", Name: "e"})
-	g.Nodes = g.Nodes.Set("f", &stage4.ResolvedNode{ID: "f", Kind: "NODE", Name: "f"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("c", []stage4.ResolvedEdge{{SourceID: "c", TargetID: "a", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("d", []stage4.ResolvedEdge{{SourceID: "d", TargetID: "e", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("e", []stage4.ResolvedEdge{{SourceID: "e", TargetID: "f", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("f", []stage4.ResolvedEdge{{SourceID: "f", TargetID: "d", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "NODE", Name: "b"})
+	g.Nodes = g.Nodes.Set("c", &link.ResolvedNode{ID: "c", Kind: "NODE", Name: "c"})
+	g.Nodes = g.Nodes.Set("d", &link.ResolvedNode{ID: "d", Kind: "NODE", Name: "d"})
+	g.Nodes = g.Nodes.Set("e", &link.ResolvedNode{ID: "e", Kind: "NODE", Name: "e"})
+	g.Nodes = g.Nodes.Set("f", &link.ResolvedNode{ID: "f", Kind: "NODE", Name: "f"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("c", []link.ResolvedEdge{{SourceID: "c", TargetID: "a", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("d", []link.ResolvedEdge{{SourceID: "d", TargetID: "e", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("e", []link.ResolvedEdge{{SourceID: "e", TargetID: "f", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("f", []link.ResolvedEdge{{SourceID: "f", TargetID: "d", Type: link.EdgeCalls}})
 
 	cycles := g.DetectCycles()
 	if len(cycles) != 2 {
@@ -437,20 +437,20 @@ func TestDetectCycles_MultipleCycles(t *testing.T) {
 
 func TestDetectCycles_SelfLoop(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "a", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "a", Type: link.EdgeCalls}})
 
 	_ = g.DetectCycles()
 }
 
 func TestDetectCycles_Disconnected(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "NODE", Name: "b"})
-	g.Nodes = g.Nodes.Set("c", &stage4.ResolvedNode{ID: "c", Kind: "NODE", Name: "c"})
-	g.Nodes = g.Nodes.Set("d", &stage4.ResolvedNode{ID: "d", Kind: "NODE", Name: "d"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("c", []stage4.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "NODE", Name: "b"})
+	g.Nodes = g.Nodes.Set("c", &link.ResolvedNode{ID: "c", Kind: "NODE", Name: "c"})
+	g.Nodes = g.Nodes.Set("d", &link.ResolvedNode{ID: "d", Kind: "NODE", Name: "d"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("c", []link.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: link.EdgeCalls}})
 
 	cycles := g.DetectCycles()
 	if len(cycles) != 0 {
@@ -462,17 +462,17 @@ func TestDetectCycles_Disconnected(t *testing.T) {
 
 func TestArticulationPoints_StarGraph(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("center", &stage4.ResolvedNode{ID: "center", Kind: "NODE", Name: "center"})
+	g.Nodes = g.Nodes.Set("center", &link.ResolvedNode{ID: "center", Kind: "NODE", Name: "center"})
 	for _, leaf := range []string{"a", "b", "c"} {
-		g.Nodes = g.Nodes.Set(leaf, &stage4.ResolvedNode{ID: leaf, Kind: "NODE", Name: leaf})
+		g.Nodes = g.Nodes.Set(leaf, &link.ResolvedNode{ID: leaf, Kind: "NODE", Name: leaf})
 
 		edges, _ := g.OutboundEdges.Get("center")
 		g.OutboundEdges = g.OutboundEdges.Set("center", append(edges,
-			stage4.ResolvedEdge{SourceID: "center", TargetID: leaf, Type: stage4.EdgeCalls}))
+			link.ResolvedEdge{SourceID: "center", TargetID: leaf, Type: link.EdgeCalls}))
 
 		inEdges, _ := g.InboundEdges.Get(leaf)
 		g.InboundEdges = g.InboundEdges.Set(leaf, append(inEdges,
-			stage4.ResolvedEdge{SourceID: "center", TargetID: leaf, Type: stage4.EdgeCalls}))
+			link.ResolvedEdge{SourceID: "center", TargetID: leaf, Type: link.EdgeCalls}))
 	}
 
 	aps := g.FindArticulationPoints()
@@ -490,21 +490,21 @@ func TestArticulationPoints_StarGraph(t *testing.T) {
 
 func TestArticulationPoints_Tree(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("root", &stage4.ResolvedNode{ID: "root", Kind: "NODE", Name: "root"})
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "NODE", Name: "b"})
-	g.Nodes = g.Nodes.Set("a1", &stage4.ResolvedNode{ID: "a1", Kind: "NODE", Name: "a1"})
-	g.Nodes = g.Nodes.Set("b1", &stage4.ResolvedNode{ID: "b1", Kind: "NODE", Name: "b1"})
-	g.OutboundEdges = g.OutboundEdges.Set("root", []stage4.ResolvedEdge{
-		{SourceID: "root", TargetID: "a", Type: stage4.EdgeCalls},
-		{SourceID: "root", TargetID: "b", Type: stage4.EdgeCalls},
+	g.Nodes = g.Nodes.Set("root", &link.ResolvedNode{ID: "root", Kind: "NODE", Name: "root"})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "NODE", Name: "b"})
+	g.Nodes = g.Nodes.Set("a1", &link.ResolvedNode{ID: "a1", Kind: "NODE", Name: "a1"})
+	g.Nodes = g.Nodes.Set("b1", &link.ResolvedNode{ID: "b1", Kind: "NODE", Name: "b1"})
+	g.OutboundEdges = g.OutboundEdges.Set("root", []link.ResolvedEdge{
+		{SourceID: "root", TargetID: "a", Type: link.EdgeCalls},
+		{SourceID: "root", TargetID: "b", Type: link.EdgeCalls},
 	})
-	g.InboundEdges = g.InboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "root", TargetID: "a", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "root", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "a1", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("a1", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "a1", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "b", TargetID: "b1", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("b1", []stage4.ResolvedEdge{{SourceID: "b", TargetID: "b1", Type: stage4.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "root", TargetID: "a", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "root", TargetID: "b", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "a1", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("a1", []link.ResolvedEdge{{SourceID: "a", TargetID: "a1", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "b", TargetID: "b1", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("b1", []link.ResolvedEdge{{SourceID: "b", TargetID: "b1", Type: link.EdgeCalls}})
 
 	aps := g.FindArticulationPoints()
 	if len(aps) == 0 {
@@ -516,16 +516,16 @@ func TestArticulationPoints_Cycle(t *testing.T) {
 	g := NewCodePropertyGraph("test")
 	ids := []string{"a", "b", "c", "d"}
 	for _, id := range ids {
-		g.Nodes = g.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: "NODE", Name: id})
+		g.Nodes = g.Nodes.Set(id, &link.ResolvedNode{ID: id, Kind: "NODE", Name: id})
 	}
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("c", []stage4.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("d", []stage4.ResolvedEdge{{SourceID: "d", TargetID: "a", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("c", []stage4.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("d", []stage4.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "d", TargetID: "a", Type: stage4.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("c", []link.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("d", []link.ResolvedEdge{{SourceID: "d", TargetID: "a", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("c", []link.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("d", []link.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "d", TargetID: "a", Type: link.EdgeCalls}})
 
 	aps := g.FindArticulationPoints()
 	_ = aps
@@ -533,10 +533,10 @@ func TestArticulationPoints_Cycle(t *testing.T) {
 
 func TestArticulationPoints_Disconnected(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "NODE", Name: "b"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("c", []stage4.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "NODE", Name: "b"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("c", []link.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: link.EdgeCalls}})
 
 	aps := g.FindArticulationPoints()
 	_ = aps
@@ -546,10 +546,10 @@ func TestArticulationPoints_Disconnected(t *testing.T) {
 
 func TestPageRank_TwoNodesOneEdge(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "NODE", Name: "b"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "NODE", Name: "b"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
 
 	ranks := g.CalculatePageRank(10, 0.85)
 	if ranks["b"] <= ranks["a"] {
@@ -561,7 +561,7 @@ func TestPageRank_NoEdges(t *testing.T) {
 	g := NewCodePropertyGraph("test")
 	for i := 0; i < 3; i++ {
 		id := fmt.Sprintf("n%d", i)
-		g.Nodes = g.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: "NODE", Name: id})
+		g.Nodes = g.Nodes.Set(id, &link.ResolvedNode{ID: id, Kind: "NODE", Name: id})
 	}
 
 	ranks := g.CalculatePageRank(10, 0.85)
@@ -575,10 +575,10 @@ func TestPageRank_NoEdges(t *testing.T) {
 
 func TestPageRank_CustomIterations(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "NODE", Name: "b"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "NODE", Name: "b"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
 
 	r1 := g.CalculatePageRank(1, 0.85)
 	r10 := g.CalculatePageRank(10, 0.85)
@@ -592,15 +592,15 @@ func TestPageRank_CustomIterations(t *testing.T) {
 // redistribution, ranks leak every iteration and the sum drifts well below 1.
 func TestPageRank_DanglingMassConserved(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
-	g.Nodes = g.Nodes.Set("leaf1", &stage4.ResolvedNode{ID: "leaf1", Kind: "FUNCTION", Name: "leaf1"})
-	g.Nodes = g.Nodes.Set("leaf2", &stage4.ResolvedNode{ID: "leaf2", Kind: "FUNCTION", Name: "leaf2"})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
+	g.Nodes = g.Nodes.Set("leaf1", &link.ResolvedNode{ID: "leaf1", Kind: "FUNCTION", Name: "leaf1"})
+	g.Nodes = g.Nodes.Set("leaf2", &link.ResolvedNode{ID: "leaf2", Kind: "FUNCTION", Name: "leaf2"})
 	addPageRankEdge := func(src, dst string) {
 		g.OutboundEdges = g.OutboundEdges.Set(src, append(g.GetOutboundEdges(src),
-			stage4.ResolvedEdge{SourceID: src, TargetID: dst, Type: stage4.EdgeCalls}))
+			link.ResolvedEdge{SourceID: src, TargetID: dst, Type: link.EdgeCalls}))
 		g.InboundEdges = g.InboundEdges.Set(dst, append(g.GetInboundEdges(dst),
-			stage4.ResolvedEdge{SourceID: src, TargetID: dst, Type: stage4.EdgeCalls}))
+			link.ResolvedEdge{SourceID: src, TargetID: dst, Type: link.EdgeCalls}))
 	}
 	addPageRankEdge("a", "b")
 	addPageRankEdge("b", "leaf1")
@@ -622,14 +622,14 @@ func TestPageRank_DanglingMassConserved(t *testing.T) {
 func TestBetweenness_DirectedNoHalving(t *testing.T) {
 	g := NewCodePropertyGraph("test")
 	for _, id := range []string{"a", "b", "c", "d"} {
-		g.Nodes = g.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: "STRUCT", Name: id})
+		g.Nodes = g.Nodes.Set(id, &link.ResolvedNode{ID: id, Kind: "STRUCT", Name: id})
 	}
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("c", []stage4.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("c", []stage4.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("d", []stage4.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: stage4.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("c", []link.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("c", []link.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("d", []link.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: link.EdgeCalls}})
 
 	bc := g.CalculateBetweennessCentrality(true)
 	assert.Equal(t, 2.0, bc["b"])
@@ -643,11 +643,11 @@ func TestBetweenness_DirectedNoHalving(t *testing.T) {
 func TestBetweenness_LineGraph(t *testing.T) {
 	g := NewCodePropertyGraph("test")
 	for _, id := range []string{"a", "b", "c", "d"} {
-		g.Nodes = g.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: "STRUCT", Name: id})
+		g.Nodes = g.Nodes.Set(id, &link.ResolvedNode{ID: id, Kind: "STRUCT", Name: id})
 	}
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("c", []stage4.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: stage4.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("c", []link.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: link.EdgeCalls}})
 
 	bc := g.CalculateBetweennessCentrality(true)
 	if bc["b"] <= 0 || bc["c"] <= 0 {
@@ -657,11 +657,11 @@ func TestBetweenness_LineGraph(t *testing.T) {
 
 func TestBetweenness_AllKinds(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("f", &stage4.ResolvedNode{ID: "f", Kind: "FUNCTION", Name: "func1"})
-	g.Nodes = g.Nodes.Set("m", &stage4.ResolvedNode{ID: "m", Kind: "METHOD", Name: "method1"})
-	g.Nodes = g.Nodes.Set("s", &stage4.ResolvedNode{ID: "s", Kind: "STRUCT", Name: "struct1"})
-	g.OutboundEdges = g.OutboundEdges.Set("f", []stage4.ResolvedEdge{{SourceID: "f", TargetID: "m", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("m", []stage4.ResolvedEdge{{SourceID: "m", TargetID: "s", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("f", &link.ResolvedNode{ID: "f", Kind: "FUNCTION", Name: "func1"})
+	g.Nodes = g.Nodes.Set("m", &link.ResolvedNode{ID: "m", Kind: "METHOD", Name: "method1"})
+	g.Nodes = g.Nodes.Set("s", &link.ResolvedNode{ID: "s", Kind: "STRUCT", Name: "struct1"})
+	g.OutboundEdges = g.OutboundEdges.Set("f", []link.ResolvedEdge{{SourceID: "f", TargetID: "m", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("m", []link.ResolvedEdge{{SourceID: "m", TargetID: "s", Type: link.EdgeCalls}})
 
 	bcAll := g.CalculateBetweennessCentrality(true)
 	if _, ok := bcAll["f"]; !ok {
@@ -684,7 +684,7 @@ func TestBetweenness_AllKinds(t *testing.T) {
 	// When includeAll=false, only major kinds (STRUCT/CLASS/MODULE/PACKAGE/FILE) have entries
 	// Check that FUNCTION nodes appear in one but not the other
 	funcNodes := 0
-	g.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
+	g.Nodes.Iterate(func(id string, node *link.ResolvedNode) {
 		if node.Kind == "FUNCTION" {
 			_, inAll := resultAll[id]
 			_, inRestricted := resultRestricted[id]
@@ -702,20 +702,20 @@ func TestBetweenness_AllKinds(t *testing.T) {
 func TestGodObjects_OneGod(t *testing.T) {
 	g := NewCodePropertyGraph("test")
 	for _, id := range []string{"a", "b", "c"} {
-		g.Nodes = g.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: "STRUCT", Name: id})
+		g.Nodes = g.Nodes.Set(id, &link.ResolvedNode{ID: id, Kind: "STRUCT", Name: id})
 	}
-	g.Nodes = g.Nodes.Set("g", &stage4.ResolvedNode{ID: "g", Kind: "STRUCT", Name: "God"})
+	g.Nodes = g.Nodes.Set("g", &link.ResolvedNode{ID: "g", Kind: "STRUCT", Name: "God"})
 	for i := 0; i < 15; i++ {
 		dep := fmt.Sprintf("dep%d", i)
-		g.Nodes = g.Nodes.Set(dep, &stage4.ResolvedNode{ID: dep, Kind: "STRUCT", Name: dep})
+		g.Nodes = g.Nodes.Set(dep, &link.ResolvedNode{ID: dep, Kind: "STRUCT", Name: dep})
 
 		edges, _ := g.OutboundEdges.Get("g")
 		g.OutboundEdges = g.OutboundEdges.Set("g", append(edges,
-			stage4.ResolvedEdge{SourceID: "g", TargetID: dep, Type: stage4.EdgeCalls}))
+			link.ResolvedEdge{SourceID: "g", TargetID: dep, Type: link.EdgeCalls}))
 
 		inEdges, _ := g.InboundEdges.Get("g")
 		g.InboundEdges = g.InboundEdges.Set("g", append(inEdges,
-			stage4.ResolvedEdge{SourceID: dep, TargetID: "g", Type: stage4.EdgeCalls}))
+			link.ResolvedEdge{SourceID: dep, TargetID: "g", Type: link.EdgeCalls}))
 	}
 
 	_ = g.DetectGodObjects()
@@ -723,18 +723,18 @@ func TestGodObjects_OneGod(t *testing.T) {
 
 func TestGodObjects_OnlyRelevantKinds(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("fn", &stage4.ResolvedNode{ID: "fn", Kind: "FUNCTION", Name: "hotFunc"})
+	g.Nodes = g.Nodes.Set("fn", &link.ResolvedNode{ID: "fn", Kind: "FUNCTION", Name: "hotFunc"})
 	for i := 0; i < 20; i++ {
 		dep := fmt.Sprintf("dep%d", i)
-		g.Nodes = g.Nodes.Set(dep, &stage4.ResolvedNode{ID: dep, Kind: "FUNCTION", Name: dep})
+		g.Nodes = g.Nodes.Set(dep, &link.ResolvedNode{ID: dep, Kind: "FUNCTION", Name: dep})
 
 		edges, _ := g.OutboundEdges.Get("fn")
 		g.OutboundEdges = g.OutboundEdges.Set("fn", append(edges,
-			stage4.ResolvedEdge{SourceID: "fn", TargetID: dep, Type: stage4.EdgeCalls}))
+			link.ResolvedEdge{SourceID: "fn", TargetID: dep, Type: link.EdgeCalls}))
 
 		inEdges, _ := g.InboundEdges.Get("fn")
 		g.InboundEdges = g.InboundEdges.Set("fn", append(inEdges,
-			stage4.ResolvedEdge{SourceID: dep, TargetID: "fn", Type: stage4.EdgeCalls}))
+			link.ResolvedEdge{SourceID: dep, TargetID: "fn", Type: link.EdgeCalls}))
 	}
 
 	objects := g.DetectGodObjects()
@@ -749,15 +749,15 @@ func TestGodObjects_OnlyRelevantKinds(t *testing.T) {
 
 func TestIslands_OneIsland(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("main", &stage4.ResolvedNode{ID: "main", Kind: "FUNCTION", Name: "main"})
-	g.Nodes = g.Nodes.Set("helper", &stage4.ResolvedNode{ID: "helper", Kind: "FUNCTION", Name: "helper"})
+	g.Nodes = g.Nodes.Set("main", &link.ResolvedNode{ID: "main", Kind: "FUNCTION", Name: "main"})
+	g.Nodes = g.Nodes.Set("helper", &link.ResolvedNode{ID: "helper", Kind: "FUNCTION", Name: "helper"})
 	g.Entrypoints = []string{"main"}
-	g.OutboundEdges = g.OutboundEdges.Set("main", []stage4.ResolvedEdge{{SourceID: "main", TargetID: "helper", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("helper", []stage4.ResolvedEdge{{SourceID: "main", TargetID: "helper", Type: stage4.EdgeCalls}})
-	g.Nodes = g.Nodes.Set("iso1", &stage4.ResolvedNode{ID: "iso1", Kind: "FUNCTION", Name: "iso1"})
-	g.Nodes = g.Nodes.Set("iso2", &stage4.ResolvedNode{ID: "iso2", Kind: "FUNCTION", Name: "iso2"})
-	g.OutboundEdges = g.OutboundEdges.Set("iso1", []stage4.ResolvedEdge{{SourceID: "iso1", TargetID: "iso2", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("iso2", []stage4.ResolvedEdge{{SourceID: "iso1", TargetID: "iso2", Type: stage4.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("main", []link.ResolvedEdge{{SourceID: "main", TargetID: "helper", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("helper", []link.ResolvedEdge{{SourceID: "main", TargetID: "helper", Type: link.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("iso1", &link.ResolvedNode{ID: "iso1", Kind: "FUNCTION", Name: "iso1"})
+	g.Nodes = g.Nodes.Set("iso2", &link.ResolvedNode{ID: "iso2", Kind: "FUNCTION", Name: "iso2"})
+	g.OutboundEdges = g.OutboundEdges.Set("iso1", []link.ResolvedEdge{{SourceID: "iso1", TargetID: "iso2", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("iso2", []link.ResolvedEdge{{SourceID: "iso1", TargetID: "iso2", Type: link.EdgeCalls}})
 
 	islands := g.FindIsolatedIslands()
 	if len(islands) != 1 {
@@ -767,11 +767,11 @@ func TestIslands_OneIsland(t *testing.T) {
 
 func TestIslands_None(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("main", &stage4.ResolvedNode{ID: "main", Kind: "FUNCTION", Name: "main"})
-	g.Nodes = g.Nodes.Set("helper", &stage4.ResolvedNode{ID: "helper", Kind: "FUNCTION", Name: "helper"})
+	g.Nodes = g.Nodes.Set("main", &link.ResolvedNode{ID: "main", Kind: "FUNCTION", Name: "main"})
+	g.Nodes = g.Nodes.Set("helper", &link.ResolvedNode{ID: "helper", Kind: "FUNCTION", Name: "helper"})
 	g.Entrypoints = []string{"main"}
-	g.OutboundEdges = g.OutboundEdges.Set("main", []stage4.ResolvedEdge{{SourceID: "main", TargetID: "helper", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("helper", []stage4.ResolvedEdge{{SourceID: "main", TargetID: "helper", Type: stage4.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("main", []link.ResolvedEdge{{SourceID: "main", TargetID: "helper", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("helper", []link.ResolvedEdge{{SourceID: "main", TargetID: "helper", Type: link.EdgeCalls}})
 
 	islands := g.FindIsolatedIslands()
 	if len(islands) != 0 {
@@ -781,18 +781,18 @@ func TestIslands_None(t *testing.T) {
 
 func TestIslands_MultipleIslands(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("main", &stage4.ResolvedNode{ID: "main", Kind: "FUNCTION", Name: "main"})
+	g.Nodes = g.Nodes.Set("main", &link.ResolvedNode{ID: "main", Kind: "FUNCTION", Name: "main"})
 	g.Entrypoints = []string{"main"}
 	for _, id := range []string{"i1a", "i1b"} {
-		g.Nodes = g.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: "FUNCTION", Name: id})
+		g.Nodes = g.Nodes.Set(id, &link.ResolvedNode{ID: id, Kind: "FUNCTION", Name: id})
 	}
-	g.OutboundEdges = g.OutboundEdges.Set("i1a", []stage4.ResolvedEdge{{SourceID: "i1a", TargetID: "i1b", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("i1b", []stage4.ResolvedEdge{{SourceID: "i1a", TargetID: "i1b", Type: stage4.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("i1a", []link.ResolvedEdge{{SourceID: "i1a", TargetID: "i1b", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("i1b", []link.ResolvedEdge{{SourceID: "i1a", TargetID: "i1b", Type: link.EdgeCalls}})
 	for _, id := range []string{"i2a", "i2b"} {
-		g.Nodes = g.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: "FUNCTION", Name: id})
+		g.Nodes = g.Nodes.Set(id, &link.ResolvedNode{ID: id, Kind: "FUNCTION", Name: id})
 	}
-	g.OutboundEdges = g.OutboundEdges.Set("i2a", []stage4.ResolvedEdge{{SourceID: "i2a", TargetID: "i2b", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("i2b", []stage4.ResolvedEdge{{SourceID: "i2a", TargetID: "i2b", Type: stage4.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("i2a", []link.ResolvedEdge{{SourceID: "i2a", TargetID: "i2b", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("i2b", []link.ResolvedEdge{{SourceID: "i2a", TargetID: "i2b", Type: link.EdgeCalls}})
 
 	islands := g.FindIsolatedIslands()
 	if len(islands) != 2 {
@@ -802,10 +802,10 @@ func TestIslands_MultipleIslands(t *testing.T) {
 
 func TestIslands_IslandHasEntrypoint(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("iso1", &stage4.ResolvedNode{ID: "iso1", Kind: "FUNCTION", Name: "iso1"})
-	g.Nodes = g.Nodes.Set("iso2", &stage4.ResolvedNode{ID: "iso2", Kind: "FUNCTION", Name: "iso2"})
+	g.Nodes = g.Nodes.Set("iso1", &link.ResolvedNode{ID: "iso1", Kind: "FUNCTION", Name: "iso1"})
+	g.Nodes = g.Nodes.Set("iso2", &link.ResolvedNode{ID: "iso2", Kind: "FUNCTION", Name: "iso2"})
 	g.Entrypoints = []string{"iso1"}
-	g.OutboundEdges = g.OutboundEdges.Set("iso1", []stage4.ResolvedEdge{{SourceID: "iso1", TargetID: "iso2", Type: stage4.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("iso1", []link.ResolvedEdge{{SourceID: "iso1", TargetID: "iso2", Type: link.EdgeCalls}})
 
 	islands := g.FindIsolatedIslands()
 	for _, island := range islands {
@@ -821,16 +821,16 @@ func TestIslands_IslandHasEntrypoint(t *testing.T) {
 
 func TestSimilarity_Partial(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "NODE", Name: "b"})
-	g.Nodes = g.Nodes.Set("x", &stage4.ResolvedNode{ID: "x", Kind: "NODE", Name: "x"})
-	g.Nodes = g.Nodes.Set("y", &stage4.ResolvedNode{ID: "y", Kind: "NODE", Name: "y"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{
-		{SourceID: "a", TargetID: "x", Type: stage4.EdgeCalls},
-		{SourceID: "a", TargetID: "y", Type: stage4.EdgeCalls},
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "NODE", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "NODE", Name: "b"})
+	g.Nodes = g.Nodes.Set("x", &link.ResolvedNode{ID: "x", Kind: "NODE", Name: "x"})
+	g.Nodes = g.Nodes.Set("y", &link.ResolvedNode{ID: "y", Kind: "NODE", Name: "y"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{
+		{SourceID: "a", TargetID: "x", Type: link.EdgeCalls},
+		{SourceID: "a", TargetID: "y", Type: link.EdgeCalls},
 	})
-	g.OutboundEdges = g.OutboundEdges.Set("b", []stage4.ResolvedEdge{
-		{SourceID: "b", TargetID: "x", Type: stage4.EdgeCalls},
+	g.OutboundEdges = g.OutboundEdges.Set("b", []link.ResolvedEdge{
+		{SourceID: "b", TargetID: "x", Type: link.EdgeCalls},
 	})
 
 	sim := g.GetStructuralSimilarity("a", "b")
@@ -843,9 +843,9 @@ func TestSimilarity_Partial(t *testing.T) {
 
 func TestTopoSort_Disconnected(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
 
 	sorted, ok := g.GetTopologicalSort()
 	if !ok || len(sorted) != 2 {
@@ -858,11 +858,11 @@ func TestTopoSort_Disconnected(t *testing.T) {
 func TestFindPath_MaxDepth(t *testing.T) {
 	g := NewCodePropertyGraph("test")
 	for _, id := range []string{"a", "b", "c", "d"} {
-		g.Nodes = g.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: "FUNCTION", Name: id})
+		g.Nodes = g.Nodes.Set(id, &link.ResolvedNode{ID: id, Kind: "FUNCTION", Name: id})
 	}
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("c", []stage4.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: stage4.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("c", []link.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: link.EdgeCalls}})
 
 	path := g.FindPath("a", "d", 2)
 	if path != nil {
@@ -877,7 +877,7 @@ func TestFindPath_MaxDepth(t *testing.T) {
 
 func TestFindPath_SameNode(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
 
 	path := g.FindPath("a", "a", 10)
 	if path == nil {
@@ -889,10 +889,10 @@ func TestFindPath_SameNode(t *testing.T) {
 
 func TestOrphans_None(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
 
 	g.Entrypoints = []string{"a"}
 	orphans := g.GetOrphanNodes()
@@ -905,16 +905,16 @@ func TestOrphans_None(t *testing.T) {
 
 func TestInstability_Balanced(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
-	g.InboundEdges = g.InboundEdges.Set("a", []stage4.ResolvedEdge{
-		{SourceID: "x", TargetID: "a", Type: stage4.EdgeCalls},
-		{SourceID: "y", TargetID: "a", Type: stage4.EdgeCalls},
-		{SourceID: "z", TargetID: "a", Type: stage4.EdgeCalls},
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.InboundEdges = g.InboundEdges.Set("a", []link.ResolvedEdge{
+		{SourceID: "x", TargetID: "a", Type: link.EdgeCalls},
+		{SourceID: "y", TargetID: "a", Type: link.EdgeCalls},
+		{SourceID: "z", TargetID: "a", Type: link.EdgeCalls},
 	})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{
-		{SourceID: "a", TargetID: "p", Type: stage4.EdgeCalls},
-		{SourceID: "a", TargetID: "q", Type: stage4.EdgeCalls},
-		{SourceID: "a", TargetID: "r", Type: stage4.EdgeCalls},
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{
+		{SourceID: "a", TargetID: "p", Type: link.EdgeCalls},
+		{SourceID: "a", TargetID: "q", Type: link.EdgeCalls},
+		{SourceID: "a", TargetID: "r", Type: link.EdgeCalls},
 	})
 
 	inst := g.CalculateInstability("a")
@@ -925,7 +925,7 @@ func TestInstability_Balanced(t *testing.T) {
 
 func TestImpactRadius_Self(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
 	radius := g.CalculateImpactRadius("a")
 	if radius != 0 {
 		t.Errorf("expected 0 impact radius for itself, got %d", radius)
@@ -934,34 +934,34 @@ func TestImpactRadius_Self(t *testing.T) {
 
 func TestPackageCohesion_High(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("pkg", &stage4.ResolvedNode{ID: "pkg", Kind: "PACKAGE", Name: "pkg"})
+	g.Nodes = g.Nodes.Set("pkg", &link.ResolvedNode{ID: "pkg", Kind: "PACKAGE", Name: "pkg"})
 	components := []string{"a", "b", "c"}
 	for _, c := range components {
-		g.Nodes = g.Nodes.Set(c, &stage4.ResolvedNode{ID: c, Kind: "CLASS", Name: c})
+		g.Nodes = g.Nodes.Set(c, &link.ResolvedNode{ID: c, Kind: "CLASS", Name: c})
 
 		edges, _ := g.OutboundEdges.Get(c)
 		g.OutboundEdges = g.OutboundEdges.Set(c, append(edges,
-			stage4.ResolvedEdge{SourceID: c, TargetID: "pkg", Type: stage4.EdgeBelongsTo}))
+			link.ResolvedEdge{SourceID: c, TargetID: "pkg", Type: link.EdgeBelongsTo}))
 
 		inEdges, _ := g.InboundEdges.Get("pkg")
 		g.InboundEdges = g.InboundEdges.Set("pkg", append(inEdges,
-			stage4.ResolvedEdge{SourceID: c, TargetID: "pkg", Type: stage4.EdgeBelongsTo}))
+			link.ResolvedEdge{SourceID: c, TargetID: "pkg", Type: link.EdgeBelongsTo}))
 	}
 
 	edgesA, _ := g.OutboundEdges.Get("a")
 	g.OutboundEdges = g.OutboundEdges.Set("a", append(edgesA,
-		stage4.ResolvedEdge{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls},
-		stage4.ResolvedEdge{SourceID: "a", TargetID: "c", Type: stage4.EdgeCalls}))
+		link.ResolvedEdge{SourceID: "a", TargetID: "b", Type: link.EdgeCalls},
+		link.ResolvedEdge{SourceID: "a", TargetID: "c", Type: link.EdgeCalls}))
 
 	edgesB, _ := g.OutboundEdges.Get("b")
 	g.OutboundEdges = g.OutboundEdges.Set("b", append(edgesB,
-		stage4.ResolvedEdge{SourceID: "b", TargetID: "a", Type: stage4.EdgeCalls},
-		stage4.ResolvedEdge{SourceID: "b", TargetID: "c", Type: stage4.EdgeCalls}))
+		link.ResolvedEdge{SourceID: "b", TargetID: "a", Type: link.EdgeCalls},
+		link.ResolvedEdge{SourceID: "b", TargetID: "c", Type: link.EdgeCalls}))
 
 	edgesC, _ := g.OutboundEdges.Get("c")
 	g.OutboundEdges = g.OutboundEdges.Set("c", append(edgesC,
-		stage4.ResolvedEdge{SourceID: "c", TargetID: "a", Type: stage4.EdgeCalls},
-		stage4.ResolvedEdge{SourceID: "c", TargetID: "b", Type: stage4.EdgeCalls}))
+		link.ResolvedEdge{SourceID: "c", TargetID: "a", Type: link.EdgeCalls},
+		link.ResolvedEdge{SourceID: "c", TargetID: "b", Type: link.EdgeCalls}))
 
 	cohesion := g.CalculatePackageCohesion("pkg")
 	if cohesion <= 1.0 {
@@ -971,18 +971,18 @@ func TestPackageCohesion_High(t *testing.T) {
 
 func TestPackageCohesion_Low(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("pkg", &stage4.ResolvedNode{ID: "pkg", Kind: "PACKAGE", Name: "pkg"})
+	g.Nodes = g.Nodes.Set("pkg", &link.ResolvedNode{ID: "pkg", Kind: "PACKAGE", Name: "pkg"})
 	components := []string{"a", "b", "c"}
 	for _, c := range components {
-		g.Nodes = g.Nodes.Set(c, &stage4.ResolvedNode{ID: c, Kind: "CLASS", Name: c})
+		g.Nodes = g.Nodes.Set(c, &link.ResolvedNode{ID: c, Kind: "CLASS", Name: c})
 
 		edges, _ := g.OutboundEdges.Get(c)
 		g.OutboundEdges = g.OutboundEdges.Set(c, append(edges,
-			stage4.ResolvedEdge{SourceID: c, TargetID: "pkg", Type: stage4.EdgeBelongsTo}))
+			link.ResolvedEdge{SourceID: c, TargetID: "pkg", Type: link.EdgeBelongsTo}))
 
 		inEdges, _ := g.InboundEdges.Get("pkg")
 		g.InboundEdges = g.InboundEdges.Set("pkg", append(inEdges,
-			stage4.ResolvedEdge{SourceID: c, TargetID: "pkg", Type: stage4.EdgeBelongsTo}))
+			link.ResolvedEdge{SourceID: c, TargetID: "pkg", Type: link.EdgeBelongsTo}))
 	}
 
 	cohesion := g.CalculatePackageCohesion("pkg")
@@ -1011,8 +1011,8 @@ func TestClone_Empty(t *testing.T) {
 
 func TestClone_DeepCopy(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
 	clone := g.Clone()
 	clone.Nodes = clone.Nodes.Delete("a")
 	if _, ok := g.Nodes.Get("a"); !ok {
@@ -1022,13 +1022,13 @@ func TestClone_DeepCopy(t *testing.T) {
 
 func TestClone_DeepEdges(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
 
 	clone := g.Clone()
 	edges, _ := clone.OutboundEdges.Get("a")
-	clone.OutboundEdges = clone.OutboundEdges.Set("a", append(edges, stage4.ResolvedEdge{SourceID: "a", TargetID: "c", Type: stage4.EdgeCalls}))
+	clone.OutboundEdges = clone.OutboundEdges.Set("a", append(edges, link.ResolvedEdge{SourceID: "a", TargetID: "c", Type: link.EdgeCalls}))
 
 	origEdges, _ := g.OutboundEdges.Get("a")
 	if len(origEdges) != 1 {
@@ -1038,7 +1038,7 @@ func TestClone_DeepEdges(t *testing.T) {
 
 func TestClone_DeepKindIndex(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
 	g.KindIndex = g.KindIndex.Set("FUNCTION", map[string]bool{"a": true})
 
 	clone := g.Clone()
@@ -1088,7 +1088,7 @@ func TestMVCC_AllocateShadow(t *testing.T) {
 func TestMVCC_Promote(t *testing.T) {
 	mc := NewMVCCGraphContainer()
 	shadow, _ := mc.AllocateShadowSnapshot()
-	shadow.Nodes = shadow.Nodes.Set("n1", &stage4.ResolvedNode{ID: "n1", Kind: "FUNCTION", Name: "fn"})
+	shadow.Nodes = shadow.Nodes.Set("n1", &link.ResolvedNode{ID: "n1", Kind: "FUNCTION", Name: "fn"})
 	mc.PromoteShadowSnapshot(shadow)
 
 	snapshot := mc.GetSnapshot()
@@ -1103,7 +1103,7 @@ func TestMVCC_Isolation(t *testing.T) {
 	snap1 := mc.GetSnapshot()
 
 	shadow, _ := mc.AllocateShadowSnapshot()
-	shadow.Nodes = shadow.Nodes.Set("n1", &stage4.ResolvedNode{ID: "n1", Kind: "FUNCTION", Name: "fn"})
+	shadow.Nodes = shadow.Nodes.Set("n1", &link.ResolvedNode{ID: "n1", Kind: "FUNCTION", Name: "fn"})
 
 	if _, ok := snap1.Nodes.Get("n1"); ok {
 		t.Error("snapshot should not see uncommitted shadow changes")
@@ -1119,12 +1119,12 @@ func TestMVCC_Isolation(t *testing.T) {
 // ==================== PageRank Convergence Tests ====================
 func TestPageRank_Convergence(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("A", &stage4.ResolvedNode{ID: "A", Kind: "FUNCTION", Name: "A"})
-	g.Nodes = g.Nodes.Set("B", &stage4.ResolvedNode{ID: "B", Kind: "FUNCTION", Name: "B"})
-	g.OutboundEdges = g.OutboundEdges.Set("A", []stage4.ResolvedEdge{{SourceID: "A", TargetID: "B", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("B", []stage4.ResolvedEdge{{SourceID: "B", TargetID: "A", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("A", []stage4.ResolvedEdge{{SourceID: "B", TargetID: "A", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("B", []stage4.ResolvedEdge{{SourceID: "A", TargetID: "B", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("A", &link.ResolvedNode{ID: "A", Kind: "FUNCTION", Name: "A"})
+	g.Nodes = g.Nodes.Set("B", &link.ResolvedNode{ID: "B", Kind: "FUNCTION", Name: "B"})
+	g.OutboundEdges = g.OutboundEdges.Set("A", []link.ResolvedEdge{{SourceID: "A", TargetID: "B", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("B", []link.ResolvedEdge{{SourceID: "B", TargetID: "A", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("A", []link.ResolvedEdge{{SourceID: "B", TargetID: "A", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("B", []link.ResolvedEdge{{SourceID: "A", TargetID: "B", Type: link.EdgeCalls}})
 
 	ranks := g.CalculatePageRank(20, 0.85)
 	assert.InDelta(t, 0.5, ranks["A"], 0.01)
@@ -1135,15 +1135,15 @@ func TestPageRank_Convergence(t *testing.T) {
 
 func TestBetweenness_StarGraph(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("center", &stage4.ResolvedNode{ID: "center", Kind: "STRUCT", Name: "center"})
+	g.Nodes = g.Nodes.Set("center", &link.ResolvedNode{ID: "center", Kind: "STRUCT", Name: "center"})
 	for _, leaf := range []string{"leaf1", "leaf2", "leaf3"} {
-		g.Nodes = g.Nodes.Set(leaf, &stage4.ResolvedNode{ID: leaf, Kind: "STRUCT", Name: leaf})
-		g.OutboundEdges = g.OutboundEdges.Set(leaf, []stage4.ResolvedEdge{{SourceID: leaf, TargetID: "center", Type: stage4.EdgeCalls}})
+		g.Nodes = g.Nodes.Set(leaf, &link.ResolvedNode{ID: leaf, Kind: "STRUCT", Name: leaf})
+		g.OutboundEdges = g.OutboundEdges.Set(leaf, []link.ResolvedEdge{{SourceID: leaf, TargetID: "center", Type: link.EdgeCalls}})
 		g.OutboundEdges = g.OutboundEdges.Set("center", append(g.GetOutboundEdges("center"),
-			stage4.ResolvedEdge{SourceID: "center", TargetID: leaf, Type: stage4.EdgeCalls}))
+			link.ResolvedEdge{SourceID: "center", TargetID: leaf, Type: link.EdgeCalls}))
 		g.InboundEdges = g.InboundEdges.Set("center", append(g.GetInboundEdges("center"),
-			stage4.ResolvedEdge{SourceID: leaf, TargetID: "center", Type: stage4.EdgeCalls}))
-		g.InboundEdges = g.InboundEdges.Set(leaf, []stage4.ResolvedEdge{{SourceID: "center", TargetID: leaf, Type: stage4.EdgeCalls}})
+			link.ResolvedEdge{SourceID: leaf, TargetID: "center", Type: link.EdgeCalls}))
+		g.InboundEdges = g.InboundEdges.Set(leaf, []link.ResolvedEdge{{SourceID: "center", TargetID: leaf, Type: link.EdgeCalls}})
 	}
 
 	bc := g.CalculateBetweennessCentrality(false)
@@ -1158,10 +1158,10 @@ func TestBetweenness_StarGraph(t *testing.T) {
 func TestBetweenness_Disconnected(t *testing.T) {
 	g := NewCodePropertyGraph("test")
 	for _, id := range []string{"A", "B", "C", "D"} {
-		g.Nodes = g.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: "STRUCT", Name: id})
+		g.Nodes = g.Nodes.Set(id, &link.ResolvedNode{ID: id, Kind: "STRUCT", Name: id})
 	}
-	g.OutboundEdges = g.OutboundEdges.Set("A", []stage4.ResolvedEdge{{SourceID: "A", TargetID: "B", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("C", []stage4.ResolvedEdge{{SourceID: "C", TargetID: "D", Type: stage4.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("A", []link.ResolvedEdge{{SourceID: "A", TargetID: "B", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("C", []link.ResolvedEdge{{SourceID: "C", TargetID: "D", Type: link.EdgeCalls}})
 
 	bc := g.CalculateBetweennessCentrality(false)
 	assert.Equal(t, 0.0, bc["A"])
@@ -1176,37 +1176,37 @@ func TestGodObjects_Boundaries(t *testing.T) {
 	g := NewCodePropertyGraph("test")
 	for i := 0; i < 6; i++ {
 		id := fmt.Sprintf("n%d", i)
-		g.Nodes = g.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: "STRUCT", Name: id})
+		g.Nodes = g.Nodes.Set(id, &link.ResolvedNode{ID: id, Kind: "STRUCT", Name: id})
 	}
-	g.Nodes = g.Nodes.Set("mod", &stage4.ResolvedNode{ID: "mod", Kind: "STRUCT", Name: "mod"})
-	g.Nodes = g.Nodes.Set("ext", &stage4.ResolvedNode{ID: "ext", Kind: "STRUCT", Name: "ext"})
+	g.Nodes = g.Nodes.Set("mod", &link.ResolvedNode{ID: "mod", Kind: "STRUCT", Name: "mod"})
+	g.Nodes = g.Nodes.Set("ext", &link.ResolvedNode{ID: "ext", Kind: "STRUCT", Name: "ext"})
 
 	for i := 0; i < 3; i++ {
 		src := fmt.Sprintf("mod_src_%d", i)
 		dst := fmt.Sprintf("mod_dst_%d", i)
-		g.Nodes = g.Nodes.Set(src, &stage4.ResolvedNode{ID: src, Kind: "FUNCTION", Name: src})
-		g.Nodes = g.Nodes.Set(dst, &stage4.ResolvedNode{ID: dst, Kind: "FUNCTION", Name: dst})
+		g.Nodes = g.Nodes.Set(src, &link.ResolvedNode{ID: src, Kind: "FUNCTION", Name: src})
+		g.Nodes = g.Nodes.Set(dst, &link.ResolvedNode{ID: dst, Kind: "FUNCTION", Name: dst})
 
-		g.OutboundEdges = g.OutboundEdges.Set(src, []stage4.ResolvedEdge{{SourceID: src, TargetID: "mod", Type: stage4.EdgeCalls}})
+		g.OutboundEdges = g.OutboundEdges.Set(src, []link.ResolvedEdge{{SourceID: src, TargetID: "mod", Type: link.EdgeCalls}})
 		g.InboundEdges = g.InboundEdges.Set("mod", append(g.GetInboundEdges("mod"),
-			stage4.ResolvedEdge{SourceID: src, TargetID: "mod", Type: stage4.EdgeCalls}))
+			link.ResolvedEdge{SourceID: src, TargetID: "mod", Type: link.EdgeCalls}))
 		g.OutboundEdges = g.OutboundEdges.Set("mod", append(g.GetOutboundEdges("mod"),
-			stage4.ResolvedEdge{SourceID: "mod", TargetID: dst, Type: stage4.EdgeCalls}))
-		g.InboundEdges = g.InboundEdges.Set(dst, []stage4.ResolvedEdge{{SourceID: "mod", TargetID: dst, Type: stage4.EdgeCalls}})
+			link.ResolvedEdge{SourceID: "mod", TargetID: dst, Type: link.EdgeCalls}))
+		g.InboundEdges = g.InboundEdges.Set(dst, []link.ResolvedEdge{{SourceID: "mod", TargetID: dst, Type: link.EdgeCalls}})
 	}
 
 	for i := 0; i < 15; i++ {
 		src := fmt.Sprintf("ext_src_%d", i)
 		dst := fmt.Sprintf("ext_dst_%d", i)
-		g.Nodes = g.Nodes.Set(src, &stage4.ResolvedNode{ID: src, Kind: "FUNCTION", Name: src})
-		g.Nodes = g.Nodes.Set(dst, &stage4.ResolvedNode{ID: dst, Kind: "FUNCTION", Name: dst})
+		g.Nodes = g.Nodes.Set(src, &link.ResolvedNode{ID: src, Kind: "FUNCTION", Name: src})
+		g.Nodes = g.Nodes.Set(dst, &link.ResolvedNode{ID: dst, Kind: "FUNCTION", Name: dst})
 
-		g.OutboundEdges = g.OutboundEdges.Set(src, []stage4.ResolvedEdge{{SourceID: src, TargetID: "ext", Type: stage4.EdgeCalls}})
+		g.OutboundEdges = g.OutboundEdges.Set(src, []link.ResolvedEdge{{SourceID: src, TargetID: "ext", Type: link.EdgeCalls}})
 		g.InboundEdges = g.InboundEdges.Set("ext", append(g.GetInboundEdges("ext"),
-			stage4.ResolvedEdge{SourceID: src, TargetID: "ext", Type: stage4.EdgeCalls}))
+			link.ResolvedEdge{SourceID: src, TargetID: "ext", Type: link.EdgeCalls}))
 		g.OutboundEdges = g.OutboundEdges.Set("ext", append(g.GetOutboundEdges("ext"),
-			stage4.ResolvedEdge{SourceID: "ext", TargetID: dst, Type: stage4.EdgeCalls}))
-		g.InboundEdges = g.InboundEdges.Set(dst, []stage4.ResolvedEdge{{SourceID: "ext", TargetID: dst, Type: stage4.EdgeCalls}})
+			link.ResolvedEdge{SourceID: "ext", TargetID: dst, Type: link.EdgeCalls}))
+		g.InboundEdges = g.InboundEdges.Set(dst, []link.ResolvedEdge{{SourceID: "ext", TargetID: dst, Type: link.EdgeCalls}})
 	}
 
 	godObjects := g.DetectGodObjects()
@@ -1218,7 +1218,7 @@ func TestGodObjects_Boundaries(t *testing.T) {
 
 func TestIslands_Singleton(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("alone", &stage4.ResolvedNode{ID: "alone", Kind: "FUNCTION", Name: "alone"})
+	g.Nodes = g.Nodes.Set("alone", &link.ResolvedNode{ID: "alone", Kind: "FUNCTION", Name: "alone"})
 
 	islands := g.FindIsolatedIslands()
 	assert.Empty(t, islands)
@@ -1228,9 +1228,9 @@ func TestIslands_Singleton(t *testing.T) {
 
 func TestFindPath_MissingNodes(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("A", &stage4.ResolvedNode{ID: "A", Kind: "FUNCTION", Name: "A"})
-	g.Nodes = g.Nodes.Set("B", &stage4.ResolvedNode{ID: "B", Kind: "FUNCTION", Name: "B"})
-	g.OutboundEdges = g.OutboundEdges.Set("A", []stage4.ResolvedEdge{{SourceID: "A", TargetID: "B", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("A", &link.ResolvedNode{ID: "A", Kind: "FUNCTION", Name: "A"})
+	g.Nodes = g.Nodes.Set("B", &link.ResolvedNode{ID: "B", Kind: "FUNCTION", Name: "B"})
+	g.OutboundEdges = g.OutboundEdges.Set("A", []link.ResolvedEdge{{SourceID: "A", TargetID: "B", Type: link.EdgeCalls}})
 
 	assert.Nil(t, g.FindPath("nonexistent", "B", 10))
 	assert.Nil(t, g.FindPath("A", "nonexistent", 10))
@@ -1240,7 +1240,7 @@ func TestFindPath_MissingNodes(t *testing.T) {
 
 func TestClone_DeepHashIndex(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a", Properties: map[string]string{"hash": "abc123"}})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a", Properties: map[string]string{"hash": "abc123"}})
 	g.HashIndex = g.HashIndex.Set("abc123", []string{"a"})
 
 	clone := g.Clone()
@@ -1255,7 +1255,7 @@ func TestClone_DeepHashIndex(t *testing.T) {
 
 func TestClone_DeepFileNodeIndex(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
 	g.FileNodeIndex = g.FileNodeIndex.Set("file.go", map[string]bool{"a": true})
 
 	clone := g.Clone()
@@ -1271,7 +1271,7 @@ func TestClone_LargeGraph_Parallel(t *testing.T) {
 	g := NewCodePropertyGraph("test")
 	for i := 0; i < 100; i++ {
 		id := fmt.Sprintf("n%d", i)
-		g.Nodes = g.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: "FUNCTION", Name: id})
+		g.Nodes = g.Nodes.Set(id, &link.ResolvedNode{ID: id, Kind: "FUNCTION", Name: id})
 	}
 	assert.Equal(t, 100, g.Nodes.Len())
 
@@ -1299,7 +1299,7 @@ func TestMVCC_ConcurrentAccess(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		shadow, _ := mc.AllocateShadowSnapshot()
-		shadow.Nodes = shadow.Nodes.Set("n1", &stage4.ResolvedNode{ID: "n1", Kind: "FUNCTION", Name: "n1"})
+		shadow.Nodes = shadow.Nodes.Set("n1", &link.ResolvedNode{ID: "n1", Kind: "FUNCTION", Name: "n1"})
 		mc.PromoteShadowSnapshot(shadow)
 	}()
 

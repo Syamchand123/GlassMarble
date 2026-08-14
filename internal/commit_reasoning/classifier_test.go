@@ -8,7 +8,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/arch_intelligence"
 	"github.com/Syamchand123/GlassMarble/internal/arch_timeline"
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/git"
 )
 
@@ -100,7 +100,7 @@ func TestClassifyComponentPass_RemovedAndSplitAndMerge(t *testing.T) {
 	}
 }
 
-func TestClassifyDependencyPass_Matches5DEventID(t *testing.T) {
+func TestClassifyDependencyPass_MatchesIntelligenceEventID(t *testing.T) {
 	base := &archmodel.ArchSnapshot{Components: []archmodel.DetectedComponent{comp("svc", "service")}}
 	head := &archmodel.ArchSnapshot{Components: []archmodel.DetectedComponent{comp("svc", "service", "db")}}
 
@@ -110,25 +110,25 @@ func TestClassifyDependencyPass_Matches5DEventID(t *testing.T) {
 	})
 	changes := ClassifyChange(in)
 
-	// Stage 8's dependency event must produce the identical ID that the
-	// Stage 5D generator would produce for the same commit.
+	// commit reasoning's dependency event must produce the identical ID that the
+	// component inference generator would produce for the same commit.
 	fiveD := arch_intelligence.GenerateEvents(base, head, nil, arch_intelligence.CommitMeta{Hash: testMeta().Hash, Timestamp: testTS})
 
-	var stage8ID string
+	var reasoningID string
 	for _, c := range changes {
 		if c.Kind == archmodel.EventDependencyAdded {
-			stage8ID = arch_intelligence.EventID(testMeta().Hash, c.Kind, c.AffectedIDs)
+			reasoningID = arch_intelligence.EventID(testMeta().Hash, c.Kind, c.AffectedIDs)
 			if len(c.AffectedIDs) != 2 || c.AffectedIDs[0] != "svc" || c.AffectedIDs[1] != "db" {
 				t.Errorf("affected = %v, want [svc db]", c.AffectedIDs)
 			}
 		}
 	}
-	if stage8ID == "" {
+	if reasoningID == "" {
 		t.Fatal("no DEPENDENCY_ADDED classified")
 	}
 	for _, ev := range fiveD {
-		if ev.Kind == archmodel.EventDependencyAdded && ev.ID != stage8ID {
-			t.Errorf("ID mismatch: stage8=%q stage5d=%q", stage8ID, ev.ID)
+		if ev.Kind == archmodel.EventDependencyAdded && ev.ID != reasoningID {
+			t.Errorf("ID mismatch: reasoning=%q intelligence=%q", reasoningID, ev.ID)
 		}
 	}
 }
@@ -147,7 +147,7 @@ func TestClassifySmellPass_LayerViolation(t *testing.T) {
 		t.Fatalf("want one LAYER_VIOLATION, got %+v", changes)
 	}
 	if changes[0].AffectedIDs != nil {
-		t.Errorf("layer violation affected must stay nil for 5D dedup, got %v", changes[0].AffectedIDs)
+		t.Errorf("layer violation affected must stay nil for component inference dedup, got %v", changes[0].AffectedIDs)
 	}
 }
 
@@ -164,24 +164,24 @@ func TestClassifySmellPass_DeduplicatesExistingSmells(t *testing.T) {
 
 func TestClassifyGraphPass(t *testing.T) {
 	head := akg.NewCodePropertyGraph("head")
-	head.Nodes = head.Nodes.Set("mod:pay", &stage4.ResolvedNode{ID: "mod:pay", Kind: "MODULE", Name: "PaymentModule", FileSpec: stage4.LocationMeta{Path: "internal/pay/mod.go"}})
-	head.Nodes = head.Nodes.Set("db:postgres", &stage4.ResolvedNode{ID: "db:postgres", Kind: "DATABASE", Name: "Postgres", FileSpec: stage4.LocationMeta{Path: "db.go"}})
-	head.Nodes = head.Nodes.Set("endpoint:GET:/pay", &stage4.ResolvedNode{ID: "endpoint:GET:/pay", Kind: "ENDPOINT", Name: "GET /pay", FileSpec: stage4.LocationMeta{Path: "api.go"}})
-	head.Nodes = head.Nodes.Set("sink:SQL", &stage4.ResolvedNode{ID: "sink:SQL", Kind: "SINK", Name: "SQL sink", FileSpec: stage4.LocationMeta{Path: "api.go"}})
-	head.Nodes = head.Nodes.Set("svc:pay", &stage4.ResolvedNode{ID: "svc:pay", Kind: "CLASS", Name: "PaymentService", FileSpec: stage4.LocationMeta{Path: "internal/pay/pay.go"}})
-	head.Nodes = head.Nodes.Set("redis", &stage4.ResolvedNode{ID: "redis", Kind: "EXTERNAL", Name: "redis", FileSpec: stage4.LocationMeta{Path: "cache.go"}})
+	head.Nodes = head.Nodes.Set("mod:pay", &link.ResolvedNode{ID: "mod:pay", Kind: "MODULE", Name: "PaymentModule", FileSpec: link.LocationMeta{Path: "internal/pay/mod.go"}})
+	head.Nodes = head.Nodes.Set("db:postgres", &link.ResolvedNode{ID: "db:postgres", Kind: "DATABASE", Name: "Postgres", FileSpec: link.LocationMeta{Path: "db.go"}})
+	head.Nodes = head.Nodes.Set("endpoint:GET:/pay", &link.ResolvedNode{ID: "endpoint:GET:/pay", Kind: "ENDPOINT", Name: "GET /pay", FileSpec: link.LocationMeta{Path: "api.go"}})
+	head.Nodes = head.Nodes.Set("sink:SQL", &link.ResolvedNode{ID: "sink:SQL", Kind: "SINK", Name: "SQL sink", FileSpec: link.LocationMeta{Path: "api.go"}})
+	head.Nodes = head.Nodes.Set("svc:pay", &link.ResolvedNode{ID: "svc:pay", Kind: "CLASS", Name: "PaymentService", FileSpec: link.LocationMeta{Path: "internal/pay/pay.go"}})
+	head.Nodes = head.Nodes.Set("redis", &link.ResolvedNode{ID: "redis", Kind: "EXTERNAL", Name: "redis", FileSpec: link.LocationMeta{Path: "cache.go"}})
 
 	in := testInput(func(in *ClassifyInput) {
 		in.HeadGraph = head
 		in.GraphDiff = &akg.GraphDiff{
 			NodesAdded: []akg.DiffNode{{ID: "mod:pay", Kind: "MODULE", Name: "PaymentModule"}},
 			EdgesAdded: []akg.DiffEdge{
-				{Type: string(stage4.EdgeQueriesDB), SourceID: "svc:pay", TargetID: "db:postgres"},
-				{Type: string(stage4.EdgePublishes), SourceID: "svc:pay", TargetID: "events:paid"},
-				{Type: string(stage4.EdgeSubscribes), SourceID: "svc:pay", TargetID: "events:refunded"},
-				{Type: string(stage4.EdgeDependsOn), SourceID: "svc:pay", TargetID: "redis"},
-				{Type: string(stage4.EdgeExposesEndpoint), SourceID: "svc:pay", TargetID: "endpoint:GET:/pay"},
-				{Type: string(stage4.EdgeSecuritySink), SourceID: "svc:pay", TargetID: "sink:SQL"},
+				{Type: string(link.EdgeQueriesDB), SourceID: "svc:pay", TargetID: "db:postgres"},
+				{Type: string(link.EdgePublishes), SourceID: "svc:pay", TargetID: "events:paid"},
+				{Type: string(link.EdgeSubscribes), SourceID: "svc:pay", TargetID: "events:refunded"},
+				{Type: string(link.EdgeDependsOn), SourceID: "svc:pay", TargetID: "redis"},
+				{Type: string(link.EdgeExposesEndpoint), SourceID: "svc:pay", TargetID: "endpoint:GET:/pay"},
+				{Type: string(link.EdgeSecuritySink), SourceID: "svc:pay", TargetID: "sink:SQL"},
 			},
 		}
 	})
@@ -225,8 +225,8 @@ func TestClassifyGraphPass_CacheWordBoundaries(t *testing.T) {
 		in.HeadGraph = akg.NewCodePropertyGraph("head")
 		in.GraphDiff = &akg.GraphDiff{
 			EdgesAdded: []akg.DiffEdge{
-				{Type: string(stage4.EdgeDependsOn), SourceID: "s1", TargetID: "cacheable-thing"},
-				{Type: string(stage4.EdgeDependsOn), SourceID: "s2", TargetID: "my-cache"},
+				{Type: string(link.EdgeDependsOn), SourceID: "s1", TargetID: "cacheable-thing"},
+				{Type: string(link.EdgeDependsOn), SourceID: "s2", TargetID: "my-cache"},
 			},
 		}
 	})
@@ -242,14 +242,14 @@ func TestClassifyGraphPass_CacheWordBoundaries(t *testing.T) {
 func TestClassifyCyclePass_SCCComparison(t *testing.T) {
 	// base: a -> b (no cycle); head: a -> b -> a (cycle)
 	base := akg.NewCodePropertyGraph("base")
-	base.Nodes = base.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "A"})
-	base.Nodes = base.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "B"})
+	base.Nodes = base.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "A"})
+	base.Nodes = base.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "B"})
 	addEdge(t, base, "a", "b")
 
 	head := akg.NewCodePropertyGraph("head")
 	head.Nodes = base.Nodes
-	head.Nodes = head.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "A"})
-	head.Nodes = head.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "B"})
+	head.Nodes = head.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "A"})
+	head.Nodes = head.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "B"})
 	head.OutboundEdges = base.OutboundEdges
 	head.InboundEdges = base.InboundEdges
 	addEdge(t, head, "b", "a")
@@ -263,7 +263,7 @@ func TestClassifyCyclePass_SCCComparison(t *testing.T) {
 		t.Fatalf("want one CYCLE_INTRODUCED, got %+v", changes)
 	}
 	if changes[0].AffectedIDs != nil {
-		t.Errorf("cycle affected must stay nil for 5D dedup, got %v", changes[0].AffectedIDs)
+		t.Errorf("cycle affected must stay nil for component inference dedup, got %v", changes[0].AffectedIDs)
 	}
 }
 
@@ -298,8 +298,8 @@ func TestClassifyChange_Deterministic(t *testing.T) {
 		in.HeadSnap = &archmodel.ArchSnapshot{Components: []archmodel.DetectedComponent{comp("c1", "auth"), comp("c2", "billing", "c3"), comp("c3", "db")}}
 		in.GraphDiff = &akg.GraphDiff{
 			EdgesAdded: []akg.DiffEdge{
-				{Type: string(stage4.EdgeQueriesDB), SourceID: "svc:pay", TargetID: "db:postgres"},
-				{Type: string(stage4.EdgePublishes), SourceID: "svc:pay", TargetID: "events:paid"},
+				{Type: string(link.EdgeQueriesDB), SourceID: "svc:pay", TargetID: "db:postgres"},
+				{Type: string(link.EdgePublishes), SourceID: "svc:pay", TargetID: "events:paid"},
 			},
 		}
 	})
@@ -325,6 +325,6 @@ func addEdge(t *testing.T, g *akg.CodePropertyGraph, src, tgt string) {
 	t.Helper()
 	out, _ := g.OutboundEdges.Get(src)
 	in, _ := g.InboundEdges.Get(tgt)
-	g.OutboundEdges = g.OutboundEdges.Set(src, append(out, stage4.ResolvedEdge{SourceID: src, TargetID: tgt, Type: stage4.EdgeDependsOn}))
-	g.InboundEdges = g.InboundEdges.Set(tgt, append(in, stage4.ResolvedEdge{SourceID: src, TargetID: tgt, Type: stage4.EdgeDependsOn}))
+	g.OutboundEdges = g.OutboundEdges.Set(src, append(out, link.ResolvedEdge{SourceID: src, TargetID: tgt, Type: link.EdgeDependsOn}))
+	g.InboundEdges = g.InboundEdges.Set(tgt, append(in, link.ResolvedEdge{SourceID: src, TargetID: tgt, Type: link.EdgeDependsOn}))
 }

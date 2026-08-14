@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 // GraphJSON is the portable, language-neutral interchange format for AKG
@@ -40,7 +40,7 @@ type GraphNodeJSON struct {
 	Properties      map[string]string  `json:"properties,omitempty"`
 }
 
-// LocationMetaJSON mirrors stage4.LocationMeta.
+// LocationMetaJSON mirrors link.LocationMeta.
 type LocationMetaJSON struct {
 	Path      string `json:"path"`
 	LineStart int    `json:"line_start,omitempty"`
@@ -88,7 +88,7 @@ func ExportGraphJSON(graph *CodePropertyGraph, w io.Writer) error {
 	}
 
 	if graph.Nodes != nil {
-		graph.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
+		graph.Nodes.Iterate(func(id string, node *link.ResolvedNode) {
 			if node == nil {
 				return
 			}
@@ -117,7 +117,7 @@ func ExportGraphJSON(graph *CodePropertyGraph, w io.Writer) error {
 
 	if graph.OutboundEdges != nil {
 		seen := make(map[string]bool)
-		graph.OutboundEdges.Iterate(func(srcID string, edges []stage4.ResolvedEdge) {
+		graph.OutboundEdges.Iterate(func(srcID string, edges []link.ResolvedEdge) {
 			for _, e := range edges {
 				// Mirror the node fallback: the OutboundEdges map key is the
 				// canonical source ID when the edge does not carry one.
@@ -274,13 +274,13 @@ func ImportGraphJSON(r io.Reader) (*CodePropertyGraph, error) {
 		if n.ID == "" {
 			continue
 		}
-		graph.Nodes = graph.Nodes.Set(n.ID, &stage4.ResolvedNode{
+		graph.Nodes = graph.Nodes.Set(n.ID, &link.ResolvedNode{
 			ID:              n.ID,
 			Kind:            n.Kind,
 			Name:            n.Name,
 			Primitive:       n.Primitive,
 			PrimitiveScores: n.PrimitiveScores,
-			FileSpec: stage4.LocationMeta{
+			FileSpec: link.LocationMeta{
 				Path:      n.FileSpec.Path,
 				LineStart: n.FileSpec.LineStart,
 				LineEnd:   n.FileSpec.LineEnd,
@@ -294,7 +294,7 @@ func ImportGraphJSON(r io.Reader) (*CodePropertyGraph, error) {
 	kindIndex := make(map[string]map[string]bool)
 	hashIndex := make(map[string][]string)
 	fileNodeIndex := make(map[string]map[string]bool)
-	graph.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
+	graph.Nodes.Iterate(func(id string, node *link.ResolvedNode) {
 		if node == nil {
 			return
 		}
@@ -327,10 +327,10 @@ func ImportGraphJSON(r io.Reader) (*CodePropertyGraph, error) {
 		if e.SourceID == "" || e.TargetID == "" {
 			continue
 		}
-		edge := stage4.ResolvedEdge{
+		edge := link.ResolvedEdge{
 			SourceID:   e.SourceID,
 			TargetID:   e.TargetID,
-			Type:       stage4.RelationshipType(e.Type),
+			Type:       link.RelationshipType(e.Type),
 			LineNumber: e.LineNumber,
 			Confidence: e.Confidence,
 			IsCycle:    e.IsCycle,

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,12 +17,12 @@ func TestCommitBudgetGate(t *testing.T) {
 	tm, err := NewAKGTransactionManager(tmpDir)
 	require.NoError(t, err)
 
-	payload := &stage4.Stage4Output{
-		GraphNodes: map[string]*stage4.ResolvedNode{
-			"pkg/a.go::A": {Kind: "STRUCT", Name: "A", FileSpec: stage4.LocationMeta{Path: "pkg/a.go", LineStart: 1}},
-			"pkg/b.go::B": {Kind: "STRUCT", Name: "B", FileSpec: stage4.LocationMeta{Path: "pkg/b.go", LineStart: 10}},
+	payload := &link.LinkOutput{
+		GraphNodes: map[string]*link.ResolvedNode{
+			"pkg/a.go::A": {Kind: "STRUCT", Name: "A", FileSpec: link.LocationMeta{Path: "pkg/a.go", LineStart: 1}},
+			"pkg/b.go::B": {Kind: "STRUCT", Name: "B", FileSpec: link.LocationMeta{Path: "pkg/b.go", LineStart: 10}},
 		},
-		OutboundEdges: map[string][]stage4.ResolvedEdge{
+		OutboundEdges: map[string][]link.ResolvedEdge{
 			"pkg/a.go::A": {{Type: "calls", TargetID: "pkg/b.go::B", LineNumber: 5}},
 		},
 	}

@@ -3,14 +3,14 @@ package akg
 import (
 	"testing"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 func buildDiffBase() *CodePropertyGraph {
 	g := NewCodePropertyGraph("basehash")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "A", FileSpec: stage4.LocationMeta{Path: "a.go"}})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "B", FileSpec: stage4.LocationMeta{Path: "b.go"}})
-	addEdgeToGraph(g, "a", "b", stage4.EdgeCalls, 1)
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "A", FileSpec: link.LocationMeta{Path: "a.go"}})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "B", FileSpec: link.LocationMeta{Path: "b.go"}})
+	addEdgeToGraph(g, "a", "b", link.EdgeCalls, 1)
 	return g
 }
 
@@ -20,12 +20,12 @@ func TestDiffGraphsDetectsAddRemove(t *testing.T) {
 
 	head := buildDiffBase()
 	head.CommitHash = "headhash"
-	head.Nodes = head.Nodes.Set("c", &stage4.ResolvedNode{ID: "c", Kind: "FUNCTION", Name: "C", FileSpec: stage4.LocationMeta{Path: "c.go"}})
+	head.Nodes = head.Nodes.Set("c", &link.ResolvedNode{ID: "c", Kind: "FUNCTION", Name: "C", FileSpec: link.LocationMeta{Path: "c.go"}})
 	// b removed; edge a->b removed; new edge a->c added.
 	head.Nodes = head.Nodes.Delete("b")
 	head.OutboundEdges = head.OutboundEdges.Delete("a")
 	head.InboundEdges = head.InboundEdges.Delete("b")
-	addEdgeToGraph(head, "a", "c", stage4.EdgeCalls, 5)
+	addEdgeToGraph(head, "a", "c", link.EdgeCalls, 5)
 
 	diff := DiffGraphs(base, head)
 	if len(diff.NodesAdded) != 1 || diff.NodesAdded[0].ID != "c" {
@@ -58,7 +58,7 @@ func TestDiffGraphsIdentical(t *testing.T) {
 func TestDiffGraphsFilesChanged(t *testing.T) {
 	base := buildDiffBase()
 	head := buildDiffBase()
-	head.Nodes = head.Nodes.Set("c", &stage4.ResolvedNode{ID: "c", Kind: "FUNCTION", Name: "C", FileSpec: stage4.LocationMeta{Path: "c.go"}})
+	head.Nodes = head.Nodes.Set("c", &link.ResolvedNode{ID: "c", Kind: "FUNCTION", Name: "C", FileSpec: link.LocationMeta{Path: "c.go"}})
 	head.Nodes = head.Nodes.Delete("b")
 
 	diff := DiffGraphs(base, head)

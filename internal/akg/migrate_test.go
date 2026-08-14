@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 func TestAutoMigrateOnLoad(t *testing.T) {
@@ -19,7 +19,7 @@ func TestAutoMigrateOnLoad(t *testing.T) {
 
 	graph := NewCodePropertyGraph("commit123")
 	graph.SchemaVersion = 2
-	graph.Nodes = graph.Nodes.Set("node1", &stage4.ResolvedNode{
+	graph.Nodes = graph.Nodes.Set("node1", &link.ResolvedNode{
 		ID:   "node1",
 		Kind: "TYPE_DECL",
 		Properties: map[string]string{

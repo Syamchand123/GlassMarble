@@ -1,4 +1,4 @@
-// Package knowledge_fusion implements Stage 9 of the GlassMarble V2
+// Package knowledge_fusion implements knowledge fusion of the GlassMarble V2
 // pipeline: Multi-Source Knowledge Fusion (v2_master_implementaion_plan.md
 // §7).
 //
@@ -7,7 +7,7 @@
 //	Architecture knowledge does not live only in source code. READMEs
 //	describe design decisions, ADRs (Architecture Decision Records) explain
 //	WHY things are the way they are, and git history ties code changes to
-//	PRs and issues. Stage 9 ingests all of these and fuses them with the
+//	PRs and issues. knowledge fusion ingests all of these and fuses them with the
 //	AKG (JSON graph) into one provenance-tagged picture.
 //
 // PIPELINE (FusionEngine.Run):
@@ -33,8 +33,8 @@
 //     append-only AND bounded.
 //   - LLM intensity: Medium by design, and zero LLM calls in this
 //     implementation — semantic extraction here is deterministic keyword
-//     matching with word boundaries. The LLM is reserved for Stage 12 and
-//     only ever interprets what this stage has grounded.
+//     matching with word boundaries. The LLM is reserved for evidence retrieval and
+//     only ever interprets what this phase has grounded.
 //
 // DEPENDENCY DIRECTION (strict, cycle-free):
 //
@@ -50,6 +50,6 @@
 // aggregate. This makes fused claims immediately queryable via
 // `gmb memory --ask` and keeps them in the same dedup/aging pipeline as
 // event-derived claims. (Approved deviation from the plan's literal
-// .glassmarble/fusion/ layout, which predates the Stage 6 refactor that
+// .glassmarble/fusion/ layout, which predates the developer memory refactor that
 // consolidated all claims into the memory store.)
 package knowledge_fusion

@@ -1,12 +1,12 @@
 package e2e_test
 
 // TestAnalyzeStoresWholePipelineAndSecondCommitDrivesMemory is the master-plan
-// end-to-end journey for Stages 2-7 persistence:
+// end-to-end journey for Phases 2-7 persistence:
 //
 //	init → sample project committed → analyze (full pipeline) → second commit
 //	that ADDS a component → analyze again → assert every persistence artifact
 //	exists on disk and that the second analysis wrote real architectural
-//	events into developer memory (the Stage 5-6 wiring).
+//	events into developer memory (the intelligence-memory wiring).
 //
 // The second commit deterministically produces events because the new
 // internal/audit package appears as a brand-new component in the diff between
@@ -51,12 +51,12 @@ func TestAnalyzeStoresWholePipelineAndSecondCommitDrivesMemory(t *testing.T) {
 
 	// --- 3. first analysis: full pipeline -----------------------------------
 	commit1 := sb.GitHead()
-	gmbWant(t, sb, []string{"Analyzed", "Stage 5:"}, "analyze")
+	gmbWant(t, sb, []string{"Analyzed", "Intelligence:"}, "analyze")
 	if !sb.Exists(".glassmarble/telemetry.json") {
 		t.Errorf("analyze did not write telemetry.json")
 	}
 	if !sb.Exists(".glassmarble/intelligence/latest.json") {
-		t.Errorf("analyze did not persist the Stage 5 result")
+		t.Errorf("analyze did not persist the intelligence result")
 	}
 	if want, got := akgCommitHash(t, sb), commit1; got != want {
 		t.Errorf("akg.json commit_hash = %s, want commit1 %s", got, want)
@@ -87,7 +87,7 @@ func (a *Auditor) State() string {
 	}
 
 	// --- 5. second analysis: publishes events into developer memory ----------
-	out := gmbWant(t, sb, []string{"Analyzed", "Stage 5:"}, "analyze")
+	out := gmbWant(t, sb, []string{"Analyzed", "Intelligence:"}, "analyze")
 	if !strings.Contains(out, "audit") {
 		t.Logf("second analyze output (informational):\n%s", out)
 	}
@@ -107,7 +107,7 @@ func (a *Auditor) State() string {
 		t.Errorf("snapshots/index.json missing after two analyses")
 	}
 
-	// --- 6. the Stage 6 developer memory is populated from the WAL -----------
+	// --- 6. the developer memory is populated from the WAL -----------
 	assertMemoryWAL(t, sb)
 	assertTimeline(t, sb)
 }

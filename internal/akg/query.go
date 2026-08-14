@@ -4,13 +4,13 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 // Query returns all nodes matching the given filter. Filters are AND-ed together.
 // Empty/zero fields are ignored. Uses KindIndex for O(1) pre-filtering when Kind is set.
-func (c *CodePropertyGraph) Query(filter stage4.QueryFilter) []*stage4.ResolvedNode {
-	var candidates []*stage4.ResolvedNode
+func (c *CodePropertyGraph) Query(filter link.QueryFilter) []*link.ResolvedNode {
+	var candidates []*link.ResolvedNode
 	if filter.Kind != "" {
 		if c.KindIndex != nil {
 			if nodeSet, exists := c.KindIndex.Get(filter.Kind); exists {
@@ -53,7 +53,7 @@ func (c *CodePropertyGraph) Query(filter stage4.QueryFilter) []*stage4.ResolvedN
 		}
 	}
 
-	var results []*stage4.ResolvedNode
+	var results []*link.ResolvedNode
 	for _, node := range candidates {
 		if !matchFilter(node, filter, nameRegex, propRegexes, c) {
 			continue
@@ -73,7 +73,7 @@ func (c *CodePropertyGraph) Query(filter stage4.QueryFilter) []*stage4.ResolvedN
 	return results
 }
 
-func matchFilter(node *stage4.ResolvedNode, filter stage4.QueryFilter, nameRegex *regexp.Regexp, propRegexes map[string]*regexp.Regexp, graph *CodePropertyGraph) bool {
+func matchFilter(node *link.ResolvedNode, filter link.QueryFilter, nameRegex *regexp.Regexp, propRegexes map[string]*regexp.Regexp, graph *CodePropertyGraph) bool {
 	if node == nil {
 		return false
 	}
@@ -124,11 +124,11 @@ func matchFilter(node *stage4.ResolvedNode, filter stage4.QueryFilter, nameRegex
 // GetNodesByPattern returns all source node IDs that have an outbound edge of the
 // given predicate type pointing to the given objectID.
 // If objectID is empty, returns all source node IDs with any edge of that type.
-func (c *CodePropertyGraph) GetNodesByPattern(predicate stage4.RelationshipType, objectID string) []string {
+func (c *CodePropertyGraph) GetNodesByPattern(predicate link.RelationshipType, objectID string) []string {
 	var results []string
 	seen := make(map[string]bool)
 
-	c.OutboundEdges.Iterate(func(sourceID string, edges []stage4.ResolvedEdge) {
+	c.OutboundEdges.Iterate(func(sourceID string, edges []link.ResolvedEdge) {
 		for _, edge := range edges {
 			if edge.Type != predicate {
 				continue
@@ -153,8 +153,8 @@ func (c *CodePropertyGraph) GetNodesByPattern(predicate stage4.RelationshipType,
 //	"primitive:DATABASE"   -> filter by Primitive
 //	"prop:key=val"         -> filter by Properties key=val
 //	Multiple patterns can be space-separated (AND-ed).
-func (c *CodePropertyGraph) Match(pattern string) []*stage4.ResolvedNode {
-	filter := stage4.QueryFilter{}
+func (c *CodePropertyGraph) Match(pattern string) []*link.ResolvedNode {
+	filter := link.QueryFilter{}
 	parts := strings.Fields(pattern)
 	for _, part := range parts {
 		switch {
@@ -178,14 +178,14 @@ func (c *CodePropertyGraph) Match(pattern string) []*stage4.ResolvedNode {
 }
 
 // SafeQuery is a concurrency-safe wrapper that acquires the read lock before querying.
-func (c *CodePropertyGraph) SafeQuery(filter stage4.QueryFilter) []*stage4.ResolvedNode {
+func (c *CodePropertyGraph) SafeQuery(filter link.QueryFilter) []*link.ResolvedNode {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.Query(filter)
 }
 
 // SafeGetNodesByPattern is a concurrency-safe wrapper.
-func (c *CodePropertyGraph) SafeGetNodesByPattern(predicate stage4.RelationshipType, objectID string) []string {
+func (c *CodePropertyGraph) SafeGetNodesByPattern(predicate link.RelationshipType, objectID string) []string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.GetNodesByPattern(predicate, objectID)

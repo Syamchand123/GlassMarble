@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage1"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage2"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage3"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/ingest"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/normalize"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/aggregate"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/config"
 	"github.com/Syamchand123/GlassMarble/internal/git"
 	"github.com/Syamchand123/GlassMarble/internal/product"
@@ -24,7 +24,7 @@ import (
 var analyzeCmd = &cobra.Command{
 	Use:   "analyze",
 	Short: "Run full source code ingestion and build Architecture Knowledge Graph (AKG)",
-	Long:  `Executes Stage 1 (ingestion), Stage 2 (normalization), Stage 3 (topology aggregation), Stage 4 (CPG linking), and commits the graph state to AKG.`,
+	Long:  `Executes ingestion, normalization, topology aggregation, CPG linking, and commits the graph state to AKG.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		targetDir, _ := cmd.Flags().GetString("dir")
 		commitHash, _ := cmd.Flags().GetString("commit")
@@ -38,7 +38,7 @@ var analyzeCmd = &cobra.Command{
 		asJSON, _ := cmd.Flags().GetBool("json")
 		storeCode, _ := cmd.Flags().GetBool("store-code")
 		isBench, _ := cmd.Flags().GetBool("bench")
-		stage5, _ := cmd.Flags().GetBool("stage5")
+		intelligence, _ := cmd.Flags().GetBool("intelligence")
 		includeDocs, _ := cmd.Flags().GetBool("include-docs")
 		if targetDir == "" {
 			targetDir = "."
@@ -56,7 +56,7 @@ var analyzeCmd = &cobra.Command{
 			abortOnLimit:   abortOnLimit,
 			json:           asJSON,
 			bench:          isBench,
-			stage5:         stage5,
+			intelligence:         intelligence,
 			includeDocs:    includeDocs,
 		}
 		if isBench {
@@ -87,17 +87,17 @@ type runAnalysisOptions struct {
 	abortOnLimit   bool
 	json           bool
 	bench          bool
-	// progress, when non-nil, receives stage-boundary updates so a BubbleTea
+	// progress, when non-nil, receives phase-boundary updates so a BubbleTea
 	// program can animate the pipeline. It is purely additive: nil behaves
 	// exactly as before.
-	progress func(stage int, name string, current, total int)
+	progress func(step int, name string, current, total int)
 	// onSummary, when non-nil, receives the QA numbers of a completed run so
 	// the TUI layer can render its own styled summary card.
 	onSummary func(s analysisSummary)
-	// stage5 controls whether Stage 5 architectural intelligence runs after
+	// intelligence controls whether architecture intelligence runs after
 	// the graph is committed (human output only).
-	stage5 bool
-	// includeDocs controls whether Stage 9 knowledge fusion (ADR/README/PR
+	intelligence bool
+	// includeDocs controls whether knowledge fusion (ADR/README/PR
 	// claims) runs after the graph is committed. Opt-in by design — doc
 	// scanning and git-history walks are not free on large repositories.
 	includeDocs bool
@@ -133,7 +133,7 @@ type analysisJSON struct {
 	StorageDir    string   `json:"storage_dir"`
 }
 
-// runAnalysis executes the full four-stage pipeline. It is shared by
+// runAnalysis executes the full four-phase pipeline. It is shared by
 // `gmb analyze` and `gmb watch` so both commands drive the same engine.
 func runAnalysis(opts runAnalysisOptions) error {
 	start := time.Now()
@@ -161,11 +161,11 @@ func runAnalysis(opts runAnalysisOptions) error {
 		opts.progress(1, "Tree-sitter Ingestion", 0, 0)
 	}
 
-	// Stage 1: Tree-sitter Ingestion.
+	// Ingestion: Tree-sitter Ingestion.
 	// Default: incremental delta against the working tree (git diff HEAD).
 	// --full forces a clean full scan of every file (AUDIT Issue 1.1 /
 	// Phase 1C-9 — the old --full flag was a no-op).
-	cfg := stage1.DefaultConfig(absDir)
+	cfg := ingest.DefaultConfig(absDir)
 	// Wire internal/config knobs (AUDIT Issue 4 Phase 4A-4): workers and
 	// max file size come from .glassmarble/config.yaml / GLASSMARBLE_* /
 	// flags, with flags winning.
@@ -184,7 +184,7 @@ func runAnalysis(opts runAnalysisOptions) error {
 		cfg.GitTrackedOnly = true
 	}
 	// Live per-file progress during ingestion so the TUI can animate a real
-	// counter (currently stage 1 only reports start/end boundaries).
+	// counter (currently ingestion only reports start/end boundaries).
 	if opts.progress != nil {
 		cfg.OnProgress = func(done, total int) {
 			if total <= 0 {
@@ -202,10 +202,10 @@ func runAnalysis(opts runAnalysisOptions) error {
 	// The delta linkers must then not deduplicate against the persisted base
 	// graph: they only re-emit "new" nodes, and the commit sweep removes every
 	// modified-file node missing from the delta, so deduplicating would
-	// silently delete untouched derived nodes. Stage 4 therefore links full
+	// silently delete untouched derived nodes. The linker therefore links full
 	// rescans against an empty base.
 	fullRescan := full
-	var stage1Out *stage1.StageOutput
+	var ingestOut *ingest.IngestOutput
 	doneParse := product.StartSpan("parse")
 	if !full {
 		// A base state only counts when akg.json actually contains graph
@@ -215,7 +215,7 @@ func runAnalysis(opts runAnalysisOptions) error {
 		// The check streams just the first node and stops, so it stays
 		// bounded-memory (AUDIT Issue 4 Phase 4A-2).
 		hasBaseState := false
-		if err := akg.StreamNodes(filepath.Join(absDir, ".glassmarble"), func(*stage4.ResolvedNode) bool {
+		if err := akg.StreamNodes(filepath.Join(absDir, ".glassmarble"), func(*link.ResolvedNode) bool {
 			hasBaseState = true
 			return false
 		}); err != nil {
@@ -224,70 +224,70 @@ func runAnalysis(opts runAnalysisOptions) error {
 		// A root commit has no parent, so its "diff" is the whole tree —
 		// not an incremental delta. Treat it as a full rescan.
 		isRoot, rootErr := git.IsRootCommit(absDir, commitHash)
-		diff, diffErr := stage1.CollectGitDiff(absDir, commitHash)
+		diff, diffErr := ingest.CollectGitDiff(absDir, commitHash)
 		if hasBaseState && diffErr == nil && !(rootErr == nil && isRoot) && len(diff) > 0 {
-			stage1Out, err = stage1.RunIngestionForDelta(cfg, diff)
+			ingestOut, err = ingest.RunIngestionForDelta(cfg, diff)
 			if err == nil {
 				if verbose {
-					fmt.Printf("Stage 1 (delta): parsed %d changed files, %d deleted.\n",
-						len(stage1Out.Updated), len(stage1Out.Deleted))
+					fmt.Printf("Ingestion (delta): parsed %d changed files, %d deleted.\n",
+						len(ingestOut.Updated), len(ingestOut.Deleted))
 				}
 			}
 		}
 	}
-	if stage1Out == nil {
+	if ingestOut == nil {
 		fullRescan = true
-		stage1Out, err = stage1.RunIngestion(cfg)
+		ingestOut, err = ingest.RunIngestion(cfg)
 		if err != nil {
 			doneParse()
-			return fmt.Errorf("stage 1 ingestion failed: %w", err)
+			return fmt.Errorf("ingestion failed: %w", err)
 		}
 		if verbose {
-			fmt.Printf("Stage 1 (full): discovered and parsed %d source files.\n", len(stage1Out.Updated))
+			fmt.Printf("Ingestion (full): discovered and parsed %d source files.\n", len(ingestOut.Updated))
 		}
 	}
 	doneParse()
 	if opts.progress != nil {
-		opts.progress(1, "Tree-sitter Ingestion", len(stage1Out.Updated), len(stage1Out.Updated))
+		opts.progress(1, "Tree-sitter Ingestion", len(ingestOut.Updated), len(ingestOut.Updated))
 	}
 
-	// Stage 2: GAST Normalization
+	// Normalization: GAST Normalization
 	doneNormalize := product.StartSpan("normalize")
 	if opts.progress != nil {
 		opts.progress(2, "GAST Normalization", 0, 0)
 	}
-	stage2Payload, err := stage2.Normalize(stage1Out, commitHash)
+	normalizePayload, err := normalize.Normalize(ingestOut, commitHash)
 	if err != nil {
 		doneNormalize()
-		return fmt.Errorf("stage 2 normalization failed: %w", err)
+		return fmt.Errorf("normalization failed: %w", err)
 	}
 	doneNormalize()
 	if opts.progress != nil {
-		opts.progress(2, "GAST Normalization", len(stage2Payload.UpsertedTrees), len(stage2Payload.UpsertedTrees))
+		opts.progress(2, "GAST Normalization", len(normalizePayload.UpsertedTrees), len(normalizePayload.UpsertedTrees))
 	}
 	if verbose {
-		fmt.Printf("Stage 2: Normalized %d syntax trees.\n", len(stage2Payload.UpsertedTrees))
+		fmt.Printf("Normalization: Normalized %d syntax trees.\n", len(normalizePayload.UpsertedTrees))
 	}
 
-	// Stage 3: Topology Aggregation
-	doneStage3 := product.StartSpan("stage3")
+	// Aggregation: Topology Aggregation
+	doneAggregate := product.StartSpan("aggregate")
 	if opts.progress != nil {
 		opts.progress(3, "Topology Aggregation", 0, 0)
 	}
-	stage3Out, err := stage3.Aggregate(stage2Payload, nil, absDir)
+	aggregateOut, err := aggregate.Aggregate(normalizePayload, nil, absDir)
 	if err != nil {
-		doneStage3()
-		return fmt.Errorf("stage 3 aggregation failed: %w", err)
+		doneAggregate()
+		return fmt.Errorf("aggregation failed: %w", err)
 	}
-	doneStage3()
+	doneAggregate()
 	if opts.progress != nil {
 		opts.progress(3, "Topology Aggregation", 1, 1)
 	}
 	if verbose {
-		fmt.Printf("Stage 3: Built topology with %d global definition symbols.\n", len(stage3Out.GlobalDefinitionIndex))
+		fmt.Printf("Aggregation: Built topology with %d global definition symbols.\n", len(aggregateOut.GlobalDefinitionIndex))
 	}
 
-	// Initialize AKG before Stage 4 so we have a persistent GraphDB for incremental lookups
+	// Initialize AKG before Linking so we have a persistent GraphDB for incremental lookups
 	storageDir := filepath.Join(absDir, ".glassmarble")
 	tm, err := newAKGManager(storageDir, nil)
 	if err != nil {
@@ -296,18 +296,18 @@ func runAnalysis(opts runAnalysisOptions) error {
 	defer tm.Close()
 
 	var modifiedFiles []string
-	for relPath := range stage2Payload.UpsertedTrees {
+	for relPath := range normalizePayload.UpsertedTrees {
 		modifiedFiles = append(modifiedFiles, relPath)
 	}
-	modifiedFiles = append(modifiedFiles, stage2Payload.DeletedPaths...)
+	modifiedFiles = append(modifiedFiles, normalizePayload.DeletedPaths...)
 
-	// Stage 4: CPG Linker (Incremental Delta Mode).
-	linkerCfg := stage4.LinkerConfig{}
+	// Linking: CPG Linker (Incremental Delta Mode).
+	linkerCfg := link.LinkerConfig{}
 	if opts.linkLevel != "" {
 		linkerCfg.LevelOfDetail = opts.linkLevel
 	}
 	if full {
-		linkerCfg.LevelOfDetail = stage4.LevelFull
+		linkerCfg.LevelOfDetail = link.LevelFull
 	}
 	if opts.macroInference != "" {
 		linkerCfg.MacroInference = opts.macroInference
@@ -321,22 +321,22 @@ func runAnalysis(opts runAnalysisOptions) error {
 	if opts.progress != nil {
 		opts.progress(4, "Semantic Linking", 0, 0)
 	}
-	doneStage4 := product.StartSpan("stage4")
-	var linkBase stage4.GraphDB = tm.GetActiveGraph()
+	doneLink := product.StartSpan("link")
+	var linkBase link.GraphDB = tm.GetActiveGraph()
 	if fullRescan {
 		linkBase = akg.NewCodePropertyGraph("rescan")
 	}
-	cpg, err := stage4.Link(stage3Out, modifiedFiles, linkBase, linkerCfg)
+	cpg, err := link.Link(aggregateOut, modifiedFiles, linkBase, linkerCfg)
 	if err != nil {
-		doneStage4()
-		return fmt.Errorf("stage 4 linker failed: %w", err)
+		doneLink()
+		return fmt.Errorf("linking failed: %w", err)
 	}
-	doneStage4()
+	doneLink()
 	if opts.progress != nil {
 		opts.progress(4, "Semantic Linking", len(cpg.GraphNodes), len(cpg.GraphNodes))
 	}
 	if verbose {
-		fmt.Printf("Stage 4: Bound Delta CPG with %d new/modified nodes.\n", len(cpg.GraphNodes))
+		fmt.Printf("Linking: Bound Delta CPG with %d new/modified nodes.\n", len(cpg.GraphNodes))
 	}
 
 	if opts.progress != nil {
@@ -369,7 +369,7 @@ func runAnalysis(opts runAnalysisOptions) error {
 	if opts.onSummary != nil {
 		opts.onSummary(analysisSummary{
 			targetDir:     absDir,
-			filesAnalyzed: len(stage1Out.Updated),
+			filesAnalyzed: len(ingestOut.Updated),
 			nodes:         q.TotalNodes,
 			edges:         q.TotalEdges,
 			virtualNodes:  q.VirtualNodes,
@@ -384,15 +384,15 @@ func runAnalysis(opts runAnalysisOptions) error {
 		out, _ := json.MarshalIndent(analysisJSON{
 			TargetDir:     absDir,
 			CommitHash:    commitHash,
-			FilesAnalyzed: len(stage1Out.Updated),
+			FilesAnalyzed: len(ingestOut.Updated),
 			Nodes:         q.TotalNodes,
 			Edges:         q.TotalEdges,
 			VirtualNodes:  q.VirtualNodes,
 			DanglingEdges: q.DanglingEdges,
 			StateBytes:    stateSize,
 			DurationMs:    duration.Milliseconds(),
-			Skipped:       stage1Out.Skipped,
-			Warnings:      stage1Out.Warnings,
+			Skipped:       ingestOut.Skipped,
+			Warnings:      ingestOut.Warnings,
 			StorageDir:    storageDir,
 		}, "", "  ")
 		fmt.Println(string(out))
@@ -400,46 +400,46 @@ func runAnalysis(opts runAnalysisOptions) error {
 	}
 
 	fmt.Printf("Analyzed %d files | %d nodes (+%d) | %d edges (+%d) | %d virtual (+%d) | %d dangling | state=%s | %.1fs\n",
-		len(stage1Out.Updated), q.TotalNodes, q.TotalNodes-baseQ.TotalNodes,
+		len(ingestOut.Updated), q.TotalNodes, q.TotalNodes-baseQ.TotalNodes,
 		q.TotalEdges, q.TotalEdges-baseQ.TotalEdges,
 		q.VirtualNodes, q.VirtualNodes-baseQ.VirtualNodes,
 		q.DanglingEdges, humanBytes(stateSize), duration.Seconds())
 	if q.DanglingEdges > 0 {
 		fmt.Printf("WARNING: %d edges reference missing nodes (dangling). Run `gmb analyze --full` to rebuild.\n", q.DanglingEdges)
 	}
-	// Stage 5 architectural intelligence + Stage 6 developer memory
+	// architecture intelligence + developer memory
 	// (human mode only; the JSON contract above must stay stable for
-	// machine consumers). Both stages are non-fatal by design.
-	if opts.stage5 {
-		runMemoryStage(storageDir, tm, commitHash, verbose)
+	// machine consumers). Both phases are non-fatal by design.
+	if opts.intelligence {
+		runMemoryPipeline(storageDir, tm, commitHash, verbose)
 	}
-	// Stage 9 knowledge fusion: ADR/README/PR claims fused into developer
+	// knowledge fusion: ADR/README/PR claims fused into developer
 	// memory. Also human-output-only and non-fatal by design.
 	if opts.includeDocs {
-		runFusionStage(storageDir, tm, verbose)
+		runFusion(storageDir, tm, verbose)
 	}
-	// Stage 10 learning layer: refresh the project conventions
+	// convention-learning layer: refresh the project conventions
 	// (.glassmarble/memory/conventions.json) from the graph, the memory
 	// and the correction log. Corrections themselves are applied at query
 	// time (gmb memory), not here. Non-fatal by design (§15.6).
-	runLearningStage(storageDir, tm, verbose)
-	// Stage 11 knowledge aging: freshness decay on every claim plus
+	runLearning(storageDir, tm, verbose)
+	// knowledge aging: freshness decay on every claim plus
 	// deterministic state transitions, persisted as replayable
 	// STATE_CHANGE events in the memory WAL (master plan §13.1 — aging
 	// runs on every analysis). Non-fatal by design (§15.6).
-	runAgingStage(storageDir, verbose)
+	runAging(storageDir, verbose)
 	// Surface files that were skipped (oversized, unknown grammar) or that
 	// produced warnings so silent data loss stays visible (AUDIT Issue 1
 	// Phase 1C-10: skipped/warnings were collected but never printed).
-	if len(stage1Out.Skipped) > 0 {
-		fmt.Printf("WARNING: %d file(s) skipped during ingestion (oversized or unsupported language):\n", len(stage1Out.Skipped))
-		for _, s := range stage1Out.Skipped {
+	if len(ingestOut.Skipped) > 0 {
+		fmt.Printf("WARNING: %d file(s) skipped during ingestion (oversized or unsupported language):\n", len(ingestOut.Skipped))
+		for _, s := range ingestOut.Skipped {
 			fmt.Printf("  - %s\n", s)
 		}
 	}
-	if len(stage1Out.Warnings) > 0 {
-		fmt.Printf("Note: %d ingestion warning(s):\n", len(stage1Out.Warnings))
-		for _, w := range stage1Out.Warnings {
+	if len(ingestOut.Warnings) > 0 {
+		fmt.Printf("Note: %d ingestion warning(s):\n", len(ingestOut.Warnings))
+		for _, w := range ingestOut.Warnings {
 			fmt.Printf("  - %s\n", w)
 		}
 	}
@@ -452,10 +452,10 @@ func runAnalysis(opts runAnalysisOptions) error {
 }
 
 // runAnalyzeTUI drives the full pipeline from inside the analyze BubbleTea
-// program, wiring stage progress and the final QA summary into the model.
+// program, wiring phase progress and the final QA summary into the model.
 func runAnalyzeTUI(c *cobra.Command, opts runAnalysisOptions) error {
 	var summary analyze.Summary
-	run := func(progress func(stage int, name string, current, total int)) (analyze.Summary, error) {
+	run := func(progress func(step int, name string, current, total int)) (analyze.Summary, error) {
 		opts.progress = progress
 		opts.onSummary = func(s analysisSummary) {
 			summary = analyze.Summary{
@@ -513,8 +513,8 @@ func runAnalysisBenchmark(cmd *cobra.Command, opts runAnalysisOptions) error {
 	fmt.Fprintln(out, "=== GlassMarble Pipeline Benchmark Gate (Phase 8 / §12.0) ===")
 	fmt.Fprintln(out, "")
 
-	// Stage 5 adds analysis time that would skew the benchmark gates; skip it.
-	opts.stage5 = false
+	// Architecture Intelligence adds analysis time that would skew the benchmark gates; skip it.
+	opts.intelligence = false
 
 	var commitMS float64
 	var totalDuration time.Duration
@@ -584,7 +584,7 @@ func init() {
 	analyzeCmd.Flags().Bool("store-code", false, "Store source code content snippets in AKG nodes (default: false)")
 	analyzeCmd.Flags().Bool("json", false, "Emit machine-readable JSON instead of the human summary")
 	analyzeCmd.Flags().Bool("bench", false, "Run analysis benchmark battery and verify performance against budget gates")
-	analyzeCmd.Flags().Bool("stage5", true, "Run Stage 5 architectural intelligence after committing the graph (human output only)")
-	analyzeCmd.Flags().Bool("include-docs", false, "Run Stage 9 knowledge fusion: fuse ADR/README/PR claims from documentation and git history into developer memory")
+	analyzeCmd.Flags().Bool("intelligence", true, "Run architecture intelligence after committing the graph (human output only)")
+	analyzeCmd.Flags().Bool("include-docs", false, "Run knowledge fusion: fuse ADR/README/PR claims from documentation and git history into developer memory")
 	rootCmd.AddCommand(analyzeCmd)
 }

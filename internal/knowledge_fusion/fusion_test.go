@@ -8,18 +8,18 @@ import (
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/config"
 	"github.com/Syamchand123/GlassMarble/internal/developer_memory"
 )
 
-// stage4Node builds a minimal resolved node for graph construction.
-func stage4Node(name, file string) *stage4.ResolvedNode {
-	return &stage4.ResolvedNode{
+// linkNode builds a minimal resolved node for graph construction.
+func linkNode(name, file string) *link.ResolvedNode {
+	return &link.ResolvedNode{
 		ID:       name,
 		Kind:     "MODULE",
 		Name:     name,
-		FileSpec: stage4.LocationMeta{Path: file},
+		FileSpec: link.LocationMeta{Path: file},
 	}
 }
 
@@ -236,8 +236,8 @@ func TestFusion_Run_EntityLinkingExpandsPRClaims(t *testing.T) {
 	write(t, repo, "services/user-service/main.go", "package main\n")
 
 	graph := akg.NewCodePropertyGraph("test")
-	graph.Nodes = graph.Nodes.Set("mod::user-service", stage4Node("UserService", "services/user-service/main.go"))
-	graph.Nodes = graph.Nodes.Set("mod::user-cache", stage4Node("UserCache", "services/user-service/main.go"))
+	graph.Nodes = graph.Nodes.Set("mod::user-service", linkNode("UserService", "services/user-service/main.go"))
+	graph.Nodes = graph.Nodes.Set("mod::user-cache", linkNode("UserCache", "services/user-service/main.go"))
 	graph.FileNodeIndex = graph.FileNodeIndex.Set("services/user-service/main.go", map[string]bool{
 		"mod::user-service": true,
 		"mod::user-cache":   true,

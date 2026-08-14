@@ -1,4 +1,4 @@
-// Package knowledge_aging implements Stage 11 of the GlassMarble V2
+// Package knowledge_aging implements knowledge aging of the GlassMarble V2
 // pipeline: Knowledge Aging (master plan §9).
 //
 // WHAT THIS IS:
@@ -42,11 +42,11 @@
 //
 //	- Never destroy knowledge: transitions only move states; nothing is
 //	  deleted. REMOVED / HISTORICAL are terminal for aging — restoring a
-//	  component is a user correction (Stage 10) or a new SERVICE_ADDED
-//	  event (Stage 6), never a silent revert.
+//	  component is a user correction (convention learning) or a new SERVICE_ADDED
+//	  event (developer memory), never a silent revert.
 //	- Deterministic first: every rule is a pure function of the snapshot,
 //	  the memory and the clock. No LLM anywhere in this package.
-//	- Corrections win (Stage 10 integration): components whose state the
+//	- Corrections win (convention learning integration): components whose state the
 //	  developer pinned via a STATE correction are exempt from aging
 //	  transitions (WithPinnedStates) — the user's state is authoritative
 //	  until a compensating correction.
@@ -59,7 +59,7 @@
 //	knowledge_aging imports config, archmodel, developer_memory and
 //	evidence. Nothing imports this package from the leaf packages; the CLI
 //	(cmd/) wires it into the pipeline and into read-time projections, and
-//	is responsible for passing Stage 10's STATE corrections as pins.
+//	is responsible for passing convention learning's STATE corrections as pins.
 package knowledge_aging
 
 import (
@@ -80,7 +80,7 @@ import (
 // the freshened aggregate is saved atomically.
 //
 // Pinned states: components whose state the developer explicitly corrected
-// (Stage 10 STATE corrections) must be passed via WithPinnedStates. Aging
+// (convention learning STATE corrections) must be passed via WithPinnedStates. Aging
 // never transitions a pinned component — the user's state is authoritative
 // until a compensating correction. The CLI (composition root) is
 // responsible for deriving the pins from the correction log, so this
@@ -103,7 +103,7 @@ func WithConfig(cfg *config.AgingConfig) AgerOption {
 }
 
 // WithPinnedStates marks component states as authoritative user corrections
-// (derived from Stage 10 STATE corrections by the caller). Pinned components
+// (derived from convention learning STATE corrections by the caller). Pinned components
 // are exempt from every aging transition, so aging can never fight a
 // developer's explicit state correction. The map value is informational
 // (used for logging); presence in the map is what pins the component.
@@ -178,7 +178,7 @@ type TransitionResult struct {
 //  1. refresh every claim's freshness score in memory,
 //  2. detect entities that vanished from the graph,
 //  3. apply the deterministic state-transition rules (skipping components
-//     pinned by Stage 10 STATE corrections),
+//     pinned by convention learning STATE corrections),
 //  4. append STATE_CHANGE events to the memory WAL (deduplicated by ID),
 //  5. rebuild the aggregate so the transitions are applied and save
 //     memory.json + timeline.json atomically with a freshness stamp.
@@ -227,7 +227,7 @@ func (a *Ager) Age(snap *archmodel.ArchSnapshot, now time.Time) ([]TransitionRes
 	var pending []archmodel.ArchEvent
 	for compName, history := range mem.ComponentMemory {
 		if _, pinned := a.pins[compName]; pinned {
-			// Stage 10 STATE corrections win over aging: the developer
+			// convention learning STATE corrections win over aging: the developer
 			// owns this component's temporal state.
 			continue
 		}
@@ -434,7 +434,7 @@ func freshenClaim(claim developer_memory.KnowledgeClaim, subjectState developer_
 //     temporal state (DEPRECATED / REMOVED / HISTORICAL), so knowledge
 //     about aged-out components stops ranking as current.
 //   - Every other persisted state (DEPRECATED from ADR status,
-//     HISTORICAL from Stage 9 conflict resolution, UNKNOWN) is displayed
+//     HISTORICAL from knowledge fusion conflict resolution, UNKNOWN) is displayed
 //     as stored — those states carry their own meaning and are never
 //     overwritten by the projection.
 //

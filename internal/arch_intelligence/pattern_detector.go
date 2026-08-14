@@ -8,7 +8,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/config"
 	"github.com/Syamchand123/GlassMarble/internal/evidence"
 )
@@ -218,7 +218,7 @@ func (r *PR03Microservices) Evaluate(ctx *RuleContext) *archmodel.DetectedPatter
 	hasOwnResource := func(c archmodel.DetectedComponent) bool {
 		for _, id := range c.NodeIDs {
 			for _, e := range ctx.Graph.Outbound[id] {
-				if e.Type == stage4.EdgeQueriesDB || e.Type == stage4.EdgeExposesEndpoint {
+				if e.Type == link.EdgeQueriesDB || e.Type == link.EdgeExposesEndpoint {
 					return true
 				}
 			}
@@ -402,9 +402,9 @@ func (r *PR06EventDriven) Evaluate(ctx *RuleContext) *archmodel.DetectedPattern 
 			if isStructuralEdge(e.Type) {
 				totalEdges++
 			}
-			if e.Type == stage4.EdgePublishes || e.Type == stage4.EdgeSubscribes ||
-				e.Type == stage4.EdgeDispatchesEvent || e.Type == stage4.EdgeSendsTo ||
-				e.Type == stage4.EdgeReceivesFrom {
+			if e.Type == link.EdgePublishes || e.Type == link.EdgeSubscribes ||
+				e.Type == link.EdgeDispatchesEvent || e.Type == link.EdgeSendsTo ||
+				e.Type == link.EdgeReceivesFrom {
 				eventEdges++
 			}
 		}
@@ -454,9 +454,9 @@ func (r *PR07RepositoryPattern) Evaluate(ctx *RuleContext) *archmodel.DetectedPa
 		}
 		repos++
 		for _, e := range ctx.Graph.Outbound[id] {
-			if e.Type == stage4.EdgeQueriesDB {
+			if e.Type == link.EdgeQueriesDB {
 				directDB++
-			} else if e.Type == stage4.EdgeDependsOn {
+			} else if e.Type == link.EdgeDependsOn {
 				if tgt, ok := ctx.Graph.Nodes[e.TargetID]; ok && tgt.Primitive == "DATABASE" {
 					directDB++
 				}

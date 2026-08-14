@@ -21,7 +21,7 @@ var (
 var statsCmd = &cobra.Command{
 	Use:   "stats",
 	Short: "Display pipeline execution telemetry and performance stats",
-	Long:  `Surfaces pipeline phase timings (parse, translate, normalize, stage3, stage4, akg-commit, extract, project, render) and benchmark budget gates.`,
+	Long:  `Surfaces pipeline phase timings (parse, translate, normalize, aggregate, link, akg-commit, extract, project, render) and benchmark budget gates.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, _ := cmd.Flags().GetString("dir")
 		if dir == "" {
@@ -94,12 +94,12 @@ var statsCmd = &cobra.Command{
 func init() {
 	statsCmd.Flags().BoolVar(&statsLast, "last", true, "Display telemetry spans for the last pipeline execution")
 	statsCmd.Flags().BoolVar(&statsBench, "bench", false, "Display pipeline benchmark gates and budget status")
-	statsCmd.Flags().BoolVar(&statsArch, "arch", false, "Display architecture health: component coupling (Ca/Ce/Instability) from Stage 5")
+	statsCmd.Flags().BoolVar(&statsArch, "arch", false, "Display architecture health: component coupling (Ca/Ce/Instability) from architecture intelligence")
 	statsCmd.Flags().String("dir", ".", "Directory path containing the .glassmarble/ database folder")
 	rootCmd.AddCommand(statsCmd)
 }
 
-// runArchStats runs Stage 5 against the committed AKG and prints the
+// runArchStats runs architecture intelligence against the committed AKG and prints the
 // component-level coupling table (Ca, Ce, Instability, stability status).
 func runArchStats(storageDir string, cmd *cobra.Command) error {
 	tm, err := newAKGManager(storageDir, cmd)
@@ -122,7 +122,7 @@ func runArchStats(storageDir string, cmd *cobra.Command) error {
 		arch_intelligence.WithLayerForbidden(cfgForbiddenPairs(storageDir)))
 	res := engine.Run()
 
-	fmt.Println("=== Architecture Health (Stage 5) ===")
+	fmt.Println("=== Architecture Health (Intelligence) ===")
 	fmt.Println("")
 	fmt.Printf("Nodes: %d | Edges: %d | Components: %d | Cycles: %d | Layer violations: %d\n",
 		res.Metrics.TotalNodes, res.Metrics.TotalEdges, len(res.Components),

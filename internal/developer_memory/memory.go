@@ -1,12 +1,12 @@
-// Package developer_memory implements Stage 6 of the GlassMarble V2 pipeline:
+// Package developer_memory implements developer memory of the GlassMarble V2 pipeline:
 // the Developer Memory Engine.
 //
 // WHAT THIS IS:
 //
-//	Stage 5 (arch_intelligence) tells us what the system IS today. Stage 6
+//	Architecture Intelligence (arch_intelligence) tells us what the system IS today. developer memory
 //	tells us what the system WAS, what changed, and — where real evidence
 //	exists — WHY it changed. It converts ephemeral ArchEvents (produced by
-//	Stage 5D event generation and, later, Stage 8 commit reasoning) into a
+//	component inference event generation and, later, commit reasoning) into a
 //	persistent, queryable, reproducible project memory.
 //
 // CONCEPTUAL PIPELINE:
@@ -49,15 +49,15 @@
 // KNOWLEDGE STATES (temporal validity):
 //
 //	CURRENT / DEPRECATED / REMOVED / HISTORICAL / EXPERIMENTAL / UNKNOWN.
-//	Stage 6 assigns states deterministically from events (added → CURRENT,
-//	removed → REMOVED, with ValidUntil stamped). Stage 11 (knowledge_aging)
+//	developer memory assigns states deterministically from events (added → CURRENT,
+//	removed → REMOVED, with ValidUntil stamped). knowledge aging (knowledge_aging)
 //	owns the decay curves and DEPRECATED/HISTORICAL transitions. Historical
 //	knowledge is never deleted — memory only grows.
 //
 // DEPENDENCY DIRECTION (strict, cycle-free):
 //
-//	developer_memory imports only evidence, archmodel and stdlib. No stage
-//	package imports this package's internals; Stage 12 reads it through the
+//	developer_memory imports only evidence, archmodel and stdlib. No phase
+//	package imports this package's internals; evidence retrieval reads it through the
 //	store/query APIs.
 package developer_memory
 
@@ -79,7 +79,7 @@ const (
 	StateActive KnowledgeState = "CURRENT"
 
 	// StateDeprecated marks knowledge that is no longer maintained but may
-	// still be referenced elsewhere. Assigned by Stage 11 (knowledge aging).
+	// still be referenced elsewhere. Assigned by knowledge aging.
 	StateDeprecated KnowledgeState = "DEPRECATED"
 
 	// StateRemoved marks a component/claim that no longer exists in the
@@ -87,7 +87,7 @@ const (
 	StateRemoved KnowledgeState = "REMOVED"
 
 	// StateHistorical marks knowledge that was true in the past and is
-	// retained purely for context. Assigned by Stage 11.
+	// retained purely for context. Assigned by knowledge aging.
 	StateHistorical KnowledgeState = "HISTORICAL"
 
 	// StateExperimental marks knowledge that is not yet confirmed.
@@ -148,13 +148,13 @@ type DeveloperMemory struct {
 	ComponentMemory map[string]ComponentHistory `json:"component_memory"`
 
 	// GlobalMemory holds every knowledge claim ever recorded (event-derived
-	// facts, explicit reasons, and — in later stages — fused documentation
+	// facts, explicit reasons, and — in later phases — fused documentation
 	// claims). Claims are never deleted, only state-marked.
 	GlobalMemory []KnowledgeClaim `json:"global_memory"`
 
 	// Events holds every unique event in memory, in WAL order. The events
 	// WAL remains the source of truth; this slice is the aggregate view the
-	// query layer (and Stage 12 evidence retrieval) reads from.
+	// query layer (and evidence retrieval evidence retrieval) reads from.
 	Events []archmodel.ArchEvent `json:"events"`
 }
 
@@ -196,7 +196,7 @@ type KnowledgeClaim struct {
 	Subject string `json:"subject"`
 
 	// SubjectID is the AKG node ID the subject resolved to (set by the
-	// Stage 9 entity linker). Empty when the subject is not a graph
+	// knowledge fusion entity linker). Empty when the subject is not a graph
 	// entity (e.g. a file that no longer maps to nodes, or the global
 	// "architecture" subject). Additive field — persisted claims without
 	// it remain valid.
@@ -211,7 +211,7 @@ type KnowledgeClaim struct {
 	// the resolved node ID lives in ObjectID.
 	Object string `json:"object"`
 
-	// ObjectID is the AKG node ID the object resolved to (Stage 9 entity
+	// ObjectID is the AKG node ID the object resolved to (knowledge fusion entity
 	// linking). Empty when the object is not a graph entity.
 	ObjectID string `json:"object_id,omitempty"`
 
@@ -234,7 +234,7 @@ type KnowledgeClaim struct {
 	// was removed); nil means still valid.
 	ValidUntil *time.Time `json:"valid_until,omitempty"`
 
-	// FreshnessScore is 0.0–1.0 and decays over time; Stage 11 owns the
+	// FreshnessScore is 0.0–1.0 and decays over time; knowledge aging owns the
 	// decay curves. Initialized to 1.0 at creation.
 	FreshnessScore float64 `json:"freshness_score"`
 }

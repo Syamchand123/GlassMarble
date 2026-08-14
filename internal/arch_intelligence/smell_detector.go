@@ -8,7 +8,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/config"
 	"github.com/Syamchand123/GlassMarble/internal/evidence"
 )
@@ -67,7 +67,7 @@ func (r *SD01GodObject) Evaluate(ctx *RuleContext) []archmodel.ArchSmell {
 		}
 		methodCount := 0
 		for _, e := range ctx.Graph.Outbound[id] {
-			if e.Type == stage4.EdgeHasReceiver || e.Type == stage4.EdgeContains {
+			if e.Type == link.EdgeHasReceiver || e.Type == link.EdgeContains {
 				if t, ok := ctx.Graph.Nodes[e.TargetID]; ok && t.Kind == "FUNCTION" {
 					methodCount++
 				}

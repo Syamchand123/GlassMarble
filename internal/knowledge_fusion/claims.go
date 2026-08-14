@@ -37,7 +37,7 @@ func fusedClaimID(kind, reference, subject, predicate, object, subjectID, object
 //   - ClaimKind and State passed by the caller,
 //   - ValidFrom taken from the source's real timestamp (doc mtime, commit
 //     author time, ...) — never time.Now(),
-//   - FreshnessScore initialized to 1.0 (Stage 11 owns decay),
+//   - FreshnessScore initialized to 1.0 (knowledge aging owns decay),
 //   - SubjectID/ObjectID populated when the entity linker resolved them.
 //
 // subjectID and objectID are optional ("" when unresolved); the subject and
@@ -71,7 +71,7 @@ func evidenceReference(b evidence.Bundle) string {
 	return b.Items[0].Reference
 }
 
-// validateFusedClaim enforces the same evidence discipline the Stage 6
+// validateFusedClaim enforces the same evidence discipline the developer memory
 // memory builder applies to event-derived claims. A claim without an ID,
 // without evidence, or without a timestamp cannot be persisted.
 func validateFusedClaim(c developer_memory.KnowledgeClaim) error {

@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 )
 
 // RenderInspectDetail renders a node detail card for `gmb inspect [node_id]`
 // and the interactive inspect table's Enter-detail view. It is the canonical
 // detail renderer shared by the static view and the BubbleTea program.
-func RenderInspectDetail(node *stage4.ResolvedNode, out, in []stage4.ResolvedEdge) string {
+func RenderInspectDetail(node *link.ResolvedNode, out, in []link.ResolvedEdge) string {
 	lines := []string{
 		tui.KV("ID", node.ID),
 		tui.KV("Kind", node.Kind),

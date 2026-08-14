@@ -58,13 +58,13 @@ func TestEndToEndUserJourney(t *testing.T) {
 		gmbWant(t, sb, []string{
 			"Starting GlassMarble Analysis",
 			"Analyzed",
-			"Stage 5:",
+			"Intelligence:",
 		}, "analyze")
 		if !sb.Exists(".glassmarble/telemetry.json") {
 			t.Errorf("analyze did not write telemetry.json")
 		}
 		if !sb.Exists(".glassmarble/intelligence/latest.json") {
-			t.Errorf("analyze did not persist Stage 5 result")
+			t.Errorf("analyze did not persist intelligence result")
 		}
 		akg := sb.ReadFile(".glassmarble/akg.json")
 		if !strings.Contains(akg, `"schema_version"`) {
@@ -126,12 +126,12 @@ func TestEndToEndUserJourney(t *testing.T) {
 	})
 
 	t.Run("stats arch", func(t *testing.T) {
-		gmbWant(t, sb, []string{"=== Architecture Health (Stage 5) ===", "Components:"}, "stats", "--arch")
+		gmbWant(t, sb, []string{"=== Architecture Health (Intelligence) ===", "Components:"}, "stats", "--arch")
 	})
 
 	// --- 8. second change: evolve the codebase ------------------------------
 	// A whole new package (not just a method) so the snapshot delta and the
-	// Stage 6 event generator have real architectural changes to report.
+	// developer memory event generator have real architectural changes to report.
 	commit2 := ""
 	t.Run("evolve", func(t *testing.T) {
 		commit2 = sb.GitCommitFiles("add checkout service", map[string]string{
@@ -163,8 +163,8 @@ func (p *Processor) Complete(customer string) string {
 	t.Run("analyze incremental", func(t *testing.T) {
 		out := gmbWant(t, sb, []string{
 			"Analyzed",
-			"Stage 8: reasoned",
-			"Stage 6: recorded",
+			"Commit reasoning: reasoned",
+			"Memory: recorded",
 		}, "analyze")
 		if !strings.Contains(out, "checkout") {
 			t.Logf("incremental run did not mention the new package (informational)")
@@ -350,7 +350,7 @@ func (p *Processor) Complete(customer string) string {
 	})
 
 	t.Run("patterns", func(t *testing.T) {
-		gmbWant(t, sb, []string{"=== Stage 5: Architectural Intelligence ===", "Patterns:", "Components:"}, "patterns")
+		gmbWant(t, sb, []string{"=== Architecture Intelligence ===", "Patterns:", "Components:"}, "patterns")
 	})
 
 	// --- 15. housekeeping + hooks + completion ---------------------------------

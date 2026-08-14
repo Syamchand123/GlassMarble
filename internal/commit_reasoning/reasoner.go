@@ -17,7 +17,7 @@ import (
 )
 
 // Reasoner turns one commit (or a range of commits) into architectural
-// events with evidence, intent and impact. It is the Stage 8 entry point
+// events with evidence, intent and impact. It is the commit reasoning entry point
 // (v2_master_implementaion_plan.md §6).
 type Reasoner struct {
 	cfg            *config.IntelligenceConfig
@@ -47,7 +47,7 @@ func WithIntentExtractor(e *IntentExtractor) ReasonerOption {
 }
 
 // WithLayerForbidden injects drift-level forbidden dependency pairs used by
-// layer-violation rules, mirroring the Stage 5 engine convention
+// layer-violation rules, mirroring the Architecture Intelligence engine convention
 // (arch_intelligence.WithLayerForbidden).
 func WithLayerForbidden(rules []config.ForbiddenDepRule) ReasonerOption {
 	return func(r *Reasoner) { r.forbiddenPairs = rules }
@@ -88,9 +88,9 @@ type ReasonInput struct {
 //  3. Classify the architectural changes (component, smell, graph, cycle
 //     passes — see ClassifyChange).
 //  4. Resolve the impact of the commit's files onto snapshot components.
-//  5. Assemble deterministic events whose IDs match Stage 5D's scheme via
-//     arch_intelligence.EventID, so the Stage 6 memory builder deduplicates
-//     the two generators (Stage 8 events are enriched and appended first).
+//  5. Assemble deterministic events whose IDs match component inference's scheme via
+//     arch_intelligence.EventID, so the developer memory memory builder deduplicates
+//     the two generators (commit reasoning events are enriched and appended first).
 func (r *Reasoner) ReasonCommit(ctx context.Context, in ReasonInput) ([]archmodel.ArchEvent, error) {
 	if in.RepoDir == "" || in.CommitHash == "" {
 		return nil, fmt.Errorf("commit_reasoning: repo dir and commit hash are required")

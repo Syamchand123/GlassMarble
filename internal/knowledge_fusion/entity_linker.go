@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/developer_memory"
 )
 
@@ -82,7 +82,7 @@ func buildNodeNameIndex(graph *akg.CodePropertyGraph) (exact, lower map[string]s
 	if graph == nil || graph.Nodes == nil {
 		return exact, lower
 	}
-	graph.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
+	graph.Nodes.Iterate(func(id string, node *link.ResolvedNode) {
 		if node == nil || node.Name == "" {
 			return
 		}

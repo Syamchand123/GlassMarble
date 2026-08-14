@@ -1,6 +1,6 @@
 package ai_engine
 
-// This file holds the Stage 12 prompt templates (master plan §10.3 / §10.5).
+// This file holds the evidence retrieval prompt templates (master plan §10.3 / §10.5).
 // The templates are the ONLY place prompt text is authored: the context
 // builder and the CLI reference these constants, so the grounding discipline
 // ("answer from evidence only, never invent history") can never drift between
@@ -29,7 +29,7 @@ const GroundingInstructions = `INSTRUCTIONS:
 - Cite the specific commits, PR numbers, or component names from the evidence when they are available.
 - Never invent architectural history. If you don't know, say "I don't have evidence for that."`
 
-// GroundedSystemPrompt extends the base persona with the Stage 12 evidence
+// GroundedSystemPrompt extends the base persona with the evidence retrieval evidence
 // discipline (master plan §10.5). It is used for `gmb why` and for `gmb ai`
 // runs where the deterministic evidence retriever found material.
 const GroundedSystemPrompt = `You are GlassMarble AI Architect, an intelligent assistant with access to:

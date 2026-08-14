@@ -1,3 +1,21 @@
+## [stage-naming-overhaul] - 2026-08-13
+
+### Stage-Naming Overhaul (per NAMING_OVERHAUL_PLAN.md v2)
+
+- **Packages:** `code_analysis_engine/stage1..4` -> `ingest`, `normalize`, `aggregate`, `link`;
+  `visualization_engine/stage1..4` -> `extract`, `layout`, `render`, `specialized`.
+- **CLI:** `--stage5` -> `--intelligence`. **Env vars:** `GMB_NEW_STAGE3/4` -> `GMB_NEW_AGGREGATOR/LINKER`
+  (`IsNewStage3/4Enabled` -> `IsNewAggregator/LinkerEnabled`).
+- **User-visible output prefixes:** `Stage 1..4` -> `Ingestion/Normalization/Aggregation/Linking`,
+  `Stage 5` -> `Intelligence`, `Stage 6` -> `Memory`, `Stage 8` -> `Commit reasoning`,
+  `Stage 9` -> `Fusion`, `Stage 10` -> `Learning`, `Stage 11` -> `Aging`.
+- **Comments/help:** `Stage 5A/5B/5C/5D` -> `intelligence metrics/pattern detection/smell
+  detection/component inference`; `Stage 5..12` -> `Architecture Intelligence/developer
+  memory/architecture timeline/commit reasoning/knowledge fusion/convention learning/
+  knowledge aging/evidence retrieval`.
+- Historical entries below retain the old stage names by design.
+
+---
 # Changelog & Overhaul Release Notes
 
 All notable changes to the GlassMarble Architectural Knowledge Graph (AKG) and Visualization Engine are documented here.

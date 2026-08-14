@@ -36,9 +36,9 @@ var initCmd = &cobra.Command{
 			return fmt.Errorf("failed to create marbles directory: %w", err)
 		}
 
-		// V2 stage directories (master plan §4.2): intelligence (Stage 5
-		// latest.json), snapshots (Stage 5D arch snapshots) and memory
-		// (Stage 6 developer memory). Also created lazily by `gmb analyze`.
+		// V2 pipeline directories (master plan §4.2): intelligence (Architecture Intelligence
+		// latest.json), snapshots (intelligence arch snapshots) and memory
+		// (developer memory). Also created lazily by `gmb analyze`.
 		for _, sub := range []string{"intelligence", "snapshots", "memory"} {
 			if err := os.MkdirAll(filepath.Join(gmDir, sub), 0755); err != nil {
 				return fmt.Errorf("failed to create %s directory: %w", sub, err)

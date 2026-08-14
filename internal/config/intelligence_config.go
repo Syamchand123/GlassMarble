@@ -1,6 +1,6 @@
 // File: internal/config/intelligence_config.go
 //
-// WHY: Stage 5 pattern/smell detection requires configurable thresholds.
+// WHY: Architecture Intelligence pattern/smell detection requires configurable thresholds.
 // Hard-coded values would cause false positives on large repos and false
 // negatives on small ones. IntelligenceConfig holds all thresholds with
 // sensible defaults that will be refined after Phase 3 calibration.
@@ -10,7 +10,7 @@
 // Update DefaultIntelligenceConfig() accordingly.
 package config
 
-// IntelligenceConfig holds threshold values for Stage 5 pattern/smell detection.
+// IntelligenceConfig holds threshold values for Architecture Intelligence pattern/smell detection.
 type IntelligenceConfig struct {
 	GodObjectFanInThreshold     int     `json:"god_object_fan_in_threshold" yaml:"god_object_fan_in_threshold"`
 	GodObjectMethodThreshold    int     `json:"god_object_method_threshold" yaml:"god_object_method_threshold"`
@@ -52,7 +52,7 @@ type IntelligenceConfig struct {
 	// are retained for drift analysis.
 	SnapshotNumPages int `json:"snapshot_num_pages" yaml:"snapshot_num_pages"`
 
-	// RunRules selects which rule families run in Stage 5: any subset of
+	// RunRules selects which rule families run in Architecture Intelligence: any subset of
 	// "patterns", "smells", "events". Empty means all.
 	RunRules []string `json:"run_rules,omitempty" yaml:"run_rules"`
 }

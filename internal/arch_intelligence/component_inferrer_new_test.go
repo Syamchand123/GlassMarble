@@ -6,19 +6,19 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/config"
 )
 
 var testClock = func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 
 // testNode is a helper that creates a node with a file path.
-func testNode(id, path string) *stage4.ResolvedNode {
-	return &stage4.ResolvedNode{
+func testNode(id, path string) *link.ResolvedNode {
+	return &link.ResolvedNode{
 		ID:   id,
 		Name: id,
 		Kind: "FUNCTION",
-		FileSpec: stage4.LocationMeta{
+		FileSpec: link.LocationMeta{
 			Path: path,
 		},
 	}
@@ -31,8 +31,8 @@ func addNodeWithPath(graph *akg.CodePropertyGraph, id, path string) *akg.CodePro
 }
 
 // addStructuralEdge registers an outbound+inbound structural edge.
-func addStructuralEdge(graph *akg.CodePropertyGraph, src, tgt string, typ stage4.RelationshipType) *akg.CodePropertyGraph {
-	edge := stage4.ResolvedEdge{SourceID: src, TargetID: tgt, Type: typ}
+func addStructuralEdge(graph *akg.CodePropertyGraph, src, tgt string, typ link.RelationshipType) *akg.CodePropertyGraph {
+	edge := link.ResolvedEdge{SourceID: src, TargetID: tgt, Type: typ}
 	edges, _ := graph.OutboundEdges.Get(src)
 	edges = append(edges, edge)
 	graph.OutboundEdges = graph.OutboundEdges.Set(src, edges)
@@ -116,7 +116,7 @@ func TestInferComponentsFromSnapshot_Dependencies(t *testing.T) {
 	addNodeWithPath(graph, "a2", "internal/a/y.go")
 	addNodeWithPath(graph, "b1", "internal/b/x.go")
 	addNodeWithPath(graph, "b2", "internal/b/y.go")
-	addStructuralEdge(graph, "a1", "b1", stage4.EdgeCalls)
+	addStructuralEdge(graph, "a1", "b1", link.EdgeCalls)
 
 	components := InferComponentsFromSnapshot(NewGraphSnapshot(graph), nil, testClock)
 	byID := map[string]archmodel.DetectedComponent{}

@@ -3,7 +3,7 @@ package visualization_engine
 import (
 	"fmt"
 
-	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/stage3"
+	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/render"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
@@ -21,7 +21,7 @@ func (r *MermaidRenderer) Render(tree *types.LayoutTree, t types.DiagramType) (s
 	if tree == nil {
 		return "", fmt.Errorf("cannot render nil LayoutTree")
 	}
-	return stage3.RenderDiagramFormat(tree, t, "mermaid"), nil
+	return aggregate.RenderDiagramFormat(tree, t, "mermaid"), nil
 }
 
 func (r *MermaidRenderer) Format() string { return "mermaid" }
@@ -47,7 +47,7 @@ func (r *PlantUMLRenderer) Render(tree *types.LayoutTree, t types.DiagramType) (
 	if tree == nil {
 		return "", fmt.Errorf("cannot render nil LayoutTree")
 	}
-	return stage3.RenderDiagramFormat(tree, t, "plantuml"), nil
+	return aggregate.RenderDiagramFormat(tree, t, "plantuml"), nil
 }
 
 func (r *PlantUMLRenderer) Format() string { return "plantuml" }
@@ -73,7 +73,7 @@ func (r *DOTRenderer) Render(tree *types.LayoutTree, t types.DiagramType) (strin
 	if tree == nil {
 		return "", fmt.Errorf("cannot render nil LayoutTree")
 	}
-	return stage3.RenderDiagramFormat(tree, t, "dot"), nil
+	return aggregate.RenderDiagramFormat(tree, t, "dot"), nil
 }
 
 func (r *DOTRenderer) Format() string { return "dot" }

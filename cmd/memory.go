@@ -17,14 +17,14 @@ import (
 )
 
 // memoryCmd answers questions about the project's architectural memory
-// (Stage 6) and records developer corrections to it (Stage 10). It is a
+// (developer memory) and records developer corrections to it (convention learning). It is a
 // deterministic, read-only view over .glassmarble/memory/ — no LLM is
 // involved (master plan §4.4). Corrections recorded with --correct are
 // overlaid onto every query result immediately (master plan §8.3).
 var memoryCmd = &cobra.Command{
 	Use:   "memory [query]",
 	Short: "Query the developer memory: what do we know, when did it change, and why",
-	Long: `Reads the Stage 6 developer memory (.glassmarble/memory/) and answers
+	Long: `Reads the developer memory (.glassmarble/memory/) and answers
 questions like "what do we know about Redis?" and "why was PaymentService added?".
 
 Modes:
@@ -32,7 +32,7 @@ Modes:
   memory QUERY     ranked retrieval — a positional query is shorthand for --ask
   --ask "query"    ranked knowledge retrieval (components, claims, events, timeline)
   --component NAME longitudinal history of one component plus its timeline
-  --correct ID     record a developer correction (Stage 10 learning layer):
+  --correct ID     record a developer correction (convention-learning layer):
                    --kind INTENT|LABEL|STATE|CONFIDENCE|REJECT|ACCEPT --value ...
   --corrections    list the correction audit log (append-only, reversible)
 
@@ -70,7 +70,7 @@ labelled by how they were established (FACT / EXPLICIT_REASON / INFERENCE
 			lcfg = nil
 		}
 		learner := learning.NewLearnerForRepo(absDir, learning.WithConfig(lcfg))
-		// Latest architecture snapshot for the Stage 11 missing-entity
+		// Latest architecture snapshot for the knowledge aging missing-entity
 		// projection; nil when no analysis has run yet (the projection
 		// degrades gracefully to FreshenMemory).
 		snap := latestSnapshotOrNil(absDir)
@@ -106,7 +106,7 @@ func init() {
 }
 
 // latestSnapshotOrNil loads the most recent architecture snapshot for the
-// Stage 11 missing-entity projection. Absence of a snapshot is absence of
+// knowledge aging missing-entity projection. Absence of a snapshot is absence of
 // information: any failure yields nil and callers degrade gracefully (a nil
 // snapshot behaves exactly like FreshenMemory).
 func latestSnapshotOrNil(absRepoDir string) *archmodel.ArchSnapshot {
@@ -122,7 +122,7 @@ func latestSnapshotOrNil(absRepoDir string) *archmodel.ArchSnapshot {
 }
 
 // renderOverview prints the memory stats and current components. JSON mode
-// emits the whole aggregate so machine consumers get everything. Stage 10
+// emits the whole aggregate so machine consumers get everything. convention learning
 // corrections (e.g. a STATE override) are reflected in the projection.
 func renderOverview(cmd *cobra.Command, learner *learning.Learner, store *developer_memory.MemoryStore, snap *archmodel.ArchSnapshot, asJSON bool) error {
 	mem, err := store.LoadMemory()
@@ -133,7 +133,7 @@ func renderOverview(cmd *cobra.Command, learner *learning.Learner, store *develo
 	if err != nil {
 		return fmt.Errorf("failed to apply corrections: %w", err)
 	}
-	// Stage 11: recompute freshness live and project temporal states
+	// knowledge aging: recompute freshness live and project temporal states
 	// (including missing-entity marking against the latest snapshot), so
 	// the view always reflects the clock, never a stale persisted score.
 	proj = knowledge_aging.FreshenMemoryWithSnapshot(proj, snap, time.Now(), nil)
@@ -172,7 +172,7 @@ func renderOverview(cmd *cobra.Command, learner *learning.Learner, store *develo
 	return nil
 }
 
-// agingSummaryLine renders the Stage 11 freshness summary for the overview
+// agingSummaryLine renders the knowledge aging freshness summary for the overview
 // (empty when there is nothing to age).
 func agingSummaryLine(mem *developer_memory.DeveloperMemory) string {
 	if mem == nil || mem.TotalEvents == 0 {
@@ -213,7 +213,7 @@ func appliedCount(applied []learning.AppliedCorrection) int {
 }
 
 // renderQuery runs deterministic ranked retrieval for the user's question,
-// with the Stage 10 correction overlay applied (master plan §8.3). Stage 11
+// with the convention learning correction overlay applied (master plan §8.3). knowledge aging
 // freshness is recomputed live BEFORE ranking (with missing-entity marking
 // against the latest snapshot), so decayed knowledge sinks in the results
 // without ever being hidden.
@@ -291,7 +291,7 @@ func renderComponent(cmd *cobra.Command, learner *learning.Learner, store *devel
 	if err != nil {
 		return fmt.Errorf("failed to apply corrections: %w", err)
 	}
-	// Stage 11 temporal projection: live freshness + aged claim states +
+	// knowledge aging temporal projection: live freshness + aged claim states +
 	// missing-entity marking against the latest snapshot.
 	proj = knowledge_aging.FreshenMemoryWithSnapshot(proj, snap, time.Now(), nil)
 	history := findComponent(proj, component)
@@ -384,7 +384,7 @@ func recordCorrection(cmd *cobra.Command, learner *learning.Learner, store *deve
 	return nil
 }
 
-// renderCorrections prints the full correction audit log (Stage 10
+// renderCorrections prints the full correction audit log (convention learning
 // auditability: what was learned, when, by whom).
 func renderCorrections(cmd *cobra.Command, learner *learning.Learner, asJSON bool) error {
 	corrections, err := learner.List()

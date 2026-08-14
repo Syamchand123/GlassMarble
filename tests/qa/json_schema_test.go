@@ -6,11 +6,11 @@ package qa_test
 // is pinned against the REAL decoder types from internal/*. Hand-written
 // sample documents (shaped after the struct json tags) must unmarshal
 // cleanly and every gate field must survive the round trip. Documented
-// as the "contract of record" for stage persistence formats:
+// as the "contract of record" for phase persistence formats:
 //
 //	akg.json            -> akg.GraphJSON            (schema v3)
 //	memory.json         -> developer_memory.DeveloperMemory
-//	intelligence/...    -> arch_intelligence.Stage5Result
+//	intelligence/...    -> arch_intelligence.IntelligenceResult
 //	snapshots/index.json -> []arch_timeline.SnapshotIndexEntry
 //	snapshots/<id>.json -> archmodel.ArchSnapshot
 //
@@ -227,7 +227,7 @@ const intelligenceSample = `{
 }`
 
 func TestIntelligenceJSONSchema(t *testing.T) {
-	var r arch_intelligence.Stage5Result
+	var r arch_intelligence.IntelligenceResult
 	if err := json.Unmarshal([]byte(intelligenceSample), &r); err != nil {
 		t.Fatalf("intelligence sample must unmarshal: %v", err)
 	}

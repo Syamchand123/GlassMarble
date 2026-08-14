@@ -6,18 +6,18 @@ import (
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 // isStructuralEdge returns true if the edge represents a high-level architectural
 // dependency (as opposed to CFG/DFG low-level details).
-func isStructuralEdge(edgeType stage4.RelationshipType) bool {
+func isStructuralEdge(edgeType link.RelationshipType) bool {
 	switch edgeType {
-	case stage4.EdgeDependsOn, stage4.EdgeCalls, stage4.EdgeImplements,
-		stage4.EdgeExtends, stage4.EdgeContains, stage4.EdgeComposes,
-		stage4.EdgeReferences, stage4.EdgeNetworkCall, stage4.EdgeQueriesDB,
-		stage4.EdgeCallsCloudAPI, stage4.EdgePublishes, stage4.EdgeSubscribes,
-		stage4.EdgeSendsTo, stage4.EdgeReceivesFrom, stage4.EdgeDispatchesEvent:
+	case link.EdgeDependsOn, link.EdgeCalls, link.EdgeImplements,
+		link.EdgeExtends, link.EdgeContains, link.EdgeComposes,
+		link.EdgeReferences, link.EdgeNetworkCall, link.EdgeQueriesDB,
+		link.EdgeCallsCloudAPI, link.EdgePublishes, link.EdgeSubscribes,
+		link.EdgeSendsTo, link.EdgeReceivesFrom, link.EdgeDispatchesEvent:
 		return true
 	default:
 		return false
@@ -31,11 +31,11 @@ func isStructuralEdge(edgeType stage4.RelationshipType) bool {
 type GraphSnapshot struct {
 	// NodeIDs is the sorted node id list — iteration order is deterministic.
 	NodeIDs []string
-	Nodes   map[string]*stage4.ResolvedNode
+	Nodes   map[string]*link.ResolvedNode
 	// Outbound and Inbound hold the per-node edge lists with stable ordering
 	// (sorted by type, then target/source id).
-	Outbound    map[string][]stage4.ResolvedEdge
-	Inbound     map[string][]stage4.ResolvedEdge
+	Outbound    map[string][]link.ResolvedEdge
+	Inbound     map[string][]link.ResolvedEdge
 	Entrypoints []string
 	EdgeCount   int
 }
@@ -43,9 +43,9 @@ type GraphSnapshot struct {
 // NewGraphSnapshot captures the current CPG state into a GraphSnapshot.
 func NewGraphSnapshot(graph *akg.CodePropertyGraph) *GraphSnapshot {
 	snap := &GraphSnapshot{
-		Nodes:       make(map[string]*stage4.ResolvedNode),
-		Outbound:    make(map[string][]stage4.ResolvedEdge),
-		Inbound:     make(map[string][]stage4.ResolvedEdge),
+		Nodes:       make(map[string]*link.ResolvedNode),
+		Outbound:    make(map[string][]link.ResolvedEdge),
+		Inbound:     make(map[string][]link.ResolvedEdge),
 		Entrypoints: nil,
 	}
 	if graph == nil {
@@ -55,7 +55,7 @@ func NewGraphSnapshot(graph *akg.CodePropertyGraph) *GraphSnapshot {
 		snap.Entrypoints = append([]string(nil), graph.Entrypoints...)
 	}
 	if graph.Nodes != nil {
-		graph.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
+		graph.Nodes.Iterate(func(id string, node *link.ResolvedNode) {
 			snap.Nodes[id] = node
 			snap.NodeIDs = append(snap.NodeIDs, id)
 			snap.Outbound[id] = graph.SafeGetOutboundEdges(id)
@@ -75,7 +75,7 @@ func NewGraphSnapshot(graph *akg.CodePropertyGraph) *GraphSnapshot {
 	return snap
 }
 
-func sortEdges(edges []stage4.ResolvedEdge) {
+func sortEdges(edges []link.ResolvedEdge) {
 	sort.SliceStable(edges, func(i, j int) bool {
 		a, b := edges[i], edges[j]
 		if a.Type != b.Type {
@@ -86,17 +86,17 @@ func sortEdges(edges []stage4.ResolvedEdge) {
 }
 
 // Node returns the node with the given id, or nil.
-func (s *GraphSnapshot) Node(id string) *stage4.ResolvedNode {
+func (s *GraphSnapshot) Node(id string) *link.ResolvedNode {
 	return s.Nodes[id]
 }
 
 // OutEdges returns the structural outbound edges of id, sorted.
-func (s *GraphSnapshot) OutEdges(id string) []stage4.ResolvedEdge {
+func (s *GraphSnapshot) OutEdges(id string) []link.ResolvedEdge {
 	return s.Outbound[id]
 }
 
 // InEdges returns the structural inbound edges of id, sorted.
-func (s *GraphSnapshot) InEdges(id string) []stage4.ResolvedEdge {
+func (s *GraphSnapshot) InEdges(id string) []link.ResolvedEdge {
 	return s.Inbound[id]
 }
 
@@ -107,9 +107,9 @@ func (s *GraphSnapshot) Len() int {
 
 // structuralOutbound filters the outbound edges of id to structural edges
 // whose target exists in the snapshot (dangling edges are ignored).
-func (s *GraphSnapshot) structuralOutbound(id string) []stage4.ResolvedEdge {
+func (s *GraphSnapshot) structuralOutbound(id string) []link.ResolvedEdge {
 	edges := s.Outbound[id]
-	out := make([]stage4.ResolvedEdge, 0, len(edges))
+	out := make([]link.ResolvedEdge, 0, len(edges))
 	for _, e := range edges {
 		if isStructuralEdge(e.Type) {
 			if _, ok := s.Nodes[e.TargetID]; ok {
@@ -146,7 +146,7 @@ func SCCIterative(snap *GraphSnapshot) [][]string {
 
 	type frame struct {
 		v     string
-		edges []stage4.ResolvedEdge
+		edges []link.ResolvedEdge
 		next  int
 	}
 
@@ -331,7 +331,7 @@ func NodeMetricsSnapshot(snap *GraphSnapshot) map[string]NodeCouplingMetrics {
 // LCOM4 calculates Lack of Cohesion of Methods for a struct/class node.
 // Methods are the only vertices; two methods are connected when they share
 // field access or call each other. LCOM4 = number of connected components.
-func LCOM4(node *stage4.ResolvedNode, graph *akg.CodePropertyGraph) float64 {
+func LCOM4(node *link.ResolvedNode, graph *akg.CodePropertyGraph) float64 {
 	if graph == nil {
 		return 0
 	}
@@ -339,16 +339,16 @@ func LCOM4(node *stage4.ResolvedNode, graph *akg.CodePropertyGraph) float64 {
 }
 
 // LCOM4Snapshot is the snapshot-based LCOM4.
-func LCOM4Snapshot(node *stage4.ResolvedNode, snap *GraphSnapshot) float64 {
+func LCOM4Snapshot(node *link.ResolvedNode, snap *GraphSnapshot) float64 {
 	if node == nil || snap == nil {
 		return 0
 	}
 	methods := make(map[string]bool)
 	fields := make(map[string]bool)
 	for _, e := range snap.Outbound[node.ID] {
-		if e.Type == stage4.EdgeHasField {
+		if e.Type == link.EdgeHasField {
 			fields[e.TargetID] = true
-		} else if e.Type == stage4.EdgeContains || e.Type == stage4.EdgeHasReceiver {
+		} else if e.Type == link.EdgeContains || e.Type == link.EdgeHasReceiver {
 			if t, ok := snap.Nodes[e.TargetID]; ok && t.Kind == "FUNCTION" {
 				methods[e.TargetID] = true
 			}
@@ -428,12 +428,12 @@ func LCOM4Snapshot(node *stage4.ResolvedNode, snap *GraphSnapshot) float64 {
 // either direction.
 func methodsCallEachOther(snap *GraphSnapshot, a, b string) bool {
 	for _, e := range snap.Outbound[a] {
-		if e.Type == stage4.EdgeCalls && e.TargetID == b {
+		if e.Type == link.EdgeCalls && e.TargetID == b {
 			return true
 		}
 	}
 	for _, e := range snap.Outbound[b] {
-		if e.Type == stage4.EdgeCalls && e.TargetID == a {
+		if e.Type == link.EdgeCalls && e.TargetID == a {
 			return true
 		}
 	}
@@ -558,9 +558,9 @@ func CyclomaticComplexitySnapshot(snap *GraphSnapshot) map[string]int {
 		}
 		comp := 1
 		for _, e := range snap.Outbound[id] {
-			if e.Type == stage4.EdgeConditionalBranch ||
-				e.Type == stage4.EdgeLoopBranch ||
-				e.Type == stage4.EdgeSwitchBranch {
+			if e.Type == link.EdgeConditionalBranch ||
+				e.Type == link.EdgeLoopBranch ||
+				e.Type == link.EdgeSwitchBranch {
 				comp++
 			}
 		}

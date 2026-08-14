@@ -15,8 +15,8 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/config"
 )
 
-// Stage5Result holds all insights derived from a single graph snapshot.
-type Stage5Result struct {
+// IntelligenceResult holds all insights derived from a single graph snapshot.
+type IntelligenceResult struct {
 	// GraphHash is a stable fingerprint of the analyzed topology
 	// (sorted node ids + edge signatures), used to detect unchanged graphs.
 	GraphHash string                `json:"graph_hash"`
@@ -30,7 +30,7 @@ type Stage5Result struct {
 }
 
 // Engine coordinates the execution of graph analytics, pattern detection,
-// and component inference (Stage 5A-5D). It is safe for concurrent Run calls:
+// and component inference (intelligence metrics to component inference). It is safe for concurrent Run calls:
 // graph reads happen on a cached immutable snapshot, never on the live AKG.
 type Engine struct {
 	graph *akg.CodePropertyGraph
@@ -47,7 +47,7 @@ type Engine struct {
 	snapAt time.Time
 }
 
-// NewEngine creates a new Stage 5 engine with default config and clock.
+// NewEngine creates a new Architecture Intelligence engine with default config and clock.
 func NewEngine(graph *akg.CodePropertyGraph) *Engine {
 	return &Engine{
 		graph: graph,
@@ -60,7 +60,7 @@ func NewEngine(graph *akg.CodePropertyGraph) *Engine {
 // analysisClock returns a deterministic clock for the given graph. Evidence
 // timestamps are anchored to the analyzed commit (stable bytes of the commit
 // hash), so analyzing an identical graph produces byte-identical output —
-// the reproducibility contract Stage 5 artifacts must satisfy. The derived
+// the reproducibility contract Architecture Intelligence artifacts must satisfy. The derived
 // instant is kept inside a sane window (a hash cannot be a real date). A
 // graph without a commit hash anchors to the zero time. The wall clock is
 // never used implicitly: callers that need real observation times inject
@@ -104,7 +104,7 @@ func WithClock(clock func() time.Time) EngineOption {
 	}
 }
 
-// WithLogger sets a sink for stage progress lines (nil disables logging).
+// WithLogger sets a sink for phase progress lines (nil disables logging).
 func WithLogger(logf func(format string, args ...any)) EngineOption {
 	return func(e *Engine) {
 		if logf != nil {
@@ -156,14 +156,14 @@ func (e *Engine) Snapshot() *GraphSnapshot {
 	if e.graph != nil && e.graph.Nodes != nil {
 		nodeCount = e.graph.Nodes.Len()
 	}
-	e.logf("Stage 5: capturing graph snapshot (%d nodes)", nodeCount)
+	e.logf("Intelligence: capturing graph snapshot (%d nodes)", nodeCount)
 	e.snap = NewGraphSnapshot(e.graph)
 	e.snapAt = e.clock()
 	return e.snap
 }
 
-// Run executes the full Stage 5 pipeline with a background context.
-func (e *Engine) Run() Stage5Result {
+// Run executes the full Architecture Intelligence pipeline with a background context.
+func (e *Engine) Run() IntelligenceResult {
 	return e.RunContext(context.Background())
 }
 
@@ -181,24 +181,24 @@ func rulesEnabled(cfg *config.IntelligenceConfig, family string) bool {
 	return false
 }
 
-// RunContext executes the full Stage 5 pipeline: snapshot capture, metrics,
+// RunContext executes the full Architecture Intelligence pipeline: snapshot capture, metrics,
 // component inference, coupling, pattern detection, smell detection. Phases
-// check ctx cancellation between each stage.
-func (e *Engine) RunContext(ctx context.Context) Stage5Result {
+// check ctx cancellation between each phase.
+func (e *Engine) RunContext(ctx context.Context) IntelligenceResult {
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
-			e.logf("Stage 5: cancelled before start (%v)", err)
+			e.logf("Intelligence: cancelled before start (%v)", err)
 		}
 	}
 	cfg := e.cfg
 	snap := e.Snapshot()
-	result := Stage5Result{GraphHash: topologyHash(snap)}
+	result := IntelligenceResult{GraphHash: topologyHash(snap)}
 
-	// 5A: quantitative metrics.
+	// intelligence metrics: quantitative metrics.
 	if ctx != nil && ctx.Err() != nil {
 		return result
 	}
-	e.logf("Stage 5A: computing metrics (%d nodes, %d edges)", snap.Len(), snap.EdgeCount)
+	e.logf("Intelligence metrics: computing metrics (%d nodes, %d edges)", snap.Len(), snap.EdgeCount)
 	metrics := CalculateMetricsFromSnapshot(snap)
 	assigner := NewLayerAssigner(cfg.ArchLayers)
 	assigner.WithForbidden(e.forbiddenPairs)
@@ -206,7 +206,7 @@ func (e *Engine) RunContext(ctx context.Context) Stage5Result {
 		metrics.LayerViolationCount = countLayerViolations(snap, assigner)
 	}
 
-	// 5D: component inference + coupling.
+	// component inference: component inference + coupling.
 	components := InferComponentsFromSnapshot(snap, cfg, e.clock)
 	couplings, ca, ce, inst := ComputeComponentCoupling(snap, components)
 	applyComponentMetrics(&metrics, ca, ce, inst)
@@ -234,25 +234,25 @@ func (e *Engine) RunContext(ctx context.Context) Stage5Result {
 		Clock:             e.clock,
 	}
 
-	// 5B: pattern detection.
+	// pattern detection: pattern detection.
 	if rulesEnabled(cfg, "patterns") {
 		if ctx != nil && ctx.Err() != nil {
 			return result
 		}
-		e.logf("Stage 5B: running %d pattern rules", 7)
+		e.logf("Intelligence patterns: running %d pattern rules", 7)
 		result.Patterns = RunPatternDetectionContext(rctx)
 	}
 
-	// 5C: smell detection.
+	// smell detection: smell detection.
 	if rulesEnabled(cfg, "smells") {
 		if ctx != nil && ctx.Err() != nil {
 			return result
 		}
-		e.logf("Stage 5C: running %d smell rules", 7)
+		e.logf("Intelligence smells: running %d smell rules", 7)
 		result.Smells = RunSmellDetectionContext(rctx)
 	}
 
-	e.logf("Stage 5: done — %d components, %d patterns, %d smells",
+	e.logf("Intelligence: done — %d components, %d patterns, %d smells",
 		len(result.Components), len(result.Patterns), len(result.Smells))
 	return result
 }

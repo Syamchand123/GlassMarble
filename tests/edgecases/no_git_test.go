@@ -71,7 +71,7 @@ func TestAnalyzeNoGit(t *testing.T) {
 	sb := harness.NewSandbox(t)
 	sb.WriteFile("main.go", "package main\n\nfunc main() {}\n")
 	out := mustRunContains(t, sb, []string{"Analyzed 1 files"}, "analyze")
-	if strings.Contains(out, "stage 1 ingestion failed") {
+	if strings.Contains(out, "ingestion failed") {
 		t.Errorf("analyze failed without git:\n%s", out)
 	}
 }

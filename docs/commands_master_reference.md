@@ -88,7 +88,7 @@ gmb --help             # root help
 ```
 gmb
 ├── init                          Initialize a repository workspace
-├── analyze                       Run the 4-stage ingestion pipeline (full or delta)
+├── analyze                       Run the 4-phase ingestion pipeline (full or delta)
 ├── watch                         Continuously watch the repo and re-analyze on change
 ├── status                        AKG database status, stats, and health
 ├── doctor                        Integrity diagnostics on the AKG database
@@ -157,13 +157,13 @@ Created by `gmb init` (or on demand). Lives at `<repo>/.glassmarble/` and is aut
 │   └── akg_transactions.wal     # Write-ahead log (transaction replay; truncated after each successful commit)
 ├── marbles/                     # Saved diagram markdown files
 ├── intelligence/
-│   └── latest.json              # Stage 5 current architectural state (written by `gmb analyze --stage5`)
+│   └── latest.json              # Architecture Intelligence current architectural state (written by `gmb analyze --intelligence`)
 ├── snapshots/
 │   ├── index.json               # Snapshot index (commit → file)
 │   └── snap_<hash8>.json        # Point-in-time ArchSnapshot (skip-written when topology unchanged)
 ├── memory/
-│   ├── events.jsonl             # Append-only event WAL (source of truth for Stage 6)
-│   ├── claims.jsonl             # Append-only claim WAL (source of truth for Stage 6)
+│   ├── events.jsonl             # Append-only event WAL (source of truth for developer memory)
+│   ├── claims.jsonl             # Append-only claim WAL (source of truth for developer memory)
 │   ├── memory.json              # Derived DeveloperMemory aggregate (rebuildable from the WALs)
 │   └── timeline.json            # Derived timeline (fast path for queries)
 ├── ai/
@@ -179,9 +179,9 @@ Created by `gmb init` (or on demand). Lives at `<repo>/.glassmarble/` and is aut
 | `wal/akg_transactions.wal` | Crash-safety: every transaction is appended, then truncated after a successful commit | `gmb doctor` staleness check, `housekeeping --prune` |
 | `db.lock` | Mutual exclusion for transactions (30s staleness timeout) | `AcquireLock`/`ReleaseLock` |
 | `marbles/` | Saved diagrams from `visualize --save` and AI artifacts | `housekeeping --prune` |
-| `intelligence/latest.json` | Stage 5 output (current architecture state) | atomic temp+rename write |
+| `intelligence/latest.json` | Architecture Intelligence output (current architecture state) | atomic temp+rename write |
 | `snapshots/` | Point-in-time architecture snapshots for event diffing | unchanged-topology skip-write |
-| `memory/` | Stage 6 developer memory: WALs (source of truth) + derived aggregates | corrupt-line tolerance, atomic rebuild |
+| `memory/` | developer memory: WALs (source of truth) + derived aggregates | corrupt-line tolerance, atomic rebuild |
 | `ai/` | AI answers, project AI config, chat sessions | `housekeeping --prune`, `ai sessions --delete` |
 
 ---
@@ -340,7 +340,7 @@ gmb init --dir /path/to/repo
 
 ### 8.2 `gmb analyze`
 
-**Purpose:** Run the full 4-stage ingestion pipeline and commit the result to the AKG. The workhorse of GlassMarble.
+**Purpose:** Run the full 4-phase ingestion pipeline and commit the result to the AKG. The workhorse of GlassMarble.
 
 **Syntax:** `gmb analyze [--dir <path>] [--full] [--workers <n>] [--commit <hash>] [--link-level <level>] [--macro-inference <mode>] [--max-nodes <n>] [--abort-on-limit] [--verbose] [--json]`
 
@@ -356,7 +356,7 @@ gmb init --dir /path/to/repo
 | `--macro-inference` | string | `all` | `disabled` (no macro inference), `structural` (rules with evidence only), `all` (full heuristic + structural) |
 | `--max-nodes` | int | `0` | Max total CPG nodes before warning/abort (`0` = unlimited) |
 | `--abort-on-limit` | bool | `false` | Abort analysis if `--max-nodes` is exceeded (otherwise warn) |
-| `--verbose` | bool | `false` | Stage-by-stage progress on stdout |
+| `--verbose` | bool | `false` | Phase-by-phase progress on stdout |
 | `--json` | bool | `false` | Machine-readable JSON result |
 
 **Execution flow (incremental delta, default):**
@@ -370,13 +370,13 @@ resolve abs dir
         diff = CollectGitDiff(dir, commitHash)                    # ""  → git diff HEAD (working tree)
                                                                   # hash → git diff-tree <hash> (commit vs parent)
         if hasBaseState && diffErr == nil && len(diff) > 0:
-            Stage 1 delta: parse only changed files, emit deletes
+            Ingestion delta: parse only changed files, emit deletes
         else:
-            Stage 1 full scan (all files)
-  → Stage 2: GAST normalization of every parsed tree
-  → Stage 3: topology aggregation → global definition index
+            Ingestion full scan (all files)
+  → Normalization: GAST normalization of every parsed tree
+  → Aggregation: topology aggregation → global definition index
   → open AKG transaction manager (.glassmarble)
-  → Stage 4: CPG linking (delta mode against base graph)
+  → Linking: CPG linking (delta mode against base graph)
   → ExecuteDeltaTransaction(cpg, modifiedFiles)   # atomic GraphJSON commit, WAL truncation
   → quality report on the MERGED graph (nodes/edges/virtual/dangling)
   → report skipped files & ingestion warnings
@@ -385,11 +385,11 @@ resolve abs dir
 **Output (plain):**
 ```
 Starting GlassMarble Analysis on C:\repo...
-Stage 1 (delta): parsed 3 changed files, 0 deleted.
-Stage 2: Normalized 3 syntax trees.
-Stage 3: Built topology with 42 global definition symbols.
+Ingestion (delta): parsed 3 changed files, 0 deleted.
+Normalization: Normalized 3 syntax trees.
+Aggregation: Built topology with 42 global definition symbols.
 Linker level: architecture (CFG/DFG disabled)
-Stage 4: Bound Delta CPG with 90 new/modified nodes.
+Linking: Bound Delta CPG with 90 new/modified nodes.
 Analyzed 3 files | 120 nodes | 240 edges | 18 virtual | 0 dangling | state=180.0KB wal=0B | 0.4s
 WARNING: 1 file(s) skipped during ingestion (oversized or unsupported language):
   - assets/logo.png (exceeds MaxFileBytes)
@@ -448,7 +448,7 @@ gmb analyze --commit 3f2a1b4      # analyze only what that commit changed
 | `--macro-inference` | string | `all` | Macro inference mode |
 | `--max-nodes` | int | `0` | Node budget |
 | `--abort-on-limit` | bool | `false` | Abort on budget exceed |
-| `--verbose` | bool | `false` | Verbose stage output |
+| `--verbose` | bool | `false` | Verbose phase output |
 | `--interval` | duration | `500ms` | Debounce interval for file-system events |
 
 **Requirements:** must be a git repository (`watch requires a git repository`).
@@ -1161,7 +1161,7 @@ gmb ai configure --provider NAME --model MODEL --key KEY [--scope global|project
 
 ### 8.21 `gmb memory`
 
-**Purpose:** Query the Stage 6 developer memory — what the system was, what changed, and (where evidence exists) why. Deterministic retrieval, no LLM (master plan §4.4). Since Stage 10, memory is also a **self-correcting layer**: `--correct` records human corrections about components, intents, or stated reasons, and the learning overlay replays them on every view (`--ask`, `--component`, overview) so corrections are never lost when aggregates rebuild.
+**Purpose:** Query the developer memory — what the system was, what changed, and (where evidence exists) why. Deterministic retrieval, no LLM (master plan §4.4). Since convention learning, memory is also a **self-correcting layer**: `--correct` records human corrections about components, intents, or stated reasons, and the learning overlay replays them on every view (`--ask`, `--component`, overview) so corrections are never lost when aggregates rebuild.
 
 **Syntax:** `gmb memory [--dir <path>] [--ask "<question>"] [--component <name>] [--json] [--correct <target> --kind <kind> --value <value>] [--corrections]`
 
@@ -1173,12 +1173,12 @@ gmb ai configure --provider NAME --model MODEL --key KEY [--scope global|project
 | `--ask` | string | `""` | Natural-language-style question answered by ranked retrieval |
 | `--component` | string | `""` | Show the full history of one component (case-insensitive substring match) |
 | `--json` | bool | `false` | Emit the machine-readable document instead of the human report |
-| `--correct` | string | `""` | Record a learning correction (Stage 10). Target is a component name, an event ID, or a claim ID |
+| `--correct` | string | `""` | Record a learning correction (convention learning). Target is a component name, an event ID, or a claim ID |
 | `--kind` | string | `"STATE"` | What to correct: `STATE` (component state), `INTENT` (event intent), `REASON` (claim stated-reason) |
 | `--value` | string | `""` | The corrected value |
 | `--corrections` | bool | `false` | Show the audit trail of all recorded corrections instead of the overview |
 
-**Data source:** `.glassmarble/memory/` — `events.jsonl`/`claims.jsonl` (append-only WALs, source of truth) + derived `memory.json`/`timeline.json`. Populated by `gmb analyze --stage5`; re-runs are idempotent. Corrections are appended to `.glassmarble/memory/corrections.jsonl` (append-only audit trail) and replayed in memory order — deterministic, idempotent, and never merged into the WALs.
+**Data source:** `.glassmarble/memory/` — `events.jsonl`/`claims.jsonl` (append-only WALs, source of truth) + derived `memory.json`/`timeline.json`. Populated by `gmb analyze --intelligence`; re-runs are idempotent. Corrections are appended to `.glassmarble/memory/corrections.jsonl` (append-only audit trail) and replayed in memory order — deterministic, idempotent, and never merged into the WALs.
 
 **Output (default):** project id, event count, component count, last update, and each component with its temporal state (CURRENT / REMOVED / DEPRECATED / EXPERIMENTAL / HISTORICAL / UNKNOWN). Component states are the learning overlay projection: corrected states replace the derived state and are flagged in the report.
 
@@ -1194,26 +1194,26 @@ gmb ai configure --provider NAME --model MODEL --key KEY [--scope global|project
 
 ## 9. Analysis Pipeline Execution Flow
 
-The `analyze`/`watch` pipeline is the heart of the product. Four stages, then an atomic commit:
+The `analyze`/`watch` pipeline is the heart of the product. Four phases, then an atomic commit:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│ STAGE 1 — Tree-sitter Ingestion                                      │
+│ PHASE 1 — Tree-sitter Ingestion                                      │
 │   discover source files (git-tracked when .git exists)               │
 │   FULL: walk all files → concurrent parse through worker pool        │
 │   DELTA: parse only git-diff files, emit deletes for removed files   │
 │   skips: oversized (> max_file_bytes), unknown grammar               │
 │   live progress → TUI counter                                        │
 ├──────────────────────────────────────────────────────────────────────┤
-│ STAGE 2 — GAST Normalization                                         │
+│ PHASE 2 — GAST Normalization                                         │
 │   normalize every parsed tree → canonical GAST nodes                 │
 │   produces UpsertedTrees + DeletedPaths                              │
 ├──────────────────────────────────────────────────────────────────────┤
-│ STAGE 3 — Topology Aggregation                                       │
+│ PHASE 3 — Topology Aggregation                                       │
 │   build global definition index (symbol → definitions)               │
 │   workspace context for cross-file resolution                        │
 ├──────────────────────────────────────────────────────────────────────┤
-│ STAGE 4 — CPG Linking                                                │
+│ PHASE 4 — CPG Linking                                                │
 │   resolve references → nodes + outbound edges                        │
 │   detail: architecture (default) | standard CFG | full CFG+DFG       │
 │   macro inference: disabled | structural | all                       │
@@ -1369,7 +1369,7 @@ gmb housekeeping --prune --older-than 7   # prune + truncate WAL (cron-friendly)
 | Command | Exit 0 | Exit non-zero when |
 |---|---|---|
 | `init` | workspace created/verified | path resolution fails |
-| `analyze` | committed, healthy | any stage fails, commit rejected |
+| `analyze` | committed, healthy | any phase fails, commit rejected |
 | `watch` | Ctrl+C stopped | not a git repo; watcher failure |
 | `status` | **always** (missing DB = uninitialized state, not error) | TTL unreadable/corrupt |
 | `doctor` | all integrity checks pass (missing DB also 0) | parse-back failure, dangling, stale WAL, duplicate IDs |

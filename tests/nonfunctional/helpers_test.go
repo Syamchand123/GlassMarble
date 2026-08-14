@@ -20,34 +20,34 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/evidence"
 	"github.com/Syamchand123/GlassMarble/tests/harness"
 )
 
-// commitPayload builds a minimal valid Stage4Output for
+// commitPayload builds a minimal valid LinkOutput for
 // ExecuteDeltaTransaction: a chain of FUNCTION nodes with one CALLS edge.
-func commitPayload(commitHash string, ids ...string) *stage4.Stage4Output {
-	payload := &stage4.Stage4Output{
+func commitPayload(commitHash string, ids ...string) *link.LinkOutput {
+	payload := &link.LinkOutput{
 		CommitHash:         commitHash,
-		GraphNodes:         map[string]*stage4.ResolvedNode{},
-		OutboundEdges:      map[string][]stage4.ResolvedEdge{},
-		InboundEdges:       map[string][]stage4.ResolvedEdge{},
+		GraphNodes:         map[string]*link.ResolvedNode{},
+		OutboundEdges:      map[string][]link.ResolvedEdge{},
+		InboundEdges:       map[string][]link.ResolvedEdge{},
 		EntrypointRegistry: []string{},
 	}
 	for _, id := range ids {
-		payload.GraphNodes[id] = &stage4.ResolvedNode{
+		payload.GraphNodes[id] = &link.ResolvedNode{
 			ID:       id,
 			Kind:     "FUNCTION",
 			Name:     id,
-			FileSpec: stage4.LocationMeta{Path: "src/gen.go", LineStart: 1, LineEnd: 10},
+			FileSpec: link.LocationMeta{Path: "src/gen.go", LineStart: 1, LineEnd: 10},
 		}
 	}
 	if len(ids) >= 2 {
 		src, tgt := ids[0], ids[1]
-		edge := stage4.ResolvedEdge{SourceID: src, TargetID: tgt, Type: stage4.EdgeCalls, LineNumber: 1, Confidence: 1.0}
-		payload.OutboundEdges[src] = []stage4.ResolvedEdge{edge}
-		payload.InboundEdges[tgt] = []stage4.ResolvedEdge{edge}
+		edge := link.ResolvedEdge{SourceID: src, TargetID: tgt, Type: link.EdgeCalls, LineNumber: 1, Confidence: 1.0}
+		payload.OutboundEdges[src] = []link.ResolvedEdge{edge}
+		payload.InboundEdges[tgt] = []link.ResolvedEdge{edge}
 		payload.EntrypointRegistry = []string{src}
 	}
 	return payload

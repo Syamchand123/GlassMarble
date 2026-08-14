@@ -140,9 +140,9 @@ var visualizeCmd = &cobra.Command{
 			})
 		}
 
-		// Non-interactive fallback: report pipeline stages to stderr
-		opts.OnProgress = func(stage, detail string) {
-			msg := stage
+		// Non-interactive fallback: report pipeline phases to stderr
+		opts.OnProgress = func(step, detail string) {
+			msg := step
 			if detail != "" {
 				msg += " " + detail
 			}

@@ -22,11 +22,11 @@ All GlassMarble pipeline operations are bounded by strictly enforced budget gate
 
 ## 2. Cost Model per 1,000 Nodes (§12.1)
 
-| Stage / Operation | Cost Baseline | Target Cost | Algorithmic Driver |
+| Phase / Operation | Cost Baseline | Target Cost | Algorithmic Driver |
 |---|---|---|---|
-| **Stage 1 (Parse + Translate)** | 3.1s | **2.0s** | Parallelized across 8-worker thread pool (`runtime.GOMAXPROCS`) |
-| **Stage 3 (Ownership)** | 2.2s | **1.0s** | Single-pass symbol-to-owner index map ($O(N)$) |
-| **Stage 4 (Semantic Linkers)** | 4.0s | **1.5s** | Direct index lookup (`InboundEdges.Get(id)`), no full $O(N^2)$ iterations |
+| **Ingestion (Parse + Translate)** | 3.1s | **2.0s** | Parallelized across 8-worker thread pool (`runtime.GOMAXPROCS`) |
+| **Aggregation (Ownership)** | 2.2s | **1.0s** | Single-pass symbol-to-owner index map ($O(N)$) |
+| **Linking (Semantic Linkers)** | 4.0s | **1.5s** | Direct index lookup (`InboundEdges.Get(id)`), no full $O(N^2)$ iterations |
 | **AKG Serialization** | 6.0s | **1.2s** | Schema v3 RDF-star single-statement stream (50% I/O reduction) |
 | **AKG Verification** | 4.0s | **0.8s** | Pre-commit macro inference skipped; async post-commit background verification |
 | **Transaction Commit / WAL** | 6.0s | **1.2s** | Batched graph diff + compressed gzip WAL |
@@ -42,6 +42,6 @@ All GlassMarble pipeline operations are bounded by strictly enforced budget gate
 3. **Streaming Renderers**:
    - Diagram format encoders (Mermaid, PlantUML, DOT) use `strings.Builder` output buffers without intermediate string copies or string concatenations.
 4. **Projection Truncation**:
-   - `--max-nodes` truncation is performed during layout tree projection in Stage 2 (before rendering), using `[+N]` boundary ports.
+   - `--max-nodes` truncation is performed during layout tree projection in Normalization (before rendering), using `[+N]` boundary ports.
 5. **Memory Budget (§12.3)**:
    - GAST node retention is bounded to $\le 2\text{KB}/\text{node}$ including strings using `product.StringTable` identifier interning.

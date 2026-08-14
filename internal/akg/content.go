@@ -3,7 +3,7 @@ package akg
 import (
 	"sync/atomic"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 // storeCodeFlag tracks whether source code content storage (--store-code) is enabled globally.
@@ -35,7 +35,7 @@ const MaxContentLength = 512
 //   - Content is kept only for structural nodes (STRUCT, CLASS, INTERFACE, FUNCTION, METHOD).
 //   - Content is capped at MaxContentLength (512 bytes).
 //   - Properties["hasContent"] is set to "true".
-func ApplyContentPolicy(node *stage4.ResolvedNode, storeCode bool) {
+func ApplyContentPolicy(node *link.ResolvedNode, storeCode bool) {
 	if node == nil {
 		return
 	}

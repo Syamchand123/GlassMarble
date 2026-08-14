@@ -17,7 +17,7 @@ import (
 var patternsCmd = &cobra.Command{
 	Use:   "patterns",
 	Short: "Detect architectural patterns and smells from the committed AKG",
-	Long: `Runs Stage 5 (architectural intelligence) against the committed AKG:
+	Long: `Runs Architecture Intelligence (architectural intelligence) against the committed AKG:
 component inference, pattern detection (PR-01..PR-07) and — with --smells —
 smell detection (SD-01..SD-07). Thresholds come from .glassmarble/config.yaml
 under the "intelligence" key; layer definitions are reused from the "drift"
@@ -78,7 +78,7 @@ key when present.`,
 			return nil
 		}
 
-		fmt.Println("=== Stage 5: Architectural Intelligence ===")
+		fmt.Println("=== Architecture Intelligence ===")
 		fmt.Println("")
 		if len(res.Patterns) == 0 {
 			fmt.Println("Patterns: none detected")

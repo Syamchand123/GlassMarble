@@ -115,10 +115,10 @@ func TestSubgraphCacheEvict(t *testing.T) {
 
 func TestReportProgress(t *testing.T) {
 	called := false
-	cb := func(stage, detail string) {
+	cb := func(step, detail string) {
 		called = true
-		if stage != "test" {
-			t.Errorf("expected stage 'test', got '%s'", stage)
+		if step != "test" {
+			t.Errorf("expected step 'test', got '%s'", step)
 		}
 	}
 	reportProgress(cb, "test", "detail")

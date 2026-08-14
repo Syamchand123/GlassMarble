@@ -14,7 +14,7 @@
 //
 // HOW TO USE:
 //
-//	When any stage (5–12) creates an ArchEvent, DetectedPattern, ArchSmell, or KnowledgeClaim,
+//	When any phase (5-12) creates an ArchEvent, DetectedPattern, ArchSmell, or KnowledgeClaim,
 //	it MUST populate at least one EvidenceItem in the Bundle. An empty Bundle is a bug and is
 //	caught by tests. Use Bundle.Add() to append items, Bundle.Aggregate() to compute the
 //	aggregate confidence (weighted minimum across all items).
@@ -128,7 +128,7 @@ type EvidenceItem struct {
 // after adding new items.
 //
 // PrimarySource is the highest-reliability source present in the bundle, used to drive
-// freshness decay curves in Stage 11 (knowledge_aging).
+// freshness decay curves in knowledge aging (knowledge_aging).
 type Bundle struct {
 	Items         []EvidenceItem `json:"items"`
 	AggConfidence float64        `json:"agg_confidence"` // recomputed by Aggregate()

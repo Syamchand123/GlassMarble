@@ -84,7 +84,7 @@ func TestRepeatedAnalyzeStableWithVersionBump(t *testing.T) {
 	}
 }
 
-// TestPatternsJSONDeterministic verifies Stage 5 produces byte-identical
+// TestPatternsJSONDeterministic verifies Architecture Intelligence produces byte-identical
 // JSON output for the same graph.
 func TestPatternsJSONDeterministic(t *testing.T) {
 	sb := harness.NewSandbox(t)

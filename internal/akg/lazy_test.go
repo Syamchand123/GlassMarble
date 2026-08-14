@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -19,11 +19,11 @@ func commitTestGraph(t *testing.T) string {
 	require.NoError(t, err)
 	defer tm.Close()
 
-	payload := stage4.NewStage4Output("testhash")
-	payload.GraphNodes["a"] = &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "alpha", FileSpec: stage4.LocationMeta{Path: "src/a.go", LineStart: 1, LineEnd: 10}}
-	payload.GraphNodes["b"] = &stage4.ResolvedNode{ID: "b", Kind: "STRUCT", Name: "beta", FileSpec: stage4.LocationMeta{Path: "src/b.go", LineStart: 5, LineEnd: 20}}
-	payload.GraphNodes["VIRTUAL_q1"] = &stage4.ResolvedNode{ID: "VIRTUAL_q1", Kind: "VIRTUAL_QUEUE", Name: "q1", FileSpec: stage4.LocationMeta{Path: "", LineStart: 0, LineEnd: 0}}
-	payload.AddEdge("a", "b", stage4.EdgeCalls, 7)
+	payload := link.NewLinkOutput("testhash")
+	payload.GraphNodes["a"] = &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "alpha", FileSpec: link.LocationMeta{Path: "src/a.go", LineStart: 1, LineEnd: 10}}
+	payload.GraphNodes["b"] = &link.ResolvedNode{ID: "b", Kind: "STRUCT", Name: "beta", FileSpec: link.LocationMeta{Path: "src/b.go", LineStart: 5, LineEnd: 20}}
+	payload.GraphNodes["VIRTUAL_q1"] = &link.ResolvedNode{ID: "VIRTUAL_q1", Kind: "VIRTUAL_QUEUE", Name: "q1", FileSpec: link.LocationMeta{Path: "", LineStart: 0, LineEnd: 0}}
+	payload.AddEdge("a", "b", link.EdgeCalls, 7)
 	payload.EntrypointRegistry = []string{"a"}
 
 	require.NoError(t, tm.ExecuteDeltaTransaction(payload, []string{"src/a.go", "src/b.go"}))
@@ -53,7 +53,7 @@ func TestQueryNodeLazyMatchesRestored(t *testing.T) {
 	assert.Len(t, out, 1)
 	assert.Empty(t, in)
 	assert.Equal(t, "b", out[0].TargetID)
-	assert.Equal(t, stage4.EdgeCalls, out[0].Type)
+	assert.Equal(t, link.EdgeCalls, out[0].Type)
 	assert.Equal(t, 7, out[0].LineNumber)
 
 	// Inbound edge on the target side.
@@ -83,7 +83,7 @@ func TestStreamNodesParity(t *testing.T) {
 	expected := tm.GetActiveSnapshot().Nodes.Len()
 
 	seen := 0
-	err = StreamNodes(dir, func(n *stage4.ResolvedNode) bool {
+	err = StreamNodes(dir, func(n *link.ResolvedNode) bool {
 		seen++
 		return true
 	})
@@ -92,7 +92,7 @@ func TestStreamNodesParity(t *testing.T) {
 
 	// Early stop must return a nil error.
 	stopped := 0
-	err = StreamNodes(dir, func(n *stage4.ResolvedNode) bool {
+	err = StreamNodes(dir, func(n *link.ResolvedNode) bool {
 		stopped++
 		return stopped < 1
 	})
@@ -119,7 +119,7 @@ func TestStreamGraphStatsParity(t *testing.T) {
 	assert.Equal(t, snapshot.FileNodeIndex.Len(), stats.IndexedFiles)
 
 	expectedEdges := 0
-	snapshot.OutboundEdges.Iterate(func(_ string, edges []stage4.ResolvedEdge) {
+	snapshot.OutboundEdges.Iterate(func(_ string, edges []link.ResolvedEdge) {
 		expectedEdges += len(edges)
 	})
 	assert.Equal(t, expectedEdges, stats.Edges)
@@ -159,12 +159,12 @@ func TestToNativeGraphParity(t *testing.T) {
 	require.NoError(t, err)
 	defer tm.Close()
 
-	payload := stage4.NewStage4Output("testhash")
-	payload.GraphNodes["a"] = &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "alpha", FileSpec: stage4.LocationMeta{Path: "src/a.go", LineStart: 1}}
-	payload.GraphNodes["b"] = &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "beta", FileSpec: stage4.LocationMeta{Path: "src/b.go", LineStart: 1}}
+	payload := link.NewLinkOutput("testhash")
+	payload.GraphNodes["a"] = &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "alpha", FileSpec: link.LocationMeta{Path: "src/a.go", LineStart: 1}}
+	payload.GraphNodes["b"] = &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "beta", FileSpec: link.LocationMeta{Path: "src/b.go", LineStart: 1}}
 	// Parallel edges between the same pair collapse to one canonical triple.
-	payload.AddEdge("a", "b", stage4.EdgeCalls, 3)
-	payload.AddEdge("a", "b", stage4.EdgeCalls, 9)
+	payload.AddEdge("a", "b", link.EdgeCalls, 3)
+	payload.AddEdge("a", "b", link.EdgeCalls, 9)
 	require.NoError(t, tm.ExecuteDeltaTransaction(payload, []string{"src/a.go", "src/b.go"}))
 
 	ng := tm.GetActiveSnapshot().ToNativeGraph()

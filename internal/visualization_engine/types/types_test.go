@@ -51,15 +51,15 @@ func TestPipelineConfigDefaults(t *testing.T) {
 	}
 }
 
-func TestPipelineStageOrder(t *testing.T) {
-	if StageParse != 0 {
-		t.Errorf("expected StageParse=0, got %d", StageParse)
+func TestPipelineStepOrder(t *testing.T) {
+	if StepParse != 0 {
+		t.Errorf("expected StepParse=0, got %d", StepParse)
 	}
-	if StageScope != 1 {
-		t.Errorf("expected StageScope=1, got %d", StageScope)
+	if StepScope != 1 {
+		t.Errorf("expected StepScope=1, got %d", StepScope)
 	}
-	if StageRender != 6 {
-		t.Errorf("expected StageRender=6, got %d", StageRender)
+	if StepRender != 6 {
+		t.Errorf("expected StepRender=6, got %d", StepRender)
 	}
 }
 

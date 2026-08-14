@@ -13,7 +13,7 @@ package e2e_test
 //
 // One documented case intentionally does NOT match the docs and is asserted
 // by its real behaviour (see the inline comment): `gmb analyze` on an empty
-// repository — §12 says analyze exits non-zero only when a stage fails or the
+// repository — §12 says analyze exits non-zero only when a phase fails or the
 // commit is rejected, and an empty repository commits a healthy empty graph.
 
 import (
@@ -135,7 +135,7 @@ func TestExitCodeContractViaRealBinary(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			// §12: `analyze` exits non-zero only when a stage fails or the
+			// §12: `analyze` exits non-zero only when a phase fails or the
 			// commit is rejected. An empty repository commits a healthy
 			// empty graph, so exit 0 is the documented behaviour here.
 			name: "analyze on empty repository exits 0 (healthy empty commit)",

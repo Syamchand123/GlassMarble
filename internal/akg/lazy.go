@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
@@ -18,7 +18,7 @@ func jsonStatePath(storageDir string) string {
 }
 
 // errStreamStopped is the internal sentinel for clean early termination of a
-// lazy JSON stream (mirrors stage1.StopStreaming).
+// lazy JSON stream (mirrors ingest.StopStreaming).
 var errStreamStopped = errors.New("json stream stopped")
 
 // jsonStreamHooks carries the per-document callbacks for streamJSONState.
@@ -187,14 +187,14 @@ func unwrapStreamStop(err error) error {
 //
 // Returns (nil, nil, nil, nil) when the node does not exist. A missing
 // state file is reported as an error (os.ErrNotExist wrapped).
-func QueryNode(storageDir, nodeID string) (*stage4.ResolvedNode, []stage4.ResolvedEdge, []stage4.ResolvedEdge, error) {
+func QueryNode(storageDir, nodeID string) (*link.ResolvedNode, []link.ResolvedEdge, []link.ResolvedEdge, error) {
 	jsonPath := jsonStatePath(storageDir)
 	if _, err := os.Stat(jsonPath); err != nil {
 		return nil, nil, nil, fmt.Errorf("AKG state not found: %w", err)
 	}
 
-	var found *stage4.ResolvedNode
-	var out, in []stage4.ResolvedEdge
+	var found *link.ResolvedNode
+	var out, in []link.ResolvedEdge
 
 	err := streamJSONState(jsonPath, jsonStreamHooks{
 		onNode: func(n GraphNodeJSON) bool {
@@ -225,7 +225,7 @@ func QueryNode(storageDir, nodeID string) (*stage4.ResolvedNode, []stage4.Resolv
 // the graph indices are NOT built, so Query() on nodes collected this way
 // falls back to its linear-scan path.
 // (AUDIT Issue 4 Phase 4A-2)
-func StreamNodes(storageDir string, fn func(*stage4.ResolvedNode) bool) error {
+func StreamNodes(storageDir string, fn func(*link.ResolvedNode) bool) error {
 	jsonPath := jsonStatePath(storageDir)
 	if _, err := os.Stat(jsonPath); err != nil {
 		return fmt.Errorf("AKG state not found: %w", err)
@@ -302,7 +302,7 @@ func StreamGraphStats(storageDir string) (*LazyStats, error) {
 		onNode: func(n GraphNodeJSON) bool {
 			st.NodeCount++
 			ids[n.ID] = true
-			if stage4.IsVirtualID(n.ID) {
+			if link.IsVirtualID(n.ID) {
 				st.VirtualCount++
 			}
 			// normalizePath("") is "." on Windows, so the empty-path virtual
@@ -351,7 +351,7 @@ func (c *CodePropertyGraph) ToNativeGraph() *types.NativeGraph {
 		entrypointSet[ep] = true
 	}
 
-	c.Nodes.Iterate(func(_ string, n *stage4.ResolvedNode) {
+	c.Nodes.Iterate(func(_ string, n *link.ResolvedNode) {
 		if n == nil {
 			return
 		}
@@ -365,7 +365,7 @@ func (c *CodePropertyGraph) ToNativeGraph() *types.NativeGraph {
 
 	type keyT struct{ s, p, t string }
 	best := make(map[keyT]types.NativeEdge, c.OutboundEdges.Len())
-	c.OutboundEdges.Iterate(func(sourceID string, edges []stage4.ResolvedEdge) {
+	c.OutboundEdges.Iterate(func(sourceID string, edges []link.ResolvedEdge) {
 		for _, e := range edges {
 			pred := mapEdgeTypeToPredicate(e.Type)
 			if pred == "" {
@@ -386,13 +386,13 @@ func (c *CodePropertyGraph) ToNativeGraph() *types.NativeGraph {
 
 // graphNodeToResolved converts a streamed GraphJSON node into a ResolvedNode
 // exactly as ImportGraphJSON would (verbatim fields, copied properties).
-func graphNodeToResolved(n GraphNodeJSON) *stage4.ResolvedNode {
-	return &stage4.ResolvedNode{
+func graphNodeToResolved(n GraphNodeJSON) *link.ResolvedNode {
+	return &link.ResolvedNode{
 		ID:        n.ID,
 		Kind:      n.Kind,
 		Name:      n.Name,
 		Primitive: n.Primitive,
-		FileSpec: stage4.LocationMeta{
+		FileSpec: link.LocationMeta{
 			Path:      n.FileSpec.Path,
 			LineStart: n.FileSpec.LineStart,
 			LineEnd:   n.FileSpec.LineEnd,
@@ -403,11 +403,11 @@ func graphNodeToResolved(n GraphNodeJSON) *stage4.ResolvedNode {
 
 // graphEdgeToResolved converts a streamed GraphJSON edge into a ResolvedEdge
 // exactly as ImportGraphJSON would.
-func graphEdgeToResolved(e GraphEdgeJSON) stage4.ResolvedEdge {
-	return stage4.ResolvedEdge{
+func graphEdgeToResolved(e GraphEdgeJSON) link.ResolvedEdge {
+	return link.ResolvedEdge{
 		SourceID:   e.SourceID,
 		TargetID:   e.TargetID,
-		Type:       stage4.RelationshipType(e.Type),
+		Type:       link.RelationshipType(e.Type),
 		LineNumber: e.LineNumber,
 		Confidence: e.Confidence,
 		IsCycle:    e.IsCycle,
@@ -420,7 +420,7 @@ func graphEdgeToResolved(e GraphEdgeJSON) stage4.ResolvedEdge {
 // it: kind and properties are carried via the shared vocabulary, so a node
 // loaded from GraphJSON equals the node a parse-back of the persisted file
 // would yield.
-func ResolvedNodeToNativeNode(n *stage4.ResolvedNode) *types.NativeNode {
+func ResolvedNodeToNativeNode(n *link.ResolvedNode) *types.NativeNode {
 	props := make(map[string]string, len(n.Properties))
 	for k, v := range n.Properties {
 		props[k] = v

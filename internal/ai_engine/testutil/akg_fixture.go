@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 // Node IDs used by the synthetic fixture.
@@ -37,14 +37,14 @@ func SeedAKG(t *testing.T, dir string) string {
 	if err != nil {
 		t.Fatalf("NewAKGTransactionManager: %v", err)
 	}
-	payload := &stage4.Stage4Output{
+	payload := &link.LinkOutput{
 		CommitHash: "abc1234",
-		GraphNodes: map[string]*stage4.ResolvedNode{
+		GraphNodes: map[string]*link.ResolvedNode{
 			NodeDBStore: {
 				ID:   NodeDBStore,
 				Kind: "STRUCT",
 				Name: "DBStore",
-				FileSpec: stage4.LocationMeta{
+				FileSpec: link.LocationMeta{
 					Path:      "src/db.go",
 					LineStart: 10,
 					LineEnd:   60,
@@ -54,7 +54,7 @@ func SeedAKG(t *testing.T, dir string) string {
 				ID:   NodeSave,
 				Kind: "METHOD",
 				Name: "Save",
-				FileSpec: stage4.LocationMeta{
+				FileSpec: link.LocationMeta{
 					Path:      "src/db.go",
 					LineStart: 15,
 					LineEnd:   21,
@@ -67,7 +67,7 @@ func SeedAKG(t *testing.T, dir string) string {
 				ID:   NodeMain,
 				Kind: "FUNCTION",
 				Name: "main",
-				FileSpec: stage4.LocationMeta{
+				FileSpec: link.LocationMeta{
 					Path:      "src/app.go",
 					LineStart: 1,
 					LineEnd:   5,
@@ -77,31 +77,31 @@ func SeedAKG(t *testing.T, dir string) string {
 				ID:   NodeHelper,
 				Kind: "FUNCTION",
 				Name: "helper",
-				FileSpec: stage4.LocationMeta{
+				FileSpec: link.LocationMeta{
 					Path:      "src/util.go",
 					LineStart: 30,
 					LineEnd:   40,
 				},
 			},
 		},
-		OutboundEdges: map[string][]stage4.ResolvedEdge{
+		OutboundEdges: map[string][]link.ResolvedEdge{
 			NodeMain: {
-				{SourceID: NodeMain, TargetID: NodeSave, Type: stage4.EdgeCalls, LineNumber: 3, Confidence: 1.0},
+				{SourceID: NodeMain, TargetID: NodeSave, Type: link.EdgeCalls, LineNumber: 3, Confidence: 1.0},
 			},
 			NodeSave: {
-				{SourceID: NodeSave, TargetID: NodeHelper, Type: stage4.EdgeCalls, LineNumber: 17, Confidence: 1.0},
+				{SourceID: NodeSave, TargetID: NodeHelper, Type: link.EdgeCalls, LineNumber: 17, Confidence: 1.0},
 			},
 			NodeHelper: {
-				{SourceID: NodeHelper, TargetID: NodeSave, Type: stage4.EdgeCalls, LineNumber: 33, Confidence: 1.0},
+				{SourceID: NodeHelper, TargetID: NodeSave, Type: link.EdgeCalls, LineNumber: 33, Confidence: 1.0},
 			},
 		},
-		InboundEdges: map[string][]stage4.ResolvedEdge{
+		InboundEdges: map[string][]link.ResolvedEdge{
 			NodeSave: {
-				{SourceID: NodeMain, TargetID: NodeSave, Type: stage4.EdgeCalls, LineNumber: 3, Confidence: 1.0},
-				{SourceID: NodeHelper, TargetID: NodeSave, Type: stage4.EdgeCalls, LineNumber: 33, Confidence: 1.0},
+				{SourceID: NodeMain, TargetID: NodeSave, Type: link.EdgeCalls, LineNumber: 3, Confidence: 1.0},
+				{SourceID: NodeHelper, TargetID: NodeSave, Type: link.EdgeCalls, LineNumber: 33, Confidence: 1.0},
 			},
 			NodeHelper: {
-				{SourceID: NodeSave, TargetID: NodeHelper, Type: stage4.EdgeCalls, LineNumber: 17, Confidence: 1.0},
+				{SourceID: NodeSave, TargetID: NodeHelper, Type: link.EdgeCalls, LineNumber: 17, Confidence: 1.0},
 			},
 		},
 		EntrypointRegistry: []string{NodeMain},

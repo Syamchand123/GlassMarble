@@ -197,7 +197,7 @@ func TestHooksUnknownSubcommand(t *testing.T) {
 	}
 }
 
-// TestAnalyzeCommandFullScan runs the full 4-stage pipeline over a tiny Go
+// TestAnalyzeCommandFullScan runs the full 4-phase pipeline over a tiny Go
 // file and verifies the AKG database is created and the report printed.
 func TestAnalyzeCommandFullScan(t *testing.T) {
 	tempDir := t.TempDir()

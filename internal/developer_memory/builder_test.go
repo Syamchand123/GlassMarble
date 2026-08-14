@@ -515,7 +515,7 @@ func TestMemoryAggregateJSONRoundtrip(t *testing.T) {
 	}
 }
 
-// TestProcessEvents_StateChangeTransition verifies the Stage 11 STATE_CHANGE
+// TestProcessEvents_StateChangeTransition verifies the knowledge aging STATE_CHANGE
 // event contract: the component state is set from the well-known tag, the
 // claim says "<component> state_changed_to <state>", and a rebuild from the
 // WAL reproduces the transition exactly (reproducibility).

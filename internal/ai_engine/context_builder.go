@@ -41,26 +41,26 @@ type EvidenceContext struct {
 
 	// Claims are the ranked developer-memory knowledge claims relevant to
 	// the question (FACT / EXPLICIT_REASON / INFERENCE / SPECULATION with
-	// states, freshness and evidence — the honesty mechanism of Stage 6).
+	// states, freshness and evidence — the honesty mechanism of developer memory).
 	Claims []developer_memory.KnowledgeClaim `json:"claims"`
 
 	// Timeline holds the relevant architecture evolution entries, most
 	// recent first.
 	Timeline []archmodel.TimelineEntry `json:"timeline"`
 
-	// Patterns and Smells come from the Stage 5 intelligence run, filtered
+	// Patterns and Smells come from the Architecture Intelligence intelligence run, filtered
 	// by relevance and confidence.
 	Patterns   []archmodel.DetectedPattern `json:"patterns"`
 	Smells     []archmodel.ArchSmell       `json:"smells"`
 
-	// Components are the detected architectural units (Stage 5D) relevant
+	// Components are the detected architectural units (component inference) relevant
 	// to the question.
 	Components []archmodel.DetectedComponent `json:"components"`
 
-	// MetricSummary is a one-line quantitative snapshot (Stage 5A).
+	// MetricSummary is a one-line quantitative snapshot (intelligence metrics).
 	MetricSummary string `json:"metric_summary,omitempty"`
 
-	// Corrections is the number of Stage 10 learning corrections that took
+	// Corrections is the number of convention learning corrections that took
 	// effect on the returned memory items (0 when none — the projection is
 	// applied regardless, corrections are reflected in the item values).
 	Corrections int `json:"corrections_applied,omitempty"`

@@ -54,7 +54,7 @@ type IssueAdapter interface {
 // LocalGitAdapter implements both PRAdapter and IssueAdapter with zero API
 // calls: it walks recent git history and classifies every commit's PR/issue
 // references using commit_reasoning.ExtractRelatedRefs — the same
-// extraction the Stage 8 reasoning engine uses, so the two stages can never
+// extraction the commit reasoning reasoning engine uses, so the two phases can never
 // disagree about what "PR #42" or "Fixes #42" means.
 //
 // Deterministic by construction: commits are walked newest-first (git

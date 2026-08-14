@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
@@ -62,7 +62,7 @@ var dependencyCmd = &cobra.Command{
 			var topNodes []topDependencyNode
 			var done bool
 			count := 0
-			snapshot.OutboundEdges.Iterate(func(id string, outbound []stage4.ResolvedEdge) {
+			snapshot.OutboundEdges.Iterate(func(id string, outbound []link.ResolvedEdge) {
 				if done {
 					return
 				}
@@ -93,7 +93,7 @@ var dependencyCmd = &cobra.Command{
 		var matchingNodes []string
 		lowerTarget := strings.ToLower(target)
 
-		snapshot.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
+		snapshot.Nodes.Iterate(func(id string, node *link.ResolvedNode) {
 			if strings.Contains(strings.ToLower(id), lowerTarget) || strings.Contains(strings.ToLower(node.FileSpec.Path), lowerTarget) || strings.EqualFold(node.Name, target) {
 				matchingNodes = append(matchingNodes, id)
 			}

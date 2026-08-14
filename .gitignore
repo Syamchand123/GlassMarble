@@ -124,3 +124,5 @@ miscellaneous/
 Scripts/
 manual_testing_findings.md
 MANUAL_TESTING_PLAN.md
+NAMING_OVERHAUL_PLAN.md
+master_stage_rename.ps1

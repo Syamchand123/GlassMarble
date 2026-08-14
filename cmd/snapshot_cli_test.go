@@ -17,7 +17,7 @@ func snapshotRoot(t *testing.T) (string, string, string) {
 	t.Helper()
 	root := setupAnalyzeGitRepo(t)
 
-	if _, err := runGmbCommand(t, "analyze", "--dir", root, "--stage5"); err != nil {
+	if _, err := runGmbCommand(t, "analyze", "--dir", root, "--intelligence"); err != nil {
 		t.Fatalf("first analyze failed: %v", err)
 	}
 
@@ -31,7 +31,7 @@ func snapshotRoot(t *testing.T) (string, string, string) {
 	head1 := runGitCmd(t, root, "rev-parse", "HEAD~1")
 	head2 := runGitCmd(t, root, "rev-parse", "HEAD")
 
-	if _, err := runGmbCommand(t, "analyze", "--dir", root, "--stage5"); err != nil {
+	if _, err := runGmbCommand(t, "analyze", "--dir", root, "--intelligence"); err != nil {
 		t.Fatalf("second analyze failed: %v", err)
 	}
 	return root, head1, head2
@@ -163,7 +163,7 @@ func TestSnapshotCLI_Replay(t *testing.T) {
 // snapshot, --list shows it, and --replay on it fails with a clear message.
 func TestSnapshotCLI_NoGraphFlow(t *testing.T) {
 	root := setupAnalyzeGitRepo(t)
-	if _, err := runGmbCommand(t, "analyze", "--dir", root, "--stage5"); err != nil {
+	if _, err := runGmbCommand(t, "analyze", "--dir", root, "--intelligence"); err != nil {
 		t.Fatalf("analyze failed: %v", err)
 	}
 

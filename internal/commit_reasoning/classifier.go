@@ -11,7 +11,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/arch_intelligence"
 	"github.com/Syamchand123/GlassMarble/internal/arch_timeline"
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/config"
 	"github.com/Syamchand123/GlassMarble/internal/evidence"
 	"github.com/Syamchand123/GlassMarble/internal/git"
@@ -19,10 +19,10 @@ import (
 
 // ClassifiedChange is one architectural change inferred from a commit.
 // AffectedIDs always carries the canonical ordered IDs for the event kind:
-// component IDs for SERVICE_*/DEPENDENCY_* events (so Stage 8 and Stage 5D
+// component IDs for SERVICE_*/DEPENDENCY_* events (so commit reasoning and component inference
 // produce identical event IDs), nil for cycle/layer-violation events
-// (matching the 5D convention), and node IDs for graph-level events that
-// Stage 5D does not produce.
+// (matching the component inference convention), and node IDs for graph-level events that
+// component inference does not produce.
 type ClassifiedChange struct {
 	Kind        archmodel.EventKind
 	AffectedIDs []string
@@ -58,9 +58,9 @@ var cacheTargetRegex = regexp.MustCompile(`(?i)\b(redis|memcached|hazelcast|caff
 //
 //  1. Component pass  — add/remove/split/merge/dependency events from the
 //     snapshot diff (arch_timeline.Diff), with affected IDs identical to
-//     Stage 5D's so the memory builder deduplicates the two generators.
+//     component inference's so the memory builder deduplicates the two generators.
 //  2. Smell pass      — new LAYER_VIOLATION smell instances → LAYER_VIOLATION
-//     events (affected=nil, matching 5D; 5D owns all other smell kinds).
+//     events (affected=nil, matching component inference; component inference owns all other smell kinds).
 //  3. Graph pass      — node/edge additions from the AKG diff: new modules,
 //     datastores, async hops, cache layers, API endpoints, security edges.
 //  4. Cycle pass      — SCC comparison of the replayed base/head graphs
@@ -68,7 +68,7 @@ var cacheTargetRegex = regexp.MustCompile(`(?i)\b(redis|memcached|hazelcast|caff
 //
 // The result is deterministic: every slice is sorted and no map iteration
 // order leaks into output. Rule ownership follows the plan: coupling (R9)
-// and dead code (R10) belong to Stage 5D and are deliberately not duplicated.
+// and dead code (R10) belong to component inference and are deliberately not duplicated.
 func ClassifyChange(in ClassifyInput) []ClassifiedChange {
 	var changes []ClassifiedChange
 	if in.Meta == nil {
@@ -103,9 +103,9 @@ func ClassifyChange(in ClassifyInput) []ClassifiedChange {
 // componentPass maps the reconciled snapshot diff to SERVICE_*/DEPENDENCY_*
 // events. affected IDs replicate arch_intelligence.GenerateEvents exactly
 // (component IDs; dependency pairs source-first), so deduplication in the
-// memory builder keeps the enriched Stage 8 event and drops the 5D twin.
+// memory builder keeps the enriched commit reasoning event and drops the component inference twin.
 // Components (the memory key space) are likewise the canonical component
-// IDs — one component, one key — matching the 5D convention.
+// IDs — one component, one key — matching the component inference convention.
 func componentPass(in ClassifyInput) []ClassifiedChange {
 	var changes []ClassifiedChange
 	diff := in.Diff
@@ -139,7 +139,7 @@ func componentPass(in ClassifyInput) []ClassifiedChange {
 			evItem(evidence.SourceGit, in.Meta.Hash, "removed component: "+c.Name, 0.95, t)))
 	}
 
-	// Splits and merges — beyond the 5D vocabulary (the plan's SERVICE_SPLIT
+	// Splits and merges — beyond the component inference vocabulary (the plan's SERVICE_SPLIT
 	// and SERVICE_MERGED kinds).
 	for _, s := range diff.Splits {
 		srcID := componentIDByName(baseByName, s.Source)
@@ -158,7 +158,7 @@ func componentPass(in ClassifyInput) []ClassifiedChange {
 			evItem(evidence.SourceRule, "arch_timeline.Diff:merge", "merge "+strings.Join(m.Sources, ", ")+" -> "+m.Target, 0.9, t)))
 	}
 
-	// Component-level dependency changes — identical tuple to 5D's
+	// Component-level dependency changes — identical tuple to component inference's
 	// (source component ID first, then target component ID).
 	changes = append(changes, dependencyPass(in)...)
 	return changes
@@ -218,9 +218,9 @@ func dependencyPass(in ClassifyInput) []ClassifiedChange {
 // ---------------------------------------------------------------------------
 
 // smellPass turns new LAYER_VIOLATION smell instances into events. The
-// snapshot's smell list is authoritative — it was computed by Stage 5C with
+// snapshot's smell list is authoritative — it was computed by smell detection with
 // full graph context — so this reuses signed-off analysis instead of
-// recomputing it. affected stays nil to match the 5D convention; the smell
+// recomputing it. affected stays nil to match the component inference convention; the smell
 // evidence names the violating edges.
 func smellPass(in ClassifyInput) []ClassifiedChange {
 	base := make(map[string]bool)
@@ -285,7 +285,7 @@ func graphPass(in ClassifyInput) []ClassifiedChange {
 	}
 
 	// R3: datastore edges (QUERIES_DB) grouped per datastore node.
-	datastores := groupEdgesByTarget(gd.EdgesAdded, stage4.EdgeQueriesDB)
+	datastores := groupEdgesByTarget(gd.EdgesAdded, link.EdgeQueriesDB)
 	for _, tgt := range sortedKeys(datastores) {
 		edges := datastores[tgt]
 		names := sourcesOf(edges)
@@ -297,7 +297,7 @@ func graphPass(in ClassifyInput) []ClassifiedChange {
 
 	// R4: async hops (PUBLISHES / SUBSCRIBES / DISPATCHES_EVENT) grouped per
 	// source->target pair.
-	async := groupEdgesByPair(gd.EdgesAdded, stage4.EdgePublishes, stage4.EdgeSubscribes, stage4.EdgeDispatchesEvent)
+	async := groupEdgesByPair(gd.EdgesAdded, link.EdgePublishes, link.EdgeSubscribes, link.EdgeDispatchesEvent)
 	for _, k := range sortedKeys(async) {
 		parts := strings.SplitN(k, "\x00", 2)
 		changes = append(changes, newClassified(in, archmodel.EventAsyncIntroduced,
@@ -318,7 +318,7 @@ func graphPass(in ClassifyInput) []ClassifiedChange {
 	}
 
 	// R11: API endpoints — new EXPOSES_ENDPOINT edges, grouped per API node.
-	api := groupEdgesBySource(gd.EdgesAdded, stage4.EdgeExposesEndpoint)
+	api := groupEdgesBySource(gd.EdgesAdded, link.EdgeExposesEndpoint)
 	for _, src := range sortedKeys(api) {
 		edges := api[src]
 		names := targetsOf(edges)
@@ -329,7 +329,7 @@ func graphPass(in ClassifyInput) []ClassifiedChange {
 	}
 
 	// R12: security hardening — edges carrying security meaning.
-	security := groupEdgesBySource(gd.EdgesAdded, stage4.EdgeSecuritySink, stage4.EdgeVulnerable)
+	security := groupEdgesBySource(gd.EdgesAdded, link.EdgeSecuritySink, link.EdgeVulnerable)
 	for _, src := range sortedKeys(security) {
 		edges := security[src]
 		names := targetsOf(edges)
@@ -356,7 +356,7 @@ func headOwnedNodes(in ClassifyInput) map[string]bool {
 }
 
 // groupEdgesByTarget groups added edges of the given types by target node.
-func groupEdgesByTarget(edges []akg.DiffEdge, types ...stage4.RelationshipType) map[string][]akg.DiffEdge {
+func groupEdgesByTarget(edges []akg.DiffEdge, types ...link.RelationshipType) map[string][]akg.DiffEdge {
 	out := make(map[string][]akg.DiffEdge)
 	for _, e := range edges {
 		if !edgeTypeIn(e.Type, types) {
@@ -368,7 +368,7 @@ func groupEdgesByTarget(edges []akg.DiffEdge, types ...stage4.RelationshipType) 
 }
 
 // groupEdgesBySource groups added edges of the given types by source node.
-func groupEdgesBySource(edges []akg.DiffEdge, types ...stage4.RelationshipType) map[string][]akg.DiffEdge {
+func groupEdgesBySource(edges []akg.DiffEdge, types ...link.RelationshipType) map[string][]akg.DiffEdge {
 	out := make(map[string][]akg.DiffEdge)
 	for _, e := range edges {
 		if !edgeTypeIn(e.Type, types) {
@@ -380,7 +380,7 @@ func groupEdgesBySource(edges []akg.DiffEdge, types ...stage4.RelationshipType) 
 }
 
 // groupEdgesByPair groups added edges of the given types by source-target pair.
-func groupEdgesByPair(edges []akg.DiffEdge, types ...stage4.RelationshipType) map[string][]akg.DiffEdge {
+func groupEdgesByPair(edges []akg.DiffEdge, types ...link.RelationshipType) map[string][]akg.DiffEdge {
 	out := make(map[string][]akg.DiffEdge)
 	for _, e := range edges {
 		if !edgeTypeIn(e.Type, types) {
@@ -413,7 +413,7 @@ func groupEdgesByCacheTarget(edges []akg.DiffEdge, head *akg.CodePropertyGraph) 
 	return out
 }
 
-func edgeTypeIn(typ string, types []stage4.RelationshipType) bool {
+func edgeTypeIn(typ string, types []link.RelationshipType) bool {
 	for _, t := range types {
 		if string(t) == typ {
 			return true
@@ -430,7 +430,7 @@ func edgeTypeIn(typ string, types []stage4.RelationshipType) bool {
 // graphs. New multi-node SCCs are introduced cycles; vanished ones are
 // resolved cycles. The SCC comparison runs on the replayed graphs when both
 // are available and falls back to the metric delta otherwise — both produce
-// affected=nil to match the 5D convention, with the cycle members named in
+// affected=nil to match the component inference convention, with the cycle members named in
 // the evidence.
 func cyclePass(in ClassifyInput) []ClassifiedChange {
 	var changes []ClassifiedChange

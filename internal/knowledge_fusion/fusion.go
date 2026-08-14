@@ -12,7 +12,7 @@ import (
 )
 
 // RunResult reports what one fusion run produced. It drives the
-// "Stage 9: fused N claims from M sources" summary line in `gmb analyze`.
+// "knowledge fusion: fused N claims from M sources" summary line in `gmb analyze`.
 type RunResult struct {
 	// AdrFiles is the number of ADR files that yielded at least one claim.
 	AdrFiles int `json:"adr_files"`
@@ -34,7 +34,7 @@ type RunResult struct {
 
 // FusionEngine coordinates multi-source knowledge extraction, linking,
 // conflict resolution and persistence into developer memory. It is the
-// Stage 9 orchestrator (master plan §7 / §13.1).
+// knowledge fusion orchestrator (master plan §7 / §13.1).
 type FusionEngine struct {
 	cfg          *config.FusionConfig
 	store        *developer_memory.MemoryStore
@@ -66,7 +66,7 @@ func WithLogger(logf func(format string, args ...any)) Option {
 	}
 }
 
-// NewFusionEngine creates a Stage 9 engine. cfg may be nil (defaults are
+// NewFusionEngine creates a knowledge fusion engine. cfg may be nil (defaults are
 // applied). store is the developer-memory store the fused claims are
 // appended to; a nil store makes Run return a validation error — fused
 // claims without persistence would be lost.

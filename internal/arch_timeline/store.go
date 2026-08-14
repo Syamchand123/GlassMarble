@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 // SnapshotStore persists ArchSnapshots on disk and maintains an append-only
@@ -53,7 +53,7 @@ func computeTopologyHash(snap *archmodel.ArchSnapshot) (string, error) {
 	}
 
 	var edgeTuples []string
-	graph.OutboundEdges.Iterate(func(source string, edges []stage4.ResolvedEdge) {
+	graph.OutboundEdges.Iterate(func(source string, edges []link.ResolvedEdge) {
 		for _, e := range edges {
 			edgeTuples = append(edgeTuples, fmt.Sprintf("%s|%s|%s", source, e.Type, e.TargetID))
 		}

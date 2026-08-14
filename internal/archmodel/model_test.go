@@ -1,4 +1,4 @@
-// Package archmodel_test verifies JSON round-trip stability for all cross-stage types.
+// Package archmodel_test verifies JSON round-trip stability for all cross-phase types.
 //
 // WHY: archmodel types are persisted to .glassmarble/. If JSON tags change or zero
 // values serialize differently across Go versions, persisted files become unreadable.

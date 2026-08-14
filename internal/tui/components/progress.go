@@ -10,11 +10,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// StageProgress is a single stage progress bar using the design-token colors:
+// PhaseProgress is a single phase progress bar using the design-token colors:
 // violet fill (ColorPrimary), gray-800 empty (ColorSurfaceCard), and a green
 // "✓ Xms" marker once done. The fill animates with a Harmonica spring so
 // abrupt jumps ease toward their target (§5 Phase 5, §7).
-type StageProgress struct {
+type PhaseProgress struct {
 	model   progress.Model
 	label   string
 	current int
@@ -23,8 +23,8 @@ type StageProgress struct {
 	elapsed time.Duration
 }
 
-// NewStageProgress creates a labeled progress bar for a pipeline stage.
-func NewStageProgress(label string, width int) StageProgress {
+// NewPhaseProgress creates a labeled progress bar for a pipeline phase.
+func NewPhaseProgress(label string, width int) PhaseProgress {
 	if width <= 0 {
 		width = 40
 	}
@@ -36,12 +36,12 @@ func NewStageProgress(label string, width int) StageProgress {
 	)
 	// Empty fill uses the gray-800 surface token (not the bubbles default).
 	p.EmptyColor = string(tui.ColorSurfaceCard)
-	return StageProgress{model: p, label: label, total: 1}
+	return PhaseProgress{model: p, label: label, total: 1}
 }
 
 // SetProgress updates current/total and eases the bar toward the new fraction
 // with the spring. It returns the command that drives the animation frames.
-func (s *StageProgress) SetProgress(current, total int) tea.Cmd {
+func (s *PhaseProgress) SetProgress(current, total int) tea.Cmd {
 	if total <= 0 {
 		total = 1
 	}
@@ -55,19 +55,19 @@ func (s *StageProgress) SetProgress(current, total int) tea.Cmd {
 }
 
 // MarkDone records completion and duration and snaps the bar to full.
-func (s *StageProgress) MarkDone(d time.Duration) tea.Cmd {
+func (s *PhaseProgress) MarkDone(d time.Duration) tea.Cmd {
 	s.done = true
 	s.elapsed = d
 	s.current = s.total
 	return s.model.SetPercent(1)
 }
 
-// IsDone reports whether the stage finished.
-func (s *StageProgress) IsDone() bool { return s.done }
+// IsDone reports whether the phase finished.
+func (s *PhaseProgress) IsDone() bool { return s.done }
 
 // View renders the progress bar with its label and status. The bar shows the
 // spring-animated fraction.
-func (s *StageProgress) View() string {
+func (s *PhaseProgress) View() string {
 	label := lipgloss.NewStyle().Bold(true).Foreground(tui.ColorTextPrimary).Render(s.label)
 
 	bar := s.model.View()
@@ -84,7 +84,7 @@ func (s *StageProgress) View() string {
 }
 
 // Update forwards a message to the underlying progress model.
-func (s *StageProgress) Update(msg tea.Msg) (StageProgress, tea.Cmd) {
+func (s *PhaseProgress) Update(msg tea.Msg) (PhaseProgress, tea.Cmd) {
 	model, cmd := s.model.Update(msg)
 	if p, ok := model.(progress.Model); ok {
 		s.model = p

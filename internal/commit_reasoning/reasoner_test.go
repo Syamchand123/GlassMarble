@@ -104,7 +104,7 @@ func TestReasonCommit_Integration(t *testing.T) {
 	}
 }
 
-func TestReasonCommit_IDMatches5D(t *testing.T) {
+func TestReasonCommit_IDMatchesIntelligence(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git binary not available in PATH")
 	}
@@ -155,13 +155,13 @@ func TestReasonCommit_IDMatches5D(t *testing.T) {
 
 	fiveD := arch_intelligence.GenerateEvents(base, head, nil, arch_intelligence.CommitMeta{Hash: commitHash, Timestamp: time.Now()})
 
-	stage8IDs := make(map[archmodel.EventKind]string)
+	reasoningIDs := make(map[archmodel.EventKind]string)
 	for _, ev := range events {
-		stage8IDs[ev.Kind] = ev.ID
+		reasoningIDs[ev.Kind] = ev.ID
 	}
 	for _, ev := range fiveD {
-		if id, ok := stage8IDs[ev.Kind]; ok && ev.ID != id {
-			t.Errorf("kind %s: stage8 ID %q != 5D ID %q — dedup will fail", ev.Kind, id, ev.ID)
+		if id, ok := reasoningIDs[ev.Kind]; ok && ev.ID != id {
+			t.Errorf("kind %s: reasoning ID %q != intelligence ID %q — dedup will fail", ev.Kind, id, ev.ID)
 		}
 	}
 }

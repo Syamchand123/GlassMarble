@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	akgerrs "github.com/Syamchand123/GlassMarble/internal/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,8 +35,8 @@ func TestMaxStateBytesGuardRejectsOversizedCommit(t *testing.T) {
 	require.NoError(t, err)
 	defer tm.Close()
 
-	payload := stage4.NewStage4Output("testhash")
-	payload.GraphNodes["n1"] = &stage4.ResolvedNode{ID: "n1", Kind: "FUNCTION", Name: "testFunc"}
+	payload := link.NewLinkOutput("testhash")
+	payload.GraphNodes["n1"] = &link.ResolvedNode{ID: "n1", Kind: "FUNCTION", Name: "testFunc"}
 
 	err = tm.ExecuteDeltaTransaction(payload, []string{"test.go"})
 	require.Error(t, err)
@@ -54,8 +54,8 @@ func TestMaxStateBytesGuardRejectsOversizedLoad(t *testing.T) {
 	dir := t.TempDir()
 	tm, err := NewAKGTransactionManager(dir)
 	require.NoError(t, err)
-	payload := stage4.NewStage4Output("testhash")
-	payload.GraphNodes["n1"] = &stage4.ResolvedNode{ID: "n1", Kind: "FUNCTION", Name: "testFunc"}
+	payload := link.NewLinkOutput("testhash")
+	payload.GraphNodes["n1"] = &link.ResolvedNode{ID: "n1", Kind: "FUNCTION", Name: "testFunc"}
 	require.NoError(t, tm.ExecuteDeltaTransaction(payload, []string{"test.go"}))
 	tm.Close()
 
@@ -79,8 +79,8 @@ func TestExecuteDelta_AddNode(t *testing.T) {
 	}
 	defer tm.Close()
 
-	payload := stage4.NewStage4Output("testhash")
-	payload.GraphNodes["n1"] = &stage4.ResolvedNode{
+	payload := link.NewLinkOutput("testhash")
+	payload.GraphNodes["n1"] = &link.ResolvedNode{
 		ID: "n1", Kind: "FUNCTION", Name: "testFunc",
 	}
 
@@ -105,10 +105,10 @@ func TestExecuteDelta_AddEdge(t *testing.T) {
 	}
 	defer tm.Close()
 
-	payload := stage4.NewStage4Output("testhash")
-	payload.GraphNodes["a"] = &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"}
-	payload.GraphNodes["b"] = &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"}
-	payload.AddEdge("a", "b", stage4.EdgeCalls, 1)
+	payload := link.NewLinkOutput("testhash")
+	payload.GraphNodes["a"] = &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"}
+	payload.GraphNodes["b"] = &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"}
+	payload.AddEdge("a", "b", link.EdgeCalls, 1)
 
 	if err := tm.ExecuteDeltaTransaction(payload, []string{"test.go"}); err != nil {
 		t.Fatalf("delta failed: %v", err)
@@ -130,8 +130,8 @@ func TestSubscribe_ReceivesEvent(t *testing.T) {
 	defer tm.Close()
 
 	ch := tm.Subscribe()
-	payload := stage4.NewStage4Output("testhash")
-	payload.GraphNodes["n1"] = &stage4.ResolvedNode{ID: "n1", Kind: "FUNCTION", Name: "fn"}
+	payload := link.NewLinkOutput("testhash")
+	payload.GraphNodes["n1"] = &link.ResolvedNode{ID: "n1", Kind: "FUNCTION", Name: "fn"}
 
 	if err := tm.ExecuteDeltaTransaction(payload, []string{"test.go"}); err != nil {
 		t.Fatalf("delta failed: %v", err)
@@ -153,7 +153,7 @@ func TestExecuteDelta_EmptyPayload(t *testing.T) {
 	}
 	defer tm.Close()
 
-	payload := stage4.NewStage4Output("testhash")
+	payload := link.NewLinkOutput("testhash")
 	err = tm.ExecuteDeltaTransaction(payload, []string{"test.go"})
 	if err != nil {
 		t.Fatalf("empty payload delta failed: %v", err)
@@ -168,16 +168,16 @@ func TestExecuteDelta_DeleteNodes(t *testing.T) {
 	}
 	defer tm.Close()
 
-	payload := stage4.NewStage4Output("testhash")
-	payload.GraphNodes["n1"] = &stage4.ResolvedNode{
+	payload := link.NewLinkOutput("testhash")
+	payload.GraphNodes["n1"] = &link.ResolvedNode{
 		ID: "n1", Kind: "FUNCTION", Name: "toDelete",
-		FileSpec: stage4.LocationMeta{Path: "test.go"},
+		FileSpec: link.LocationMeta{Path: "test.go"},
 	}
 	if err := tm.ExecuteDeltaTransaction(payload, []string{"test.go"}); err != nil {
 		t.Fatalf("add delta failed: %v", err)
 	}
 
-	payload2 := stage4.NewStage4Output("testhash")
+	payload2 := link.NewLinkOutput("testhash")
 	if err := tm.ExecuteDeltaTransaction(payload2, []string{"test.go"}); err != nil {
 		t.Fatalf("delete delta failed: %v", err)
 	}
@@ -196,19 +196,19 @@ func TestExecuteDelta_SweepRemovesOldEdges(t *testing.T) {
 	}
 	defer tm.Close()
 
-	payload := stage4.NewStage4Output("testhash")
-	payload.GraphNodes["a"] = &stage4.ResolvedNode{
-		ID: "a", Kind: "FUNCTION", Name: "a", FileSpec: stage4.LocationMeta{Path: "a.go"},
+	payload := link.NewLinkOutput("testhash")
+	payload.GraphNodes["a"] = &link.ResolvedNode{
+		ID: "a", Kind: "FUNCTION", Name: "a", FileSpec: link.LocationMeta{Path: "a.go"},
 	}
-	payload.GraphNodes["b"] = &stage4.ResolvedNode{
-		ID: "b", Kind: "FUNCTION", Name: "b", FileSpec: stage4.LocationMeta{Path: "b.go"},
+	payload.GraphNodes["b"] = &link.ResolvedNode{
+		ID: "b", Kind: "FUNCTION", Name: "b", FileSpec: link.LocationMeta{Path: "b.go"},
 	}
-	payload.AddEdge("a", "b", stage4.EdgeCalls, 1)
+	payload.AddEdge("a", "b", link.EdgeCalls, 1)
 	if err := tm.ExecuteDeltaTransaction(payload, []string{"a.go", "b.go"}); err != nil {
 		t.Fatalf("add delta failed: %v", err)
 	}
 
-	payload2 := stage4.NewStage4Output("testhash")
+	payload2 := link.NewLinkOutput("testhash")
 	if err := tm.ExecuteDeltaTransaction(payload2, []string{"b.go"}); err != nil {
 		t.Fatalf("sweep delta failed: %v", err)
 	}
@@ -222,10 +222,10 @@ func TestExecuteDelta_AddNodes(t *testing.T) {
 	}
 	defer tm.Close()
 
-	payload := stage4.NewStage4Output("testhash")
-	payload.GraphNodes["node1"] = &stage4.ResolvedNode{ID: "node1", Kind: "CLASS", Name: "Node1"}
-	payload.GraphNodes["node2"] = &stage4.ResolvedNode{ID: "node2", Kind: "FUNCTION", Name: "Node2"}
-	payload.GraphNodes["node3"] = &stage4.ResolvedNode{ID: "node3", Kind: "INTERFACE", Name: "Node3"}
+	payload := link.NewLinkOutput("testhash")
+	payload.GraphNodes["node1"] = &link.ResolvedNode{ID: "node1", Kind: "CLASS", Name: "Node1"}
+	payload.GraphNodes["node2"] = &link.ResolvedNode{ID: "node2", Kind: "FUNCTION", Name: "Node2"}
+	payload.GraphNodes["node3"] = &link.ResolvedNode{ID: "node3", Kind: "INTERFACE", Name: "Node3"}
 
 	if err := tm.ExecuteDeltaTransaction(payload, []string{"test.go"}); err != nil {
 		t.Fatalf("delta execution failed: %v", err)
@@ -247,10 +247,10 @@ func TestExecuteDelta_AddEdges(t *testing.T) {
 	}
 	defer tm.Close()
 
-	payload := stage4.NewStage4Output("testhash")
-	payload.GraphNodes["a"] = &stage4.ResolvedNode{ID: "a", Kind: "CLASS", Name: "A"}
-	payload.GraphNodes["b"] = &stage4.ResolvedNode{ID: "b", Kind: "CLASS", Name: "B"}
-	payload.AddEdge("a", "b", stage4.EdgeCalls, 1)
+	payload := link.NewLinkOutput("testhash")
+	payload.GraphNodes["a"] = &link.ResolvedNode{ID: "a", Kind: "CLASS", Name: "A"}
+	payload.GraphNodes["b"] = &link.ResolvedNode{ID: "b", Kind: "CLASS", Name: "B"}
+	payload.AddEdge("a", "b", link.EdgeCalls, 1)
 
 	if err := tm.ExecuteDeltaTransaction(payload, []string{"test.go"}); err != nil {
 		t.Fatalf("delta execution failed: %v", err)
@@ -264,7 +264,7 @@ func TestExecuteDelta_AddEdges(t *testing.T) {
 	if outEdges[0].TargetID != "b" {
 		t.Errorf("expected edge target b, got %s", outEdges[0].TargetID)
 	}
-	if outEdges[0].Type != stage4.EdgeCalls {
+	if outEdges[0].Type != link.EdgeCalls {
 		t.Errorf("expected EdgeCalls type, got %s", outEdges[0].Type)
 	}
 }
@@ -277,14 +277,14 @@ func TestExecuteDelta_MultipleDeltas(t *testing.T) {
 	}
 	defer tm.Close()
 
-	payload1 := stage4.NewStage4Output("hash1")
-	payload1.GraphNodes["node1"] = &stage4.ResolvedNode{ID: "node1", Kind: "CLASS", Name: "First"}
+	payload1 := link.NewLinkOutput("hash1")
+	payload1.GraphNodes["node1"] = &link.ResolvedNode{ID: "node1", Kind: "CLASS", Name: "First"}
 	if err := tm.ExecuteDeltaTransaction(payload1, []string{"a.go"}); err != nil {
 		t.Fatalf("first delta failed: %v", err)
 	}
 
-	payload2 := stage4.NewStage4Output("hash2")
-	payload2.GraphNodes["node2"] = &stage4.ResolvedNode{ID: "node2", Kind: "FUNCTION", Name: "Second"}
+	payload2 := link.NewLinkOutput("hash2")
+	payload2.GraphNodes["node2"] = &link.ResolvedNode{ID: "node2", Kind: "FUNCTION", Name: "Second"}
 	if err := tm.ExecuteDeltaTransaction(payload2, []string{"b.go"}); err != nil {
 		t.Fatalf("second delta failed: %v", err)
 	}
@@ -306,9 +306,9 @@ func TestExecuteDelta_DanglingReferenceAudit(t *testing.T) {
 	}
 	defer tm.Close()
 
-	payload := stage4.NewStage4Output("testhash")
-	payload.GraphNodes["source"] = &stage4.ResolvedNode{ID: "source", Kind: "FUNCTION", Name: "source"}
-	payload.AddEdge("source", "nonexistent", stage4.EdgeCalls, 42)
+	payload := link.NewLinkOutput("testhash")
+	payload.GraphNodes["source"] = &link.ResolvedNode{ID: "source", Kind: "FUNCTION", Name: "source"}
+	payload.AddEdge("source", "nonexistent", link.EdgeCalls, 42)
 
 	// The merge sweep (Step C.4) drops the dangling edge and records it in
 	// graph.Errors; the commit succeeds with zero dangling edges persisted
@@ -344,8 +344,8 @@ func TestExecuteDelta_MacroInferenceFires(t *testing.T) {
 	}
 	defer tm.Close()
 
-	payload := stage4.NewStage4Output("testhash")
-	payload.GraphNodes["svc"] = &stage4.ResolvedNode{
+	payload := link.NewLinkOutput("testhash")
+	payload.GraphNodes["svc"] = &link.ResolvedNode{
 		ID: "svc", Kind: "CLASS", Name: "MyService",
 	}
 
@@ -380,8 +380,8 @@ func TestGetActiveSnapshot_Immutable(t *testing.T) {
 
 	snapshot := tm.GetActiveSnapshot()
 
-	payload := stage4.NewStage4Output("testhash")
-	payload.GraphNodes["newNode"] = &stage4.ResolvedNode{
+	payload := link.NewLinkOutput("testhash")
+	payload.GraphNodes["newNode"] = &link.ResolvedNode{
 		ID: "newNode", Kind: "CLASS", Name: "NewNode",
 	}
 	if err := tm.ExecuteDeltaTransaction(payload, []string{"test.go"}); err != nil {
@@ -490,23 +490,23 @@ func TestDeleteRoundTrip_NoResurrection(t *testing.T) {
 	tm, err := NewAKGTransactionManager(dir)
 	require.NoError(t, err)
 
-	payload := stage4.NewStage4Output("hash1")
+	payload := link.NewLinkOutput("hash1")
 	for i := 0; i < 5; i++ {
 		id := fmt.Sprintf("keep%d", i)
-		payload.GraphNodes[id] = &stage4.ResolvedNode{
+		payload.GraphNodes[id] = &link.ResolvedNode{
 			ID: id, Kind: "FUNCTION", Name: id,
-			FileSpec: stage4.LocationMeta{Path: fmt.Sprintf("keep%d.go", i)},
+			FileSpec: link.LocationMeta{Path: fmt.Sprintf("keep%d.go", i)},
 		}
 	}
-	payload.GraphNodes["gone"] = &stage4.ResolvedNode{
+	payload.GraphNodes["gone"] = &link.ResolvedNode{
 		ID: "gone", Kind: "FUNCTION", Name: "gone",
-		FileSpec: stage4.LocationMeta{Path: "gone.go"},
+		FileSpec: link.LocationMeta{Path: "gone.go"},
 	}
 	files := []string{"keep0.go", "keep1.go", "keep2.go", "keep3.go", "keep4.go", "gone.go"}
 	require.NoError(t, tm.ExecuteDeltaTransaction(payload, files))
 
 	// Sweep: empty payload for the same file removes the node.
-	require.NoError(t, tm.ExecuteDeltaTransaction(stage4.NewStage4Output("hash1"), []string{"gone.go"}))
+	require.NoError(t, tm.ExecuteDeltaTransaction(link.NewLinkOutput("hash1"), []string{"gone.go"}))
 	tm.Close()
 
 	// The rewritten JSON store must not contain the deleted node.
@@ -543,9 +543,9 @@ func TestDeltaPersistsEntrypointsAndZones(t *testing.T) {
 	require.NoError(t, err)
 	defer tm.Close()
 
-	payload := stage4.NewStage4Output("hash1")
-	payload.GraphNodes["ep1"] = &stage4.ResolvedNode{ID: "ep1", Kind: "FUNCTION", Name: "main"}
-	payload.GraphNodes["mod1"] = &stage4.ResolvedNode{ID: "mod1", Kind: "MODULE", Name: "app"}
+	payload := link.NewLinkOutput("hash1")
+	payload.GraphNodes["ep1"] = &link.ResolvedNode{ID: "ep1", Kind: "FUNCTION", Name: "main"}
+	payload.GraphNodes["mod1"] = &link.ResolvedNode{ID: "mod1", Kind: "MODULE", Name: "app"}
 	payload.EntrypointRegistry = []string{"ep1"}
 	payload.FolderZones = map[string]string{"mod1": "user"}
 	require.NoError(t, tm.ExecuteDeltaTransaction(payload, []string{"a.go"}))
@@ -572,15 +572,15 @@ func TestDanglingEdgeSweepNeverPersists(t *testing.T) {
 	defer tm.Close()
 
 	// Seed a clean baseline state.
-	seed := stage4.NewStage4Output("hash1")
-	seed.GraphNodes["a.go::ok"] = &stage4.ResolvedNode{ID: "a.go::ok", Kind: "FUNCTION", Name: "ok"}
+	seed := link.NewLinkOutput("hash1")
+	seed.GraphNodes["a.go::ok"] = &link.ResolvedNode{ID: "a.go::ok", Kind: "FUNCTION", Name: "ok"}
 	require.NoError(t, tm.ExecuteDeltaTransaction(seed, []string{"a.go"}))
 
 	// A delta carrying an edge to a node that does not exist anywhere.
-	bad := stage4.NewStage4Output("hash2")
-	bad.GraphNodes["a.go::caller"] = &stage4.ResolvedNode{ID: "a.go::caller", Kind: "FUNCTION", Name: "caller"}
-	bad.OutboundEdges["a.go::caller"] = []stage4.ResolvedEdge{
-		{SourceID: "a.go::caller", TargetID: "missing::callee", Type: stage4.EdgeCalls, LineNumber: 5},
+	bad := link.NewLinkOutput("hash2")
+	bad.GraphNodes["a.go::caller"] = &link.ResolvedNode{ID: "a.go::caller", Kind: "FUNCTION", Name: "caller"}
+	bad.OutboundEdges["a.go::caller"] = []link.ResolvedEdge{
+		{SourceID: "a.go::caller", TargetID: "missing::callee", Type: link.EdgeCalls, LineNumber: 5},
 	}
 	require.NoError(t, tm.ExecuteDeltaTransaction(bad, []string{"a.go"}))
 

@@ -341,7 +341,7 @@ func (s *Sandbox) SeedMemory(projectID string) {
 
 // SeedCorrections writes a corrections.jsonl with one learned correction:
 // the developer says the cache layer must NOT be reported as a repository
-// pattern (Stage 10 rejection).
+// pattern (convention learning rejection).
 func (s *Sandbox) SeedCorrections() {
 	s.T.Helper()
 	dir := filepath.Join(s.GmDir, "memory")

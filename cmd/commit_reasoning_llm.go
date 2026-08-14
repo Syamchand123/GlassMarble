@@ -11,7 +11,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/commit_reasoning"
 )
 
-// newIntentLLM builds the optional Stage 8 Level-3 intent backend on top of
+// newIntentLLM builds the optional commit reasoning Level-3 intent backend on top of
 // the BYOK AI configuration (same config `gmb why` and `gmb ai` use).
 // It returns nil when AI is not configured or unusable, so the pipeline
 // silently degrades to the deterministic keyword/structural classifier —

@@ -174,7 +174,7 @@ func EnsureGitIgnore(repoDir string) error {
 }
 
 // CommitMeta carries the full metadata of one git commit, used by the
-// Stage 8 commit-reasoning engine (v2_master_implementaion_plan.md §6.2).
+// commit reasoning commit-reasoning engine (v2_master_implementaion_plan.md §6.2).
 // Everything here is a directly observable git fact — no interpretation.
 type CommitMeta struct {
 	Hash          string    `json:"hash"`

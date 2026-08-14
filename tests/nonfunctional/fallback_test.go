@@ -34,7 +34,7 @@ func TestSnapshotAtUnknownRef(t *testing.T) {
 	}
 }
 
-// TestPatternsFreshWithoutIntelligence verifies Stage 5 runs fresh from the
+// TestPatternsFreshWithoutIntelligence verifies Architecture Intelligence runs fresh from the
 // graph when no intelligence artifact exists — intelligence/latest.json is
 // an output, never an input.
 func TestPatternsFreshWithoutIntelligence(t *testing.T) {

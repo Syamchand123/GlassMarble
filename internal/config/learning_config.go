@@ -1,12 +1,12 @@
 package config
 
-// LearningConfig controls the Stage 10 learning layer
+// LearningConfig controls the convention-learning layer
 // (v2_master_implementaion_plan.md §8). It is the single canonical
 // definition of the "learning:" section in .glassmarble/config.yaml.
 //
 // It lives in the config package (not in learning) for the same reason
 // FusionConfig and IntelligenceConfig do: the config package is a leaf that
-// every stage imports; stage packages consume config types, they do not
+// every phase imports; phase packages consume config types, they do not
 // define them.
 //
 // All fields are optional; zero values fall back to DefaultLearningConfig

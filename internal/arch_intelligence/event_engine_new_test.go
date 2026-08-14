@@ -7,7 +7,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/config"
 )
 
@@ -142,16 +142,16 @@ func TestEngine_SnapshotCaching(t *testing.T) {
 
 func TestEngine_RunRules(t *testing.T) {
 	graph := akg.NewCodePropertyGraph("test")
-	graph.Nodes = graph.Nodes.Set("god", &stage4.ResolvedNode{ID: "god", Name: "God", Kind: "STRUCT"})
+	graph.Nodes = graph.Nodes.Set("god", &link.ResolvedNode{ID: "god", Name: "God", Kind: "STRUCT"})
 	for i := 0; i < 20; i++ {
 		id := string(rune('A' + i))
-		graph.Nodes = graph.Nodes.Set(id, &stage4.ResolvedNode{ID: id})
-		addStructuralEdge(graph, id, "god", stage4.EdgeCalls)
+		graph.Nodes = graph.Nodes.Set(id, &link.ResolvedNode{ID: id})
+		addStructuralEdge(graph, id, "god", link.EdgeCalls)
 	}
 	for i := 0; i < 35; i++ {
 		m := "m" + string(rune('a'+i%26)) + string(rune('a'+i/26))
-		graph.Nodes = graph.Nodes.Set(m, &stage4.ResolvedNode{ID: m, Kind: "FUNCTION"})
-		addStructuralEdge(graph, "god", m, stage4.EdgeHasReceiver)
+		graph.Nodes = graph.Nodes.Set(m, &link.ResolvedNode{ID: m, Kind: "FUNCTION"})
+		addStructuralEdge(graph, "god", m, link.EdgeHasReceiver)
 	}
 
 	cfg := config.DefaultIntelligenceConfig()
@@ -188,7 +188,7 @@ func TestEngine_ComponentCouplingFilled(t *testing.T) {
 	addNodeWithPath(graph, "b1", "internal/b/x.go")
 	addNodeWithPath(graph, "b2", "internal/b/y.go")
 	addNodeWithPath(graph, "b3", "internal/b/z.go")
-	addStructuralEdge(graph, "a1", "b1", stage4.EdgeCalls)
+	addStructuralEdge(graph, "a1", "b1", link.EdgeCalls)
 
 	engine := NewEngine(graph)
 	res := engine.Run()

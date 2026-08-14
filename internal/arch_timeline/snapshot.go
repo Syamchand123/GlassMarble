@@ -12,7 +12,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 // SnapshotIndexEntry represents a single entry in the snapshots index.json.
@@ -29,8 +29,8 @@ type SnapshotIndexEntry struct {
 	SnapshotFile string `json:"snapshot_file"`
 }
 
-// SnapshotInput carries the Stage 5 analysis results for one commit. It uses
-// only archmodel types so arch_timeline never imports a stage package
+// SnapshotInput carries the Architecture Intelligence analysis results for one commit. It uses
+// only archmodel types so arch_timeline never imports a phase package
 // (LOLPAL dependency rule — arch_intelligence must not be reachable from
 // here).
 type SnapshotInput struct {
@@ -55,7 +55,7 @@ type SnapshotInput struct {
 	NoGraph bool
 }
 
-// BuildSnapshot packages the Stage 5 outputs into a point-in-time
+// BuildSnapshot packages the Architecture Intelligence outputs into a point-in-time
 // ArchSnapshot ready for SnapshotStore.Create.
 //
 // The snapshot ID is deterministic: snap_ + sha256 of the commit hash and the
@@ -92,7 +92,7 @@ func BuildSnapshot(in SnapshotInput) (*archmodel.ArchSnapshot, error) {
 		}
 		snap.AKGJSON = buf.Bytes()
 		snap.NodeCount = in.Graph.Nodes.Len()
-		in.Graph.OutboundEdges.Iterate(func(_ string, edges []stage4.ResolvedEdge) {
+		in.Graph.OutboundEdges.Iterate(func(_ string, edges []link.ResolvedEdge) {
 			snap.EdgeCount += len(edges)
 		})
 	}

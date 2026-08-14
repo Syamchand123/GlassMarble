@@ -1,5 +1,5 @@
 // Package analyze is the BubbleTea program for `gmb analyze`. It only holds
-// display state: stage progress, spinner, elapsed time. The pipeline itself
+// display state: phase progress, spinner, elapsed time. The pipeline itself
 // lives in cmd/ and is injected as a RunFn so this package never imports cmd.
 package analyze
 
@@ -39,12 +39,12 @@ type Summary struct {
 	Duration      time.Duration
 }
 
-// RunFn executes the full pipeline, reporting stage boundaries through
+// RunFn executes the full pipeline, reporting phase boundaries through
 // progress, and returns the QA summary of the completed run.
-type RunFn func(progress func(stage int, name string, current, total int)) (Summary, error)
+type RunFn func(progress func(phase int, name string, current, total int)) (Summary, error)
 
-// stageNames lists the pipeline boundaries in order (stages 1..4 + commit).
-var stageNames = [...]string{
+// phaseNames lists the pipeline boundaries in order (phases 1..4 + commit).
+var phaseNames = [...]string{
 	"Tree-sitter Ingestion",
 	"GAST Normalization",
 	"Topology Aggregation",
@@ -52,8 +52,8 @@ var stageNames = [...]string{
 	"Committing graph",
 }
 
-type stageState struct {
-	progress components.StageProgress
+type phaseState struct {
+	progress components.PhaseProgress
 	started  time.Time
 	running  bool
 }
@@ -62,7 +62,7 @@ type model struct {
 	opts    Options
 	run     RunFn
 	spinner components.GMSpinner
-	stages  [5]stageState
+	phases  [5]phaseState
 	done    bool
 	summary Summary
 	err     error
@@ -71,15 +71,15 @@ type model struct {
 	width   int
 }
 
-// StageStartMsg marks the beginning of a pipeline stage.
-type StageStartMsg struct {
-	stage int
+// PhaseStartMsg marks the beginning of a pipeline phase.
+type PhaseStartMsg struct {
+	phase int
 	name  string
 }
 
-// StageCompleteMsg reports stage progress and/or completion.
-type StageCompleteMsg struct {
-	stage   int
+// PhaseCompleteMsg reports phase progress and/or completion.
+type PhaseCompleteMsg struct {
+	phase   int
 	name    string
 	current int
 	total   int
@@ -104,8 +104,8 @@ func newModel(opts Options, run RunFn) model {
 		spinner: components.NewGMSpinner("Analyzing..."),
 		started: time.Now(),
 	}
-	for i := range m.stages {
-		m.stages[i].progress = components.NewStageProgress(stageNames[i], 40)
+	for i := range m.phases {
+		m.phases[i].progress = components.NewPhaseProgress(phaseNames[i], 40)
 	}
 	return m
 }
@@ -115,12 +115,12 @@ func newModel(opts Options, run RunFn) model {
 func RunAnalyze(opts Options, run RunFn, in io.Reader, out io.Writer) error {
 	p := tea.NewProgram(newModel(opts, run), tea.WithOutput(out), tea.WithInput(in))
 	go func() {
-		summary, err := run(func(stage int, name string, current, total int) {
+		summary, err := run(func(phase int, name string, current, total int) {
 			if current == 0 {
-				p.Send(StageStartMsg{stage: stage, name: name})
+				p.Send(PhaseStartMsg{phase: phase, name: name})
 				return
 			}
-			p.Send(StageCompleteMsg{stage: stage, name: name, current: current, total: total})
+			p.Send(PhaseCompleteMsg{phase: phase, name: name, current: current, total: total})
 		})
 		if err != nil {
 			p.Send(AnalysisErrMsg{err: err})
@@ -162,22 +162,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.elapsed = time.Since(m.started)
 		return m, tickCmd()
-	case StageStartMsg:
-		idx := msg.stage - 1
-		if idx < 0 || idx >= len(m.stages) {
+	case PhaseStartMsg:
+		idx := msg.phase - 1
+		if idx < 0 || idx >= len(m.phases) {
 			return m, nil
 		}
-		st := &m.stages[idx]
+		st := &m.phases[idx]
 		cmd := st.progress.SetProgress(0, 1)
 		st.started = time.Now()
 		st.running = true
 		return m, cmd
-	case StageCompleteMsg:
-		idx := msg.stage - 1
-		if idx < 0 || idx >= len(m.stages) {
+	case PhaseCompleteMsg:
+		idx := msg.phase - 1
+		if idx < 0 || idx >= len(m.phases) {
 			return m, nil
 		}
-		st := &m.stages[idx]
+		st := &m.phases[idx]
 		var cmd tea.Cmd
 		if msg.current >= msg.total {
 			cmd = st.progress.MarkDone(time.Since(st.started))
@@ -194,12 +194,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		return m, tea.Quit
 	}
-	// Forward every message to the stage progress bars so the Harmonica spring
+	// Forward every message to the phase progress bars so the Harmonica spring
 	// animation frames drive the fills.
-	cmds := make([]tea.Cmd, 0, len(m.stages)+1)
-	for i := range m.stages {
+	cmds := make([]tea.Cmd, 0, len(m.phases)+1)
+	for i := range m.phases {
 		var cmd tea.Cmd
-		m.stages[i].progress, cmd = m.stages[i].progress.Update(msg)
+		m.phases[i].progress, cmd = m.phases[i].progress.Update(msg)
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -231,8 +231,8 @@ func (m model) View() string {
 	b.WriteString("\n")
 	b.WriteString(tui.KV("Mode", mode))
 	b.WriteString("\n\n")
-	for i := range m.stages {
-		b.WriteString(stageLine(m.stages[i]))
+	for i := range m.phases {
+		b.WriteString(phaseLine(m.phases[i]))
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
@@ -281,8 +281,8 @@ func renderErrorCard(err error, width int) string {
 	return tui.StyleCard.Render(b.String())
 }
 
-func stageLine(st stageState) string {
-	label := stageLabel(st)
+func phaseLine(st phaseState) string {
+	label := phaseLabel(st)
 	bar := st.progress.View()
 	if label == "" {
 		return bar
@@ -290,8 +290,8 @@ func stageLine(st stageState) string {
 	return tui.StyleMuted.Render("  "+label) + " " + bar
 }
 
-// stageLabel returns a pending / running / done status pill for a stage.
-func stageLabel(st stageState) string {
+// phaseLabel returns a pending / running / done status pill for a phase.
+func phaseLabel(st phaseState) string {
 	if st.progress.IsDone() {
 		return tui.BadgeOK.Render("  done  ")
 	}

@@ -9,7 +9,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 // DoctorReport is the health dashboard for the persisted AKG artifact
@@ -99,11 +99,11 @@ func RunDoctor(storageDir string) (*DoctorReport, error) {
 	rep.LoadOK = true
 	rep.NodeCount = graph.Nodes.Len()
 	rep.EdgeCount = 0
-	graph.OutboundEdges.Iterate(func(_ string, edges []stage4.ResolvedEdge) {
+	graph.OutboundEdges.Iterate(func(_ string, edges []link.ResolvedEdge) {
 		rep.EdgeCount += len(edges)
 	})
 	rep.Dangling = 0
-	graph.OutboundEdges.Iterate(func(_ string, edges []stage4.ResolvedEdge) {
+	graph.OutboundEdges.Iterate(func(_ string, edges []link.ResolvedEdge) {
 		for _, e := range edges {
 			if _, ok := graph.Nodes.Get(e.TargetID); !ok {
 				rep.Dangling++

@@ -4,17 +4,17 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
 // This file exposes a persisted GraphJSON state document as the
 // visualization graph view the extraction pipeline consumes. The functions
 // are the JSON-store equivalents of the legacy Turtle parsers in
-// internal/visualization_engine/stage1: same inputs, same (nodes, edges)
+// internal/visualization_engine/ingest: same inputs, same (nodes, edges)
 // shapes, same last-wins and scoping semantics. Node kinds and edge
 // predicates are converted with the shared kind-vocabulary contract
-// (stage4.KindToClass / EdgeTypeToPredicate), so a graph loaded from JSON
+// (link.KindToClass / EdgeTypeToPredicate), so a graph loaded from JSON
 // feeds the extraction pipeline identically. Deleted nodes and tombstones
 // do not exist in the JSON store — they are simply absent from the
 // document. Each function streams graphPath directly (the file name need
@@ -22,7 +22,7 @@ import (
 
 // ParseGraphFile loads a persisted GraphJSON state document and returns
 // extracted nodes and edges in the visualization form (NativeNode/
-// NativeEdge — the same shapes stage1.ParseTTLFile produced from Turtle).
+// NativeEdge — the same shapes ingest.ParseTTLFile produced from Turtle).
 func ParseGraphFile(graphPath string) (map[string]*types.NativeNode, []types.NativeEdge, error) {
 	entrypoints := make(map[string]bool)
 	if err := streamJSONState(graphPath, jsonStreamHooks{
@@ -50,7 +50,7 @@ func ParseGraphFile(graphPath string) (map[string]*types.NativeNode, []types.Nat
 	best := make(map[string]types.NativeEdge)
 	if err := streamJSONState(graphPath, jsonStreamHooks{
 		onEdge: func(e GraphEdgeJSON) bool {
-			pred := EdgeTypeToPredicate(stage4.RelationshipType(e.Type))
+			pred := EdgeTypeToPredicate(link.RelationshipType(e.Type))
 			if pred == "" {
 				return true
 			}
@@ -81,7 +81,7 @@ func ParseGraphFileToNative(graphPath string) (*types.NativeGraph, error) {
 
 // ParseGraphNodeByID streams a GraphJSON state document and returns the
 // LAST node whose ID matches (appended edits win), plus every edge touching
-// that node — the JSON equivalent of stage1.ParseTTLNodeByID. Memory is
+// that node — the JSON equivalent of ingest.ParseTTLNodeByID. Memory is
 // bounded by the node's incident degree. If the node is absent,
 // (nil, nil, nil) is returned with no error.
 func ParseGraphNodeByID(graphPath, nodeID string) (*types.NativeNode, []types.NativeEdge, error) {
@@ -117,7 +117,7 @@ func ParseGraphNodeByID(graphPath, nodeID string) (*types.NativeNode, []types.Na
 			if e.SourceID != nodeID && e.TargetID != nodeID {
 				return true
 			}
-			pred := EdgeTypeToPredicate(stage4.RelationshipType(e.Type))
+			pred := EdgeTypeToPredicate(link.RelationshipType(e.Type))
 			if pred == "" {
 				return true
 			}
@@ -158,7 +158,7 @@ func StreamGraphNodes(graphPath string, fn func(*types.NativeNode) bool) error {
 func StreamGraphEdges(graphPath string, fn func(*types.NativeEdge) bool) error {
 	return streamJSONState(graphPath, jsonStreamHooks{
 		onEdge: func(e GraphEdgeJSON) bool {
-			pred := EdgeTypeToPredicate(stage4.RelationshipType(e.Type))
+			pred := EdgeTypeToPredicate(link.RelationshipType(e.Type))
 			if pred == "" {
 				return true
 			}
@@ -171,7 +171,7 @@ func StreamGraphEdges(graphPath string, fn func(*types.NativeEdge) bool) error {
 // ONLY the nodes belonging to scopePath plus the edges whose endpoints are
 // both in that set: file-scope diagrams must load only the file's nodes
 // instead of the whole database. Matching rules mirror
-// stage1.ApplyScope(ScopeFile) exactly, so the result equals a full load
+// ingest.ApplyScope(ScopeFile) exactly, so the result equals a full load
 // followed by ApplyScope.
 func ParseGraphFileToNativeScoped(graphPath, scopePath string) (*types.NativeGraph, error) {
 	if scopePath == "" {
@@ -211,7 +211,7 @@ func ParseGraphFileToNativeScoped(graphPath, scopePath string) (*types.NativeGra
 	edgeMap := make(map[string]*types.NativeEdge)
 	if err := streamJSONState(graphPath, jsonStreamHooks{
 		onEdge: func(e GraphEdgeJSON) bool {
-			pred := EdgeTypeToPredicate(stage4.RelationshipType(e.Type))
+			pred := EdgeTypeToPredicate(link.RelationshipType(e.Type))
 			if pred == "" || !matched[e.SourceID] || !matched[e.TargetID] {
 				return true
 			}
@@ -231,7 +231,7 @@ func ParseGraphFileToNativeScoped(graphPath, scopePath string) (*types.NativeGra
 	return graph, nil
 }
 
-// matchesFileScope reproduces stage1.ApplyScope(ScopeFile)'s node predicate.
+// matchesFileScope reproduces ingest.ApplyScope(ScopeFile)'s node predicate.
 func matchesFileScope(n *types.NativeNode, id, scopePath, scopedPath string) bool {
 	return n.FileURI == scopedPath || strings.HasSuffix(n.FileURI, scopedPath) ||
 		strings.HasPrefix(id, scopedPath) || strings.HasPrefix(id, scopePath)
@@ -242,7 +242,7 @@ func matchesFileScope(n *types.NativeNode, id, scopePath, scopedPath string) boo
 // for whole-graph queries and a lazy file-scoped load for ScopeFile queries.
 // It is wired into EngineCoordinator by request-layer callers because akg
 // cannot be imported from visualization_engine or product (import cycle via
-// stage4 → product).
+// link → product).
 func ParseGraphForQuery(graphPath string, opts types.QueryOptions) (*types.NativeGraph, error) {
 	if opts.Scope == types.ScopeFile && opts.ScopePath != "" {
 		return ParseGraphFileToNativeScoped(graphPath, opts.ScopePath)

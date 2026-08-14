@@ -45,7 +45,7 @@ type AppliedCorrection struct {
 // ranked results with every correction applied, plus the audit trail of
 // what was applied. The JSON shape embeds the query-result fields directly
 // and adds "corrections_applied" — backward compatible for consumers that
-// read the pre-Stage-10 shape.
+// read the pre-Phase-10 shape.
 type CorrectedResult struct {
 	*developer_memory.MemoryQueryResult
 	// CorrectionsApplied lists every correction that targeted an item in
@@ -325,7 +325,7 @@ func cloneQueryResult(res *developer_memory.MemoryQueryResult) *developer_memory
 }
 
 // cloneSlice copies a slice, preserving nil so an untouched result stays
-// byte-identical to the pre-Stage-10 query output.
+// byte-identical to the pre-Phase-10 query output.
 func cloneSlice[T any](in []T) []T {
 	if in == nil {
 		return nil

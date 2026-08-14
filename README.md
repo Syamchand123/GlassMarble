@@ -42,12 +42,12 @@ GlassMarble compiles your source code — across **14 languages** — into a sem
 │            Multi-Language Source Code                                │
 │  Go · Python · JS/TS · Java · C/C++ · C# · Ruby · PHP · Rust · ...  │
 └─────────────────────┬────────────────────────────────────────────────┘
-                      │  Stage 1–2: Tree-sitter Ingestion & GAST Normalization
+                      │  Ingestion–2: Tree-sitter Ingestion & GAST Normalization
                       ▼
 ┌──────────────────────────────────────────┐
 │         Code Property Graph (CPG)        │  AST + CFG + DFG + Call Graph
 └─────────────────────┬────────────────────┘
-                      │  Stage 3–4: Topology Mapping & Semantic Linking
+                      │  Aggregation–4: Topology Mapping & Semantic Linking
                       ▼
 ┌──────────────────────────────────────────┐
 │    Architecture Knowledge Graph (AKG)    │  W3C RDF-star Turtle · MVCC · WAL
@@ -64,14 +64,14 @@ GlassMarble compiles your source code — across **14 languages** — into a sem
 └──────────────────────────────────────────┘
 ```
 
-### The Four-Stage Analysis Pipeline
+### The Four-Phase Analysis Pipeline
 
-| Stage | Name | What it does |
+| Phase | Name | What it does |
 |---|---|---|
-| **Stage 1** | Tree-sitter Ingestion | Parses source files into Concrete Syntax Trees using native Tree-sitter grammars for each language. Supports incremental (git-diff) and full-scan modes. |
-| **Stage 2** | GAST Normalization | Coerces language-specific CST nodes into a unified **Generic AST (GAST)** — declarations, calls, types, fields — consistent across all 14 languages. Detects I/O primitives (`DATABASE`, `NETWORK_IO`, `DISK_IO`). |
-| **Stage 3** | Topology Aggregation | Clusters files into package/directory boundaries, resolves public/private namespace visibility, builds the call-queue and definition index. |
-| **Stage 4** | Semantic Graph Linking | Links calls to target functions (heuristic receiver matching + selector deconstruction), resolves interface implementations, builds CFG/DFG sub-graphs, propagates resource traits, detects concurrency forks. Commits the graph to the AKG via an MVCC transaction. |
+| **Ingestion** | Tree-sitter Ingestion | Parses source files into Concrete Syntax Trees using native Tree-sitter grammars for each language. Supports incremental (git-diff) and full-scan modes. |
+| **Normalization** | GAST Normalization | Coerces language-specific CST nodes into a unified **Generic AST (GAST)** — declarations, calls, types, fields — consistent across all 14 languages. Detects I/O primitives (`DATABASE`, `NETWORK_IO`, `DISK_IO`). |
+| **Aggregation** | Topology Aggregation | Clusters files into package/directory boundaries, resolves public/private namespace visibility, builds the call-queue and definition index. |
+| **Linking** | Semantic Graph Linking | Links calls to target functions (heuristic receiver matching + selector deconstruction), resolves interface implementations, builds CFG/DFG sub-graphs, propagates resource traits, detects concurrency forks. Commits the graph to the AKG via an MVCC transaction. |
 
 ### The AKG Database
 
@@ -187,16 +187,16 @@ gmb analyze [--dir <path>] [--full] [--workers <n>] [--commit <hash>] [--verbose
 | `--full` | `false` | Force full re-scan of every file. Default is incremental (git diff). |
 | `--workers` | auto | Number of parallel parser worker goroutines |
 | `--commit` | (working tree) | Git commit hash to associate with this analysis run. Empty (default) diffs the working tree against HEAD; a hash diffs that commit against its parent |
-| `--include-docs` | `false` | Run Stage 9 knowledge fusion (ADR/README/PR claims into developer memory) |
-| `--verbose` | `false` | Print stage-by-stage progress |
+| `--include-docs` | `false` | Run knowledge fusion (ADR/README/PR claims into developer memory) |
+| `--verbose` | `false` | Print phase-by-phase progress |
 
 **Incremental mode**: On git repositories with an existing `akg.json`, GlassMarble runs `git diff HEAD` and only re-parses changed files, merging the delta into the persisted graph. On the first run (no state file) or when `--full` is passed, every file is scanned.
 
-With `--stage5` (default `true`, human output only), analysis also runs architectural intelligence, persists the result to `.glassmarble/intelligence/latest.json`, stores snapshots in `.glassmarble/snapshots/`, and folds architectural change events into developer memory (`.glassmarble/memory/`). Re-analyzing the same tree is idempotent — events are never duplicated. These stages are non-fatal: failures warn and the graph commit still succeeds.
+With `--intelligence` (default `true`, human output only), analysis also runs architectural intelligence, persists the result to `.glassmarble/intelligence/latest.json`, stores snapshots in `.glassmarble/snapshots/`, and folds architectural change events into developer memory (`.glassmarble/memory/`). Re-analyzing the same tree is idempotent — events are never duplicated. These phases are non-fatal: failures warn and the graph commit still succeeds.
 
-With `--include-docs` (default `false`, opt-in because doc scanning and git-history walks are not free on large repositories), analysis also runs Stage 9 knowledge fusion: ADR files and READMEs are parsed into knowledge claims, PR/issue references in recent git history become file-level claims, and everything is appended to developer memory — queryable through `gmb memory --ask`. The `fusion:` section of `.glassmarble/config.yaml` tunes the doc globs, technology lexicon and git scan depth; re-analyzing the same tree appends nothing (idempotent).
+With `--include-docs` (default `false`, opt-in because doc scanning and git-history walks are not free on large repositories), analysis also runs knowledge fusion: ADR files and READMEs are parsed into knowledge claims, PR/issue references in recent git history become file-level claims, and everything is appended to developer memory — queryable through `gmb memory --ask`. The `fusion:` section of `.glassmarble/config.yaml` tunes the doc globs, technology lexicon and git scan depth; re-analyzing the same tree appends nothing (idempotent).
 
-After analysis, the Stage 10 learning layer refreshes the **project conventions store** (`.glassmarble/conventions/`): it replays all recorded corrections against the new memory state so every view stays self-corrected, and learns project-wide naming and intent conventions (configurable under `learning:` in `.glassmarble/config.yaml`). Corrections recorded with `gmb memory --correct` are the human feedback loop — see the `gmb memory` section below.
+After analysis, the convention-learning layer refreshes the **project conventions store** (`.glassmarble/conventions/`): it replays all recorded corrections against the new memory state so every view stays self-corrected, and learns project-wide naming and intent conventions (configurable under `learning:` in `.glassmarble/config.yaml`). Corrections recorded with `gmb memory --correct` are the human feedback loop — see the `gmb memory` section below.
 
 ---
 
@@ -215,7 +215,7 @@ gmb memory [--dir <path>] [--ask "<question>"] [--component <name>] [--json]
 | `--ask` | Deterministic ranked retrieval over components, claims, events and timeline (no LLM) |
 | `--component` | Longitudinal history of one component (substring match) plus its timeline |
 | `--json` | Emit the machine-readable document instead of the human report |
-| `--correct` | Record a Stage 10 learning correction (component state, event intent, or claim reason). The original value is captured automatically and appended to the `.glassmarble/memory/corrections.jsonl` audit trail |
+| `--correct` | Record a convention learning correction (component state, event intent, or claim reason). The original value is captured automatically and appended to the `.glassmarble/memory/corrections.jsonl` audit trail |
 | `--corrections` | Show the correction audit trail |
 
 Reasons are never invented: every claim is labelled by how it was established — `FACT` (observed from the graph diff), `EXPLICIT_REASON` (stated by a human in a commit/PR/issue/docs), `INFERENCE` (derived by GlassMarble), or `SPECULATION` (low-confidence guess).
@@ -600,10 +600,10 @@ internal/
 │   └── ontology.ttl              # RDF schema: classes, predicates, axioms
 │
 ├── code_analysis_engine/
-│   ├── stage1/                   # Tree-sitter ingestion; git-delta support
-│   ├── stage2/                   # GAST normalization; 14 language translators
-│   ├── stage3/                   # Topology mapping; namespace clustering
-│   └── stage4/                   # Semantic linking; CPG construction; graph commit
+│   ├── ingest/                   # Tree-sitter ingestion; git-delta support
+│   ├── ingest/                   # GAST normalization; 14 language translators
+│   ├── ingest/                   # Topology mapping; namespace clustering
+│   └── ingest/                   # Semantic linking; CPG construction; graph commit
 │       ├── call_linker.go        # Nested selector call resolution
 │       ├── interface_linker.go   # Duck-type interface matching (Go, TS, etc.)
 │       ├── cfg_linker.go         # Control-flow graph construction
@@ -611,10 +611,10 @@ internal/
 │       └── primitive_reasoner.go # DATABASE / NETWORK_IO trait propagation
 │
 ├── visualization_engine/
-│   ├── visualizer.go             # Engine coordinator (3-stage pipeline)
-│   ├── stage1/extractor.go       # SPARQL-like virtual subgraph extraction + BFS
-│   ├── stage2/aggregator.go      # Layout tree; Tarjan SCC cycle detection
-│   └── stage3/mermaid.go         # Mermaid.js markup renderer (31 diagram types)
+│   ├── visualizer.go             # Engine coordinator (3-phase pipeline)
+│   ├── ingest/extractor.go       # SPARQL-like virtual subgraph extraction + BFS
+│   ├── ingest/aggregator.go      # Layout tree; Tarjan SCC cycle detection
+│   └── ingest/mermaid.go         # Mermaid.js markup renderer (31 diagram types)
 │
 └── ai_engine/
     ├── engine.go                 # Public facade: New / Ask / AskAgent
@@ -643,7 +643,7 @@ Available on every command:
 |---|---|
 | `--root-dir <path>` | Override the repository root directory |
 | `--debug` | Enable verbose debug logging |
-| `--verbose`, `-v` | Print detailed stage-by-stage output |
+| `--verbose`, `-v` | Print detailed phase-by-phase output |
 | `--max-ttl-mb <n>` | Refuse to load or commit an AKG file larger than N MiB (0 = unlimited) |
 
 ---

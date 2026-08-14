@@ -3,7 +3,7 @@ package views
 import (
 	"fmt"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 )
 
@@ -58,7 +58,7 @@ func RenderDiff(commitHash string, schemaVersion int, graphVersion uint64, entri
 }
 
 // OutboundEdgeCount totals outbound edges (shared with diff/compare views).
-func OutboundEdgeCount(out map[string][]stage4.ResolvedEdge) int {
+func OutboundEdgeCount(out map[string][]link.ResolvedEdge) int {
 	n := 0
 	for _, edges := range out {
 		n += len(edges)

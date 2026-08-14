@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-func TestNewStageProgressViewTotalOne(t *testing.T) {
-	p := NewStageProgress("Tree-sitter Ingestion", 40)
+func TestNewPhaseProgressViewTotalOne(t *testing.T) {
+	p := NewPhaseProgress("Tree-sitter Ingestion", 40)
 	v := p.View()
 	if !strings.Contains(v, "Tree-sitter Ingestion") {
 		t.Errorf("view missing label:\n%s", v)
@@ -17,8 +17,8 @@ func TestNewStageProgressViewTotalOne(t *testing.T) {
 	}
 }
 
-func TestStageProgressMarkDoneRendersCheckmark(t *testing.T) {
-	p := NewStageProgress("Committing graph", 40)
+func TestPhaseProgressMarkDoneRendersCheckmark(t *testing.T) {
+	p := NewPhaseProgress("Committing graph", 40)
 	_ = p.SetProgress(0, 1)
 	if cmd := p.MarkDone(1234 * time.Millisecond); cmd == nil {
 		t.Fatal("MarkDone should return a cmd")
@@ -35,8 +35,8 @@ func TestStageProgressMarkDoneRendersCheckmark(t *testing.T) {
 	}
 }
 
-func TestStageProgressSetProgressPartial(t *testing.T) {
-	p := NewStageProgress("Semantic Linking", 40)
+func TestPhaseProgressSetProgressPartial(t *testing.T) {
+	p := NewPhaseProgress("Semantic Linking", 40)
 	cmd := p.SetProgress(2, 4)
 	if cmd == nil {
 		t.Fatal("SetProgress should return a spring animation cmd")
@@ -46,8 +46,8 @@ func TestStageProgressSetProgressPartial(t *testing.T) {
 	}
 }
 
-func TestStageProgressUpdateForwardsCmd(t *testing.T) {
-	p := NewStageProgress("Topology Aggregation", 40)
+func TestPhaseProgressUpdateForwardsCmd(t *testing.T) {
+	p := NewPhaseProgress("Topology Aggregation", 40)
 	cmd := p.SetProgress(1, 1)
 	// Feed the model its own spring FrameMsg; the resulting cmd may be non-nil
 	// (scheduling the next frame) or nil (spring settled).
@@ -58,8 +58,8 @@ func TestStageProgressUpdateForwardsCmd(t *testing.T) {
 	}
 }
 
-func TestStageProgressZeroWidthDefault(t *testing.T) {
-	p := NewStageProgress("Committing graph", 0)
+func TestPhaseProgressZeroWidthDefault(t *testing.T) {
+	p := NewPhaseProgress("Committing graph", 0)
 	if p.View() == "" {
 		t.Error("view should render with default width")
 	}

@@ -9,7 +9,7 @@ import (
 )
 
 // ResolveConflicts groups claims by fact identity — (subject, subjectID,
-// predicate) — and applies the Stage 9 conflict semantics (master plan §7.5):
+// predicate) — and applies the knowledge fusion conflict semantics (master plan §7.5):
 //
 //   - NEVER DELETE A CLAIM. Every claim survives resolution; the loser of a
 //     contradiction is marked HISTORICAL with a ValidUntil, never dropped.

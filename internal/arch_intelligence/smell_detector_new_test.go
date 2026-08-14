@@ -5,7 +5,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/config"
 )
 
@@ -20,18 +20,18 @@ func smellContext(graph *akg.CodePropertyGraph) *RuleContext {
 
 func TestSD01GodObject(t *testing.T) {
 	graph := akg.NewCodePropertyGraph("test")
-	graph.Nodes = graph.Nodes.Set("god", &stage4.ResolvedNode{ID: "god", Name: "GodClass", Kind: "STRUCT"})
+	graph.Nodes = graph.Nodes.Set("god", &link.ResolvedNode{ID: "god", Name: "GodClass", Kind: "STRUCT"})
 	// 20 distinct callers -> fan-in 20 > 15.
 	for i := 0; i < 20; i++ {
 		id := string(rune('A' + i))
-		graph.Nodes = graph.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Name: "Caller" + id})
-		addStructuralEdge(graph, id, "god", stage4.EdgeCalls)
+		graph.Nodes = graph.Nodes.Set(id, &link.ResolvedNode{ID: id, Name: "Caller" + id})
+		addStructuralEdge(graph, id, "god", link.EdgeCalls)
 	}
 	// 35 methods -> method count 35 > 30.
 	for i := 0; i < 35; i++ {
 		m := "m" + string(rune('a'+i%26)) + string(rune('a'+i/26))
-		graph.Nodes = graph.Nodes.Set(m, &stage4.ResolvedNode{ID: m, Kind: "FUNCTION"})
-		addStructuralEdge(graph, "god", m, stage4.EdgeHasReceiver)
+		graph.Nodes = graph.Nodes.Set(m, &link.ResolvedNode{ID: m, Kind: "FUNCTION"})
+		addStructuralEdge(graph, "god", m, link.EdgeHasReceiver)
 	}
 
 	smells := RunSmellDetectionContext(smellContext(graph))
@@ -54,17 +54,17 @@ func TestSD01GodObject(t *testing.T) {
 
 func TestSD01GodObject_NotDetected(t *testing.T) {
 	graph := akg.NewCodePropertyGraph("test")
-	graph.Nodes = graph.Nodes.Set("god", &stage4.ResolvedNode{ID: "god", Name: "SmallClass", Kind: "STRUCT"})
+	graph.Nodes = graph.Nodes.Set("god", &link.ResolvedNode{ID: "god", Name: "SmallClass", Kind: "STRUCT"})
 	for i := 0; i < 20; i++ {
 		id := string(rune('A' + i))
-		graph.Nodes = graph.Nodes.Set(id, &stage4.ResolvedNode{ID: id})
-		addStructuralEdge(graph, id, "god", stage4.EdgeCalls)
+		graph.Nodes = graph.Nodes.Set(id, &link.ResolvedNode{ID: id})
+		addStructuralEdge(graph, id, "god", link.EdgeCalls)
 	}
 	// Only 2 methods -> below threshold.
 	for i := 0; i < 2; i++ {
 		m := "m" + string(rune('a'+i))
-		graph.Nodes = graph.Nodes.Set(m, &stage4.ResolvedNode{ID: m, Kind: "FUNCTION"})
-		addStructuralEdge(graph, "god", m, stage4.EdgeHasReceiver)
+		graph.Nodes = graph.Nodes.Set(m, &link.ResolvedNode{ID: m, Kind: "FUNCTION"})
+		addStructuralEdge(graph, "god", m, link.EdgeHasReceiver)
 	}
 	for _, s := range RunSmellDetectionContext(smellContext(graph)) {
 		if s.Kind == archmodel.SmellGodObject {
@@ -76,11 +76,11 @@ func TestSD01GodObject_NotDetected(t *testing.T) {
 func TestSD02CyclicDependency(t *testing.T) {
 	graph := akg.NewCodePropertyGraph("test")
 	for _, id := range []string{"a", "b", "c"} {
-		graph.Nodes = graph.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: "FUNCTION"})
+		graph.Nodes = graph.Nodes.Set(id, &link.ResolvedNode{ID: id, Kind: "FUNCTION"})
 	}
-	addStructuralEdge(graph, "a", "b", stage4.EdgeCalls)
-	addStructuralEdge(graph, "b", "c", stage4.EdgeCalls)
-	addStructuralEdge(graph, "c", "a", stage4.EdgeCalls)
+	addStructuralEdge(graph, "a", "b", link.EdgeCalls)
+	addStructuralEdge(graph, "b", "c", link.EdgeCalls)
+	addStructuralEdge(graph, "c", "a", link.EdgeCalls)
 
 	found := false
 	for _, s := range RunSmellDetectionContext(smellContext(graph)) {
@@ -100,9 +100,9 @@ func TestSD03DeadCode(t *testing.T) {
 	graph := akg.NewCodePropertyGraph("test")
 	graph.Entrypoints = []string{"main"}
 	for _, id := range []string{"main", "a", "orphan"} {
-		graph.Nodes = graph.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: "FUNCTION", Name: id})
+		graph.Nodes = graph.Nodes.Set(id, &link.ResolvedNode{ID: id, Kind: "FUNCTION", Name: id})
 	}
-	addStructuralEdge(graph, "main", "a", stage4.EdgeCalls)
+	addStructuralEdge(graph, "main", "a", link.EdgeCalls)
 
 	found := false
 	for _, s := range RunSmellDetectionContext(smellContext(graph)) {
@@ -132,7 +132,7 @@ func TestSD04LayerViolation(t *testing.T) {
 	addNodeWithPath(graph, "d1", "internal/domain/x.go")
 	addNodeWithPath(graph, "d2", "internal/domain/y.go")
 	// Upward violation: domain -> cmd.
-	addStructuralEdge(graph, "d1", "c1", stage4.EdgeDependsOn)
+	addStructuralEdge(graph, "d1", "c1", link.EdgeDependsOn)
 
 	ctx := &RuleContext{
 		Graph:         NewGraphSnapshot(graph),
@@ -155,7 +155,7 @@ func TestSD04LayerViolation_NoLayers(t *testing.T) {
 	graph := akg.NewCodePropertyGraph("test")
 	addNodeWithPath(graph, "c1", "cmd/web/handler.go")
 	addNodeWithPath(graph, "d1", "internal/domain/x.go")
-	addStructuralEdge(graph, "d1", "c1", stage4.EdgeDependsOn)
+	addStructuralEdge(graph, "d1", "c1", link.EdgeDependsOn)
 
 	for _, s := range RunSmellDetectionContext(smellContext(graph)) {
 		if s.Kind == archmodel.SmellLayerViolation {
@@ -179,7 +179,7 @@ func TestSD05GodPackage(t *testing.T) {
 		{ComponentID: "comp_s3", Name: "s3", Ca: 0, Ce: 1, Weight: 2},
 	}
 	ctx := &RuleContext{
-		Graph:             &GraphSnapshot{NodeIDs: append(nodeIDs("big", 30), nodeIDs("s1", 2)...), Nodes: map[string]*stage4.ResolvedNode{}},
+		Graph:             &GraphSnapshot{NodeIDs: append(nodeIDs("big", 30), nodeIDs("s1", 2)...), Nodes: map[string]*link.ResolvedNode{}},
 		Components:        components,
 		ComponentCoupling: couplings,
 		Cfg:               config.DefaultIntelligenceConfig(),
@@ -211,7 +211,7 @@ func TestSD06TightCoupling(t *testing.T) {
 		couplings = append(couplings, ComponentCoupling{ComponentID: id, Name: id, Ca: 0, Ce: 0, Weight: 1})
 	}
 	ctx := &RuleContext{
-		Graph:             &GraphSnapshot{NodeIDs: nodeIDs("t", 5), Nodes: map[string]*stage4.ResolvedNode{}},
+		Graph:             &GraphSnapshot{NodeIDs: nodeIDs("t", 5), Nodes: map[string]*link.ResolvedNode{}},
 		Components:        comps,
 		ComponentCoupling: couplings,
 		Cfg:               config.DefaultIntelligenceConfig(),
@@ -243,7 +243,7 @@ func TestSD07UnstableAbstraction(t *testing.T) {
 		{ComponentID: "comp_b", Name: "b", Ca: 1, Ce: 0, Instability: 0, Weight: 3},
 	}
 	ctx := &RuleContext{
-		Graph:             &GraphSnapshot{NodeIDs: nodeIDs("u", 3), Nodes: map[string]*stage4.ResolvedNode{}},
+		Graph:             &GraphSnapshot{NodeIDs: nodeIDs("u", 3), Nodes: map[string]*link.ResolvedNode{}},
 		Components:        components,
 		ComponentCoupling: couplings,
 		Cfg:               config.DefaultIntelligenceConfig(),
@@ -266,9 +266,9 @@ func TestSD07UnstableAbstraction(t *testing.T) {
 func TestRunSmellDetection_Compat(t *testing.T) {
 	graph := akg.NewCodePropertyGraph("test")
 	for _, id := range []string{"a", "b"} {
-		graph.Nodes = graph.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: "FUNCTION"})
+		graph.Nodes = graph.Nodes.Set(id, &link.ResolvedNode{ID: id, Kind: "FUNCTION"})
 	}
-	addStructuralEdge(graph, "a", "b", stage4.EdgeCalls)
+	addStructuralEdge(graph, "a", "b", link.EdgeCalls)
 	smells := RunSmellDetection(graph, archmodel.ArchMetrics{})
 	if len(smells) != 0 {
 		t.Errorf("expected 0 smells on clean graph, got %d", len(smells))

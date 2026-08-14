@@ -66,7 +66,7 @@ func TestDetectStaleEntities_Components(t *testing.T) {
 }
 
 // TestDetectStaleEntities_CanonicalIDKeys pins that memory keyed by the
-// canonical component ID (the Stage 5D/8 convention for every event kind)
+// canonical component ID (the component inference/commit reasoning convention for every event kind)
 // is matched against the snapshot's component IDs, not just its names.
 func TestDetectStaleEntities_CanonicalIDKeys(t *testing.T) {
 	snap := &archmodel.ArchSnapshot{

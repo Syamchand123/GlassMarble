@@ -4,18 +4,18 @@ import (
 	"testing"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 // TestReplay_RoundTrip: the graph embedded in a snapshot must come back
 // structurally identical (no node/edge drift through JSON).
 func TestReplay_RoundTrip(t *testing.T) {
 	graph := akg.NewCodePropertyGraph("c1")
-	graph.Nodes = graph.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "A"})
-	graph.Nodes = graph.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "B"})
-	e1 := stage4.ResolvedEdge{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls, LineNumber: 1}
-	graph.OutboundEdges = graph.OutboundEdges.Set("a", []stage4.ResolvedEdge{e1})
-	graph.InboundEdges = graph.InboundEdges.Set("b", []stage4.ResolvedEdge{e1})
+	graph.Nodes = graph.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "A"})
+	graph.Nodes = graph.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "B"})
+	e1 := link.ResolvedEdge{SourceID: "a", TargetID: "b", Type: link.EdgeCalls, LineNumber: 1}
+	graph.OutboundEdges = graph.OutboundEdges.Set("a", []link.ResolvedEdge{e1})
+	graph.InboundEdges = graph.InboundEdges.Set("b", []link.ResolvedEdge{e1})
 
 	snap, err := BuildSnapshot(SnapshotInput{Graph: graph, CommitHash: "c1", Timestamp: snapBaseTime})
 	if err != nil {

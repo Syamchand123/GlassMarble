@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
@@ -59,7 +59,7 @@ state always stays verified.`,
 // confirmation line).
 func countGraphEdges(graph *akg.CodePropertyGraph) int {
 	count := 0
-	graph.OutboundEdges.Iterate(func(_ string, edges []stage4.ResolvedEdge) {
+	graph.OutboundEdges.Iterate(func(_ string, edges []link.ResolvedEdge) {
 		count += len(edges)
 	})
 	return count

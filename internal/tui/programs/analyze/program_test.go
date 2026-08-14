@@ -39,57 +39,57 @@ func TestHumanBytes(t *testing.T) {
 	}
 }
 
-func TestStageStartOutOfRange(t *testing.T) {
+func TestPhaseStartOutOfRange(t *testing.T) {
 	m := newModel(Options{}, nil)
-	// A stage index outside [1,5] must not panic and must not flip running.
+	// A phase index outside [1,5] must not panic and must not flip running.
 	for _, bad := range []int{0, 6, 99, -1} {
-		next, cmd := m.Update(StageStartMsg{stage: bad, name: "bogus"})
+		next, cmd := m.Update(PhaseStartMsg{phase: bad, name: "bogus"})
 		m = next.(model)
 		if cmd != nil {
-			t.Errorf("stage %d returned a cmd, want nil", bad)
+			t.Errorf("phase %d returned a cmd, want nil", bad)
 		}
-		for i := range m.stages {
-			if m.stages[i].running {
-				t.Errorf("stage %d marked running for bad stage msg %d", i, bad)
+		for i := range m.phases {
+			if m.phases[i].running {
+				t.Errorf("phase %d marked running for bad phase msg %d", i, bad)
 			}
 		}
 	}
 }
 
-func TestStageCompleteExceedsTotalMarksDone(t *testing.T) {
+func TestPhaseCompleteExceedsTotalMarksDone(t *testing.T) {
 	m := newModel(Options{}, nil)
-	next, _ := m.Update(StageStartMsg{stage: 1, name: "Tree-sitter Ingestion"})
+	next, _ := m.Update(PhaseStartMsg{phase: 1, name: "Tree-sitter Ingestion"})
 	m = next.(model)
-	if !m.stages[0].running {
-		t.Fatal("stage 1 should be running after StageStartMsg")
+	if !m.phases[0].running {
+		t.Fatal("phase 1 should be running after PhaseStartMsg")
 	}
-	next, cmd := m.Update(StageCompleteMsg{stage: 1, current: 10, total: 5})
+	next, cmd := m.Update(PhaseCompleteMsg{phase: 1, current: 10, total: 5})
 	m = next.(model)
 	if cmd == nil {
 		t.Fatal("expected a MarkDone command")
 	}
-	if !m.stages[0].progress.IsDone() {
-		t.Error("stage 1 should be marked done when current >= total")
+	if !m.phases[0].progress.IsDone() {
+		t.Error("phase 1 should be marked done when current >= total")
 	}
-	if m.stages[0].running {
-		t.Error("stage 1 should no longer be running after completion")
+	if m.phases[0].running {
+		t.Error("phase 1 should no longer be running after completion")
 	}
 }
 
-func TestStageCompletePartialKeepsRunning(t *testing.T) {
+func TestPhaseCompletePartialKeepsRunning(t *testing.T) {
 	m := newModel(Options{}, nil)
-	next, _ := m.Update(StageStartMsg{stage: 2, name: "GAST Normalization"})
+	next, _ := m.Update(PhaseStartMsg{phase: 2, name: "GAST Normalization"})
 	m = next.(model)
-	next, cmd := m.Update(StageCompleteMsg{stage: 2, current: 3, total: 10})
+	next, cmd := m.Update(PhaseCompleteMsg{phase: 2, current: 3, total: 10})
 	m = next.(model)
 	if cmd == nil {
 		t.Fatal("expected a SetProgress command for a partial update")
 	}
-	if m.stages[1].progress.IsDone() {
-		t.Error("partial progress must not mark the stage done")
+	if m.phases[1].progress.IsDone() {
+		t.Error("partial progress must not mark the phase done")
 	}
-	if !m.stages[1].running {
-		t.Error("stage 2 should remain running after a partial update")
+	if !m.phases[1].running {
+		t.Error("phase 2 should remain running after a partial update")
 	}
 }
 
@@ -134,11 +134,11 @@ func TestTickCmdProducesTickMsg(t *testing.T) {
 	}
 }
 
-func TestNewModelInitializesAllStages(t *testing.T) {
+func TestNewModelInitializesAllPhases(t *testing.T) {
 	m := newModel(Options{}, nil)
-	for i := range m.stages {
-		if m.stages[i].progress.View() == "" {
-			t.Errorf("stage %d progress has empty view", i)
+	for i := range m.phases {
+		if m.phases[i].progress.View() == "" {
+			t.Errorf("phase %d progress has empty view", i)
 		}
 	}
 }

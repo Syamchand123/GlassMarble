@@ -19,9 +19,9 @@ var ErrNotUndoable = errors.New("learning: correction kind cannot be auto-revert
 // that is not in the log.
 var ErrNotFound = errors.New("learning: correction not found in log")
 
-// Learner is the Stage 10 facade. It owns the append-only correction log
+// Learner is the convention learning facade. It owns the append-only correction log
 // and knows how to overlay it onto memory query results and aggregates —
-// the single entry point the CLI and (later) Stage 12 evidence retrieval
+// the single entry point the CLI and (later) evidence retrieval evidence retrieval
 // use. It NEVER writes to the source-of-truth memory WALs.
 type Learner struct {
 	store *Store

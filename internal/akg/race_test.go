@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -16,7 +16,7 @@ func TestConcurrentReadWrite_NoRace(t *testing.T) {
 	// Add 100 nodes
 	for i := 0; i < 100; i++ {
 		id := fmt.Sprintf("node_%d", i)
-		graph.Nodes = graph.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: "FUNCTION", Name: id})
+		graph.Nodes = graph.Nodes.Set(id, &link.ResolvedNode{ID: id, Kind: "FUNCTION", Name: id})
 		existing, _ := graph.KindIndex.Get("FUNCTION")
 		newSet := make(map[string]bool, len(existing)+1)
 		for k, v := range existing {
@@ -37,7 +37,7 @@ func TestConcurrentReadWrite_NoRace(t *testing.T) {
 				graph.SafeGetOutboundEdges("node_0")
 				graph.SafeGetNodesByKind("FUNCTION")
 				graph.SafeDetectCycles()
-				graph.SafeQuery(stage4.QueryFilter{Kind: "FUNCTION"})
+				graph.SafeQuery(link.QueryFilter{Kind: "FUNCTION"})
 			}
 		}()
 	}
@@ -47,10 +47,10 @@ func TestConcurrentReadWrite_NoRace(t *testing.T) {
 
 func TestSafeMethods_Basic(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "STRUCT", Name: "A"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "STRUCT", Name: "B"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.InboundEdges = g.InboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "STRUCT", Name: "A"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "STRUCT", Name: "B"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	g.InboundEdges = g.InboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
 	g.KindIndex = g.KindIndex.Set("STRUCT", map[string]bool{"a": true, "b": true})
 
 	node, ok := g.SafeGetNode("a")
@@ -81,10 +81,10 @@ func TestSafeMethods_Basic(t *testing.T) {
 	path := g.SafeFindPath("a", "b", 10)
 	assert.Equal(t, []string{"a", "b"}, path)
 
-	pat := g.SafeGetNodesByPattern(stage4.EdgeCalls, "b")
+	pat := g.SafeGetNodesByPattern(link.EdgeCalls, "b")
 	assert.Len(t, pat, 1)
 
-	q := g.SafeQuery(stage4.QueryFilter{Kind: "STRUCT"})
+	q := g.SafeQuery(link.QueryFilter{Kind: "STRUCT"})
 	assert.Len(t, q, 2)
 }
 
@@ -107,8 +107,8 @@ func TestConcurrentDeltaTransactions_NoRace(t *testing.T) {
 			defer wg.Done()
 			for c := 0; c < commitsPerWorker; c++ {
 				id := fmt.Sprintf("w%d_c%d", worker, c)
-				payload := stage4.NewStage4Output("hash")
-				payload.GraphNodes[id] = &stage4.ResolvedNode{ID: id, Kind: "FUNCTION", Name: id}
+				payload := link.NewLinkOutput("hash")
+				payload.GraphNodes[id] = &link.ResolvedNode{ID: id, Kind: "FUNCTION", Name: id}
 				if err := tm.ExecuteDeltaTransaction(payload, []string{"f.go"}); err != nil {
 					t.Errorf("concurrent delta failed: %v", err)
 					return
@@ -145,11 +145,11 @@ func TestConcurrentReadersWithReasonerCommits_NoRace(t *testing.T) {
 
 	// Seed a base graph so the shadow shares unchanged nodes with the active
 	// snapshot (the pre-fix race condition).
-	base := stage4.NewStage4Output("base")
+	base := link.NewLinkOutput("base")
 	for i := 0; i < 50; i++ {
 		id := fmt.Sprintf("svc_%d", i)
-		base.GraphNodes[id] = &stage4.ResolvedNode{ID: id, Kind: "CLASS", Name: "Service" + fmt.Sprint(i)}
-		base.OutboundEdges[id] = []stage4.ResolvedEdge{{SourceID: id, TargetID: "svc_0", Type: stage4.EdgeCalls, LineNumber: i}}
+		base.GraphNodes[id] = &link.ResolvedNode{ID: id, Kind: "CLASS", Name: "Service" + fmt.Sprint(i)}
+		base.OutboundEdges[id] = []link.ResolvedEdge{{SourceID: id, TargetID: "svc_0", Type: link.EdgeCalls, LineNumber: i}}
 	}
 	require.NoError(t, tm.ExecuteDeltaTransaction(base, []string{"base.go"}))
 
@@ -166,8 +166,8 @@ func TestConcurrentReadersWithReasonerCommits_NoRace(t *testing.T) {
 			<-start
 			for j := 0; j < 500; j++ {
 				snap := tm.GetActiveSnapshot()
-				snap.SafeQuery(stage4.QueryFilter{Kind: "CLASS"})
-				snap.SafeQuery(stage4.QueryFilter{PropertyRegex: map[string]string{"pagerank": ".+"}})
+				snap.SafeQuery(link.QueryFilter{Kind: "CLASS"})
+				snap.SafeQuery(link.QueryFilter{PropertyRegex: map[string]string{"pagerank": ".+"}})
 				if n, ok := snap.SafeGetNode("svc_0"); ok {
 					_ = n.Properties["macro_rules"]
 				}
@@ -183,10 +183,10 @@ func TestConcurrentReadersWithReasonerCommits_NoRace(t *testing.T) {
 		go func(commit int) {
 			defer wg.Done()
 			<-start
-			payload := stage4.NewStage4Output("hash")
+			payload := link.NewLinkOutput("hash")
 			id := fmt.Sprintf("new_svc_%d", commit)
-			payload.GraphNodes[id] = &stage4.ResolvedNode{ID: id, Kind: "CLASS", Name: "NewService" + fmt.Sprint(commit)}
-			payload.OutboundEdges[id] = []stage4.ResolvedEdge{{SourceID: id, TargetID: "svc_0", Type: stage4.EdgeCalls, LineNumber: commit}}
+			payload.GraphNodes[id] = &link.ResolvedNode{ID: id, Kind: "CLASS", Name: "NewService" + fmt.Sprint(commit)}
+			payload.OutboundEdges[id] = []link.ResolvedEdge{{SourceID: id, TargetID: "svc_0", Type: link.EdgeCalls, LineNumber: commit}}
 			if err := tm.ExecuteDeltaTransaction(payload, []string{"new.go"}); err != nil {
 				t.Errorf("concurrent delta failed: %v", err)
 			}

@@ -6,7 +6,7 @@ import (
 	"sort"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 // akgTools builds the AKG query tools. Every handler operates on the live
@@ -66,7 +66,7 @@ func akgTools() []Tool {
 			}),
 			Handler: func(ctx context.Context, env *Env, args map[string]any) (any, error) {
 				return withSnapshot(env, func(snap *akg.CodePropertyGraph) (any, error) {
-					filter := stage4.QueryFilter{
+					filter := link.QueryFilter{
 						Kind:         strArg(args, "kind", ""),
 						NameContains: strArg(args, "name_contains", ""),
 						Primitive:    strArg(args, "primitive", ""),
@@ -78,7 +78,7 @@ func akgTools() []Tool {
 					}
 					nodes := snap.Query(filter)
 					if nodes == nil {
-						nodes = []*stage4.ResolvedNode{}
+						nodes = []*link.ResolvedNode{}
 					}
 					out := make([]nodeBrief, 0, len(nodes))
 					for _, n := range nodes {
@@ -132,7 +132,7 @@ func akgTools() []Tool {
 					limit := intArg(args, "limit", 50, 1, 200)
 					predicate := strArg(args, "predicate", "")
 
-					var edges []stage4.ResolvedEdge
+					var edges []link.ResolvedEdge
 					switch direction {
 					case "in":
 						edges = snap.GetInboundEdges(id)
@@ -340,14 +340,14 @@ func akgTools() []Tool {
 						Out    int       `json:"out"`
 					}
 					hot := make([]score, 0, snap.Nodes.Len())
-					snap.Nodes.Iterate(func(id string, _ *stage4.ResolvedNode) {
+					snap.Nodes.Iterate(func(id string, _ *link.ResolvedNode) {
 						hot = append(hot, score{Node: brief(mustNode(snap, id)), Degree: 0})
 					})
 					// Compute degrees via the adjacency maps.
 					indeg := map[string]int{}
 					outdeg := map[string]int{}
-					snap.InboundEdges.Iterate(func(id string, edges []stage4.ResolvedEdge) { indeg[id] = len(edges) })
-					snap.OutboundEdges.Iterate(func(id string, edges []stage4.ResolvedEdge) { outdeg[id] = len(edges) })
+					snap.InboundEdges.Iterate(func(id string, edges []link.ResolvedEdge) { indeg[id] = len(edges) })
+					snap.OutboundEdges.Iterate(func(id string, edges []link.ResolvedEdge) { outdeg[id] = len(edges) })
 					for i := range hot {
 						hot[i].In = indeg[hot[i].Node.ID]
 						hot[i].Out = outdeg[hot[i].Node.ID]
@@ -575,7 +575,7 @@ type edgeInfo struct {
 	IsCycle    bool    `json:"is_cycle,omitempty"`
 }
 
-func brief(n *stage4.ResolvedNode) nodeBrief {
+func brief(n *link.ResolvedNode) nodeBrief {
 	return nodeBrief{
 		ID:        n.ID,
 		Name:      n.Name,
@@ -586,11 +586,11 @@ func brief(n *stage4.ResolvedNode) nodeBrief {
 	}
 }
 
-func mustNode(snap *akg.CodePropertyGraph, id string) *stage4.ResolvedNode {
+func mustNode(snap *akg.CodePropertyGraph, id string) *link.ResolvedNode {
 	if n, ok := snap.GetNode(id); ok {
 		return n
 	}
-	return &stage4.ResolvedNode{ID: id, Name: id, Kind: "UNKNOWN"}
+	return &link.ResolvedNode{ID: id, Name: id, Kind: "UNKNOWN"}
 }
 
 func displayName(snap *akg.CodePropertyGraph, id string) string {
@@ -613,7 +613,7 @@ func resolveBriefs(snap *akg.CodePropertyGraph, ids []string, limit int) []nodeB
 
 func edgeCount(snap *akg.CodePropertyGraph) int {
 	total := 0
-	snap.OutboundEdges.Iterate(func(_ string, edges []stage4.ResolvedEdge) { total += len(edges) })
+	snap.OutboundEdges.Iterate(func(_ string, edges []link.ResolvedEdge) { total += len(edges) })
 	return total
 }
 

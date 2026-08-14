@@ -17,10 +17,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// snapshotCmd manages architecture snapshots (master plan §5.5 / Stage 7).
+// snapshotCmd manages architecture snapshots (master plan §5.5 / architecture timeline).
 // Exactly one mode per invocation:
 //
-//	--create            run Stage 5 at HEAD and store a new snapshot
+//	--create            run architecture intelligence at HEAD and store a new snapshot
 //	--list              list indexed snapshots
 //	--at <ref>          show the state at a commit/ref (nearest snapshot)
 //	--diff <ref> <ref>  architectural diff between two snapshots
@@ -32,7 +32,7 @@ import (
 var snapshotCmd = &cobra.Command{
 	Use:   "snapshot",
 	Short: "Create and query point-in-time architecture snapshots",
-	Long: `Snapshots capture the full architecture state (graph + Stage 5 analysis)
+	Long: `Snapshots capture the full architecture state (graph + Architecture Intelligence analysis)
 at a commit. This command creates and inspects them.
 
   gmb snapshot --create                     # snapshot at HEAD
@@ -111,7 +111,7 @@ branches, HEAD) via their author timestamp.`,
 	},
 }
 
-// runSnapshotCreate runs Stage 5 on the committed graph at HEAD and stores a
+// runSnapshotCreate runs architecture intelligence on the committed graph at HEAD and stores a
 // new snapshot (skip-writing when the topology is unchanged).
 func runSnapshotCreate(cmd *cobra.Command, store *arch_timeline.SnapshotStore, storageDir, absDir string, noGraph, asJSON bool) error {
 	commitHash, err := git.GetHEADCommitHash(absDir)
@@ -351,7 +351,7 @@ func parseRefList(s string) []string {
 
 func init() {
 	snapshotCmd.Flags().String("dir", ".", "Directory containing the .glassmarble/ database")
-	snapshotCmd.Flags().Bool("create", false, "Run Stage 5 at HEAD and store a new snapshot")
+	snapshotCmd.Flags().Bool("create", false, "Run architecture intelligence at HEAD and store a new snapshot")
 	snapshotCmd.Flags().Bool("list", false, "List indexed snapshots")
 	snapshotCmd.Flags().String("at", "", "Show the state at a commit/ref (nearest snapshot at or before it)")
 	snapshotCmd.Flags().String("diff", "", "Architectural diff between two refs: --diff '<base> <head>'")

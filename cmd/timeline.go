@@ -15,7 +15,7 @@ import (
 )
 
 // timelineCmd shows the architecture evolution timeline (master plan §5.5 /
-// Stage 7). It reads the Stage 6 memory fast path (.glassmarble/memory/)
+// architecture timeline). It reads the developer memory fast path (.glassmarble/memory/)
 // directly — no AKG replay, so the command stays well under the 200ms budget.
 var timelineCmd = &cobra.Command{
 	Use:   "timeline",

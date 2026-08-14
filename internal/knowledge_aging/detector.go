@@ -9,7 +9,7 @@ import (
 
 // StaleEntity is re-exported for callers that want the type without
 // importing archmodel; the canonical definition lives in archmodel so all
-// stages share one type (archmodel.StaleEntity).
+// phases share one type (archmodel.StaleEntity).
 type StaleEntity = archmodel.StaleEntity
 
 // DetectStaleEntities finds memory that is no longer backed by the current
@@ -18,7 +18,7 @@ type StaleEntity = archmodel.StaleEntity
 // "Stale" means: a component (or the entity a claim refers to) is tracked
 // in developer memory but is absent from the current snapshot. Presence is
 // decided against the snapshot's detected components and pattern members.
-// This is the deterministic input to the Stage 11 state transitions —
+// This is the deterministic input to the knowledge aging state transitions —
 // nothing here invents anything, every result names the snapshot it was
 // checked against.
 //
@@ -121,7 +121,7 @@ func indexPresentEntities(snap *archmodel.ArchSnapshot) presentEntities {
 		if comp.Name != "" {
 			p.components[comp.Name] = struct{}{}
 		}
-		// Memory keys are canonical component IDs (Stage 5D/8 events use
+		// Memory keys are canonical component IDs (component inference/commit reasoning events use
 		// them for every kind); index the ID too so ID-keyed memory is
 		// never mis-flagged as stale or missing.
 		if comp.ID != "" {

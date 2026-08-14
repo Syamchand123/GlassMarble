@@ -6,7 +6,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/developer_memory"
 	"github.com/Syamchand123/GlassMarble/internal/evidence"
 )
@@ -14,14 +14,14 @@ import (
 func testGraph(t *testing.T) *akg.CodePropertyGraph {
 	t.Helper()
 	graph := &akg.CodePropertyGraph{
-		Nodes:         akg.NewCowMap[string, *stage4.ResolvedNode](),
+		Nodes:         akg.NewCowMap[string, *link.ResolvedNode](),
 		FileNodeIndex: akg.NewCowMap[string, map[string]bool](),
 	}
-	graph.Nodes = graph.Nodes.Set("1", &stage4.ResolvedNode{Kind: "STRUCT", Name: "AuthService"})
-	graph.Nodes = graph.Nodes.Set("2", &stage4.ResolvedNode{Kind: "STRUCT", Name: "UserService"})
-	graph.Nodes = graph.Nodes.Set("3", &stage4.ResolvedNode{Kind: "STRUCT", Name: "PaymentHandler"})
-	graph.Nodes = graph.Nodes.Set("4", &stage4.ResolvedNode{Kind: "STRUCT", Name: "Order"}) // no suffix
-	graph.Nodes = graph.Nodes.Set("5", &stage4.ResolvedNode{Kind: "MODULE", Name: "checkout"})
+	graph.Nodes = graph.Nodes.Set("1", &link.ResolvedNode{Kind: "STRUCT", Name: "AuthService"})
+	graph.Nodes = graph.Nodes.Set("2", &link.ResolvedNode{Kind: "STRUCT", Name: "UserService"})
+	graph.Nodes = graph.Nodes.Set("3", &link.ResolvedNode{Kind: "STRUCT", Name: "PaymentHandler"})
+	graph.Nodes = graph.Nodes.Set("4", &link.ResolvedNode{Kind: "STRUCT", Name: "Order"}) // no suffix
+	graph.Nodes = graph.Nodes.Set("5", &link.ResolvedNode{Kind: "MODULE", Name: "checkout"})
 
 	graph.FileNodeIndex = graph.FileNodeIndex.Set("internal/domain/auth_test.go", nil)
 	graph.FileNodeIndex = graph.FileNodeIndex.Set("internal/domain/order.go", nil)
@@ -71,10 +71,10 @@ func TestLearnConventionsFromGraph(t *testing.T) {
 func TestLearnConventionsMinEvidenceGate(t *testing.T) {
 	// Only one service and one test file → nothing passes the evidence gate.
 	graph := &akg.CodePropertyGraph{
-		Nodes:         akg.NewCowMap[string, *stage4.ResolvedNode](),
+		Nodes:         akg.NewCowMap[string, *link.ResolvedNode](),
 		FileNodeIndex: akg.NewCowMap[string, map[string]bool](),
 	}
-	graph.Nodes = graph.Nodes.Set("1", &stage4.ResolvedNode{Kind: "STRUCT", Name: "AuthService"})
+	graph.Nodes = graph.Nodes.Set("1", &link.ResolvedNode{Kind: "STRUCT", Name: "AuthService"})
 	graph.FileNodeIndex = graph.FileNodeIndex.Set("x_test.go", nil)
 	graph.FileNodeIndex = graph.FileNodeIndex.Set("main.go", nil)
 
@@ -97,7 +97,7 @@ func TestLearnConventionsCrossPlatformPaths(t *testing.T) {
 	// D7 regression: the graph can store Windows-style paths; the learner
 	// must normalize them before splitting.
 	graph := &akg.CodePropertyGraph{
-		Nodes:         akg.NewCowMap[string, *stage4.ResolvedNode](),
+		Nodes:         akg.NewCowMap[string, *link.ResolvedNode](),
 		FileNodeIndex: akg.NewCowMap[string, map[string]bool](),
 	}
 	graph.FileNodeIndex = graph.FileNodeIndex.Set(`internal\domain\auth_test.go`, nil)
@@ -181,7 +181,7 @@ func TestLearnConventionsNilGraphAndEmpty(t *testing.T) {
 	}
 
 	empty := &akg.CodePropertyGraph{
-		Nodes:         akg.NewCowMap[string, *stage4.ResolvedNode](),
+		Nodes:         akg.NewCowMap[string, *link.ResolvedNode](),
 		FileNodeIndex: akg.NewCowMap[string, map[string]bool](),
 	}
 	conv = LearnConventions(empty, nil)

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 // TestGraphJSONRoundTripFidelity (Phase B parity gate, JSON-only since Phase D)
@@ -33,7 +33,7 @@ func TestGraphJSONRoundTripFidelity(t *testing.T) {
 	}
 
 	// Node set parity (incl. properties + file specs).
-	fromJSON.Nodes.Iterate(func(id string, jn *stage4.ResolvedNode) {
+	fromJSON.Nodes.Iterate(func(id string, jn *link.ResolvedNode) {
 		src, ok := g.Nodes.Get(id)
 		if !ok {
 			t.Errorf("JSON node %q not in source graph", id)
@@ -100,9 +100,9 @@ func TestJSONStatePersistsAndReloads(t *testing.T) {
 
 	g := NewCodePropertyGraph("dual")
 	g.Version = 9
-	g.Nodes = g.Nodes.Set("p", &stage4.ResolvedNode{ID: "p", Kind: "STRUCT", Name: "P", FileSpec: stage4.LocationMeta{Path: "p.go"}})
-	g.Nodes = g.Nodes.Set("q", &stage4.ResolvedNode{ID: "q", Kind: "STRUCT", Name: "Q", FileSpec: stage4.LocationMeta{Path: "q.go"}})
-	addEdgeToGraph(g, "p", "q", stage4.EdgeComposes, 4)
+	g.Nodes = g.Nodes.Set("p", &link.ResolvedNode{ID: "p", Kind: "STRUCT", Name: "P", FileSpec: link.LocationMeta{Path: "p.go"}})
+	g.Nodes = g.Nodes.Set("q", &link.ResolvedNode{ID: "q", Kind: "STRUCT", Name: "Q", FileSpec: link.LocationMeta{Path: "q.go"}})
+	addEdgeToGraph(g, "p", "q", link.EdgeComposes, 4)
 
 	if err := tm.ReplaceGraph(g); err != nil {
 		t.Fatalf("ReplaceGraph failed: %v", err)
@@ -142,7 +142,7 @@ func TestJSONStatePersistsAndReloads(t *testing.T) {
 // of the TTL serializer's parallel-edge dedup.
 func edgeTripleCanonicalSet(g *CodePropertyGraph) map[string]int {
 	out := make(map[string]int)
-	g.OutboundEdges.Iterate(func(_ string, edges []stage4.ResolvedEdge) {
+	g.OutboundEdges.Iterate(func(_ string, edges []link.ResolvedEdge) {
 		for _, e := range edges {
 			key := e.SourceID + "|" + string(e.Type) + "|" + e.TargetID
 			if e.LineNumber > out[key] {

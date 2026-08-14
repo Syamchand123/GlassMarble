@@ -47,7 +47,7 @@ const (
 
 	// CorrectionKindAccept accepts/confirms an inference: the item stays
 	// visible and is flagged as confirmed. Feeds preferred-pattern
-	// learning. (Stage 10's inputs list "accepted/rejected inferences";
+	// learning. (convention learning's inputs list "accepted/rejected inferences";
 	// REJECT alone could not express confirmation.)
 	CorrectionKindAccept CorrectionKind = "ACCEPT"
 )

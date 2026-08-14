@@ -12,8 +12,8 @@ import (
 )
 
 // MemoryBuilder processes ArchEvents and updates the persistent developer
-// memory. It is the Stage 6 ingestion entry point, called after Stage 5D
-// event generation (and, later, Stage 8 commit reasoning).
+// memory. It is the developer memory ingestion entry point, called after component inference
+// event generation (and, later, commit reasoning).
 //
 // IDEMPOTENCY: event IDs are deterministic (sha256 of commit + kind +
 // affected ids, computed by the event producers). ProcessEvents appends an
@@ -111,7 +111,7 @@ func (b *MemoryBuilder) ProcessEvents(events []archmodel.ArchEvent) (int, error)
 	return appended, nil
 }
 
-// validateEvent enforces the Stage 6 evidence discipline. An event without
+// validateEvent enforces the developer memory evidence discipline. An event without
 // evidence, without an ID, or without a timestamp is rejected before any
 // write happens.
 func validateEvent(e archmodel.ArchEvent) error {
@@ -156,7 +156,7 @@ func applyEvent(mem *DeveloperMemory, ev archmodel.ArchEvent) {
 		case archmodel.EventServiceRemoved:
 			history.State = StateRemoved
 		case archmodel.EventStateChanged:
-			// Stage 11 aging transitions are replayable: the new state is
+			// knowledge aging aging transitions are replayable: the new state is
 			// carried in the well-known "state=<STATE>" tag, so rebuilding
 			// memory from the WAL reproduces aging states exactly.
 			if s := archmodel.StateFromTags(ev.Tags); s != "" {

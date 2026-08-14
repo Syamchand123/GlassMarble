@@ -14,12 +14,12 @@ Modern software systems suffer from **documentation drift**: architecture diagra
 ┌─────────────────────────────────┐
 │       Multi-Language Code       │
 └────────────────┬────────────────┘
-                 │ (Stage 1-2: Tree-sitter Ingestion & GAST normalization)
+                 │ (Ingestion-2: Tree-sitter Ingestion & GAST normalization)
                  ▼
 ┌─────────────────────────────────┐
 │     Code Property Graph (CPG)    │
 └────────────────┬────────────────┘
-                 │ (Stage 3-4: Topology & Semantic Binding)
+                 │ (Aggregation-4: Topology & Semantic Binding)
                  ▼
 ┌─────────────────────────────────┐
 │  Architecture Knowledge Graph   │ (Committed as W3C RDF-star / Turtle)
@@ -89,51 +89,51 @@ Manages serialization, transactions, thread locks, and recovery of the W3C Turtl
 Translates codebase repositories into semantic CPG structures.
 
 *   [`integration_test.go`](file:///G:/GlassMarble/internal/code_analysis_engine/integration_test.go):
-    *   Orchestrates integration tests running Stage 1 through 4 end-to-end to verify language parsing and semantic link bindings.
+    *   Orchestrates integration tests running Ingestion through 4 end-to-end to verify language parsing and semantic link bindings.
 
-*   `stage1/` (Lexical & Structural AST Ingestion)
-    *   [`engine.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage1/engine.go): Initializes and controls multi-threaded execution pools for file ingestion.
-    *   [`worker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage1/worker.go): Runs background parser workers that fetch files from queues and traverse CSTs.
-    *   [`git.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage1/git.go): Resolves local directories change lists and filters out unchanged files from Stage 1 ingestion scans.
-    *   [`languages.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage1/languages.go): Registers grammar identifiers, extensions lists, declarations, imports, and call tokens for the 13 supported languages.
-    *   [`lookup.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage1/lookup.go): Resolves directory symbols namespaces.
-    *   [`parser.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage1/parser.go): Interfaces with tree-sitter bindings, processes nodes, and extracts raw lexical tokens.
-    *   [`walker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage1/walker.go): Traverses tree-sitter AST nodes recursively to normalize parent-child indexing.
-    *   [`type.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage1/type.go): Defines structures for `IngestionResult` and `RawToken`.
-    *   [`stage1_test.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage1/stage1_test.go): Unit tests verifying parser walker outputs.
+*   `ingest/` (Lexical & Structural AST Ingestion)
+    *   [`engine.go`](file:///G:/GlassMarble/internal/code_analysis_engine/ingest/engine.go): Initializes and controls multi-threaded execution pools for file ingestion.
+    *   [`worker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/ingest/worker.go): Runs background parser workers that fetch files from queues and traverse CSTs.
+    *   [`git.go`](file:///G:/GlassMarble/internal/code_analysis_engine/ingest/git.go): Resolves local directories change lists and filters out unchanged files from ingestion scans.
+    *   [`languages.go`](file:///G:/GlassMarble/internal/code_analysis_engine/ingest/languages.go): Registers grammar identifiers, extensions lists, declarations, imports, and call tokens for the 13 supported languages.
+    *   [`lookup.go`](file:///G:/GlassMarble/internal/code_analysis_engine/ingest/lookup.go): Resolves directory symbols namespaces.
+    *   [`parser.go`](file:///G:/GlassMarble/internal/code_analysis_engine/ingest/parser.go): Interfaces with tree-sitter bindings, processes nodes, and extracts raw lexical tokens.
+    *   [`walker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/ingest/walker.go): Traverses tree-sitter AST nodes recursively to normalize parent-child indexing.
+    *   [`type.go`](file:///G:/GlassMarble/internal/code_analysis_engine/ingest/type.go): Defines structures for `IngestionResult` and `RawToken`.
+    *   [`engine_test.go`](file:///G:/GlassMarble/internal/code_analysis_engine/ingest/engine_test.go): Unit tests verifying parser walker outputs.
 
-*   `stage2/` (GAST Translation & Language Coercion)
-    *   [`normalizer.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/normalizer.go): Normalizes raw tokens to GAST, maps calls, receiver types, and parses imports/exports.
-    *   [`translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/translator.go): Dispatches the correct language-specific translation module.
-    *   [`primitives.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/primitives.go): Scans code syntax regex patterns to flag nodes with primitive I/O behaviors (`DATABASE`, `NETWORK_IO`, `DISK_IO`).
-    *   [`type.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/type.go): Declares GASTNode types.
+*   `ingest/` (GAST Translation & Language Coercion)
+    *   [`normalizer.go`](file:///G:/GlassMarble/internal/code_analysis_engine/normalize/normalizer.go): Normalizes raw tokens to GAST, maps calls, receiver types, and parses imports/exports.
+    *   [`translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/normalize/translator.go): Dispatches the correct language-specific translation module.
+    *   [`primitives.go`](file:///G:/GlassMarble/internal/code_analysis_engine/normalize/primitives.go): Scans code syntax regex patterns to flag nodes with primitive I/O behaviors (`DATABASE`, `NETWORK_IO`, `DISK_IO`).
+    *   [`type.go`](file:///G:/GlassMarble/internal/code_analysis_engine/normalize/type.go): Declares GASTNode types.
     *   **Translators**:
-        *   [`go_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/go_translator.go): GAST coercer for Go language, parses structs and receiver types.
-        *   [`python_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/python_translator.go): Python GAST coercer.
-        *   [`javascript_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/javascript_translator.go) & [`typescript_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/typescript_translator.go): JS/TS coercers.
-        *   [`c_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/c_translator.go), [`cpp_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/cpp_translator.go), [`csharp_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/csharp_translator.go), [`css_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/css_translator.go), [`html_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/html_translator.go), [`java_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/java_translator.go), [`json_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/json_translator.go), [`php_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/php_translator.go), [`ruby_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/ruby_translator.go), [`generic_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/generic_translator.go): GAST coercers for C, C++, C#, CSS, HTML, Java, JSON, PHP, and Ruby.
-    *   [`stage2_test.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage2/stage2_test.go): Coercion and primitive propagation tests.
+        *   [`go_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/normalize/go_translator.go): GAST coercer for Go language, parses structs and receiver types.
+        *   [`python_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/normalize/python_translator.go): Python GAST coercer.
+        *   [`javascript_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/normalize/javascript_translator.go) & [`typescript_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/normalize/typescript_translator.go): JS/TS coercers.
+        *   [`c_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/normalize/c_translator.go), [`cpp_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/normalize/cpp_translator.go), [`csharp_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/normalize/csharp_translator.go), [`css_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/normalize/css_translator.go), [`html_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/normalize/html_translator.go), [`java_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/normalize/java_translator.go), [`json_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/normalize/json_translator.go), [`php_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/normalize/php_translator.go), [`ruby_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/normalize/ruby_translator.go), [`generic_translator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/normalize/generic_translator.go): GAST coercers for C, C++, C#, CSS, HTML, Java, JSON, PHP, and Ruby.
+    *   [`normalizer_test.go`](file:///G:/GlassMarble/internal/code_analysis_engine/normalize/normalizer_test.go): Coercion and primitive propagation tests.
 
-*   `stage3/` (Topology Mapping & Indexing)
-    *   [`aggregator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage3/aggregator.go): Structures individual files into boundary packages, clusters relative directories, and sets up definitions mapping index.
-    *   [`decoupler.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage3/decoupler.go): Cleans up file system path separators, strips Windows drive prefixes, and extracts directory chains.
-    *   [`mutator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage3/mutator.go): Grafts file nodes onto the folder directory tree structure and prunes dead files recursively.
-    *   [`visibility.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage3/visibility.go): Traverses folder namespaces to compute and tag public/private export bindings and FQN keys.
-    *   [`type.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage3/type.go): Workspace directory layouts, CallQueue and DefinitionIndex maps.
-    *   [`stage3_test.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage3/stage3_test.go): Namespace clustering and directory tree tests.
+*   `ingest/` (Topology Mapping & Indexing)
+    *   [`aggregator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/aggregate/aggregator.go): Structures individual files into boundary packages, clusters relative directories, and sets up definitions mapping index.
+    *   [`decoupler.go`](file:///G:/GlassMarble/internal/code_analysis_engine/aggregate/decoupler.go): Cleans up file system path separators, strips Windows drive prefixes, and extracts directory chains.
+    *   [`mutator.go`](file:///G:/GlassMarble/internal/code_analysis_engine/aggregate/mutator.go): Grafts file nodes onto the folder directory tree structure and prunes dead files recursively.
+    *   [`visibility.go`](file:///G:/GlassMarble/internal/code_analysis_engine/aggregate/visibility.go): Traverses folder namespaces to compute and tag public/private export bindings and FQN keys.
+    *   [`type.go`](file:///G:/GlassMarble/internal/code_analysis_engine/aggregate/type.go): Workspace directory layouts, CallQueue and DefinitionIndex maps.
+    *   [`aggregator_test.go`](file:///G:/GlassMarble/internal/code_analysis_engine/aggregate/aggregator_test.go): Namespace clustering and directory tree tests.
 
-*   `stage4/` (Semantic Graph Linker)
-    *   [`linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/linker.go): Coordinates all Stage 4 linker phases.
-    *   [`builder.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/builder.go): Reconstructs CPG nodes, formats FQNs, and stamps location metadata.
-    *   [`call_linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/call_linker.go): Links calls to target method nodes using case-insensitive receiver matching and selector-path deconstruction.
-    *   [`type_linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/type_linker.go): Maps field composition mappings and data types propagation.
-    *   [`interface_linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/interface_linker.go): Links structural interface duck-typing implementations (like Go structs matching interfaces).
-    *   [`cfg_linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/cfg_linker.go): Registers internal function branching (if, for, loops, switch) as CFG sub-nodes and connects execution paths.
-    *   [`concurrency_linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/concurrency_linker.go): Scans for asynchronous execution forks and flags concurrency thread boundaries (`EdgeSpawnsConcurrent`).
-    *   [`dfg_linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/dfg_linker.go): Builds variable assignment flow paths and extracts data flow networks.
-    *   [`primitive_reasoner.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/primitive_reasoner.go): Propagates resource traits (e.g. `DATABASE`, `NETWORK_IO`) from low-level calls to caller functions.
-    *   [`type.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/type.go): CPG nodes, edges, relationships, and linking schemas.
-    *   [`stage4_test.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/stage4_test.go): Duck-typing, variables, and CPG binding tests.
+*   `ingest/` (Semantic Graph Linker)
+    *   [`linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/link/linker.go): Coordinates all linker phases.
+    *   [`builder.go`](file:///G:/GlassMarble/internal/code_analysis_engine/link/builder.go): Reconstructs CPG nodes, formats FQNs, and stamps location metadata.
+    *   [`call_linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/link/call_linker.go): Links calls to target method nodes using case-insensitive receiver matching and selector-path deconstruction.
+    *   [`type_linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/link/type_linker.go): Maps field composition mappings and data types propagation.
+    *   [`interface_linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/link/interface_linker.go): Links structural interface duck-typing implementations (like Go structs matching interfaces).
+    *   [`cfg_linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/link/cfg_linker.go): Registers internal function branching (if, for, loops, switch) as CFG sub-nodes and connects execution paths.
+    *   [`concurrency_linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/link/concurrency_linker.go): Scans for asynchronous execution forks and flags concurrency thread boundaries (`EdgeSpawnsConcurrent`).
+    *   [`dfg_linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/link/dfg_linker.go): Builds variable assignment flow paths and extracts data flow networks.
+    *   [`primitive_reasoner.go`](file:///G:/GlassMarble/internal/code_analysis_engine/link/primitive_reasoner.go): Propagates resource traits (e.g. `DATABASE`, `NETWORK_IO`) from low-level calls to caller functions.
+    *   [`type.go`](file:///G:/GlassMarble/internal/code_analysis_engine/link/type.go): CPG nodes, edges, relationships, and linking schemas.
+    *   [`linker_test.go`](file:///G:/GlassMarble/internal/code_analysis_engine/link/linker_test.go): Duck-typing, variables, and CPG binding tests.
 
 ### 📂 `internal/git/` (Incremental Analysis)
 *   [`git.go`](file:///G:/GlassMarble/internal/git/git.go): Calls external Git CLI commands to fetch logs, extract delta modifications files list, and track head commits.
@@ -142,15 +142,15 @@ Translates codebase repositories into semantic CPG structures.
 ### 📂 `internal/visualization_engine/` (The Diagram Renderer)
 Generates standard visual diagram markup by executing queries against the `.ttl` graph.
 
-*   [`visualizer.go`](file:///G:/GlassMarble/internal/visualization_engine/visualizer.go): Coordinates the visualizer stages (subgraph extraction, layout aggregation, and Mermaid formatting).
+*   [`visualizer.go`](file:///G:/GlassMarble/internal/visualization_engine/visualizer.go): Coordinates the visualizer phases (subgraph extraction, layout aggregation, and Mermaid formatting).
 *   [`types.go`](file:///G:/GlassMarble/internal/visualization_engine/types.go): Simple pointer mapping visualizer constants redirecting to leaf `types` package to avoid cycle import loops.
 *   [`visualizer_test.go`](file:///G:/GlassMarble/internal/visualization_engine/visualizer_test.go): Validates Mermaid markup diagrams outputs against schema.
-*   `stage1/` (SPARQL-like Subgraph Filtering)
-    *   [`extractor.go`](file:///G:/GlassMarble/internal/visualization_engine/stage1/extractor.go): Extracts virtual subgraphs from Turtle matching UML and C4 scopes.
-*   `stage2/` (Visual Folder Aggregation & Cycle Tracking)
-    *   [`aggregator.go`](file:///G:/GlassMarble/internal/visualization_engine/stage2/aggregator.go): Collapses edges, nests subgraphs into directories, and runs Tarjan's SCC cycle tracking.
-*   `stage3/` (Mermaid Formatting)
-    *   [`formatter.go`](file:///G:/GlassMarble/internal/visualization_engine/stage3/formatter.go): Emits formatted syntax files matching Mermaid's visual specs, fixing syntax errors.
+*   `ingest/` (SPARQL-like Subgraph Filtering)
+    *   [`extractor.go`](file:///G:/GlassMarble/internal/visualization_engine/extract/extractor.go): Extracts virtual subgraphs from Turtle matching UML and C4 scopes.
+*   `ingest/` (Visual Folder Aggregation & Cycle Tracking)
+    *   [`aggregator.go`](file:///G:/GlassMarble/internal/visualization_engine/layout/aggregator.go): Collapses edges, nests subgraphs into directories, and runs Tarjan's SCC cycle tracking.
+*   `ingest/` (Mermaid Formatting)
+    *   [`formatter.go`](file:///G:/GlassMarble/internal/visualization_engine/render/formatter.go): Emits formatted syntax files matching Mermaid's visual specs, fixing syntax errors.
 *   `types/` (Visualizer Schemas & Registries)
     *   [`types.go`](file:///G:/GlassMarble/internal/visualization_engine/types/types.go): Declares all UML and C4 diagram registries and virtual layout structures.
 
@@ -162,7 +162,7 @@ Generates standard visual diagram markup by executing queries against the `.ttl`
 In modern codebases, method calls are rarely simple identifiers (e.g., `GetUser(id)`). They are often chained or invoked via fields, such as `a.Store.GetUser(id)` or `self.email_client.send_notification(...)`. 
 
 1.  **AST Split**: The Tree-sitter parser extracts these expressions as a single call token, but the normalizer collects the method name prefixed with field selectors (e.g., `MethodName = "Store.GetUser"`, `ReceiverName = "a"`).
-2.  **Resolution Logic**: Inside [`call_linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/stage4/call_linker.go#L62), the method name is deconstructed:
+2.  **Resolution Logic**: Inside [`call_linker.go`](file:///G:/GlassMarble/internal/code_analysis_engine/link/call_linker.go#L62), the method name is deconstructed:
     *   The leaf segment is extracted as the true method target (`"GetUser"`).
     *   The intermediate selector segments are prepended onto the receiver string (`"a.Store"`).
 3.  **Heuristic Type Matcher**:
@@ -241,7 +241,7 @@ When an end-user runs a command like `glassmarble visualize class --dir ./projec
 Every phase has direct unit tests inside the workspace:
 *   **Database Concurrency & Locking**: Verified in `internal/akg/transaction_manager_test.go`. Asserts concurrent lock acquisition failures.
 *   **Self-Healing Migration Loader**: Verified in `transaction_manager_test.go` — a missing `akg.json` with a legacy `akg_state.ttl` present restores the graph from Turtle and archives the TTL as `.bak`; a corrupt `akg.json` fails loudly instead of being silently rebuilt (see `doctor_test.go`).
-*   **Parser & Translators**: Verified in `internal/code_analysis_engine/stage2/stage2_test.go` and `stage4/stage4_test.go`.
+*   **Parser & Translators**: Verified in `internal/code_analysis_engine/normalize/normalizer_test.go` and `link/linker_test.go`.
 
 ### B. End-to-End Real Codebase Integration Test
 We validated the system using a real polyglot codebase containing 11 files across Go, Python, and JavaScript:
@@ -314,23 +314,23 @@ A corrupt `akg.json` fails loudly at startup instead of being silently overwritt
 The [`turtle_serializer.go`](file:///G:/GlassMarble/internal/akg/turtle_serializer.go) file converts the internal CPG Go structs into Turtle text. It is retained for the legacy TTL migration reader and `gmb export --format turtle`; the canonical store is GraphJSON (see `graph_json.go`):
 
 *   **Namespace Mappings**: Automatically binds URIs like `<http://glassmarble.org/node/...>` to keep graphs clean and structured.
-*   **Type Coercion**: Maps GAST nodes and predicates to standard ontology types (e.g. `stage4.EdgeCalls` is mapped to `gm:calls`).
+*   **Type Coercion**: Maps GAST nodes and predicates to standard ontology types (e.g. `link.EdgeCalls` is mapped to `gm:calls`).
 *   **String Escaping**: Sanitizes code segments, string literals, and comments using backslash escaping rules to ensure valid Turtle syntax.
 
 ---
 
 ## 9. GlassMarble System Architecture Diagram
 
-The diagram below provides a complete visual representation of the GlassMarble system architecture, illustrating the flow of data from source code files, through the multi-stage analysis pipeline, into the transaction-managed GraphJSON state store, and finally through the visualization engine to emit Mermaid diagrams.
+The diagram below provides a complete visual representation of the GlassMarble system architecture, illustrating the flow of data from source code files, through the multi-phase analysis pipeline, into the transaction-managed GraphJSON state store, and finally through the visualization engine to emit Mermaid diagrams.
 
 ```mermaid
 graph TB
     subgraph CodeAnalysisEngine ["Code Analysis Engine (CPG Compiler)"]
         direction TB
-        S1["Stage 1: Lexical Ingestion<br/>(parser.go, walker.go, worker.go)"]
-        S2["Stage 2: GAST Normalization<br/>(normalizer.go, translators, primitives.go)"]
-        S3["Stage 3: Topology Aggregation<br/>(aggregator.go, decoupler.go, mutator.go, visibility.go)"]
-        S4["Stage 4: Semantic CPG Linker<br/>(linker.go, call_linker.go, type_linker.go, interface_linker.go, cfg_linker.go, concurrency_linker.go, dfg_linker.go, primitive_reasoner.go)"]
+        S1["Ingestion: Lexical Ingestion<br/>(parser.go, walker.go, worker.go)"]
+        S2["Normalization: GAST Normalization<br/>(normalizer.go, translators, primitives.go)"]
+        S3["Aggregation: Topology Aggregation<br/>(aggregator.go, decoupler.go, mutator.go, visibility.go)"]
+        S4["Linking: Semantic CPG Linker<br/>(linker.go, call_linker.go, type_linker.go, interface_linker.go, cfg_linker.go, concurrency_linker.go, dfg_linker.go, primitive_reasoner.go)"]
         
         S1 -->|"Raw Lexical Tokens"| S2
         S2 -->|"GAST Nodes & Primitives"| S3
@@ -359,9 +359,9 @@ graph TB
     subgraph VizEngine ["Visualization Engine (Diagram Projector)"]
         direction TB
         VC["Visualizer Coordinator<br/>(visualizer.go)"]
-        VE1["Stage 1: Subgraph Extractor<br/>(extractor.go)"]
-        VE2["Stage 2: Visual Aggregator<br/>(aggregator.go, Tarjan's SCC)"]
-        VE3["Stage 3: Mermaid Formatter<br/>(formatter.go)"]
+        VE1["Ingestion: Subgraph Extractor<br/>(extractor.go)"]
+        VE2["Normalization: Visual Aggregator<br/>(aggregator.go, Tarjan's SCC)"]
+        VE3["Aggregation: Mermaid Formatter<br/>(formatter.go)"]
         
         VC -->|"Select Diagram Type"| VE1
         VE1 -->|"Virtual Subgraph"| VE2

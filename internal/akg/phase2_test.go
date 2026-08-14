@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 // TestLegacyReadBackCompat (W2-02 / K-01 / AC-28):
@@ -62,7 +62,7 @@ func TestLegacyReadBackCompat(t *testing.T) {
 // --store-code is disabled, and the canonical GraphJSON export never
 // carries it.
 func TestNoContentByDefault(t *testing.T) {
-	node := &stage4.ResolvedNode{
+	node := &link.ResolvedNode{
 		ID:   "type:main:App",
 		Kind: "STRUCT",
 		Name: "App",
@@ -89,7 +89,7 @@ func TestNoContentByDefault(t *testing.T) {
 // nodes and capped at 512B in the GraphJSON export.
 func TestStoreCodeCap(t *testing.T) {
 	longContent := strings.Repeat("A", 1000)
-	node := &stage4.ResolvedNode{
+	node := &link.ResolvedNode{
 		ID:   "type:main:App",
 		Kind: "STRUCT",
 		Name: "App",
@@ -170,7 +170,7 @@ func TestWriteReadSymmetry(t *testing.T) {
 	graph := NewCodePropertyGraph("symmetry_test")
 	graph.SchemaVersion = CurrentSchemaVersion
 
-	node := &stage4.ResolvedNode{
+	node := &link.ResolvedNode{
 		ID:   "type:main:Model",
 		Kind: "STRUCT",
 		Name: "Model",
@@ -211,7 +211,7 @@ func TestVerifySkipsMacro(t *testing.T) {
 	graph := NewCodePropertyGraph("verify_macro_test")
 	graph.SchemaVersion = CurrentSchemaVersion
 
-	node := &stage4.ResolvedNode{
+	node := &link.ResolvedNode{
 		ID:   "type:main:Server",
 		Kind: "STRUCT",
 		Name: "Server",

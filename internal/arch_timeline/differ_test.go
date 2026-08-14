@@ -6,7 +6,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 func diffSnapshot(comps []archmodel.DetectedComponent, pats []archmodel.DetectedPattern, smells []archmodel.ArchSmell, m archmodel.ArchMetrics, id string) *archmodel.ArchSnapshot {
@@ -233,10 +233,10 @@ func TestDiff_DependencyChanges(t *testing.T) {
 // real structural diff; with either side missing (--no-graph), it must be nil.
 func TestDiff_StructuralGraphDiff(t *testing.T) {
 	baseGraph := akg.NewCodePropertyGraph("base")
-	baseGraph.Nodes = baseGraph.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "A"})
+	baseGraph.Nodes = baseGraph.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "A"})
 	headGraph := akg.NewCodePropertyGraph("head")
-	headGraph.Nodes = headGraph.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "A"})
-	headGraph.Nodes = headGraph.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "B"})
+	headGraph.Nodes = headGraph.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "A"})
+	headGraph.Nodes = headGraph.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "B"})
 
 	base, err := BuildSnapshot(SnapshotInput{Graph: baseGraph, CommitHash: "b", Timestamp: snapBaseTime})
 	if err != nil {

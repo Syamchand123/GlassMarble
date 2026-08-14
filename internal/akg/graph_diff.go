@@ -3,7 +3,7 @@ package akg
 import (
 	"sort"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 // GraphDiff summarizes the structural delta between two AKG snapshots (base vs
@@ -40,7 +40,7 @@ type DiffEdge struct {
 }
 
 // edgeKey uniquely identifies an edge within a snapshot for set comparison.
-func edgeKey(e stage4.ResolvedEdge) string {
+func edgeKey(e link.ResolvedEdge) string {
 	return string(e.Type) + "\x00" + e.SourceID + "\x00" + e.TargetID
 }
 
@@ -55,13 +55,13 @@ func DiffGraphs(base, head *CodePropertyGraph) *GraphDiff {
 		diff.HeadCommit = head.CommitHash
 	}
 
-	baseNodes := map[string]*stage4.ResolvedNode{}
+	baseNodes := map[string]*link.ResolvedNode{}
 	if base != nil && base.Nodes != nil {
-		base.Nodes.Iterate(func(id string, n *stage4.ResolvedNode) { baseNodes[id] = n })
+		base.Nodes.Iterate(func(id string, n *link.ResolvedNode) { baseNodes[id] = n })
 	}
-	headNodes := map[string]*stage4.ResolvedNode{}
+	headNodes := map[string]*link.ResolvedNode{}
 	if head != nil && head.Nodes != nil {
-		head.Nodes.Iterate(func(id string, n *stage4.ResolvedNode) { headNodes[id] = n })
+		head.Nodes.Iterate(func(id string, n *link.ResolvedNode) { headNodes[id] = n })
 	}
 
 	for id, n := range headNodes {
@@ -81,17 +81,17 @@ func DiffGraphs(base, head *CodePropertyGraph) *GraphDiff {
 		}
 	}
 
-	baseEdges := map[string]stage4.ResolvedEdge{}
+	baseEdges := map[string]link.ResolvedEdge{}
 	if base != nil && base.OutboundEdges != nil {
-		base.OutboundEdges.Iterate(func(_ string, edges []stage4.ResolvedEdge) {
+		base.OutboundEdges.Iterate(func(_ string, edges []link.ResolvedEdge) {
 			for _, e := range edges {
 				baseEdges[edgeKey(e)] = e
 			}
 		})
 	}
-	headEdges := map[string]stage4.ResolvedEdge{}
+	headEdges := map[string]link.ResolvedEdge{}
 	if head != nil && head.OutboundEdges != nil {
-		head.OutboundEdges.Iterate(func(_ string, edges []stage4.ResolvedEdge) {
+		head.OutboundEdges.Iterate(func(_ string, edges []link.ResolvedEdge) {
 			for _, e := range edges {
 				headEdges[edgeKey(e)] = e
 			}
@@ -113,7 +113,7 @@ func DiffGraphs(base, head *CodePropertyGraph) *GraphDiff {
 	return diff
 }
 
-func toDiffNode(n *stage4.ResolvedNode) DiffNode {
+func toDiffNode(n *link.ResolvedNode) DiffNode {
 	d := DiffNode{}
 	if n == nil {
 		return d
@@ -125,7 +125,7 @@ func toDiffNode(n *stage4.ResolvedNode) DiffNode {
 	return d
 }
 
-func toDiffEdge(e stage4.ResolvedEdge) DiffEdge {
+func toDiffEdge(e link.ResolvedEdge) DiffEdge {
 	return DiffEdge{
 		Type:     string(e.Type),
 		SourceID: e.SourceID,

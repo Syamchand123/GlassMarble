@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage1"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/ingest"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/programs/watch"
@@ -68,7 +68,7 @@ changes made outside the watcher's scope are also picked up.`,
 // and the analysis pipeline into the program as callbacks (the program must
 // not import cmd).
 func runWatchTUI(c *cobra.Command, opts runAnalysisOptions) error {
-	runFn := func(progress func(stage int, name string, current, total int)) error {
+	runFn := func(progress func(step int, name string, current, total int)) error {
 		opts.progress = progress
 		return runAnalysis(opts)
 	}
@@ -242,11 +242,11 @@ func addWatchTree(w *fsnotify.Watcher, root string) error {
 // files reported by `git status --porcelain`.
 func workingTreeFingerprint(absDir, commitHash string) string {
 	head := commitHash
-	if out, err := stage1.GitCommandOutput(absDir, "rev-parse", "HEAD"); err == nil && out != "" {
+	if out, err := ingest.GitCommandOutput(absDir, "rev-parse", "HEAD"); err == nil && out != "" {
 		head = out
 	}
 	status := ""
-	if out, err := stage1.GitCommandOutput(absDir, "status", "--porcelain"); err == nil {
+	if out, err := ingest.GitCommandOutput(absDir, "status", "--porcelain"); err == nil {
 		status = out
 	}
 	return head + "\x00" + status

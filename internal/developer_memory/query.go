@@ -49,7 +49,7 @@ func QueryMemory(store *MemoryStore, query string) *MemoryQueryResult {
 
 // QueryMemoryFromMemory runs the query against an in-memory aggregate with an
 // explicit result cap. Used by callers that already hold the memory (e.g.
-// Stage 12 evidence retrieval) and by tests.
+// evidence retrieval evidence retrieval) and by tests.
 func QueryMemoryFromMemory(mem *DeveloperMemory, query string, topK int) *MemoryQueryResult {
 	result := &MemoryQueryResult{Query: query}
 	if mem == nil || topK <= 0 {
@@ -149,7 +149,7 @@ func QueryMemoryFromMemory(mem *DeveloperMemory, query string, topK int) *Memory
 
 // QueryTerms returns the normalized, stopword-filtered query tokens used by
 // the memory query layer. Exported for consumers that need identical
-// tokenization for their own matching (e.g. Stage 12 evidence retrieval), so
+// tokenization for their own matching (e.g. evidence retrieval evidence retrieval), so
 // entity extraction never drifts from the ranking logic.
 func QueryTerms(query string) []string {
 	return tokenize(query)
@@ -365,7 +365,7 @@ func claimConfidence(c KnowledgeClaim) float64 {
 }
 
 // claimFreshness returns the claim's freshness score, defaulting to 1.0
-// before Stage 11 aging has run.
+// before knowledge aging aging has run.
 func claimFreshness(c KnowledgeClaim) float64 {
 	if c.FreshnessScore > 0 {
 		return c.FreshnessScore

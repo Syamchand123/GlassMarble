@@ -10,7 +10,7 @@
 Parses, normalizes, aggregates, and semantic-links source code files into the AKG graph database (`.glassmarble/akg.json`).
 
 ```bash
-gmb analyze [--dir <path>] [--commit <hash>] [--full] [--workers <N>] [--link-level <level>] [--json] [--bench] [--stage5]
+gmb analyze [--dir <path>] [--commit <hash>] [--full] [--workers <N>] [--link-level <level>] [--json] [--bench] [--intelligence]
 ```
 
 **Flags:**
@@ -22,10 +22,10 @@ gmb analyze [--dir <path>] [--commit <hash>] [--full] [--workers <N>] [--link-le
 - `--store-code`: Opt-in source snippet storage in AKG nodes.
 - `--json`: Emit machine-readable JSON summary.
 - `--bench`: Run analysis benchmark suite and verify timings/file sizes against performance budget gates.
-- `--stage5`: Run Stage 5 architectural intelligence + Stage 6 developer memory after committing the graph (default `true`, human output only; both stages are non-fatal).
+- `--intelligence`: Run architecture intelligence + developer memory after committing the graph (default `true`, human output only; both phases are non-fatal).
 
-When `--stage5` is enabled, `gmb analyze` also writes:
-- `.glassmarble/intelligence/latest.json` — current Stage 5 state,
+When `--intelligence` is enabled, `gmb analyze` also writes:
+- `.glassmarble/intelligence/latest.json` — current Architecture Intelligence state,
 - `.glassmarble/snapshots/` — point-in-time architecture snapshots (skip-written when the topology is unchanged),
 - `.glassmarble/memory/` — the developer memory WALs (`events.jsonl`) and derived aggregates (`memory.json`, `timeline.json`).
 
@@ -34,7 +34,7 @@ Event ingestion is idempotent: re-analyzing the same commit never duplicates mem
 ---
 
 ### `gmb memory`
-Answers questions about the project's architectural history from the Stage 6 developer memory (`.glassmarble/memory/`). Deterministic retrieval — no LLM. Since Stage 10, a learning overlay lets you correct wrong derived facts and replays them on every view.
+Answers questions about the project's architectural history from the developer memory (`.glassmarble/memory/`). Deterministic retrieval — no LLM. Since convention learning, a learning overlay lets you correct wrong derived facts and replays them on every view.
 
 ```bash
 gmb memory [--dir <path>] [--ask "<question>"] [--component <name>] [--json]

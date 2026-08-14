@@ -89,7 +89,7 @@ func TestAIMemoryQueries(t *testing.T) {
 	}
 
 	// An event-ID correction with LABEL kind is applied to query results
-	// (Stage 10 overlay), visible in the next --ask.
+	// (convention learning overlay), visible in the next --ask.
 	gmbWant(t, sb, []string{"Recorded correction", "LABEL", "evt_fixture_0001", "add cache layer", "->", "cache layer re-labeled"},
 		"memory", "--correct", "evt_fixture_0001", "--kind", "LABEL", "--value", "cache layer re-labeled", "--reason", "renamed in review")
 

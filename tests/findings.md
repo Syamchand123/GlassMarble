@@ -54,7 +54,7 @@
   suite that discovered the finding. They are NEVER reused:
 
       E2E-0001    e2e suite (tests/e2e)             user flows, CLI contracts
-      STG-0001    stages suite (tests/stages)       stages 1-12 pipeline logic
+      STG-0001    phases suite (tests/stages)       phases 1-12 pipeline logic
       NFL-0001    nonfunctional (tests/nonfunctional)  perf, determinism,
                                                       concurrency, resilience,
                                                       fallback
@@ -72,10 +72,10 @@
   ------------------------------------------------------------------------
   TITLE:    <One-line, imperative summary. e.g. "analyze crashes on file
              whose name is only a dot ('.')">
-  TARGET:   <Product area: command, stage, package, artifact. e.g.
-             "cmd/analyze.go / stage2_normalize / akg.json writer">
+  TARGET:   <Product area: command, phase, package, artifact. e.g.
+             "cmd/analyze.go / normalize / akg.json writer">
   TEST:     <Owning test function + file, e.g. "TestStage2DotFile
-             (tests/stages/stage2_normalize_test.go)">
+             (tests/stages/normalize_test.go)">
 
   ------------------------------------------------------------------------
   EVIDENCE
@@ -294,7 +294,7 @@
   SEVERITY:        HIGH (exit-code contract; a successful exit on zero files
                     analyzed presents "success" as fact — silent no-op)
   IMPACT:          Users on an empty repo (or with zero Go files) get a
-                    green analyze run with no graph; downstream stages
+                    green analyze run with no graph; downstream phases
                     (visualize, drift) then fail on the missing DB with
                     unrelated errors.
   ROOT CAUSE:      cmd/analyze.go never errors when zero files match; the
@@ -318,7 +318,7 @@
                 2026-08-11, INVESTIGATION: the claimed contract ("exit 1")
                 comes only from the phantom docs/exit-code-contract.md
                 (INF-0001). The on-disk authority docs/commands_master_reference.md
-                §12 exits non-zero only when a stage fails or the commit is
+                §12 exits non-zero only when a phase fails or the commit is
                 rejected; an empty repository commits a healthy empty graph,
                 so exit 0 is the documented behavior. Product is correct.
                 2026-08-11, e2e subtest renamed
@@ -770,9 +770,9 @@
   ------------------------------------------------------------------------
   TITLE:    TestStage12TokenBudgetTrim asserts ≤1 item per section at
              MaxTokens=1, ignoring the documented 64-token per-section floor
-  TARGET:   tests/stages/stage12_retrieval_test.go:275-310 (test contract);
+  TARGET:   tests/stages/retrieval_test.go:275-310 (test contract);
              internal/ai_engine/context_builder.go:190-232 (product behavior)
-  TEST:     TestStage12TokenBudgetTrim (tests/stages/stage12_retrieval_test.go:275-310)
+  TEST:     TestStage12TokenBudgetTrim (tests/stages/retrieval_test.go:275-310)
 
   ------------------------------------------------------------------------
   EVIDENCE
@@ -780,10 +780,10 @@
   COMMAND:    go test ./tests/... ;
               go test ./tests/stages/ -run '^TestStage12TokenBudgetTrim$' -count=1 -v ;
               go test ./tests/stages/ -run '^TestStage12TokenBudgetTrim$' -count=2 -v
-  EXPECTED:   stage12_retrieval_test.go:306-308: "if sec.got > 1 {
+  EXPECTED:   retrieval_test.go:306-308: "if sec.got > 1 {
               t.Errorf(\"MaxTokens=1 section %s has %d items, want <= 1\",
               sec.name, sec.got) }"
-  ACTUAL:     "stage12_retrieval_test.go:307: MaxTokens=1 section nodes has
+  ACTUAL:     "retrieval_test.go:307: MaxTokens=1 section nodes has
               4 items, want <= 1". With MaxTokens=1, sectionBudget floors
               every section at 64 tokens (context_builder.go:204-207:
               "if b < 64 { b = 64 // floor: never render a section with
@@ -792,7 +792,7 @@
               characters (context_builder.go:219-232). Four short node
               lines fit, so 4 items is exactly the floor behavior. The
               test's own header documents the floor
-              (stage12_retrieval_test.go:20-21: "sectionBudget floors every
+              (retrieval_test.go:20-21: "sectionBudget floors every
               section at 64 tokens (context_builder.go:204), so MaxTokens=1
               still keeps one item per section").
   LOGS:       C:\Users\SivaS\AppData\Local\Temp\opencode\run1_full.log
@@ -834,7 +834,7 @@
                 2026-08-11, go test ./tests/stages/ -run
                 '^TestStage12TokenBudgetTrim$' -count=2 -v -> FAIL twice
                 identically (run3_TestStage12TokenBudgetTrim.log)
-                2026-08-11, FIX: stage12_retrieval_test.go re-pinned the
+                2026-08-11, FIX: retrieval_test.go re-pinned the
                 capped-floor contract — the per-section floor is now capped
                 at the caller's budget (context_builder.go, see STG-0003), so
                 MaxTokens=1 keeps exactly the top item per non-empty section
@@ -853,7 +853,7 @@
              64-token per-section floor silently overrides tiny budgets
   TARGET:   internal/ai_engine/context_builder.go:204-207 (floor) vs
              context_builder.go:238-253 (documented contract)
-  TEST:     TestStage12TokenBudgetTrim (tests/stages/stage12_retrieval_test.go:291-309)
+  TEST:     TestStage12TokenBudgetTrim (tests/stages/retrieval_test.go:291-309)
              — the failing part of the test exposes this gap
 
   ------------------------------------------------------------------------
@@ -1068,7 +1068,7 @@
   LAST RUN MODE:   go test ./tests/... ; go build ./... ; go vet ./... ;
                    focused -run -count=2 -v per previously failing test
   RESULT:          PASS — all six test packages green (e2e, edgecases,
-                   harness [no tests], nonfunctional, qa, stages); exit 0
+                   harness [no tests], nonfunctional, qa, phases); exit 0
   OPEN FINDINGS:   0
   RESOLVED:        8 (E2E-0001, NFL-0001, NFL-0002, QA-0001, STG-0001,
                    STG-0002, STG-0003, INF-0001)
@@ -1086,7 +1086,7 @@
                    fallback_test.go (case-insensitive pins + exact wantCode),
                    golden_output_test.go ("committed" pin),
                    drift_test.go (explicit {api, private} rule),
-                   stage12_retrieval_test.go (capped-floor + top-item pins).
+                   retrieval_test.go (capped-floor + top-item pins).
                    E2E-0002 closed CANNOT REPRODUCE: §12 (the real on-disk
                    authority, INF-0001) documents exit 0 for an empty-repo
                    analyze (healthy empty commit); the "exit 1" expectation

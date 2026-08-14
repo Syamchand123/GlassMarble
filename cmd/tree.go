@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 	treeprog "github.com/Syamchand123/GlassMarble/internal/tui/programs/tree"
@@ -40,7 +40,7 @@ var treeCmd = &cobra.Command{
 
 		// Group nodes by file path
 		fileTree := make(map[string][]string)
-		snapshot.Nodes.Iterate(func(_ string, node *stage4.ResolvedNode) {
+		snapshot.Nodes.Iterate(func(_ string, node *link.ResolvedNode) {
 			if node.FileSpec.Path != "" {
 				sym := node.Name
 				if node.Primitive != "" {

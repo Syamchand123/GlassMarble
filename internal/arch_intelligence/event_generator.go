@@ -32,12 +32,12 @@ func eventID(commit string, kind archmodel.EventKind, affected []string) string 
 }
 
 // EventID is the exported form of the deterministic event-ID scheme shared by
-// every event producer (Stage 5D snapshot diff and Stage 8 commit reasoning).
+// every event producer (component inference snapshot diff and commit reasoning).
 //
-// Stage 8 must produce the exact same ID for the same (commit, kind, affected)
-// tuple so the Stage 6 memory builder can deduplicate the two generators: the
-// Stage 8 event (enriched with intent, PR refs and impact) is appended first
-// and the identical Stage 5D event is dropped. Producers therefore must agree
+// commit reasoning must produce the exact same ID for the same (commit, kind, affected)
+// tuple so the developer memory memory builder can deduplicate the two generators: the
+// commit reasoning event (enriched with intent, PR refs and impact) is appended first
+// and the identical component inference event is dropped. Producers therefore must agree
 // on the canonical ordering of affected IDs — see the classifier contract in
 // internal/commit_reasoning.
 func EventID(commit string, kind archmodel.EventKind, affected []string) string {

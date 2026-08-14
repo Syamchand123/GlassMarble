@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 // buildExportTestGraph builds a small graph exercising nodes, edges,
@@ -15,39 +15,39 @@ func buildExportTestGraph() *CodePropertyGraph {
 	g.Version = 42
 	g.SchemaVersion = CurrentSchemaVersion
 	g.Entrypoints = []string{"a::main"}
-	g.Nodes = g.Nodes.Set("a::main", &stage4.ResolvedNode{
+	g.Nodes = g.Nodes.Set("a::main", &link.ResolvedNode{
 		ID:         "a::main",
 		Kind:       "FUNCTION",
 		Name:       "main",
 		Primitive:  "COMPUTE",
-		FileSpec:   stage4.LocationMeta{Path: "cmd/app/main.go", LineStart: 5, LineEnd: 9},
+		FileSpec:   link.LocationMeta{Path: "cmd/app/main.go", LineStart: 5, LineEnd: 9},
 		Properties: map[string]string{"metric": "fan_in=3"},
 	})
-	g.Nodes = g.Nodes.Set("b::svc", &stage4.ResolvedNode{
+	g.Nodes = g.Nodes.Set("b::svc", &link.ResolvedNode{
 		ID:       "b::svc",
 		Kind:     "MODULE",
 		Name:     "svc",
-		FileSpec: stage4.LocationMeta{Path: "internal/svc/svc.go", LineStart: 1},
+		FileSpec: link.LocationMeta{Path: "internal/svc/svc.go", LineStart: 1},
 	})
-	addEdgeToGraph(g, "a::main", "b::svc", stage4.EdgeCalls, 7)
-	addEdgeToGraph(g, "a::main", "b::svc", stage4.EdgeCalls, 8) // parallel edge with distinct line
+	addEdgeToGraph(g, "a::main", "b::svc", link.EdgeCalls, 7)
+	addEdgeToGraph(g, "a::main", "b::svc", link.EdgeCalls, 8) // parallel edge with distinct line
 	// Edge property facts (gm:provenance / gm:embedding, W1-11/W1-14).
-	g.OutboundEdges = g.OutboundEdges.Set("a::main", []stage4.ResolvedEdge{
-		{SourceID: "a::main", TargetID: "b::svc", Type: stage4.EdgeCalls, LineNumber: 7,
+	g.OutboundEdges = g.OutboundEdges.Set("a::main", []link.ResolvedEdge{
+		{SourceID: "a::main", TargetID: "b::svc", Type: link.EdgeCalls, LineNumber: 7,
 			Properties: map[string]string{"provenance": "import-resolved", "embedding": "0.91"}},
-		{SourceID: "a::main", TargetID: "b::svc", Type: stage4.EdgeCalls, LineNumber: 8},
+		{SourceID: "a::main", TargetID: "b::svc", Type: link.EdgeCalls, LineNumber: 8},
 	})
-	g.InboundEdges = g.InboundEdges.Set("b::svc", []stage4.ResolvedEdge{
-		{SourceID: "a::main", TargetID: "b::svc", Type: stage4.EdgeCalls, LineNumber: 7,
+	g.InboundEdges = g.InboundEdges.Set("b::svc", []link.ResolvedEdge{
+		{SourceID: "a::main", TargetID: "b::svc", Type: link.EdgeCalls, LineNumber: 7,
 			Properties: map[string]string{"provenance": "import-resolved", "embedding": "0.91"}},
-		{SourceID: "a::main", TargetID: "b::svc", Type: stage4.EdgeCalls, LineNumber: 8},
+		{SourceID: "a::main", TargetID: "b::svc", Type: link.EdgeCalls, LineNumber: 8},
 	})
 	g.FolderZones = g.FolderZones.Set("b::svc", "SERVICE_ZONE")
 	return g
 }
 
-func addEdgeToGraph(g *CodePropertyGraph, src, tgt string, typ stage4.RelationshipType, line int) {
-	edge := stage4.ResolvedEdge{SourceID: src, TargetID: tgt, Type: typ, LineNumber: line}
+func addEdgeToGraph(g *CodePropertyGraph, src, tgt string, typ link.RelationshipType, line int) {
+	edge := link.ResolvedEdge{SourceID: src, TargetID: tgt, Type: typ, LineNumber: line}
 	out, _ := g.OutboundEdges.Get(src)
 	g.OutboundEdges = g.OutboundEdges.Set(src, append(out, edge))
 	in, _ := g.InboundEdges.Get(tgt)
@@ -99,7 +99,7 @@ func TestGraphJSONRoundTrip(t *testing.T) {
 	}
 
 	// Edge properties must survive the round trip (GraphEdgeJSON.Properties).
-	var withProps *stage4.ResolvedEdge
+	var withProps *link.ResolvedEdge
 	for i := range edges {
 		if len(edges[i].Properties) > 0 {
 			withProps = &edges[i]
@@ -148,17 +148,17 @@ func TestGraphJSONCorruptRejected(t *testing.T) {
 // duplicates (identical incl. properties) are still deduplicated.
 func TestGraphJSONEdgePropsNotDeduped(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{
-		{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls, LineNumber: 1},
-		{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls, LineNumber: 1, Properties: map[string]string{"embedding": "0.5"}},
-		{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls, LineNumber: 1, Properties: map[string]string{"embedding": "0.5"}},
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "b"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{
+		{SourceID: "a", TargetID: "b", Type: link.EdgeCalls, LineNumber: 1},
+		{SourceID: "a", TargetID: "b", Type: link.EdgeCalls, LineNumber: 1, Properties: map[string]string{"embedding": "0.5"}},
+		{SourceID: "a", TargetID: "b", Type: link.EdgeCalls, LineNumber: 1, Properties: map[string]string{"embedding": "0.5"}},
 	})
-	g.InboundEdges = g.InboundEdges.Set("b", []stage4.ResolvedEdge{
-		{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls, LineNumber: 1},
-		{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls, LineNumber: 1, Properties: map[string]string{"embedding": "0.5"}},
-		{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls, LineNumber: 1, Properties: map[string]string{"embedding": "0.5"}},
+	g.InboundEdges = g.InboundEdges.Set("b", []link.ResolvedEdge{
+		{SourceID: "a", TargetID: "b", Type: link.EdgeCalls, LineNumber: 1},
+		{SourceID: "a", TargetID: "b", Type: link.EdgeCalls, LineNumber: 1, Properties: map[string]string{"embedding": "0.5"}},
+		{SourceID: "a", TargetID: "b", Type: link.EdgeCalls, LineNumber: 1, Properties: map[string]string{"embedding": "0.5"}},
 	})
 
 	var buf bytes.Buffer
@@ -191,13 +191,13 @@ func TestGraphJSONEdgePropsNotDeduped(t *testing.T) {
 // graphs whose edges reference missing nodes.
 func TestGraphJSONRejectsDanglingViaReplaceGraph(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "a"})
 	// Edge to nonexistent node b.
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{
-		{SourceID: "a", TargetID: "missing", Type: stage4.EdgeCalls, LineNumber: 1},
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{
+		{SourceID: "a", TargetID: "missing", Type: link.EdgeCalls, LineNumber: 1},
 	})
-	g.InboundEdges = g.InboundEdges.Set("missing", []stage4.ResolvedEdge{
-		{SourceID: "a", TargetID: "missing", Type: stage4.EdgeCalls, LineNumber: 1},
+	g.InboundEdges = g.InboundEdges.Set("missing", []link.ResolvedEdge{
+		{SourceID: "a", TargetID: "missing", Type: link.EdgeCalls, LineNumber: 1},
 	})
 
 	dir := t.TempDir()
@@ -225,9 +225,9 @@ func TestReplaceGraphPersistsAndReloads(t *testing.T) {
 
 	g := NewCodePropertyGraph("imported")
 	g.Version = 5
-	g.Nodes = g.Nodes.Set("x", &stage4.ResolvedNode{ID: "x", Kind: "STRUCT", Name: "X", FileSpec: stage4.LocationMeta{Path: "x.go", LineStart: 3}})
-	g.Nodes = g.Nodes.Set("y", &stage4.ResolvedNode{ID: "y", Kind: "STRUCT", Name: "Y", FileSpec: stage4.LocationMeta{Path: "y.go"}})
-	addEdgeToGraph(g, "x", "y", stage4.EdgeComposes, 4)
+	g.Nodes = g.Nodes.Set("x", &link.ResolvedNode{ID: "x", Kind: "STRUCT", Name: "X", FileSpec: link.LocationMeta{Path: "x.go", LineStart: 3}})
+	g.Nodes = g.Nodes.Set("y", &link.ResolvedNode{ID: "y", Kind: "STRUCT", Name: "Y", FileSpec: link.LocationMeta{Path: "y.go"}})
+	addEdgeToGraph(g, "x", "y", link.EdgeComposes, 4)
 
 	if err := tm.ReplaceGraph(g); err != nil {
 		t.Fatalf("ReplaceGraph failed: %v", err)

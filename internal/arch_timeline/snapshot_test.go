@@ -7,7 +7,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/evidence"
 )
 
@@ -15,11 +15,11 @@ var snapBaseTime = time.Date(2025, 6, 1, 10, 0, 0, 0, time.UTC)
 
 func buildSnapshotGraph() *akg.CodePropertyGraph {
 	g := akg.NewCodePropertyGraph("c1")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "A"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "B"})
-	edge := stage4.ResolvedEdge{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls, LineNumber: 1}
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{edge})
-	g.InboundEdges = g.InboundEdges.Set("b", []stage4.ResolvedEdge{edge})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "A"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "B"})
+	edge := link.ResolvedEdge{SourceID: "a", TargetID: "b", Type: link.EdgeCalls, LineNumber: 1}
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{edge})
+	g.InboundEdges = g.InboundEdges.Set("b", []link.ResolvedEdge{edge})
 	return g
 }
 
@@ -260,13 +260,13 @@ func TestBuildSnapshot_StoreIntegration(t *testing.T) {
 
 	// Changing the graph must produce a new snapshot.
 	in3 := snapshotInput("commit-aaaa3")
-	in3.Graph.Nodes = in3.Graph.Nodes.Set("c", &stage4.ResolvedNode{ID: "c", Kind: "FUNCTION", Name: "C"})
-	edge := stage4.ResolvedEdge{SourceID: "a", TargetID: "c", Type: stage4.EdgeCalls, LineNumber: 2}
-	in3.Graph.OutboundEdges = in3.Graph.OutboundEdges.Set("a", []stage4.ResolvedEdge{
-		{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls, LineNumber: 1},
+	in3.Graph.Nodes = in3.Graph.Nodes.Set("c", &link.ResolvedNode{ID: "c", Kind: "FUNCTION", Name: "C"})
+	edge := link.ResolvedEdge{SourceID: "a", TargetID: "c", Type: link.EdgeCalls, LineNumber: 2}
+	in3.Graph.OutboundEdges = in3.Graph.OutboundEdges.Set("a", []link.ResolvedEdge{
+		{SourceID: "a", TargetID: "b", Type: link.EdgeCalls, LineNumber: 1},
 		edge,
 	})
-	in3.Graph.InboundEdges = in3.Graph.InboundEdges.Set("c", []stage4.ResolvedEdge{edge})
+	in3.Graph.InboundEdges = in3.Graph.InboundEdges.Set("c", []link.ResolvedEdge{edge})
 	snap3, err := BuildSnapshot(in3)
 	if err != nil {
 		t.Fatalf("BuildSnapshot: %v", err)

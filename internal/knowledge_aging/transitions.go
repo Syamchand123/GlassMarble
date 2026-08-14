@@ -31,7 +31,7 @@ type transitionDecision struct {
 	reason   string
 }
 
-// determineNextState applies the Stage 11 state-transition rules to one
+// determineNextState applies the knowledge aging state-transition rules to one
 // component (master plan §9.4, presence-based interpretation):
 //
 //	CURRENT     + absent from graph + grace elapsed + referenced elsewhere → DEPRECATED
@@ -49,8 +49,8 @@ type transitionDecision struct {
 // "two consecutive snapshots" requirement expressed in time).
 //
 // REMOVED / HISTORICAL / UNKNOWN are terminal: aging never silently
-// reverts them — restoring knowledge is a user correction (Stage 10) or a
-// new SERVICE_ADDED event (Stage 6). DEPRECATED is NOT terminal: a
+// reverts them — restoring knowledge is a user correction (convention learning) or a
+// new SERVICE_ADDED event (developer memory). DEPRECATED is NOT terminal: a
 // component that reappears in the graph is restored to CURRENT so the
 // graph and the memory can never disagree.
 //

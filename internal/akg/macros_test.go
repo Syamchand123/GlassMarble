@@ -5,21 +5,21 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestMacroRule_DeadCode(t *testing.T) {
 	graph := NewCodePropertyGraph("test")
-	graph.Nodes = graph.Nodes.Set("orphan", &stage4.ResolvedNode{
+	graph.Nodes = graph.Nodes.Set("orphan", &link.ResolvedNode{
 		ID: "orphan", Kind: "FUNCTION", Name: "deadFunc",
 	})
-	graph.Nodes = graph.Nodes.Set("used", &stage4.ResolvedNode{
+	graph.Nodes = graph.Nodes.Set("used", &link.ResolvedNode{
 		ID: "used", Kind: "FUNCTION", Name: "liveFunc",
 	})
-	graph.InboundEdges = graph.InboundEdges.Set("used", []stage4.ResolvedEdge{
-		{SourceID: "caller", TargetID: "used", Type: stage4.EdgeCalls},
+	graph.InboundEdges = graph.InboundEdges.Set("used", []link.ResolvedEdge{
+		{SourceID: "caller", TargetID: "used", Type: link.EdgeCalls},
 	})
 
 	RunTopologicalMacroInference(graph)
@@ -32,12 +32,12 @@ func TestMacroRule_DeadCode(t *testing.T) {
 
 func TestMacroRule_CircularDependency(t *testing.T) {
 	graph := NewCodePropertyGraph("test")
-	graph.Nodes = graph.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "MODULE", Name: "ModuleA"})
-	graph.Nodes = graph.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "MODULE", Name: "ModuleB"})
-	graph.Nodes = graph.Nodes.Set("c", &stage4.ResolvedNode{ID: "c", Kind: "MODULE", Name: "ModuleC"})
-	graph.OutboundEdges = graph.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	graph.OutboundEdges = graph.OutboundEdges.Set("b", []stage4.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: stage4.EdgeCalls}})
-	graph.OutboundEdges = graph.OutboundEdges.Set("c", []stage4.ResolvedEdge{{SourceID: "c", TargetID: "a", Type: stage4.EdgeCalls}})
+	graph.Nodes = graph.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "MODULE", Name: "ModuleA"})
+	graph.Nodes = graph.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "MODULE", Name: "ModuleB"})
+	graph.Nodes = graph.Nodes.Set("c", &link.ResolvedNode{ID: "c", Kind: "MODULE", Name: "ModuleC"})
+	graph.OutboundEdges = graph.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	graph.OutboundEdges = graph.OutboundEdges.Set("b", []link.ResolvedEdge{{SourceID: "b", TargetID: "c", Type: link.EdgeCalls}})
+	graph.OutboundEdges = graph.OutboundEdges.Set("c", []link.ResolvedEdge{{SourceID: "c", TargetID: "a", Type: link.EdgeCalls}})
 
 	RunTopologicalMacroInference(graph)
 
@@ -49,7 +49,7 @@ func TestMacroRule_CircularDependency(t *testing.T) {
 
 func TestMacroRule_ServiceLayer(t *testing.T) {
 	graph := NewCodePropertyGraph("test")
-	graph.Nodes = graph.Nodes.Set("svc", &stage4.ResolvedNode{
+	graph.Nodes = graph.Nodes.Set("svc", &link.ResolvedNode{
 		ID: "svc", Kind: "CLASS", Name: "UserService",
 	})
 
@@ -70,7 +70,7 @@ func TestMacroRule_ServiceLayer(t *testing.T) {
 
 func TestMacroRule_NetworkIO(t *testing.T) {
 	graph := NewCodePropertyGraph("test")
-	graph.Nodes = graph.Nodes.Set("api", &stage4.ResolvedNode{
+	graph.Nodes = graph.Nodes.Set("api", &link.ResolvedNode{
 		ID: "api", Kind: "CLASS", Name: "ApiClient", Primitive: "NETWORK_IO",
 	})
 
@@ -91,18 +91,18 @@ func TestMacroRule_NetworkIO(t *testing.T) {
 
 func TestMacroRule_GodObject(t *testing.T) {
 	graph := NewCodePropertyGraph("test")
-	graph.Nodes = graph.Nodes.Set("god", &stage4.ResolvedNode{ID: "god", Kind: "STRUCT", Name: "GodObject"})
+	graph.Nodes = graph.Nodes.Set("god", &link.ResolvedNode{ID: "god", Kind: "STRUCT", Name: "GodObject"})
 	for i := 0; i < 20; i++ {
 		id := string(rune('a' + i))
-		graph.Nodes = graph.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: "STRUCT", Name: "Dep" + id})
+		graph.Nodes = graph.Nodes.Set(id, &link.ResolvedNode{ID: id, Kind: "STRUCT", Name: "Dep" + id})
 
 		edges, _ := graph.OutboundEdges.Get("god")
 		graph.OutboundEdges = graph.OutboundEdges.Set("god", append(edges,
-			stage4.ResolvedEdge{SourceID: "god", TargetID: id, Type: stage4.EdgeCalls}))
+			link.ResolvedEdge{SourceID: "god", TargetID: id, Type: link.EdgeCalls}))
 
 		inEdges, _ := graph.InboundEdges.Get("god")
 		graph.InboundEdges = graph.InboundEdges.Set("god", append(inEdges,
-			stage4.ResolvedEdge{SourceID: id, TargetID: "god", Type: stage4.EdgeCalls}))
+			link.ResolvedEdge{SourceID: id, TargetID: "god", Type: link.EdgeCalls}))
 	}
 
 	_ = graph.DetectGodObjects()
@@ -110,12 +110,12 @@ func TestMacroRule_GodObject(t *testing.T) {
 
 func TestDisabledRules_ExcludeRule(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("svc", &stage4.ResolvedNode{ID: "svc", Kind: "CLASS", Name: "UserService"})
-	g.Nodes = g.Nodes.Set("ctrl", &stage4.ResolvedNode{ID: "ctrl", Kind: "CLASS", Name: "UserController"})
+	g.Nodes = g.Nodes.Set("svc", &link.ResolvedNode{ID: "svc", Kind: "CLASS", Name: "UserService"})
+	g.Nodes = g.Nodes.Set("ctrl", &link.ResolvedNode{ID: "ctrl", Kind: "CLASS", Name: "UserController"})
 	g.KindIndex = g.KindIndex.Set("CLASS", map[string]bool{"svc": true, "ctrl": true})
 
 	// Use DisabledRules to disable rule_06 (Service Layer)
-	config := stage4.LinkerConfig{
+	config := link.LinkerConfig{
 		MacroInference: "all",
 		DisabledRules:  []string{"rule_06"},
 	}
@@ -145,8 +145,8 @@ func TestDisabledRules_ExcludeRule(t *testing.T) {
 
 func TestMacroCache_DifferentNodes(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("svc_a", &stage4.ResolvedNode{ID: "svc_a", Kind: "CLASS", Name: "PaymentService"})
-	g.Nodes = g.Nodes.Set("svc_b", &stage4.ResolvedNode{ID: "svc_b", Kind: "CLASS", Name: "OrderService"})
+	g.Nodes = g.Nodes.Set("svc_a", &link.ResolvedNode{ID: "svc_a", Kind: "CLASS", Name: "PaymentService"})
+	g.Nodes = g.Nodes.Set("svc_b", &link.ResolvedNode{ID: "svc_b", Kind: "CLASS", Name: "OrderService"})
 	g.KindIndex = g.KindIndex.Set("CLASS", map[string]bool{"svc_a": true, "svc_b": true})
 
 	RunTopologicalMacroInference(g)
@@ -185,29 +185,29 @@ func TestRuleRegistry_AllRules(t *testing.T) {
 
 func TestMacroRule_ArticulationPoint(t *testing.T) {
 	graph := NewCodePropertyGraph("test")
-	graph.Nodes = graph.Nodes.Set("bridge", &stage4.ResolvedNode{ID: "bridge", Kind: "MODULE", Name: "BridgeModule"})
-	graph.Nodes = graph.Nodes.Set("left", &stage4.ResolvedNode{ID: "left", Kind: "MODULE", Name: "LeftMod"})
-	graph.Nodes = graph.Nodes.Set("right", &stage4.ResolvedNode{ID: "right", Kind: "MODULE", Name: "RightMod"})
-	graph.OutboundEdges = graph.OutboundEdges.Set("bridge", []stage4.ResolvedEdge{
-		{SourceID: "bridge", TargetID: "left", Type: stage4.EdgeCalls},
-		{SourceID: "bridge", TargetID: "right", Type: stage4.EdgeCalls},
+	graph.Nodes = graph.Nodes.Set("bridge", &link.ResolvedNode{ID: "bridge", Kind: "MODULE", Name: "BridgeModule"})
+	graph.Nodes = graph.Nodes.Set("left", &link.ResolvedNode{ID: "left", Kind: "MODULE", Name: "LeftMod"})
+	graph.Nodes = graph.Nodes.Set("right", &link.ResolvedNode{ID: "right", Kind: "MODULE", Name: "RightMod"})
+	graph.OutboundEdges = graph.OutboundEdges.Set("bridge", []link.ResolvedEdge{
+		{SourceID: "bridge", TargetID: "left", Type: link.EdgeCalls},
+		{SourceID: "bridge", TargetID: "right", Type: link.EdgeCalls},
 	})
-	graph.InboundEdges = graph.InboundEdges.Set("left", []stage4.ResolvedEdge{{SourceID: "bridge", TargetID: "left", Type: stage4.EdgeCalls}})
-	graph.InboundEdges = graph.InboundEdges.Set("right", []stage4.ResolvedEdge{{SourceID: "bridge", TargetID: "right", Type: stage4.EdgeCalls}})
-	graph.OutboundEdges = graph.OutboundEdges.Set("left", []stage4.ResolvedEdge{})
+	graph.InboundEdges = graph.InboundEdges.Set("left", []link.ResolvedEdge{{SourceID: "bridge", TargetID: "left", Type: link.EdgeCalls}})
+	graph.InboundEdges = graph.InboundEdges.Set("right", []link.ResolvedEdge{{SourceID: "bridge", TargetID: "right", Type: link.EdgeCalls}})
+	graph.OutboundEdges = graph.OutboundEdges.Set("left", []link.ResolvedEdge{})
 
 	_ = graph.FindArticulationPoints()
 }
 
 func TestMacroRule_HighBlastRadius(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("target", &stage4.ResolvedNode{ID: "target", Kind: "CLASS", Name: "CoreClass"})
+	g.Nodes = g.Nodes.Set("target", &link.ResolvedNode{ID: "target", Kind: "CLASS", Name: "CoreClass"})
 	for i := 0; i < 55; i++ {
 		sid := fmt.Sprintf("src_%d", i)
-		g.Nodes = g.Nodes.Set(sid, &stage4.ResolvedNode{ID: sid, Kind: "FILE", Name: sid})
-		g.OutboundEdges = g.OutboundEdges.Set(sid, []stage4.ResolvedEdge{{SourceID: sid, TargetID: "target", Type: stage4.EdgeCalls}})
+		g.Nodes = g.Nodes.Set(sid, &link.ResolvedNode{ID: sid, Kind: "FILE", Name: sid})
+		g.OutboundEdges = g.OutboundEdges.Set(sid, []link.ResolvedEdge{{SourceID: sid, TargetID: "target", Type: link.EdgeCalls}})
 		existing, _ := g.InboundEdges.Get("target")
-		g.InboundEdges = g.InboundEdges.Set("target", append(existing, stage4.ResolvedEdge{SourceID: sid, TargetID: "target", Type: stage4.EdgeCalls}))
+		g.InboundEdges = g.InboundEdges.Set("target", append(existing, link.ResolvedEdge{SourceID: sid, TargetID: "target", Type: link.EdgeCalls}))
 	}
 	g.Entrypoints = []string{"src_0"}
 	RunTopologicalMacroInference(g)
@@ -225,13 +225,13 @@ func TestMacroRule_HighBlastRadius(t *testing.T) {
 
 func TestMacroRule_HighPageRank(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("hub", &stage4.ResolvedNode{ID: "hub", Kind: "CLASS", Name: "CoreHub"})
+	g.Nodes = g.Nodes.Set("hub", &link.ResolvedNode{ID: "hub", Kind: "CLASS", Name: "CoreHub"})
 	for i := 0; i < 45; i++ {
 		sid := fmt.Sprintf("src_%d", i)
-		g.Nodes = g.Nodes.Set(sid, &stage4.ResolvedNode{ID: sid, Kind: "CLASS", Name: sid})
-		g.OutboundEdges = g.OutboundEdges.Set(sid, []stage4.ResolvedEdge{{SourceID: sid, TargetID: "hub", Type: stage4.EdgeCalls}})
+		g.Nodes = g.Nodes.Set(sid, &link.ResolvedNode{ID: sid, Kind: "CLASS", Name: sid})
+		g.OutboundEdges = g.OutboundEdges.Set(sid, []link.ResolvedEdge{{SourceID: sid, TargetID: "hub", Type: link.EdgeCalls}})
 		existing, _ := g.InboundEdges.Get("hub")
-		g.InboundEdges = g.InboundEdges.Set("hub", append(existing, stage4.ResolvedEdge{SourceID: sid, TargetID: "hub", Type: stage4.EdgeCalls}))
+		g.InboundEdges = g.InboundEdges.Set("hub", append(existing, link.ResolvedEdge{SourceID: sid, TargetID: "hub", Type: link.EdgeCalls}))
 	}
 	g.Entrypoints = []string{"src_0"}
 	RunTopologicalMacroInference(g)
@@ -249,12 +249,12 @@ func TestMacroRule_HighPageRank(t *testing.T) {
 
 func TestMacroRule_IsolatedIsland(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a", &stage4.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "ConnectedA"})
-	g.Nodes = g.Nodes.Set("b", &stage4.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "ConnectedB"})
-	g.Nodes = g.Nodes.Set("c", &stage4.ResolvedNode{ID: "c", Kind: "FUNCTION", Name: "IslandC"})
-	g.Nodes = g.Nodes.Set("d", &stage4.ResolvedNode{ID: "d", Kind: "FUNCTION", Name: "IslandD"})
-	g.OutboundEdges = g.OutboundEdges.Set("a", []stage4.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: stage4.EdgeCalls}})
-	g.OutboundEdges = g.OutboundEdges.Set("c", []stage4.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: stage4.EdgeCalls}})
+	g.Nodes = g.Nodes.Set("a", &link.ResolvedNode{ID: "a", Kind: "FUNCTION", Name: "ConnectedA"})
+	g.Nodes = g.Nodes.Set("b", &link.ResolvedNode{ID: "b", Kind: "FUNCTION", Name: "ConnectedB"})
+	g.Nodes = g.Nodes.Set("c", &link.ResolvedNode{ID: "c", Kind: "FUNCTION", Name: "IslandC"})
+	g.Nodes = g.Nodes.Set("d", &link.ResolvedNode{ID: "d", Kind: "FUNCTION", Name: "IslandD"})
+	g.OutboundEdges = g.OutboundEdges.Set("a", []link.ResolvedEdge{{SourceID: "a", TargetID: "b", Type: link.EdgeCalls}})
+	g.OutboundEdges = g.OutboundEdges.Set("c", []link.ResolvedEdge{{SourceID: "c", TargetID: "d", Type: link.EdgeCalls}})
 	g.Entrypoints = []string{"a"}
 	RunTopologicalMacroInference(g)
 	for _, id := range []string{"c", "d"} {
@@ -276,17 +276,17 @@ func TestMacroRule_ArchitecturalBridge(t *testing.T) {
 	n := 25
 	for i := 0; i < n; i++ {
 		id := fmt.Sprintf("n%d", i)
-		g.Nodes = g.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: "CLASS", Name: id})
+		g.Nodes = g.Nodes.Set(id, &link.ResolvedNode{ID: id, Kind: "CLASS", Name: id})
 	}
 	for i := 0; i < n-1; i++ {
 		src := fmt.Sprintf("n%d", i)
 		dst := fmt.Sprintf("n%d", i+1)
 		existingSrc, _ := g.OutboundEdges.Get(src)
 		g.OutboundEdges = g.OutboundEdges.Set(src, append(existingSrc,
-			stage4.ResolvedEdge{SourceID: src, TargetID: dst, Type: stage4.EdgeCalls}))
+			link.ResolvedEdge{SourceID: src, TargetID: dst, Type: link.EdgeCalls}))
 		existingDst, _ := g.OutboundEdges.Get(dst)
 		g.OutboundEdges = g.OutboundEdges.Set(dst, append(existingDst,
-			stage4.ResolvedEdge{SourceID: dst, TargetID: src, Type: stage4.EdgeCalls}))
+			link.ResolvedEdge{SourceID: dst, TargetID: src, Type: link.EdgeCalls}))
 	}
 	g.Entrypoints = []string{"n0"}
 	RunTopologicalMacroInference(g)
@@ -307,18 +307,18 @@ func TestMacroRule_ArchitecturalBridge(t *testing.T) {
 
 func TestMacroRule_LowCohesion(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("pkg", &stage4.ResolvedNode{ID: "pkg", Kind: "PACKAGE", Name: "LowCohesionPkg"})
+	g.Nodes = g.Nodes.Set("pkg", &link.ResolvedNode{ID: "pkg", Kind: "PACKAGE", Name: "LowCohesionPkg"})
 	for i := 0; i < 3; i++ {
 		id := fmt.Sprintf("comp_%d", i)
-		g.Nodes = g.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: "CLASS", Name: id})
-		g.OutboundEdges = g.OutboundEdges.Set(id, []stage4.ResolvedEdge{{SourceID: id, TargetID: "pkg", Type: stage4.EdgeBelongsTo}})
+		g.Nodes = g.Nodes.Set(id, &link.ResolvedNode{ID: id, Kind: "CLASS", Name: id})
+		g.OutboundEdges = g.OutboundEdges.Set(id, []link.ResolvedEdge{{SourceID: id, TargetID: "pkg", Type: link.EdgeBelongsTo}})
 		existing, _ := g.InboundEdges.Get("pkg")
-		g.InboundEdges = g.InboundEdges.Set("pkg", append(existing, stage4.ResolvedEdge{SourceID: id, TargetID: "pkg", Type: stage4.EdgeBelongsTo}))
+		g.InboundEdges = g.InboundEdges.Set("pkg", append(existing, link.ResolvedEdge{SourceID: id, TargetID: "pkg", Type: link.EdgeBelongsTo}))
 	}
 	// Add 1 internal edge so cohesion = 1/3 = 0.33 (< 1.0 and > 0)
 	existing, _ := g.OutboundEdges.Get("comp_0")
 	g.OutboundEdges = g.OutboundEdges.Set("comp_0", append(existing,
-		stage4.ResolvedEdge{SourceID: "comp_0", TargetID: "comp_1", Type: stage4.EdgeCalls}))
+		link.ResolvedEdge{SourceID: "comp_0", TargetID: "comp_1", Type: link.EdgeCalls}))
 	RunTopologicalMacroInference(g)
 	rules, ok := g.MacroRules.Get("pkg")
 	require.True(t, ok, "expected rules for low-cohesion package")

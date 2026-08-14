@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 // codeTools builds the source-reading tools that ground the agent in real
@@ -130,13 +130,13 @@ func codeTools() []Tool {
 			Handler: func(ctx context.Context, env *Env, args map[string]any) (any, error) {
 				return withSnapshot(env, func(snap *akg.CodePropertyGraph) (any, error) {
 					name := strArg(args, "name", "")
-					filter := stage4.QueryFilter{
+					filter := link.QueryFilter{
 						NameContains: name,
 						Kind:         strArg(args, "kind", ""),
 					}
 					all := snap.Query(filter)
 					if all == nil {
-						all = []*stage4.ResolvedNode{}
+						all = []*link.ResolvedNode{}
 					}
 					limit := intArg(args, "limit", 20, 1, 50)
 					out := make([]nodeBrief, 0, min(limit, len(all)))
@@ -159,13 +159,13 @@ func codeTools() []Tool {
 			}),
 			Handler: func(ctx context.Context, env *Env, args map[string]any) (any, error) {
 				symbol := strArg(args, "symbol", "")
-				var node *stage4.ResolvedNode
+				var node *link.ResolvedNode
 				_, err := withSnapshot(env, func(snap *akg.CodePropertyGraph) (any, error) {
-					all := snap.Query(stage4.QueryFilter{NameContains: symbol, Limit: 50})
+					all := snap.Query(link.QueryFilter{NameContains: symbol, Limit: 50})
 					if all == nil {
-						all = []*stage4.ResolvedNode{}
+						all = []*link.ResolvedNode{}
 					}
-					var exact []*stage4.ResolvedNode
+					var exact []*link.ResolvedNode
 					for _, n := range all {
 						if n.Name == symbol {
 							exact = append(exact, n)

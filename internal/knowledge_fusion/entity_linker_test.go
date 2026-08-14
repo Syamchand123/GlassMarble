@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/developer_memory"
 	"github.com/Syamchand123/GlassMarble/internal/evidence"
 )
@@ -32,11 +32,11 @@ func testGraph(t *testing.T, file string, names map[string]string) *akg.CodeProp
 	g := akg.NewCodePropertyGraph("test")
 	nodeIDs := make(map[string]bool, len(names))
 	for name, id := range names {
-		g.Nodes = g.Nodes.Set(id, &stage4.ResolvedNode{
+		g.Nodes = g.Nodes.Set(id, &link.ResolvedNode{
 			ID:       id,
 			Kind:     "MODULE",
 			Name:     name,
-			FileSpec: stage4.LocationMeta{Path: file},
+			FileSpec: link.LocationMeta{Path: file},
 		})
 		nodeIDs[id] = true
 	}
@@ -163,8 +163,8 @@ func TestLinkDocumentClaimsToAKG_CaseInsensitiveNameCollisionLowestID(t *testing
 	g := akg.NewCodePropertyGraph("test")
 	// Two nodes share the name "Redis": the collision must resolve to the
 	// lowest node ID deterministically, regardless of insertion order.
-	g.Nodes = g.Nodes.Set("mod::redis-b", &stage4.ResolvedNode{ID: "mod::redis-b", Kind: "MODULE", Name: "Redis"})
-	g.Nodes = g.Nodes.Set("mod::redis-a", &stage4.ResolvedNode{ID: "mod::redis-a", Kind: "MODULE", Name: "Redis"})
+	g.Nodes = g.Nodes.Set("mod::redis-b", &link.ResolvedNode{ID: "mod::redis-b", Kind: "MODULE", Name: "Redis"})
+	g.Nodes = g.Nodes.Set("mod::redis-a", &link.ResolvedNode{ID: "mod::redis-a", Kind: "MODULE", Name: "Redis"})
 
 	claim := testClaim("c1", "Use Redis", "Redis", ts)
 	linked := LinkDocumentClaimsToAKG([]developer_memory.KnowledgeClaim{claim}, g)

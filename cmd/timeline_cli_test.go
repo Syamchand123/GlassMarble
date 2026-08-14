@@ -32,7 +32,7 @@ func timelineTestEvent(id string, kind archmodel.EventKind, ts time.Time, title 
 }
 
 // seedTimelineMemory ingests events into the repo's developer memory
-// (.glassmarble/memory/) exactly as the Stage 6 pipeline would.
+// (.glassmarble/memory/) exactly as the developer memory pipeline would.
 func seedTimelineMemory(t *testing.T, root string, events []archmodel.ArchEvent) {
 	t.Helper()
 	store := developer_memory.NewStoreForRepo(root)

@@ -4,16 +4,16 @@ import (
 	"testing"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/config"
 )
 
 func testGraph() *akg.CodePropertyGraph {
 	g := akg.NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("a::web", &stage4.ResolvedNode{ID: "a::web", FileSpec: stage4.LocationMeta{Path: "cmd/web/handler.go"}})
-	g.Nodes = g.Nodes.Set("b::svc", &stage4.ResolvedNode{ID: "b::svc", FileSpec: stage4.LocationMeta{Path: "internal/svc/svc.go"}})
-	g.Nodes = g.Nodes.Set("c::repo", &stage4.ResolvedNode{ID: "c::repo", FileSpec: stage4.LocationMeta{Path: "internal/repo/repo.go"}})
-	g.Nodes = g.Nodes.Set("d::db", &stage4.ResolvedNode{ID: "d::db", FileSpec: stage4.LocationMeta{Path: "internal/db/db.go"}})
+	g.Nodes = g.Nodes.Set("a::web", &link.ResolvedNode{ID: "a::web", FileSpec: link.LocationMeta{Path: "cmd/web/handler.go"}})
+	g.Nodes = g.Nodes.Set("b::svc", &link.ResolvedNode{ID: "b::svc", FileSpec: link.LocationMeta{Path: "internal/svc/svc.go"}})
+	g.Nodes = g.Nodes.Set("c::repo", &link.ResolvedNode{ID: "c::repo", FileSpec: link.LocationMeta{Path: "internal/repo/repo.go"}})
+	g.Nodes = g.Nodes.Set("d::db", &link.ResolvedNode{ID: "d::db", FileSpec: link.LocationMeta{Path: "internal/db/db.go"}})
 	return g
 }
 
@@ -30,8 +30,8 @@ func defaultConfig() config.DriftConfig {
 	}
 }
 
-func addEdge(g *akg.CodePropertyGraph, src, tgt string, typ stage4.RelationshipType) {
-	edge := stage4.ResolvedEdge{SourceID: src, TargetID: tgt, Type: typ}
+func addEdge(g *akg.CodePropertyGraph, src, tgt string, typ link.RelationshipType) {
+	edge := link.ResolvedEdge{SourceID: src, TargetID: tgt, Type: typ}
 	out, _ := g.OutboundEdges.Get(src)
 	g.OutboundEdges = g.OutboundEdges.Set(src, append(out, edge))
 	in, _ := g.InboundEdges.Get(tgt)
@@ -41,10 +41,10 @@ func addEdge(g *akg.CodePropertyGraph, src, tgt string, typ stage4.RelationshipT
 func TestAnalyzeForbiddenDependencyDetected(t *testing.T) {
 	g := testGraph()
 	// web -> db is forbidden by config.
-	addEdge(g, "a::web", "d::db", stage4.EdgeCalls)
+	addEdge(g, "a::web", "d::db", link.EdgeCalls)
 	// web -> svc and svc -> db are allowed.
-	addEdge(g, "a::web", "b::svc", stage4.EdgeCalls)
-	addEdge(g, "b::svc", "d::db", stage4.EdgeCalls)
+	addEdge(g, "a::web", "b::svc", link.EdgeCalls)
+	addEdge(g, "b::svc", "d::db", link.EdgeCalls)
 
 	rep := Analyze(g, defaultConfig())
 	if rep.ForbiddenEdges != 1 {
@@ -61,8 +61,8 @@ func TestAnalyzeForbiddenDependencyDetected(t *testing.T) {
 
 func TestAnalyzeNoViolations(t *testing.T) {
 	g := testGraph()
-	addEdge(g, "a::web", "b::svc", stage4.EdgeCalls)
-	addEdge(g, "b::svc", "c::repo", stage4.EdgeCalls)
+	addEdge(g, "a::web", "b::svc", link.EdgeCalls)
+	addEdge(g, "b::svc", "c::repo", link.EdgeCalls)
 
 	rep := Analyze(g, defaultConfig())
 	if rep.ForbiddenEdges != 0 {
@@ -76,7 +76,7 @@ func TestAnalyzeNoViolations(t *testing.T) {
 func TestAnalyzeUnassignedNodesIgnored(t *testing.T) {
 	g := testGraph()
 	// c::repo lives under internal/repo which matches no layer.
-	addEdge(g, "a::web", "c::repo", stage4.EdgeCalls)
+	addEdge(g, "a::web", "c::repo", link.EdgeCalls)
 
 	rep := Analyze(g, defaultConfig())
 	if rep.ForbiddenEdges != 0 {
@@ -87,8 +87,8 @@ func TestAnalyzeUnassignedNodesIgnored(t *testing.T) {
 func TestAnalyzeCycleBudgetExceeded(t *testing.T) {
 	g := testGraph()
 	// svc <-> db forms a two-layer cycle.
-	addEdge(g, "b::svc", "d::db", stage4.EdgeCalls)
-	addEdge(g, "d::db", "b::svc", stage4.EdgeCalls)
+	addEdge(g, "b::svc", "d::db", link.EdgeCalls)
+	addEdge(g, "d::db", "b::svc", link.EdgeCalls)
 
 	cfg := defaultConfig()
 	cfg.CycleBudget = 0
@@ -103,8 +103,8 @@ func TestAnalyzeCycleBudgetExceeded(t *testing.T) {
 
 func TestAnalyzeCycleBudgetWithinLimit(t *testing.T) {
 	g := testGraph()
-	addEdge(g, "b::svc", "d::db", stage4.EdgeCalls)
-	addEdge(g, "d::db", "b::svc", stage4.EdgeCalls)
+	addEdge(g, "b::svc", "d::db", link.EdgeCalls)
+	addEdge(g, "d::db", "b::svc", link.EdgeCalls)
 
 	cfg := defaultConfig()
 	cfg.CycleBudget = 3

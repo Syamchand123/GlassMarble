@@ -30,7 +30,7 @@ type BuildDiagramRequest struct {
 	DiagramType types.DiagramType
 	Format      string // "mermaid" | "plantuml" | "dot"
 	Options     DiagramOptions
-	OnProgress  func(stage, detail string)
+	OnProgress  func(step, detail string)
 	OnWarning   func(msg string)
 	OnSummary   func(s *types.GraphSummary)
 

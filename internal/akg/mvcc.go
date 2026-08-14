@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 const CurrentSchemaVersion = 3
@@ -26,13 +26,13 @@ type CodePropertyGraph struct {
 	SchemaVersion int                                     `json:"schema_version"`
 	CommitHash    string                                  `json:"commit_hash"`
 	Version       uint64                                  `json:"version"`
-	Nodes         *CowMap[string, *stage4.ResolvedNode]   `json:"-"`
+	Nodes         *CowMap[string, *link.ResolvedNode]   `json:"-"`
 	macroCache    *CowMap[string, []string]               `json:"-"`
 	macroHash     string                                  `json:"-"`
-	OutboundEdges *CowMap[string, []stage4.ResolvedEdge]  `json:"-"`
-	InboundEdges  *CowMap[string, []stage4.ResolvedEdge]  `json:"-"`
+	OutboundEdges *CowMap[string, []link.ResolvedEdge]  `json:"-"`
+	InboundEdges  *CowMap[string, []link.ResolvedEdge]  `json:"-"`
 	FileNodeIndex *CowMap[string, map[string]bool]        `json:"-"`
-	LineIndex     *CowMap[string, []*stage4.ResolvedNode] `json:"-"`
+	LineIndex     *CowMap[string, []*link.ResolvedNode] `json:"-"`
 	MacroRules    *CowMap[string, []string]               `json:"-"`
 	KindIndex     *CowMap[string, map[string]bool]        `json:"-"`
 	HashIndex     *CowMap[string, []string]               `json:"-"`
@@ -62,11 +62,11 @@ func NewCodePropertyGraph(commitHash string) *CodePropertyGraph {
 		SchemaVersion: CurrentSchemaVersion,
 		CommitHash:    commitHash,
 		Version:       1,
-		Nodes:         NewCowMap[string, *stage4.ResolvedNode](),
-		OutboundEdges: NewCowMap[string, []stage4.ResolvedEdge](),
-		InboundEdges:  NewCowMap[string, []stage4.ResolvedEdge](),
+		Nodes:         NewCowMap[string, *link.ResolvedNode](),
+		OutboundEdges: NewCowMap[string, []link.ResolvedEdge](),
+		InboundEdges:  NewCowMap[string, []link.ResolvedEdge](),
 		FileNodeIndex: NewCowMap[string, map[string]bool](),
-		LineIndex:     NewCowMap[string, []*stage4.ResolvedNode](),
+		LineIndex:     NewCowMap[string, []*link.ResolvedNode](),
 		MacroRules:    NewCowMap[string, []string](),
 		KindIndex:     NewCowMap[string, map[string]bool](),
 		HashIndex:     NewCowMap[string, []string](),
@@ -77,17 +77,17 @@ func NewCodePropertyGraph(commitHash string) *CodePropertyGraph {
 	}
 }
 
-// GetNode implements stage4.GraphDB interface for incremental lookups.
-func (c *CodePropertyGraph) GetNode(id string) (*stage4.ResolvedNode, bool) {
+// GetNode implements link.GraphDB interface for incremental lookups.
+func (c *CodePropertyGraph) GetNode(id string) (*link.ResolvedNode, bool) {
 	if c.Nodes == nil {
 		return nil, false
 	}
 	return c.Nodes.Get(id)
 }
 
-// GetNodesByKind implements stage4.GraphDB interface for bulk interface/struct lookups.
-func (c *CodePropertyGraph) GetNodesByKind(kind string) []*stage4.ResolvedNode {
-	var results []*stage4.ResolvedNode
+// GetNodesByKind implements link.GraphDB interface for bulk interface/struct lookups.
+func (c *CodePropertyGraph) GetNodesByKind(kind string) []*link.ResolvedNode {
+	var results []*link.ResolvedNode
 	if c.KindIndex == nil || c.Nodes == nil {
 		return results
 	}
@@ -103,8 +103,8 @@ func (c *CodePropertyGraph) GetNodesByKind(kind string) []*stage4.ResolvedNode {
 	return results
 }
 
-// GetOutboundEdges implements stage4.GraphDB interface for incremental edge traversal.
-func (c *CodePropertyGraph) GetOutboundEdges(id string) []stage4.ResolvedEdge {
+// GetOutboundEdges implements link.GraphDB interface for incremental edge traversal.
+func (c *CodePropertyGraph) GetOutboundEdges(id string) []link.ResolvedEdge {
 	if c.OutboundEdges == nil {
 		return nil
 	}
@@ -113,7 +113,7 @@ func (c *CodePropertyGraph) GetOutboundEdges(id string) []stage4.ResolvedEdge {
 }
 
 // GetInboundEdges allows backwards traversal for dependency impact analysis.
-func (c *CodePropertyGraph) GetInboundEdges(id string) []stage4.ResolvedEdge {
+func (c *CodePropertyGraph) GetInboundEdges(id string) []link.ResolvedEdge {
 	if c.InboundEdges == nil {
 		return nil
 	}
@@ -173,7 +173,7 @@ func (c *CodePropertyGraph) GetOrphanNodes() []string {
 		entrypointMap[ep] = true
 	}
 
-	c.Nodes.Iterate(func(id string, _ *stage4.ResolvedNode) {
+	c.Nodes.Iterate(func(id string, _ *link.ResolvedNode) {
 		if len(c.GetInboundEdges(id)) == 0 && !entrypointMap[id] {
 			orphans = append(orphans, id)
 		}
@@ -230,7 +230,7 @@ func (c *CodePropertyGraph) DetectCycles() [][]string {
 		}
 	}
 
-	c.Nodes.Iterate(func(v string, _ *stage4.ResolvedNode) {
+	c.Nodes.Iterate(func(v string, _ *link.ResolvedNode) {
 		if _, ok := indices[v]; !ok {
 			strongconnect(v)
 		}
@@ -246,10 +246,10 @@ func (c *CodePropertyGraph) GetTopologicalSort() ([]string, bool) {
 	var sorted []string
 
 	// Initialize in-degrees
-	c.Nodes.Iterate(func(id string, _ *stage4.ResolvedNode) {
+	c.Nodes.Iterate(func(id string, _ *link.ResolvedNode) {
 		inDegree[id] = 0
 	})
-	c.OutboundEdges.Iterate(func(_ string, edges []stage4.ResolvedEdge) {
+	c.OutboundEdges.Iterate(func(_ string, edges []link.ResolvedEdge) {
 		for _, edge := range edges {
 			inDegree[edge.TargetID]++
 		}
@@ -364,7 +364,7 @@ func (c *CodePropertyGraph) FindArticulationPoints() []string {
 		}
 	}
 
-	c.Nodes.Iterate(func(id string, _ *stage4.ResolvedNode) {
+	c.Nodes.Iterate(func(id string, _ *link.ResolvedNode) {
 		if !visited[id] {
 			dfs(id)
 		}
@@ -418,14 +418,14 @@ func (c *CodePropertyGraph) CalculatePageRank(iterations int, dampingFactor floa
 	}
 
 	initialRank := 1.0 / numNodes
-	c.Nodes.Iterate(func(id string, _ *stage4.ResolvedNode) {
+	c.Nodes.Iterate(func(id string, _ *link.ResolvedNode) {
 		ranks[id] = initialRank
 	})
 
 	// Pre-compute out-degree once so the per-iteration loops do not re-scan
 	// every node's edge list (also keeps dangling detection O(1) per node).
 	outDegree := make(map[string]int)
-	c.Nodes.Iterate(func(id string, _ *stage4.ResolvedNode) {
+	c.Nodes.Iterate(func(id string, _ *link.ResolvedNode) {
 		outDegree[id] = len(c.GetOutboundEdges(id))
 	})
 
@@ -434,7 +434,7 @@ func (c *CodePropertyGraph) CalculatePageRank(iterations int, dampingFactor floa
 
 		// Dangling nodes (no outbound edges) leak mass: their rank never
 		// propagates. Redistribute that mass evenly, matching the parallel
-		// implementation in visualization_engine/stage2/metrics.go, so rank
+		// implementation in visualization_engine/layout/metrics.go, so rank
 		// stays conserved and pageRanks remain comparable across engines.
 		var danglingSum float64
 		for id, deg := range outDegree {
@@ -444,7 +444,7 @@ func (c *CodePropertyGraph) CalculatePageRank(iterations int, dampingFactor floa
 		}
 		danglingContrib := dampingFactor * danglingSum / numNodes
 
-		c.Nodes.Iterate(func(id string, _ *stage4.ResolvedNode) {
+		c.Nodes.Iterate(func(id string, _ *link.ResolvedNode) {
 			rank := (1.0-dampingFactor)/numNodes + danglingContrib
 			for _, edge := range c.GetInboundEdges(id) {
 				outDegree := outDegree[edge.SourceID]
@@ -469,7 +469,7 @@ func (c *CodePropertyGraph) FindIsolatedIslands() [][]string {
 		isEntrypoint[ep] = true
 	}
 
-	c.Nodes.Iterate(func(id string, _ *stage4.ResolvedNode) {
+	c.Nodes.Iterate(func(id string, _ *link.ResolvedNode) {
 		if visited[id] {
 			return
 		}
@@ -515,7 +515,7 @@ func (c *CodePropertyGraph) DetectGodObjects() []string {
 
 	relevantKinds := map[string]bool{"STRUCT": true, "CLASS": true, "MODULE": true, "FILE": true}
 
-	c.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
+	c.Nodes.Iterate(func(id string, node *link.ResolvedNode) {
 		if relevantKinds[node.Kind] {
 			totalFanIn += float64(len(c.GetInboundEdges(id)))
 			totalFanOut += float64(len(c.GetOutboundEdges(id)))
@@ -531,7 +531,7 @@ func (c *CodePropertyGraph) DetectGodObjects() []string {
 	meanFanOut := totalFanOut / count
 
 	var varFanIn, varFanOut float64
-	c.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
+	c.Nodes.Iterate(func(id string, node *link.ResolvedNode) {
 		if relevantKinds[node.Kind] {
 			fanIn := float64(len(c.GetInboundEdges(id)))
 			fanOut := float64(len(c.GetOutboundEdges(id)))
@@ -555,7 +555,7 @@ func (c *CodePropertyGraph) DetectGodObjects() []string {
 		thresholdOut = adaptiveMin
 	}
 
-	c.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
+	c.Nodes.Iterate(func(id string, node *link.ResolvedNode) {
 		if relevantKinds[node.Kind] {
 			fanIn := float64(len(c.GetInboundEdges(id)))
 			fanOut := float64(len(c.GetOutboundEdges(id)))
@@ -577,7 +577,7 @@ func (c *CodePropertyGraph) CalculateBetweennessCentrality(includeAll ...bool) m
 	}
 
 	var majorNodes []string
-	c.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
+	c.Nodes.Iterate(func(id string, node *link.ResolvedNode) {
 		if includeAllNodes {
 			majorNodes = append(majorNodes, id)
 			bc[id] = 0.0
@@ -644,7 +644,7 @@ func (c *CodePropertyGraph) CalculateBetweennessCentrality(includeAll ...bool) m
 	// algorithm accumulates betweenness per directed traversal; the "/2"
 	// correction is only valid for UNDIRECTED graphs where each edge is counted
 	// in both directions. Matching the visualization engine's directed
-	// implementation (stage2/metrics.go ComputeBetweenness), no halving is
+	// implementation (layout/metrics.go ComputeBetweenness), no halving is
 	// applied here.
 	return bc
 }
@@ -656,7 +656,7 @@ func (c *CodePropertyGraph) CalculatePackageCohesion(packageID string) float64 {
 
 	foundBelongsTo := false
 	for _, e := range c.GetInboundEdges(packageID) {
-		if e.Type == stage4.EdgeBelongsTo {
+		if e.Type == link.EdgeBelongsTo {
 			components = append(components, e.SourceID)
 			componentSet[e.SourceID] = true
 			foundBelongsTo = true
@@ -664,7 +664,7 @@ func (c *CodePropertyGraph) CalculatePackageCohesion(packageID string) float64 {
 	}
 
 	if !foundBelongsTo {
-		c.Nodes.Iterate(func(id string, _ *stage4.ResolvedNode) {
+		c.Nodes.Iterate(func(id string, _ *link.ResolvedNode) {
 			for _, e := range c.GetOutboundEdges(id) {
 				if e.TargetID == packageID {
 					components = append(components, id)
@@ -742,7 +742,7 @@ func (c *CodePropertyGraph) detachNodesForWrite() {
 	if c == nil || c.Nodes == nil {
 		return
 	}
-	c.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
+	c.Nodes.Iterate(func(id string, node *link.ResolvedNode) {
 		if node == nil {
 			return
 		}
@@ -766,28 +766,28 @@ func (c *CodePropertyGraph) detachNodesForWrite() {
 }
 
 // SafeGetNode is a concurrency-safe wrapper that acquires the read lock.
-func (c *CodePropertyGraph) SafeGetNode(id string) (*stage4.ResolvedNode, bool) {
+func (c *CodePropertyGraph) SafeGetNode(id string) (*link.ResolvedNode, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.GetNode(id)
 }
 
 // SafeGetOutboundEdges is a concurrency-safe wrapper.
-func (c *CodePropertyGraph) SafeGetOutboundEdges(id string) []stage4.ResolvedEdge {
+func (c *CodePropertyGraph) SafeGetOutboundEdges(id string) []link.ResolvedEdge {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.GetOutboundEdges(id)
 }
 
 // SafeGetInboundEdges is a concurrency-safe wrapper.
-func (c *CodePropertyGraph) SafeGetInboundEdges(id string) []stage4.ResolvedEdge {
+func (c *CodePropertyGraph) SafeGetInboundEdges(id string) []link.ResolvedEdge {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.GetInboundEdges(id)
 }
 
 // SafeGetNodesByKind is a concurrency-safe wrapper.
-func (c *CodePropertyGraph) SafeGetNodesByKind(kind string) []*stage4.ResolvedNode {
+func (c *CodePropertyGraph) SafeGetNodesByKind(kind string) []*link.ResolvedNode {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.GetNodesByKind(kind)

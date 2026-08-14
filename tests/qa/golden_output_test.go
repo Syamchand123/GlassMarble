@@ -18,7 +18,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/provider"
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/session"
 	"github.com/Syamchand123/GlassMarble/internal/akg"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/drift"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 )
@@ -254,7 +254,7 @@ func TestGoldenAIDoctor(t *testing.T) {
 }
 
 func TestGoldenInspectDetail(t *testing.T) {
-	node := &stage4.ResolvedNode{
+	node := &link.ResolvedNode{
 		ID:   "cmd/app/main.go::Main",
 		Name: "Main",
 		Kind: "EXECUTABLE",

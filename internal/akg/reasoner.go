@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 const (
@@ -40,7 +40,7 @@ func capMacroCache(cache *CowMap[string, []string]) *CowMap[string, []string] {
 // RunTopologicalMacroInference executes Sub-Step D.2: Topological Macro-Inference Parsing.
 // It walks execution paths across functional primitives to infer high-level C4 component rules.
 // An optional LinkerConfig controls which tiers of rules are applied.
-func RunTopologicalMacroInference(graph *CodePropertyGraph, config ...stage4.LinkerConfig) {
+func RunTopologicalMacroInference(graph *CodePropertyGraph, config ...link.LinkerConfig) {
 	if graph == nil || graph.Nodes.Len() == 0 {
 		return
 	}
@@ -85,12 +85,12 @@ func RunTopologicalMacroInference(graph *CodePropertyGraph, config ...stage4.Lin
 	// Collect node info first to avoid concurrent map iteration with goroutines
 	type nodeTask struct {
 		id       string
-		node     *stage4.ResolvedNode
+		node     *link.ResolvedNode
 		cacheKey string
 	}
 	var tasks []nodeTask
 	mu.Lock()
-	graph.Nodes.Iterate(func(nodeID string, node *stage4.ResolvedNode) {
+	graph.Nodes.Iterate(func(nodeID string, node *link.ResolvedNode) {
 		if node == nil {
 			return
 		}
@@ -112,7 +112,7 @@ func RunTopologicalMacroInference(graph *CodePropertyGraph, config ...stage4.Lin
 	for _, task := range tasks {
 		wg.Add(1)
 		sem <- struct{}{}
-		go func(id string, n *stage4.ResolvedNode, key string) {
+		go func(id string, n *link.ResolvedNode, key string) {
 			defer wg.Done()
 			defer func() { <-sem }()
 			inferMacroRulesForNode(id, n, graph, &mu, macroMode, disabledRules)
@@ -190,7 +190,7 @@ func RunTopologicalMacroInference(graph *CodePropertyGraph, config ...stage4.Lin
 	pageRanks := graph.CalculatePageRank(20, 0.85)
 	betweenness := graph.CalculateBetweennessCentrality(graph.Nodes.Len() < 100000)
 
-	graph.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
+	graph.Nodes.Iterate(func(id string, node *link.ResolvedNode) {
 		if node.Kind == "MODULE" || node.Kind == "PACKAGE" {
 			cohesion := graph.CalculatePackageCohesion(id)
 			if node.Properties == nil {
@@ -311,14 +311,14 @@ func buildArchitecturalSummary(graph *CodePropertyGraph) {
 		summary.PrimaryPatterns = append(summary.PrimaryPatterns, p)
 	}
 
-	graph.OutboundEdges.Iterate(func(id string, edges []stage4.ResolvedEdge) {
+	graph.OutboundEdges.Iterate(func(id string, edges []link.ResolvedEdge) {
 		outboundCounts[id] += len(edges)
 	})
-	graph.InboundEdges.Iterate(func(id string, edges []stage4.ResolvedEdge) {
+	graph.InboundEdges.Iterate(func(id string, edges []link.ResolvedEdge) {
 		inboundCounts[id] += len(edges)
 	})
 
-	graph.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
+	graph.Nodes.Iterate(func(id string, node *link.ResolvedNode) {
 		summary.LayerDistribution[node.Kind]++
 
 		if node.Primitive == "EXTERNAL" || node.Primitive == "NETWORK_IO" {
@@ -337,7 +337,7 @@ func buildArchitecturalSummary(graph *CodePropertyGraph) {
 		Score int
 	}
 	var rankings []NodeRank
-	graph.Nodes.Iterate(func(id string, _ *stage4.ResolvedNode) {
+	graph.Nodes.Iterate(func(id string, _ *link.ResolvedNode) {
 		score := inboundCounts[id] + outboundCounts[id]
 		if score > 0 {
 			rankings = append(rankings, NodeRank{ID: id, Score: score})
@@ -368,7 +368,7 @@ func shouldApplyRule(tier, macroMode string) bool {
 	}
 }
 
-func inferMacroRulesForNode(nodeID string, node *stage4.ResolvedNode, graph *CodePropertyGraph, mu *sync.Mutex, macroMode string, disabledRules map[string]bool) {
+func inferMacroRulesForNode(nodeID string, node *link.ResolvedNode, graph *CodePropertyGraph, mu *sync.Mutex, macroMode string, disabledRules map[string]bool) {
 	visited := make(map[string]bool)
 	primitivesFound := make(map[string]bool)
 	var flags ruleFlags
@@ -421,29 +421,29 @@ func dfsWalkPrimitives(currentID string, graph *CodePropertyGraph, visited map[s
 
 	edges, _ := graph.OutboundEdges.Get(currentID)
 	for _, edge := range edges {
-		if edge.Type == stage4.EdgeSpawnsConcurrent || edge.Type == stage4.EdgeDispatchesEvent {
+		if edge.Type == link.EdgeSpawnsConcurrent || edge.Type == link.EdgeDispatchesEvent {
 			*hasAsync = true
 		}
-		if edge.Type == stage4.EdgePublishes || edge.Type == stage4.EdgeSubscribes || edge.Type == stage4.EdgeDispatchesEvent {
+		if edge.Type == link.EdgePublishes || edge.Type == link.EdgeSubscribes || edge.Type == link.EdgeDispatchesEvent {
 			*hasPubSub = true
 		}
-		if edge.Type == stage4.EdgeInjects {
+		if edge.Type == link.EdgeInjects {
 			*hasDI = true
 		}
-		if edge.Type == stage4.EdgeContextCall {
+		if edge.Type == link.EdgeContextCall {
 			*hasContext = true
 		}
-		if edge.Type == stage4.EdgeEscapesToHeap || edge.Type == stage4.EdgeHeapAlias {
+		if edge.Type == link.EdgeEscapesToHeap || edge.Type == link.EdgeHeapAlias {
 			*hasHeapEscape = true
 		}
-		if edge.Type == stage4.EdgeFFICall {
+		if edge.Type == link.EdgeFFICall {
 			*hasFFI = true
 		}
-		if edge.Type == stage4.EdgeConstraint {
+		if edge.Type == link.EdgeConstraint {
 			*hasConstraint = true
 		}
 
-		if edge.Type == stage4.EdgeCalls || edge.Type == stage4.EdgeSpawnsConcurrent || edge.Type == stage4.EdgeControlFlow || edge.Type == stage4.EdgeContextCall {
+		if edge.Type == link.EdgeCalls || edge.Type == link.EdgeSpawnsConcurrent || edge.Type == link.EdgeControlFlow || edge.Type == link.EdgeContextCall {
 			dfsWalkPrimitives(edge.TargetID, graph, visited, primitivesFound, hasSecurity, hasAsync, hasContext, hasPubSub, hasDI, hasHeapEscape, hasFFI, hasConstraint, depth+1, maxDepth)
 		}
 	}
@@ -468,7 +468,7 @@ const affectedReasonerDepth = 2
 // centrality) are graph-global and are NOT re-derived here; callers that need
 // them (e.g. `gmb analyze --full`) use RunTopologicalMacroInference. The
 // summary is refreshed from the merged graph so status/queries stay current.
-func RunIncrementalMacroInference(graph *CodePropertyGraph, modifiedFiles []string, changedNodeIDs []string, config ...stage4.LinkerConfig) {
+func RunIncrementalMacroInference(graph *CodePropertyGraph, modifiedFiles []string, changedNodeIDs []string, config ...link.LinkerConfig) {
 	if graph == nil || graph.Nodes == nil || graph.Nodes.Len() == 0 {
 		return
 	}
@@ -520,7 +520,7 @@ func RunIncrementalMacroInference(graph *CodePropertyGraph, modifiedFiles []stri
 		for _, filePath := range modifiedFiles {
 			need[normalizePath(filePath)] = true
 		}
-		graph.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
+		graph.Nodes.Iterate(func(id string, node *link.ResolvedNode) {
 			if node != nil && need[normalizePath(node.FileSpec.Path)] {
 				affected[id] = true
 			}
@@ -571,7 +571,7 @@ func RunIncrementalMacroInference(graph *CodePropertyGraph, modifiedFiles []stri
 	// collection loop is still reading it (same pattern as the full reasoner).
 	type task struct {
 		id   string
-		node *stage4.ResolvedNode
+		node *link.ResolvedNode
 		key  string
 	}
 	var tasks []task
@@ -595,7 +595,7 @@ func RunIncrementalMacroInference(graph *CodePropertyGraph, modifiedFiles []stri
 	for _, tk := range tasks {
 		wg.Add(1)
 		sem <- struct{}{}
-		go func(id string, n *stage4.ResolvedNode, key string) {
+		go func(id string, n *link.ResolvedNode, key string) {
 			defer wg.Done()
 			defer func() { <-sem }()
 			inferMacroRulesForNode(id, n, graph, &mu, macroMode, disabledRules)

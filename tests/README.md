@@ -3,7 +3,7 @@
 This directory is the full-product, battle-test suite for GlassMarble. It
 treats the product the way a real user does: running real commands (`gmb
 init`, `gmb analyze`, `gmb visualize`, `gmb ai`, ...) against real sandbox
-repositories, plus direct pipeline-level tests for every stage.
+repositories, plus direct pipeline-level tests for every phase.
 
 ## Layout
 
@@ -11,7 +11,7 @@ repositories, plus direct pipeline-level tests for every stage.
 |----------------|----------|
 | `harness/`     | Shared test infrastructure (sandboxes, CLI runner, fixtures, mock LLM). |
 | `e2e/`         | Real user flows: the full journey from `init` through `analyze`, `visualize`, `export`, `compare`, `snapshot`, `timeline`, `memory` and `ai`. |
-| `stages/`      | Pipeline-level tests for stages 1–12 (ingestion → linking → intelligence → memory → fusion → learning → aging). |
+| `stages/`      | Pipeline-level tests for phases 1-12 (ingestion → linking → intelligence → memory → fusion → learning → aging). |
 | `nonfunctional/` | Performance budgets, determinism, idempotency, concurrency, resilience, corruption recovery. |
 | `edgecases/`   | Empty repos, no-git repos, giant files, unknown languages, corrupt input, fallback behavior. |
 | `qa/`          | Golden outputs, JSON schema conformance, output contracts, exit codes. |

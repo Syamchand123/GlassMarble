@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
-	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/stage1"
-	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/stage2"
+	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/extract"
+	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/layout"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
@@ -39,8 +39,8 @@ func TestDiagAllTypes(t *testing.T) {
 		types.LayeredArchitecture, types.ChangeImpact, types.Infrastructure,
 	}
 	for _, dt := range all {
-		cfg := stage1.GetExtractionConfig(dt, types.QueryOptions{})
-		sub, _, err := stage1.ExtractFromSubgraph(full, cfg, types.QueryOptions{})
+		cfg := ingest.GetExtractionConfig(dt, types.QueryOptions{})
+		sub, _, err := ingest.ExtractFromSubgraph(full, cfg, types.QueryOptions{})
 		if err != nil {
 			fmt.Printf("%-22s ERROR: %v\n", dt, err)
 			continue
@@ -160,20 +160,20 @@ func TestDiagComponent(t *testing.T) {
 	}
 	t1 := nowMs()
 	fmt.Printf("PARSE: %d ms\n", t1-t0)
-	cfg := stage1.GetExtractionConfig(types.UMLComponent, types.QueryOptions{})
-	sub, _, err := stage1.ExtractFromSubgraph(&types.NativeGraph{Nodes: nodes, Edges: edges}, cfg, types.QueryOptions{})
+	cfg := ingest.GetExtractionConfig(types.UMLComponent, types.QueryOptions{})
+	sub, _, err := ingest.ExtractFromSubgraph(&types.NativeGraph{Nodes: nodes, Edges: edges}, cfg, types.QueryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t2 := nowMs()
 	fmt.Printf("EXTRACT: %d ms (nodes=%d edges=%d)\n", t2-t1, len(sub.Nodes), len(sub.Edges))
-	_ = stage2.ComputeAllMetrics(sub)
+	_ = normalize.ComputeAllMetrics(sub)
 	t3 := nowMs()
 	fmt.Printf("METRICS: %d ms\n", t3-t2)
-	_ = stage2.DetectCommunities(sub)
+	_ = normalize.DetectCommunities(sub)
 	t4 := nowMs()
 	fmt.Printf("CLUSTER: %d ms\n", t4-t3)
-	_ = stage2.BuildLayoutTreeEx(sub, &stage2.DiagramMetrics{}, nil, types.QueryOptions{}, types.UMLComponent)
+	_ = normalize.BuildLayoutTreeEx(sub, &normalize.DiagramMetrics{}, nil, types.QueryOptions{}, types.UMLComponent)
 	t5 := nowMs()
 	fmt.Printf("LAYOUT: %d ms\n", t5-t4)
 }
@@ -189,20 +189,20 @@ func TestDiagTiming(t *testing.T) {
 	}
 	t1 := nowMs()
 	fmt.Printf("PARSE: %d ms\n", t1-t0)
-	cfg := stage1.GetExtractionConfig(types.UMLClass, types.QueryOptions{})
-	sub, _, err := stage1.ExtractFromSubgraph(&types.NativeGraph{Nodes: nodes, Edges: edges}, cfg, types.QueryOptions{})
+	cfg := ingest.GetExtractionConfig(types.UMLClass, types.QueryOptions{})
+	sub, _, err := ingest.ExtractFromSubgraph(&types.NativeGraph{Nodes: nodes, Edges: edges}, cfg, types.QueryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t2 := nowMs()
 	fmt.Printf("EXTRACT: %d ms (nodes=%d edges=%d)\n", t2-t1, len(sub.Nodes), len(sub.Edges))
-	_ = stage2.ComputeAllMetrics(sub)
+	_ = normalize.ComputeAllMetrics(sub)
 	t3 := nowMs()
 	fmt.Printf("METRICS: %d ms\n", t3-t2)
-	_ = stage2.DetectCommunities(sub)
+	_ = normalize.DetectCommunities(sub)
 	t4 := nowMs()
 	fmt.Printf("CLUSTER: %d ms\n", t4-t3)
-	_ = stage2.BuildLayoutTreeEx(sub, &stage2.DiagramMetrics{}, nil, types.QueryOptions{}, types.UMLClass)
+	_ = normalize.BuildLayoutTreeEx(sub, &normalize.DiagramMetrics{}, nil, types.QueryOptions{}, types.UMLClass)
 	t5 := nowMs()
 	fmt.Printf("LAYOUT: %d ms\n", t5-t4)
 }
@@ -259,10 +259,10 @@ func TestDiagParse(t *testing.T) {
 	}
 	fmt.Printf("DANGLING src=%d tgt=%d\n", danglingSrc, danglingTgt)
 
-	cfg := stage1.GetExtractionConfig(types.UMLClass, types.QueryOptions{})
+	cfg := ingest.GetExtractionConfig(types.UMLClass, types.QueryOptions{})
 	fmt.Printf("UMLClass cfg: kinds=%v groups=%v strategy=%v maxDepth=%d dir=%v includeUnused=%v\n",
 		cfg.NodeKindFilter, cfg.PredicateGroup, cfg.EntryStrategy, cfg.MaxDepth, cfg.Direction, cfg.IncludeUnused)
-	sub, _, err := stage1.ExtractFromSubgraph(&types.NativeGraph{Nodes: nodes, Edges: edges}, cfg, types.QueryOptions{})
+	sub, _, err := ingest.ExtractFromSubgraph(&types.NativeGraph{Nodes: nodes, Edges: edges}, cfg, types.QueryOptions{})
 	if err != nil {
 		t.Fatal("UMLExtract error:", err)
 	}
@@ -276,8 +276,8 @@ func TestDiagParse(t *testing.T) {
 			fmt.Printf("  sub-edge %s: %d\n", p, c)
 		}
 	}
-	stage2.ComputeAllMetrics(sub)
-	s := stage2.ComputeGraphSummary(sub)
+	normalize.ComputeAllMetrics(sub)
+	s := normalize.ComputeGraphSummary(sub)
 	fmt.Printf("SUMMARY: nodes=%d edges=%d clusters=%d comps=%d\n", s.NodeCount, s.EdgeCount, s.ClusterCount, s.ConnectedComponents)
 
 	// Dump sample edges with endpoint kinds

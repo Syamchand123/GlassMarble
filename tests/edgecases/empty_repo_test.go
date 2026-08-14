@@ -30,7 +30,7 @@ import (
 func TestAnalyzeEmptyDirNoGit(t *testing.T) {
 	sb := harness.NewSandbox(t)
 	out := mustRunContains(t, sb, []string{"Starting GlassMarble Analysis", "Analyzed 0 files"}, "analyze")
-	if strings.Contains(out, "stage 1 ingestion failed") {
+	if strings.Contains(out, "ingestion failed") {
 		t.Errorf("analyze failed on empty dir:\n%s", out)
 	}
 }
@@ -149,7 +149,7 @@ func TestAnalyzeOversizedFileSkipped(t *testing.T) {
 	sb.WriteFile("huge.go", "package main\n// "+strings.Repeat("a", 5<<20)+"\n")
 	sb.WriteFile(".glassmarble/config.yaml", "max_file_bytes: 4096\n")
 	out := mustRunContains(t, sb, []string{"exceeds MaxFileBytes", "skipped during ingestion", "Analyzed 1 files"}, "analyze")
-	if strings.Contains(out, "stage 1 ingestion failed") {
+	if strings.Contains(out, "ingestion failed") {
 		t.Errorf("analyze failed with oversized file present:\n%s", out)
 	}
 }

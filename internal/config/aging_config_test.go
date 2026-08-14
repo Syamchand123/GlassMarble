@@ -2,7 +2,7 @@ package config
 
 import "testing"
 
-// TestAgingConfigDefaults pins the built-in Stage 11 defaults.
+// TestAgingConfigDefaults pins the built-in knowledge aging defaults.
 func TestAgingConfigDefaults(t *testing.T) {
 	c := DefaultAgingConfig()
 	if !c.AgingEnabled() {

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
@@ -46,7 +46,7 @@ var hotspotCmd = &cobra.Command{
 		}
 
 		var degrees []nodeDegree
-		snapshot.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
+		snapshot.Nodes.Iterate(func(id string, node *link.ResolvedNode) {
 			inEdges, _ := snapshot.InboundEdges.Get(id)
 			outEdges, _ := snapshot.OutboundEdges.Get(id)
 			inCount := len(inEdges)

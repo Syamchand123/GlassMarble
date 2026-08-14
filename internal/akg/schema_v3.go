@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 )
 
@@ -67,10 +67,10 @@ func MigrateToSchemaV3(graph *CodePropertyGraph) error {
 	}
 
 	// 1. Re-classify stale node kinds (K-06)
-	newNodes := NewCowMap[string, *stage4.ResolvedNode]()
+	newNodes := NewCowMap[string, *link.ResolvedNode]()
 	newKindIndex := NewCowMap[string, map[string]bool]()
 
-	graph.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
+	graph.Nodes.Iterate(func(id string, node *link.ResolvedNode) {
 		if node == nil {
 			return
 		}

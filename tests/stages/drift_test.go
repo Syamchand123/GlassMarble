@@ -29,7 +29,7 @@ import (
 	"testing"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/config"
 	"github.com/Syamchand123/GlassMarble/internal/drift"
 )
@@ -228,11 +228,11 @@ func TestDriftNilAndEmptyGraphSafety(t *testing.T) {
 func TestDriftCycleDetection(t *testing.T) {
 	graph := s12importDriftGraph(t, false)
 	// Add the cycle-forming back edge service→main directly on the graph
-	// (mirrors stage4.AddEdge's dual index update).
-	back := stage4.ResolvedEdge{
+	// (mirrors link.AddEdge's dual index update).
+	back := link.ResolvedEdge{
 		SourceID: "internal/service/service.go::Service",
 		TargetID: "cmd/api/main.go::Main",
-		Type:     stage4.EdgeCalls,
+		Type:     link.EdgeCalls,
 	}
 	out, _ := graph.OutboundEdges.Get(back.SourceID)
 	graph.OutboundEdges = graph.OutboundEdges.Set(back.SourceID, append(out, back))

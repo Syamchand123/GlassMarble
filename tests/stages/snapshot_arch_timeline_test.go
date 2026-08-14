@@ -8,7 +8,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/arch_timeline"
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/evidence"
 	"github.com/Syamchand123/GlassMarble/tests/harness"
 )
@@ -31,21 +31,21 @@ func evidenceBundle() evidence.Bundle {
 func sampleGraph(t *testing.T, commit string) *akg.CodePropertyGraph {
 	t.Helper()
 	g := akg.NewCodePropertyGraph(commit)
-	g.Nodes = g.Nodes.Set("cmd/api/main.go::Main", &stage4.ResolvedNode{
+	g.Nodes = g.Nodes.Set("cmd/api/main.go::Main", &link.ResolvedNode{
 		ID:   "cmd/api/main.go::Main",
 		Kind: "FUNCTION",
 		Name: "Main",
-		FileSpec: stage4.LocationMeta{
+		FileSpec: link.LocationMeta{
 			Path:      "cmd/api/main.go",
 			LineStart: 1,
 			LineEnd:   9,
 		},
 	})
-	g.Nodes = g.Nodes.Set("internal/service/service.go::New", &stage4.ResolvedNode{
+	g.Nodes = g.Nodes.Set("internal/service/service.go::New", &link.ResolvedNode{
 		ID:   "internal/service/service.go::New",
 		Kind: "FUNCTION",
 		Name: "New",
-		FileSpec: stage4.LocationMeta{
+		FileSpec: link.LocationMeta{
 			Path:      "internal/service/service.go",
 			LineStart: 1,
 			LineEnd:   3,
@@ -174,25 +174,25 @@ func TestSnapshotDiffChangedComponents(t *testing.T) {
 
 	baseGraph := sampleGraph(t, "base")
 	baseGraph.Nodes = baseGraph.Nodes.Delete("internal/service/service.go::New")
-	baseGraph.Nodes = baseGraph.Nodes.Set("internal/service/service.go::New", &stage4.ResolvedNode{
+	baseGraph.Nodes = baseGraph.Nodes.Set("internal/service/service.go::New", &link.ResolvedNode{
 		ID:   "internal/service/service.go::New",
 		Kind: "FUNCTION",
 		Name: "New",
-		FileSpec: stage4.LocationMeta{Path: "internal/service/service.go", LineStart: 1, LineEnd: 3},
+		FileSpec: link.LocationMeta{Path: "internal/service/service.go", LineStart: 1, LineEnd: 3},
 	})
 
 	headGraph := baseGraph.Clone()
 	headGraph.CommitHash = "head"
-	headGraph.Nodes = headGraph.Nodes.Set("internal/cache/cache.go::Get", &stage4.ResolvedNode{
+	headGraph.Nodes = headGraph.Nodes.Set("internal/cache/cache.go::Get", &link.ResolvedNode{
 		ID:   "internal/cache/cache.go::Get",
 		Kind: "METHOD",
 		Name: "Get",
-		FileSpec: stage4.LocationMeta{Path: "internal/cache/cache.go", LineStart: 1, LineEnd: 4},
+		FileSpec: link.LocationMeta{Path: "internal/cache/cache.go", LineStart: 1, LineEnd: 4},
 	})
-	headGraph.OutboundEdges = headGraph.OutboundEdges.Set("internal/service/service.go::New", []stage4.ResolvedEdge{{
+	headGraph.OutboundEdges = headGraph.OutboundEdges.Set("internal/service/service.go::New", []link.ResolvedEdge{{
 		SourceID: "internal/service/service.go::New",
 		TargetID: "internal/cache/cache.go::Get",
-		Type:     stage4.EdgeCalls,
+		Type:     link.EdgeCalls,
 		LineNumber: 2,
 	}})
 

@@ -12,7 +12,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/arch_intelligence"
 	"github.com/Syamchand123/GlassMarble/internal/arch_timeline"
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/developer_memory"
 	"github.com/Syamchand123/GlassMarble/internal/knowledge_aging"
 	"github.com/Syamchand123/GlassMarble/internal/learning"
@@ -26,13 +26,13 @@ import (
 // corrections log. It combines five deterministic sources:
 //
 //  1. AKG nodes (bridge snapshot) matched by query terms,
-//  2. developer_memory claims + timeline, ranked by the Stage 6 query layer
-//     over an aging-freshened projection (Stage 11) and corrected by the
-//     Stage 10 learning overlay,
-//  3. Stage 5 patterns/smells/components from intelligence/latest.json
+//  2. developer_memory claims + timeline, ranked by the developer memory query layer
+//     over an aging-freshened projection (knowledge aging) and corrected by the
+//     convention learning learning overlay,
+//  3. Architecture Intelligence patterns/smells/components from intelligence/latest.json
 //     (falling back to the latest architecture snapshot),
-//  4. the Stage 5 metrics summary,
-//  5. Stage 10 learned pattern rejections: patterns the developer explicitly
+//  4. the Architecture Intelligence metrics summary,
+//  5. convention learning learned pattern rejections: patterns the developer explicitly
 //     rejected are excluded from evidence.
 const (
 	// DefaultEvidenceTopK caps every evidence section.
@@ -97,8 +97,8 @@ func (r *Retriever) RetrieveForQuestion(question string, opts RetrieveOptions) *
 		return ctx
 	}
 
-	// 1. Memory: the Stage 6 ranked query over an aging-freshened
-	// projection, overlaid with Stage 10 corrections. This reuses the
+	// 1. Memory: the developer memory ranked query over an aging-freshened
+	// projection, overlaid with convention learning corrections. This reuses the
 	// existing ranking layer instead of re-implementing a weaker scan.
 	if res := r.memoryQuery(question, topK); res != nil {
 		ctx.Claims = res.Claims
@@ -109,7 +109,7 @@ func (r *Retriever) RetrieveForQuestion(question string, opts RetrieveOptions) *
 	// 2. AKG nodes matched by query terms, deduplicated and ranked.
 	ctx.Nodes = r.matchNodes(terms, topK)
 
-	// 3. Stage 5 intelligence: patterns, smells, components, metrics.
+	// 3. Architecture Intelligence intelligence: patterns, smells, components, metrics.
 	r.intelligence(terms, opts.MinConfidence, topK, ctx)
 
 	// 4. Token budget; the estimate always reflects the final prompt.
@@ -121,8 +121,8 @@ func (r *Retriever) RetrieveForQuestion(question string, opts RetrieveOptions) *
 	return ctx
 }
 
-// memoryQuery runs the Stage 6 ranked query over the freshened projection
-// with the Stage 10 learning overlay applied. Returns nil when memory is
+// memoryQuery runs the developer memory ranked query over the freshened projection
+// with the convention learning learning overlay applied. Returns nil when memory is
 // missing or unreadable.
 func (r *Retriever) memoryQuery(question string, topK int) *MemoryProjection {
 	mem, err := r.memStore.LoadMemory()
@@ -143,7 +143,7 @@ func (r *Retriever) memoryQuery(question string, topK int) *MemoryProjection {
 	}
 }
 
-// MemoryProjection is the fresh query result plus how many Stage 10
+// MemoryProjection is the fresh query result plus how many convention learning
 // corrections took effect on it.
 type MemoryProjection struct {
 	*developer_memory.MemoryQueryResult
@@ -181,10 +181,10 @@ func (r *Retriever) matchNodes(terms []string, topK int) []NodeEvidence {
 	}
 
 	best := make(map[string]float64)
-	byID := make(map[string]*stage4.ResolvedNode)
+	byID := make(map[string]*link.ResolvedNode)
 	for _, term := range terms {
 		needle := strings.ToLower(term)
-		snap.Nodes.Iterate(func(id string, node *stage4.ResolvedNode) {
+		snap.Nodes.Iterate(func(id string, node *link.ResolvedNode) {
 			score := nodeMatchScore(node, needle)
 			if score == 0 {
 				return
@@ -226,7 +226,7 @@ func (r *Retriever) matchNodes(terms []string, topK int) []NodeEvidence {
 
 // nodeMatchScore scores a node against one query term: exact name match 1.0,
 // name prefix 0.9, name substring 0.8, file-path substring 0.6, else 0.
-func nodeMatchScore(node *stage4.ResolvedNode, needle string) float64 {
+func nodeMatchScore(node *link.ResolvedNode, needle string) float64 {
 	if node == nil {
 		return 0
 	}
@@ -247,7 +247,7 @@ func nodeMatchScore(node *stage4.ResolvedNode, needle string) float64 {
 
 // toNodeEvidence projects a resolved node into the compact, prompt-safe
 // NodeEvidence summary with a curated property subset.
-func toNodeEvidence(node *stage4.ResolvedNode, score float64) NodeEvidence {
+func toNodeEvidence(node *link.ResolvedNode, score float64) NodeEvidence {
 	ev := NodeEvidence{
 		ID:    node.ID,
 		Name:  node.Name,
@@ -271,9 +271,9 @@ func toNodeEvidence(node *stage4.ResolvedNode, score float64) NodeEvidence {
 	return ev
 }
 
-// --- Stage 5 intelligence ---
+// --- Architecture Intelligence intelligence ---
 
-// intelligence loads the Stage 5 result — from intelligence/latest.json when
+// intelligence loads the intelligence result — from intelligence/latest.json when
 // available, else from the latest architecture snapshot — and filters it by
 // term relevance, confidence and learned pattern rejection.
 func (r *Retriever) intelligence(terms []string, minConf float64, topK int, ctx *EvidenceContext) {
@@ -283,7 +283,7 @@ func (r *Retriever) intelligence(terms []string, minConf float64, topK int, ctx 
 		if snap == nil {
 			return
 		}
-		intel = &arch_intelligence.Stage5Result{
+		intel = &arch_intelligence.IntelligenceResult{
 			Metrics:    snap.Metrics,
 			Components: snap.Components,
 			Patterns:   snap.Patterns,
@@ -326,7 +326,7 @@ func (r *Retriever) intelligence(terms []string, minConf float64, topK int, ctx 
 // selectRelevant filters items by the minimum-confidence gate, ranks them by
 // score, and applies the term-relevance filter only when at least one item
 // matches — general questions ("explain the architecture") still receive the
-// top-ranked context instead of nothing. Rejected pattern kinds (Stage 10)
+// top-ranked context instead of nothing. Rejected pattern kinds (convention learning)
 // are excluded via the reject set.
 func selectRelevant[T any](items []T, topK int, gate func(T) bool, score func(T) float64, names func(T) []string, terms []string, reject map[string]bool) []T {
 	type scored struct {
@@ -370,7 +370,7 @@ func selectRelevant[T any](items []T, topK int, gate func(T) bool, score func(T)
 }
 
 // rejectedPatterns returns the set of pattern kinds the developer explicitly
-// rejected through Stage 10 corrections; rejected patterns are excluded from
+// rejected through convention learning corrections; rejected patterns are excluded from
 // evidence so learned preferences shape explanations.
 func (r *Retriever) rejectedPatterns() map[string]bool {
 	mem, err := r.memStore.LoadMemory()

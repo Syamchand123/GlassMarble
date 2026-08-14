@@ -8,25 +8,25 @@ import (
 func TestFeatureFlags(t *testing.T) {
 	t.Run("default enabled", func(t *testing.T) {
 		os.Unsetenv("GMB_SCHEMA_V3")
-		os.Unsetenv("GMB_NEW_STAGE3")
-		os.Unsetenv("GMB_NEW_STAGE4")
+		os.Unsetenv("GMB_NEW_AGGREGATOR")
+		os.Unsetenv("GMB_NEW_LINKER")
 
-		if !IsSchemaV3Enabled() || !IsNewStage3Enabled() || !IsNewStage4Enabled() {
+		if !IsSchemaV3Enabled() || !IsNewAggregatorEnabled() || !IsNewLinkerEnabled() {
 			t.Fatalf("expected all feature flags enabled by default")
 		}
 	})
 
 	t.Run("explicit disable", func(t *testing.T) {
 		os.Setenv("GMB_SCHEMA_V3", "0")
-		os.Setenv("GMB_NEW_STAGE3", "false")
-		os.Setenv("GMB_NEW_STAGE4", "0")
+		os.Setenv("GMB_NEW_AGGREGATOR", "false")
+		os.Setenv("GMB_NEW_LINKER", "0")
 
-		if IsSchemaV3Enabled() || IsNewStage3Enabled() || IsNewStage4Enabled() {
+		if IsSchemaV3Enabled() || IsNewAggregatorEnabled() || IsNewLinkerEnabled() {
 			t.Fatalf("expected all feature flags to be disabled")
 		}
 
 		os.Unsetenv("GMB_SCHEMA_V3")
-		os.Unsetenv("GMB_NEW_STAGE3")
-		os.Unsetenv("GMB_NEW_STAGE4")
+		os.Unsetenv("GMB_NEW_AGGREGATOR")
+		os.Unsetenv("GMB_NEW_LINKER")
 	})
 }

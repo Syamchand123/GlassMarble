@@ -20,11 +20,11 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/git"
 )
 
-// runMemoryStage is the Stage 5 + Stage 6 wiring point (master plan §13.1).
+// runMemoryPipeline is the intelligence + memory wiring point (master plan §13.1).
 // It runs architectural intelligence on the committed graph exactly once,
 // then:
 //
-//  1. persists the Stage 5 result to .glassmarble/intelligence/latest.json,
+//  1. persists the intelligence result to .glassmarble/intelligence/latest.json,
 //  2. builds an ArchSnapshot and stores it in .glassmarble/snapshots/
 //     (skip-writes when the topology is unchanged),
 //  3. generates ArchEvents by diffing against the previous snapshot
@@ -33,9 +33,9 @@ import (
 //  4. folds the events into developer memory (.glassmarble/memory/),
 //     idempotently — re-analyzing the same commit never duplicates memory.
 //
-// The entire stage is non-fatal (§15.6): a failure here warns and continues,
+// The entire phase is non-fatal (§15.6): a failure here warns and continues,
 // because `gmb analyze` must never fail after the graph is committed.
-func runMemoryStage(storageDir string, tm *akg.AKGTransactionManager, commitHash string, verbose bool) {
+func runMemoryPipeline(storageDir string, tm *akg.AKGTransactionManager, commitHash string, verbose bool) {
 	graph := tm.GetActiveGraph()
 	if graph == nil || graph.Nodes == nil || graph.Nodes.Len() == 0 {
 		return
@@ -43,7 +43,7 @@ func runMemoryStage(storageDir string, tm *akg.AKGTransactionManager, commitHash
 
 	res := runIntelligence(graph, storageDir, verbose)
 
-	fmt.Printf("Stage 5: %d components | %d patterns | %d smells | %d cycles | %d layer violations\n",
+	fmt.Printf("Intelligence: %d components | %d patterns | %d smells | %d cycles | %d layer violations\n",
 		len(res.Components), len(res.Patterns), len(res.Smells), res.Metrics.CycleCount, res.Metrics.LayerViolationCount)
 	for _, p := range res.Patterns {
 		fmt.Printf("  pattern: %s (confidence %.2f)\n", p.Name, p.Confidence)
@@ -52,14 +52,14 @@ func runMemoryStage(storageDir string, tm *akg.AKGTransactionManager, commitHash
 		fmt.Printf("  smell: [%s] %s\n", s.Severity, s.Title)
 	}
 
-	// 1. Persist the Stage 5 result (watch mode also updates this file on
+	// 1. Persist the intelligence result (watch mode also updates this file on
 	// uncommitted saves — it is the "current state" contract).
 	if err := writeIntelligenceLatest(storageDir, res); err != nil && verbose {
 		fmt.Printf("warning: could not persist intelligence/latest.json: %v\n", err)
 	}
 
 	// 2. Snapshot. Failures here are warnings: snapshots and memory are
-	// derived state, not the graph. One store instance for the whole stage —
+	// derived state, not the graph. One store instance for the whole phase —
 	// two instances could disagree on the index mid-run.
 	store, err := arch_timeline.NewSnapshotStore(snapshotDir(storageDir))
 	if err != nil {
@@ -78,11 +78,11 @@ func runMemoryStage(storageDir string, tm *akg.AKGTransactionManager, commitHash
 		return
 	}
 
-	// 3+4. Event generation + memory ingestion. Stage 8 (commit reasoning)
-	// runs FIRST: its events share the 5D event-ID scheme and are enriched
+	// 3+4. Event generation + memory ingestion. commit reasoning
+	// runs FIRST: its events share the component inference event-ID scheme and are enriched
 	// with intent, PR/issue refs and impact, and the memory builder keeps
 	// the first occurrence — so the reasoned events win the dedup and the
-	// identical Stage 5D twins are dropped (master plan §13.1).
+	// identical component inference twins are dropped (master plan §13.1).
 	var events []archmodel.ArchEvent
 	var graphDiff *akg.GraphDiff
 	if prevSnap != nil && commitHash != "" {
@@ -118,12 +118,12 @@ func runMemoryStage(storageDir string, tm *akg.AKGTransactionManager, commitHash
 		})
 		if rerr != nil {
 			if verbose {
-				fmt.Printf("warning: Stage 8 commit reasoning failed: %v\n", rerr)
+				fmt.Printf("warning: commit reasoning failed: %v\n", rerr)
 			}
 		} else {
 			events = append(events, reasoned...)
 			if len(reasoned) > 0 {
-				fmt.Printf("Stage 8: reasoned %d architectural change(s)\n", len(reasoned))
+				fmt.Printf("Commit reasoning: reasoned %d architectural change(s)\n", len(reasoned))
 			}
 		}
 
@@ -132,7 +132,7 @@ func runMemoryStage(storageDir string, tm *akg.AKGTransactionManager, commitHash
 			Timestamp: snap.Timestamp,
 		})...)
 	} else if verbose {
-		fmt.Println("Stage 6: no previous snapshot — skipping event generation (first analysis)")
+		fmt.Println("Memory: no previous snapshot — skipping event generation (first analysis)")
 	}
 
 	store6 := developer_memory.NewStoreForRepo(filepath.Dir(storageDir)).WithLogger(func(format string, args ...any) {
@@ -147,17 +147,17 @@ func runMemoryStage(storageDir string, tm *akg.AKGTransactionManager, commitHash
 		return
 	}
 	if appended > 0 {
-		fmt.Printf("Stage 6: recorded %d architectural event(s) into developer memory\n", appended)
+		fmt.Printf("Memory: recorded %d architectural event(s) into developer memory\n", appended)
 	} else if len(events) == 0 {
 		if verbose {
-			fmt.Println("Stage 6: no architectural changes since the previous analysis")
+			fmt.Println("Memory: no architectural changes since the previous analysis")
 		}
 	}
 }
 
-// runIntelligence runs the Stage 5 engine once on a committed graph with the
+// runIntelligence runs the Architecture Intelligence engine once on a committed graph with the
 // repository's intelligence configuration.
-func runIntelligence(graph *akg.CodePropertyGraph, storageDir string, verbose bool) arch_intelligence.Stage5Result {
+func runIntelligence(graph *akg.CodePropertyGraph, storageDir string, verbose bool) arch_intelligence.IntelligenceResult {
 	cfg := config.DefaultIntelligenceConfig()
 	if local, lerr := loadIntelligenceConfig(storageDir); lerr == nil {
 		cfg = local
@@ -182,7 +182,7 @@ func runIntelligence(graph *akg.CodePropertyGraph, storageDir string, verbose bo
 // mode) fall back to now. The git-history order hint (rev-list --count)
 // keeps same-second commits correctly ordered. Returns the snapshot and
 // whether a file was written.
-func buildAndStoreSnapshot(repoDir string, graph *akg.CodePropertyGraph, commitHash string, res arch_intelligence.Stage5Result, store *arch_timeline.SnapshotStore, noGraph bool) (*archmodel.ArchSnapshot, bool, error) {
+func buildAndStoreSnapshot(repoDir string, graph *akg.CodePropertyGraph, commitHash string, res arch_intelligence.IntelligenceResult, store *arch_timeline.SnapshotStore, noGraph bool) (*archmodel.ArchSnapshot, bool, error) {
 	ts := time.Now().UTC()
 	var order int64
 	if commitHash != "" && repoDir != "" {
@@ -220,9 +220,9 @@ func snapshotDir(storageDir string) string {
 	return filepath.Join(storageDir, "snapshots")
 }
 
-// writeIntelligenceLatest persists the Stage 5 result to
+// writeIntelligenceLatest persists the intelligence result to
 // .glassmarble/intelligence/latest.json via an atomic temp+rename write.
-func writeIntelligenceLatest(storageDir string, res arch_intelligence.Stage5Result) error {
+func writeIntelligenceLatest(storageDir string, res arch_intelligence.IntelligenceResult) error {
 	dir := filepath.Join(storageDir, "intelligence")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err

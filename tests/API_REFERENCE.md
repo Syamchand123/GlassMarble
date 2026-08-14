@@ -42,36 +42,36 @@ relative to G:\GlassMarble. Verified against source on 2026-08-10.
   Aging sections; `DefaultIntelligenceConfig()` etc.
 
 ### internal/code_analysis_engine
-- stage1: `RunIngestion(cfg Config) (*StageOutput, error)`,
-  `RunIngestionForDelta(cfg Config, diff []FileTask) (*StageOutput, error)`,
+- ingest: `RunIngestion(cfg Config) (*IngestOutput, error)`,
+  `RunIngestionForDelta(cfg Config, diff []FileTask) (*IngestOutput, error)`,
   `CollectGitDiff(rootDir, commitHash string) ([]FileTask, error)`,
-  `DefaultConfig(root string) Config`. StageOutput{Updated, Deleted,
+  `DefaultConfig(root string) Config`. IngestOutput{Updated, Deleted,
   Skipped, Warnings, ...}. Config has WithWorkers, MaxFileBytes,
   GitTrackedOnly.
-- stage2: `Normalize(stage1Out *stage1.StageOutput, commitHash string)
-  (*Stage2Payload, error)`.
-- stage3: `Aggregate(payload *stage2.Stage2Payload, existingState
-  *Stage3Output, rootDir string) (*Stage3Output, error)`.
-- stage4: `Link(stage3Out *stage3.Stage3Output, modifiedFiles []string, db
-  GraphDB, config ...LinkerConfig) (*Stage4Output, error)`; db from
+- normalize: `Normalize(ingestOut *ingest.IngestOutput, commitHash string)
+  (*NormalizeOutput, error)`.
+- aggregate: `Aggregate(payload *normalize.NormalizeOutput, existingState
+  *AggregateOutput, rootDir string) (*AggregateOutput, error)`.
+- link: `Link(aggregateOut *aggregate.AggregateOutput, modifiedFiles []string, db
+  GraphDB, config ...LinkerConfig) (*LinkOutput, error)`; db from
   `akg.NewCodePropertyGraph(commitHash string) *CodePropertyGraph`;
-  `stage4.LinkerConfig{LevelOfDetail: stage4.LevelArchitecture|LevelFull,
-  ...}`, `stage4.LevelOfDetail` constants; ResolvedNode{ID, Name, Kind,
+  `link.LinkerConfig{LevelOfDetail: link.LevelArchitecture|LevelFull,
+  ...}`, `link.LevelOfDetail` constants; ResolvedNode{ID, Name, Kind,
   FileSpec{Path,LineStart,LineEnd}, Properties map[string]string};
-  `stage4.NewStage4Output()`, `out.AddEdge(...)`, QualityMetrics via
-  `stage4.MeasureQuality`.
+  `link.NewLinkOutput()`, `out.AddEdge(...)`, QualityMetrics via
+  `link.MeasureQuality`.
 
 ### internal/akg (transaction manager + state)
 - `akg.NewAKGTransactionManager(storageDir string) (*AKGTransactionManager,
   error)`; `NewAKGTransactionManagerWithOptions(storageDir string,
   maxStateBytes int64)`.
 - `tm.GetActiveGraph() *akg.CodePropertyGraph`;
-  `tm.ExecuteDeltaTransaction(payload *stage4.Stage4Output, modifiedFiles
+  `tm.ExecuteDeltaTransaction(payload *link.LinkOutput, modifiedFiles
   []string) error`; `tm.ReplaceGraph(...)`; `tm.Subscribe() chan
   AKGCommitEvent`; `tm.AcquireLock()/ReleaseLock()/Close()`.
 - `akg.StateMetadata(storageDir) (commitHash, schemaVersion string, version
   uint64, err error)`; `akg.RunDoctor(storageDir) DoctorReport{LoadOK,
-  ...}`; `akg.MeasureGraphQuality(graph) stage4.QualityMetrics`;
+  ...}`; `akg.MeasureGraphQuality(graph) link.QualityMetrics`;
   `akg.StreamGraphStats`, `akg.QueryNode`, `akg.StreamNodes`;
   `akg.DiffGraphs(base, head *CodePropertyGraph) *GraphDiff`;
   `akg.ImportGraphJSON(r io.Reader)`, `akg.ExportGraphJSON(graph, w)`.
@@ -82,11 +82,11 @@ relative to G:\GlassMarble. Verified against source on 2026-08-10.
 - Lock: `.glassmarble/db.lock`, stale after 30s, 60s timeout. State file:
   `.glassmarble/akg.json` (atomic tmp+rename+fsync).
 
-### internal/arch_intelligence (Stage 5)
+### internal/arch_intelligence (Architecture Intelligence)
 - `arch_intelligence.NewEngine(graph *akg.CodePropertyGraph) *Engine`;
-  `NewEngineWithOptions(graph, opts...)`; `engine.Run() Stage5Result`;
-  `Stage5Result{Metrics, Components, Patterns, Smells, GraphHash, ...}`;
-  `LoadLatestResult(storageDir string) (*Stage5Result, error)`;
+  `NewEngineWithOptions(graph, opts...)`; `engine.Run() IntelligenceResult`;
+  `IntelligenceResult{Metrics, Components, Patterns, Smells, GraphHash, ...}`;
+  `LoadLatestResult(storageDir string) (*IntelligenceResult, error)`;
   `MetricSummary(metrics archmodel.ArchMetrics) string`.
 - Config: `config.IntelligenceConfig{...}`; defaults via
   `config.DefaultIntelligenceConfig()`.
@@ -98,7 +98,7 @@ relative to G:\GlassMarble. Verified against source on 2026-08-10.
   `ArchMetrics{...}` (fields: node/edge counts, coupling, cohesion,
   cycles, instability...).
 
-### internal/developer_memory (Stages 6-8)
+### internal/developer_memory (Phases 6-8)
 - `developer_memory.NewStoreForRepo(repoDir string) *MemoryStore`;
   `store.LoadMemory() (*DeveloperMemory, error)`; `AppendEvent(archmodel.
   ArchEvent) error`; `AppendClaim(KnowledgeClaim) error`; `Rebuild()`;
@@ -128,14 +128,14 @@ relative to G:\GlassMarble. Verified against source on 2026-08-10.
 - archmodel.TimelineEntry{Timestamp, CommitHash, Version, Title,
   Description, EventKind, Components []string, Intent, Tags}.
 
-### internal/knowledge_aging (Stage 11)
+### internal/knowledge_aging (knowledge aging)
 - `knowledge_aging.FreshenMemoryWithSnapshot(mem *developer_memory.
   DeveloperMemory, snap *archmodel.ArchSnapshot, now time.Time, cfg
   *config.AgingConfig) *developer_memory.DeveloperMemory`;
 - `knowledge_aging.Age(mem, now, cfg)` (persists), config.AgingConfig with
   CodeHalfLifeDays etc. (defaults 365/270/180/90); `DetectStaleEntities`.
 
-### internal/learning (Stage 10)
+### internal/learning (convention learning)
 - `learning.NewLearnerForRepo(repoDir) *Learner`;
   `learner.Correct(c Correction, mem *developer_memory.DeveloperMemory)
   (Correction, error)`; `learner.List() ([]Correction, error)`;
@@ -149,12 +149,12 @@ relative to G:\GlassMarble. Verified against source on 2026-08-10.
   corrections.jsonl`; `learning.NewStoreForRepo` also used by `gmb memory
   --correct`.
 
-### internal/knowledge_fusion (Stage 9)
+### internal/knowledge_fusion (knowledge fusion)
 - `knowledge_fusion.NewFusionStore(dir) *FusionStore`; `Fuse(ctx, verify)`;
   `Put(FusedClaim)`; `Store()`; `Missing(ids...)`; `PurgeStale(olderThan)`.
   File: `<dir>/fusion.json`.
 
-### internal/commit_reasoning (Stage 8)
+### internal/commit_reasoning (commit reasoning)
 - `commit_reasoning.NewReasoner(repoPath) *Reasoner`;
   `ReasonAboutCommit(commit string) (CommitReason, error)` — categories
   BUILD | FIX | RESOURCE | MISC; `CommitMatchesCategory(category, commit)`;
@@ -178,7 +178,7 @@ relative to G:\GlassMarble. Verified against source on 2026-08-10.
 - archmodel.ArchSnapshot{ID, CapturedAt, Components []Component};
   `archmodel.BuildSnapshot(graph arch.Graph, now time.Time) ArchSnapshot`.
 
-### internal/ai_engine (Stage 12 evidence retrieval + agent)
+### internal/ai_engine (evidence retrieval evidence retrieval + agent)
 - `ai_engine.NewRetriever(rootDir string) *Retriever`; `RetrieveForQuestion(
   question string, opts RetrieveOptions) *EvidenceContext`;
   `RetrieveOptions{TopK, MaxTokens, MinConfidence}`;
@@ -221,7 +221,7 @@ relative to G:\GlassMarble. Verified against source on 2026-08-10.
 ### cmd/ flags to remember
 - `analyze`: --dir, --commit, --full, --workers, --link-level
   (architecture|standard|full), --macro-inference, --max-nodes,
-  --abort-on-limit, --verbose, --store-code, --json, --bench, --stage5,
+  --abort-on-limit, --verbose, --store-code, --json, --bench, --intelligence,
   --include-docs.
 - `visualize`: --dir, --entry, --depth (7), --unused, --save, --format
   (mermaid|plantuml|dot), --scope, --output, --summary, --pagerank,

@@ -5,15 +5,15 @@
 > `internal/akg/ontology.ttl`.
 
 Every `RelationshipType` constant in
-`internal/code_analysis_engine/stage4/type.go` belongs to exactly one of four
-families with a **single producer policy**: one (or one class of) stage4
+`internal/code_analysis_engine/link/type.go` belongs to exactly one of four
+families with a **single producer policy**: one (or one class of) link
 linker passes emits the family, and the family maps to one `gm:view` tag
 (`structural` | `dynamic` | `security`). The serializer emits that view tag as
 a `gm:view` RDF-star attribute on every triple (K-01).
 
 ## Families
 
-| Family | Constants | Producer (stage4 pass) | View |
+| Family | Constants | Producer (link pass) | View |
 |---|---|---|---|
 | STRUCTURAL | `EdgeContains, EdgeBelongsTo, EdgeDependsOn, EdgeImplements, EdgeExtends, EdgeMixes, EdgeComposes, EdgeHasField, EdgeHasParam, EdgeReturns, EdgeHasReceiver` | builder / type_linker / member_linker | structural |
 | BEHAVIORAL | `EdgeCalls, EdgeContextCall, EdgeSpawnsConcurrent, EdgeDefers, EdgeCatches, EdgeThrows, EdgeReferences, EdgeInstantiates, EdgeDispatchesEvent, EdgePublishes, EdgeSubscribes, EdgeSendsTo, EdgeReceivesFrom, EdgeQueriesDB, EdgeCallsCloudAPI, EdgeExposesEndpoint, EdgeFFICall, EdgeInjects, EdgeConsumesResource, EdgeMutatesGlobal` | call / concurrency / event / rpc / ffi / di / security linkers | structural |
@@ -48,5 +48,5 @@ extraction time (`ViewSecurity` in extraction configs).
 | `ViewSecurity` | `security` | taint propagation and sinks |
 
 `AllViews` lists every declared tag; `ExtractionConfig.Views` selects which
-views a diagram reads (defaults to `AllViews` when empty). `stage4.ViewOfEdgeType`
+views a diagram reads (defaults to `AllViews` when empty). `link.ViewOfEdgeType`
 maps a constant to its view and is checked by `TestOntologyDeclaresEdgeViews`.

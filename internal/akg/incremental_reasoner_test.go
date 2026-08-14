@@ -3,7 +3,7 @@ package akg
 import (
 	"testing"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 // TestRunIncrementalMacroInference_ChangedSubgraphOnly verifies that only the
@@ -11,9 +11,9 @@ import (
 // node keeps its previously inferred rules untouched.
 func TestRunIncrementalMacroInference_ChangedSubgraphOnly(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("svc", &stage4.ResolvedNode{ID: "svc", Kind: "CLASS", Name: "MyService", FileSpec: stage4.LocationMeta{Path: "svc.go"}})
-	g.Nodes = g.Nodes.Set("repo", &stage4.ResolvedNode{ID: "repo", Kind: "CLASS", Name: "UserRepository", FileSpec: stage4.LocationMeta{Path: "repo.go"}})
-	g.Nodes = g.Nodes.Set("other", &stage4.ResolvedNode{ID: "other", Kind: "CLASS", Name: "Widget", FileSpec: stage4.LocationMeta{Path: "other.go"}})
+	g.Nodes = g.Nodes.Set("svc", &link.ResolvedNode{ID: "svc", Kind: "CLASS", Name: "MyService", FileSpec: link.LocationMeta{Path: "svc.go"}})
+	g.Nodes = g.Nodes.Set("repo", &link.ResolvedNode{ID: "repo", Kind: "CLASS", Name: "UserRepository", FileSpec: link.LocationMeta{Path: "repo.go"}})
+	g.Nodes = g.Nodes.Set("other", &link.ResolvedNode{ID: "other", Kind: "CLASS", Name: "Widget", FileSpec: link.LocationMeta{Path: "other.go"}})
 
 	// Full inference first establishes rules for all nodes.
 	RunTopologicalMacroInference(g)
@@ -40,7 +40,7 @@ func TestRunIncrementalMacroInference_ChangedSubgraphOnly(t *testing.T) {
 // passed explicitly as changed node IDs.
 func TestRunIncrementalMacroInference_SeedsFromFilesWithoutPaths(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("svc", &stage4.ResolvedNode{ID: "svc", Kind: "CLASS", Name: "MyService"})
+	g.Nodes = g.Nodes.Set("svc", &link.ResolvedNode{ID: "svc", Kind: "CLASS", Name: "MyService"})
 
 	RunIncrementalMacroInference(g, []string{"test.go"}, []string{"svc"})
 
@@ -67,11 +67,11 @@ func TestRunIncrementalMacroInference_InboundDependentsReinferred(t *testing.T) 
 	g := NewCodePropertyGraph("test")
 	// dbStore has DATABASE primitive; cacheStore is reached by svc and carries
 	// "cache" in its name so rule_21 (Cache-Aside) can fire.
-	g.Nodes = g.Nodes.Set("dbStore", &stage4.ResolvedNode{ID: "dbStore", Kind: "CLASS", Name: "Store", Primitive: "DATABASE", FileSpec: stage4.LocationMeta{Path: "db.go"}})
-	g.Nodes = g.Nodes.Set("cache", &stage4.ResolvedNode{ID: "cache", Kind: "CLASS", Name: "CacheClient", FileSpec: stage4.LocationMeta{Path: "cache.go"}})
-	g.Nodes = g.Nodes.Set("svc", &stage4.ResolvedNode{ID: "svc", Kind: "CLASS", Name: "MyService", FileSpec: stage4.LocationMeta{Path: "svc.go"}})
-	addEdgeToGraph(g, "svc", "cache", stage4.EdgeCalls, 1)
-	addEdgeToGraph(g, "cache", "dbStore", stage4.EdgeCalls, 2)
+	g.Nodes = g.Nodes.Set("dbStore", &link.ResolvedNode{ID: "dbStore", Kind: "CLASS", Name: "Store", Primitive: "DATABASE", FileSpec: link.LocationMeta{Path: "db.go"}})
+	g.Nodes = g.Nodes.Set("cache", &link.ResolvedNode{ID: "cache", Kind: "CLASS", Name: "CacheClient", FileSpec: link.LocationMeta{Path: "cache.go"}})
+	g.Nodes = g.Nodes.Set("svc", &link.ResolvedNode{ID: "svc", Kind: "CLASS", Name: "MyService", FileSpec: link.LocationMeta{Path: "svc.go"}})
+	addEdgeToGraph(g, "svc", "cache", link.EdgeCalls, 1)
+	addEdgeToGraph(g, "cache", "dbStore", link.EdgeCalls, 2)
 
 	// Change db.go; dbStore is reached through cache, so cache and svc are
 	// inbound dependents within bounded depth and must be re-inferred.
@@ -92,9 +92,9 @@ func TestRunIncrementalMacroInference_InboundDependentsReinferred(t *testing.T) 
 // "disabled" macro mode skips all work, mirroring the full reasoner.
 func TestRunIncrementalMacroInference_DisabledModeIsNoop(t *testing.T) {
 	g := NewCodePropertyGraph("test")
-	g.Nodes = g.Nodes.Set("svc", &stage4.ResolvedNode{ID: "svc", Kind: "CLASS", Name: "MyService", FileSpec: stage4.LocationMeta{Path: "svc.go"}})
+	g.Nodes = g.Nodes.Set("svc", &link.ResolvedNode{ID: "svc", Kind: "CLASS", Name: "MyService", FileSpec: link.LocationMeta{Path: "svc.go"}})
 
-	RunIncrementalMacroInference(g, []string{"svc.go"}, []string{"svc"}, stage4.LinkerConfig{MacroInference: "disabled"})
+	RunIncrementalMacroInference(g, []string{"svc.go"}, []string{"svc"}, link.LinkerConfig{MacroInference: "disabled"})
 
 	if _, ok := g.MacroRules.Get("svc"); ok {
 		t.Error("disabled mode should not infer rules")

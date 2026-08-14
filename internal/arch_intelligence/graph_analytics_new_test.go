@@ -7,20 +7,20 @@ import (
 	"testing"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 func addTestNode(graph *akg.CodePropertyGraph, id, kind, name string) {
-	graph.Nodes = graph.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: kind, Name: name})
+	graph.Nodes = graph.Nodes.Set(id, &link.ResolvedNode{ID: id, Kind: kind, Name: name})
 }
 
-func addTestEdge(graph *akg.CodePropertyGraph, src, tgt string, typ stage4.RelationshipType) {
+func addTestEdge(graph *akg.CodePropertyGraph, src, tgt string, typ link.RelationshipType) {
 	edges, _ := graph.OutboundEdges.Get(src)
-	edges = append(edges, stage4.ResolvedEdge{SourceID: src, TargetID: tgt, Type: typ})
+	edges = append(edges, link.ResolvedEdge{SourceID: src, TargetID: tgt, Type: typ})
 	graph.OutboundEdges = graph.OutboundEdges.Set(src, edges)
 
 	inb, _ := graph.InboundEdges.Get(tgt)
-	inb = append(inb, stage4.ResolvedEdge{SourceID: src, TargetID: tgt, Type: typ})
+	inb = append(inb, link.ResolvedEdge{SourceID: src, TargetID: tgt, Type: typ})
 	graph.InboundEdges = graph.InboundEdges.Set(tgt, inb)
 }
 
@@ -29,7 +29,7 @@ func addTestEdge(graph *akg.CodePropertyGraph, src, tgt string, typ stage4.Relat
 func addTestClique(graph *akg.CodePropertyGraph, ids ...string) {
 	for i := 0; i < len(ids); i++ {
 		for j := i + 1; j < len(ids); j++ {
-			addTestEdge(graph, ids[i], ids[j], stage4.EdgeCalls)
+			addTestEdge(graph, ids[i], ids[j], link.EdgeCalls)
 		}
 	}
 }
@@ -39,9 +39,9 @@ func TestSCCIterative_Cycle(t *testing.T) {
 	for _, id := range []string{"a", "b", "c", "d"} {
 		addTestNode(graph, id, "FUNCTION", id)
 	}
-	addTestEdge(graph, "a", "b", stage4.EdgeCalls)
-	addTestEdge(graph, "b", "c", stage4.EdgeCalls)
-	addTestEdge(graph, "c", "a", stage4.EdgeCalls)
+	addTestEdge(graph, "a", "b", link.EdgeCalls)
+	addTestEdge(graph, "b", "c", link.EdgeCalls)
+	addTestEdge(graph, "c", "a", link.EdgeCalls)
 
 	snap := NewGraphSnapshot(graph)
 	first := SCCIterative(snap)
@@ -78,8 +78,8 @@ func TestSCCIterative_NoCycle(t *testing.T) {
 	for _, id := range []string{"a", "b", "c"} {
 		addTestNode(graph, id, "FUNCTION", id)
 	}
-	addTestEdge(graph, "a", "b", stage4.EdgeCalls)
-	addTestEdge(graph, "b", "c", stage4.EdgeCalls)
+	addTestEdge(graph, "a", "b", link.EdgeCalls)
+	addTestEdge(graph, "b", "c", link.EdgeCalls)
 
 	snap := NewGraphSnapshot(graph)
 	sccs := SCCIterative(snap)
@@ -106,7 +106,7 @@ func TestSCCIterative_DanglingEdge(t *testing.T) {
 	addTestNode(graph, "a", "FUNCTION", "a")
 	// Target "missing" is not registered in Nodes — must be ignored, not panic.
 	edges, _ := graph.OutboundEdges.Get("a")
-	edges = append(edges, stage4.ResolvedEdge{SourceID: "a", TargetID: "missing", Type: stage4.EdgeCalls})
+	edges = append(edges, link.ResolvedEdge{SourceID: "a", TargetID: "missing", Type: link.EdgeCalls})
 	graph.OutboundEdges = graph.OutboundEdges.Set("a", edges)
 
 	sccs := SCCIterative(NewGraphSnapshot(graph))
@@ -120,7 +120,7 @@ func TestPageRankSnapshot_Normalized(t *testing.T) {
 	for _, id := range []string{"a", "b", "c"} {
 		addTestNode(graph, id, "FUNCTION", id)
 	}
-	addTestEdge(graph, "a", "b", stage4.EdgeCalls) // c is dangling
+	addTestEdge(graph, "a", "b", link.EdgeCalls) // c is dangling
 
 	snap := NewGraphSnapshot(graph)
 	ranks := PageRankSnapshot(snap, 20, 0.85)
@@ -154,8 +154,8 @@ func TestPageRankSnapshot_Dangling(t *testing.T) {
 	for _, id := range []string{"a", "b", "c"} {
 		addTestNode(graph, id, "FUNCTION", id)
 	}
-	addTestEdge(graph, "a", "b", stage4.EdgeCalls)
-	addTestEdge(graph, "b", "c", stage4.EdgeCalls) // c is the dangling sink
+	addTestEdge(graph, "a", "b", link.EdgeCalls)
+	addTestEdge(graph, "b", "c", link.EdgeCalls) // c is the dangling sink
 
 	ranks := PageRankSnapshot(NewGraphSnapshot(graph), 20, 0.85)
 	// Chain a->b->c: every node feeds the next and the dangling sink c keeps
@@ -170,22 +170,22 @@ func TestPageRankSnapshot_Dangling(t *testing.T) {
 
 func TestLCOM4Snapshot(t *testing.T) {
 	graph := akg.NewCodePropertyGraph("test")
-	graph.Nodes = graph.Nodes.Set("C", &stage4.ResolvedNode{ID: "C", Kind: "CLASS", Name: "C"})
+	graph.Nodes = graph.Nodes.Set("C", &link.ResolvedNode{ID: "C", Kind: "CLASS", Name: "C"})
 	for _, f := range []string{"f1", "f2", "f3"} {
-		graph.Nodes = graph.Nodes.Set(f, &stage4.ResolvedNode{ID: f, Kind: "FIELD", Name: f})
+		graph.Nodes = graph.Nodes.Set(f, &link.ResolvedNode{ID: f, Kind: "FIELD", Name: f})
 	}
 	for _, m := range []string{"m1", "m2", "m3"} {
-		graph.Nodes = graph.Nodes.Set(m, &stage4.ResolvedNode{ID: m, Kind: "FUNCTION", Name: m})
+		graph.Nodes = graph.Nodes.Set(m, &link.ResolvedNode{ID: m, Kind: "FUNCTION", Name: m})
 	}
 	for _, f := range []string{"f1", "f2", "f3"} {
-		addTestEdge(graph, "C", f, stage4.EdgeHasField)
+		addTestEdge(graph, "C", f, link.EdgeHasField)
 	}
 	for _, m := range []string{"m1", "m2", "m3"} {
-		addTestEdge(graph, "C", m, stage4.EdgeHasReceiver)
+		addTestEdge(graph, "C", m, link.EdgeHasReceiver)
 	}
 	// m1 and m2 both access f1; m3 accesses no field.
-	addTestEdge(graph, "m1", "f1", stage4.EdgeReferences)
-	addTestEdge(graph, "m2", "f1", stage4.EdgeReferences)
+	addTestEdge(graph, "m1", "f1", link.EdgeReferences)
+	addTestEdge(graph, "m2", "f1", link.EdgeReferences)
 
 	snap := NewGraphSnapshot(graph)
 	if got := LCOM4Snapshot(snap.Nodes["C"], snap); got != 2 {
@@ -194,9 +194,9 @@ func TestLCOM4Snapshot(t *testing.T) {
 
 	// Class with fields but no methods -> 0.
 	empty := akg.NewCodePropertyGraph("test")
-	empty.Nodes = empty.Nodes.Set("C2", &stage4.ResolvedNode{ID: "C2", Kind: "CLASS", Name: "C2"})
-	empty.Nodes = empty.Nodes.Set("fx", &stage4.ResolvedNode{ID: "fx", Kind: "FIELD", Name: "fx"})
-	addTestEdge(empty, "C2", "fx", stage4.EdgeHasField)
+	empty.Nodes = empty.Nodes.Set("C2", &link.ResolvedNode{ID: "C2", Kind: "CLASS", Name: "C2"})
+	empty.Nodes = empty.Nodes.Set("fx", &link.ResolvedNode{ID: "fx", Kind: "FIELD", Name: "fx"})
+	addTestEdge(empty, "C2", "fx", link.EdgeHasField)
 	emptySnap := NewGraphSnapshot(empty)
 	if got := LCOM4Snapshot(emptySnap.Nodes["C2"], emptySnap); got != 0 {
 		t.Fatalf("expected LCOM4=0 for class without methods, got %v", got)
@@ -210,12 +210,12 @@ func TestDeadCodeNodesSnapshot(t *testing.T) {
 	addTestNode(graph, "b", "FUNCTION", "b")
 	addTestNode(graph, "c", "FUNCTION", "c")
 	addTestNode(graph, "Exported", "FUNCTION", "Exported")
-	graph.Nodes = graph.Nodes.Set("testFn", &stage4.ResolvedNode{
+	graph.Nodes = graph.Nodes.Set("testFn", &link.ResolvedNode{
 		ID: "testFn", Kind: "FUNCTION", Name: "testFn",
-		FileSpec: stage4.LocationMeta{Path: "pkg/x_test.go"},
+		FileSpec: link.LocationMeta{Path: "pkg/x_test.go"},
 	})
-	addTestEdge(graph, "main", "a", stage4.EdgeCalls)
-	addTestEdge(graph, "a", "b", stage4.EdgeCalls)
+	addTestEdge(graph, "main", "a", link.EdgeCalls)
+	addTestEdge(graph, "a", "b", link.EdgeCalls)
 	graph.Entrypoints = []string{"main"}
 
 	dead := DeadCodeNodesSnapshot(NewGraphSnapshot(graph))
@@ -235,14 +235,14 @@ func TestDeadCodeNodesSnapshot(t *testing.T) {
 
 func TestCyclomaticComplexitySnapshot(t *testing.T) {
 	graph := akg.NewCodePropertyGraph("test")
-	graph.Nodes = graph.Nodes.Set("f", &stage4.ResolvedNode{ID: "f", Kind: "FUNCTION", Name: "f"})
-	graph.Nodes = graph.Nodes.Set("s", &stage4.ResolvedNode{ID: "s", Kind: "STRUCT", Name: "s"})
+	graph.Nodes = graph.Nodes.Set("f", &link.ResolvedNode{ID: "f", Kind: "FUNCTION", Name: "f"})
+	graph.Nodes = graph.Nodes.Set("s", &link.ResolvedNode{ID: "s", Kind: "STRUCT", Name: "s"})
 	for _, id := range []string{"b1", "b2", "b3"} {
-		graph.Nodes = graph.Nodes.Set(id, &stage4.ResolvedNode{ID: id, Kind: "CFG_BRANCH", Name: id})
+		graph.Nodes = graph.Nodes.Set(id, &link.ResolvedNode{ID: id, Kind: "CFG_BRANCH", Name: id})
 	}
-	addTestEdge(graph, "f", "b1", stage4.EdgeConditionalBranch)
-	addTestEdge(graph, "f", "b2", stage4.EdgeLoopBranch)
-	addTestEdge(graph, "s", "b3", stage4.EdgeConditionalBranch) // non-function must be ignored
+	addTestEdge(graph, "f", "b1", link.EdgeConditionalBranch)
+	addTestEdge(graph, "f", "b2", link.EdgeLoopBranch)
+	addTestEdge(graph, "s", "b3", link.EdgeConditionalBranch) // non-function must be ignored
 
 	cc := CyclomaticComplexitySnapshot(NewGraphSnapshot(graph))
 	if len(cc) != 1 {
@@ -263,7 +263,7 @@ func TestLouvainCommunityDetectionSnapshot_Deterministic(t *testing.T) {
 	}
 	addTestClique(graph, cliqueA...)
 	addTestClique(graph, cliqueB...)
-	addTestEdge(graph, "a1", "b1", stage4.EdgeCalls) // single bridge edge
+	addTestEdge(graph, "a1", "b1", link.EdgeCalls) // single bridge edge
 
 	snap := NewGraphSnapshot(graph)
 	c1 := LouvainCommunityDetectionSnapshot(snap, 4, 10)

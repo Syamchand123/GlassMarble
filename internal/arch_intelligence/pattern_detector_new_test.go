@@ -5,7 +5,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/config"
 )
 
@@ -42,14 +42,14 @@ func TestPR01Layered(t *testing.T) {
 	graph, layers := layeredGraph()
 	// 4 edges per layer pair, all downward: cmd->domain, cmd->infra, domain->infra.
 	for _, src := range layers["cmd"] {
-		addStructuralEdge(graph, src, layers["internal/domain"][0], stage4.EdgeDependsOn)
-		addStructuralEdge(graph, src, layers["internal/infra"][0], stage4.EdgeDependsOn)
+		addStructuralEdge(graph, src, layers["internal/domain"][0], link.EdgeDependsOn)
+		addStructuralEdge(graph, src, layers["internal/infra"][0], link.EdgeDependsOn)
 	}
 	for _, src := range layers["internal/domain"] {
-		addStructuralEdge(graph, src, layers["internal/infra"][0], stage4.EdgeDependsOn)
+		addStructuralEdge(graph, src, layers["internal/infra"][0], link.EdgeDependsOn)
 	}
 	// One extra downward edge to clear the 10-edge minimum.
-	addStructuralEdge(graph, layers["cmd"][2], layers["internal/domain"][1], stage4.EdgeDependsOn)
+	addStructuralEdge(graph, layers["cmd"][2], layers["internal/domain"][1], link.EdgeDependsOn)
 	// 10 cross-layer edges, 0 violations.
 
 	ctx := &RuleContext{
@@ -77,12 +77,12 @@ func TestPR01Layered_ViolationFails(t *testing.T) {
 	graph, layers := layeredGraph()
 	// Introduce violations: infra depends on cmd (upward).
 	for _, src := range layers["internal/infra"] {
-		addStructuralEdge(graph, src, layers["cmd"][0], stage4.EdgeDependsOn)
+		addStructuralEdge(graph, src, layers["cmd"][0], link.EdgeDependsOn)
 	}
 	// One downward edge per pair so total edges are meaningful.
-	addStructuralEdge(graph, layers["cmd"][0], layers["internal/domain"][0], stage4.EdgeDependsOn)
-	addStructuralEdge(graph, layers["cmd"][0], layers["internal/infra"][0], stage4.EdgeDependsOn)
-	addStructuralEdge(graph, layers["internal/domain"][0], layers["internal/infra"][0], stage4.EdgeDependsOn)
+	addStructuralEdge(graph, layers["cmd"][0], layers["internal/domain"][0], link.EdgeDependsOn)
+	addStructuralEdge(graph, layers["cmd"][0], layers["internal/infra"][0], link.EdgeDependsOn)
+	addStructuralEdge(graph, layers["internal/domain"][0], layers["internal/infra"][0], link.EdgeDependsOn)
 	// 6 edges total, 3 violations -> consistency 0.5 < 0.8.
 
 	ctx := &RuleContext{
@@ -107,9 +107,9 @@ func TestPR02CleanArchitecture(t *testing.T) {
 	addNodeWithPath(graph, "i2", "internal/infra/y.go")
 	addNodeWithPath(graph, "i3", "internal/infra/z.go")
 	// Infra depends on domain (inversion) — clean.
-	addStructuralEdge(graph, "i1", "d1", stage4.EdgeDependsOn)
-	addStructuralEdge(graph, "i2", "d2", stage4.EdgeDependsOn)
-	addStructuralEdge(graph, "i3", "d3", stage4.EdgeDependsOn)
+	addStructuralEdge(graph, "i1", "d1", link.EdgeDependsOn)
+	addStructuralEdge(graph, "i2", "d2", link.EdgeDependsOn)
+	addStructuralEdge(graph, "i3", "d3", link.EdgeDependsOn)
 
 	ctx := &RuleContext{Graph: NewGraphSnapshot(graph), Cfg: config.DefaultIntelligenceConfig(), Clock: testClock}
 	found := false
@@ -132,9 +132,9 @@ func TestPR02CleanArchitecture_DomainToInfraFails(t *testing.T) {
 	addNodeWithPath(graph, "i2", "internal/infra/y.go")
 	addNodeWithPath(graph, "i3", "internal/infra/z.go")
 	// Domain depends on infra — the violation that kills the pattern.
-	addStructuralEdge(graph, "d1", "i1", stage4.EdgeDependsOn)
-	addStructuralEdge(graph, "d2", "i2", stage4.EdgeDependsOn)
-	addStructuralEdge(graph, "d3", "i3", stage4.EdgeDependsOn)
+	addStructuralEdge(graph, "d1", "i1", link.EdgeDependsOn)
+	addStructuralEdge(graph, "d2", "i2", link.EdgeDependsOn)
+	addStructuralEdge(graph, "d3", "i3", link.EdgeDependsOn)
 
 	ctx := &RuleContext{Graph: NewGraphSnapshot(graph), Cfg: config.DefaultIntelligenceConfig(), Clock: testClock}
 	for _, p := range RunPatternDetectionContext(ctx) {
@@ -154,8 +154,8 @@ func TestPR03Microservices(t *testing.T) {
 	addNodeWithPath(graph, "b1", "svc/b/main.go")
 	addNodeWithPath(graph, "b2", "svc/b/api.go")
 	addNodeWithPath(graph, "b3", "svc/b/extra.go")
-	addStructuralEdge(graph, "a2", "dbconn", stage4.EdgeQueriesDB)
-	addStructuralEdge(graph, "b2", "ep", stage4.EdgeExposesEndpoint)
+	addStructuralEdge(graph, "a2", "dbconn", link.EdgeQueriesDB)
+	addStructuralEdge(graph, "b2", "ep", link.EdgeExposesEndpoint)
 	// External targets must exist as nodes to survive the snapshot filter.
 	graph.Nodes = graph.Nodes.Set("dbconn", testNode("dbconn", "svc/a/dbconn.go"))
 	graph.Nodes = graph.Nodes.Set("ep", testNode("ep", "svc/b/ep.go"))
@@ -190,7 +190,7 @@ func TestPR04BoundedContext(t *testing.T) {
 		{ID: "comp_d", Name: "d", NodeIDs: []string{"d1", "d2"}, Dependencies: nil},
 	}
 	ctx := &RuleContext{
-		Graph:      &GraphSnapshot{NodeIDs: []string{"a1", "a2", "b1", "b2", "c1", "c2", "d1", "d2"}, Nodes: map[string]*stage4.ResolvedNode{}},
+		Graph:      &GraphSnapshot{NodeIDs: []string{"a1", "a2", "b1", "b2", "c1", "c2", "d1", "d2"}, Nodes: map[string]*link.ResolvedNode{}},
 		Components: components,
 		Cfg:        config.DefaultIntelligenceConfig(),
 		Clock:      testClock,
@@ -209,29 +209,29 @@ func TestPR04BoundedContext(t *testing.T) {
 func TestPR05CQRS(t *testing.T) {
 	graph := akg.NewCodePropertyGraph("test")
 	addNodeWithPath(graph, "c1", "internal/user/CreateUserCommand.go")
-	graph.Nodes = graph.Nodes.Set("c1", &stage4.ResolvedNode{
+	graph.Nodes = graph.Nodes.Set("c1", &link.ResolvedNode{
 		ID: "c1", Name: "CreateUserCommand", Kind: "STRUCT",
-		FileSpec: stage4.LocationMeta{Path: "internal/user/CreateUserCommand.go"},
+		FileSpec: link.LocationMeta{Path: "internal/user/CreateUserCommand.go"},
 	})
 	addNodeWithPath(graph, "c2", "internal/user/DeleteUserCommand.go")
-	graph.Nodes = graph.Nodes.Set("c2", &stage4.ResolvedNode{
+	graph.Nodes = graph.Nodes.Set("c2", &link.ResolvedNode{
 		ID: "c2", Name: "DeleteUserCommand", Kind: "STRUCT",
-		FileSpec: stage4.LocationMeta{Path: "internal/user/DeleteUserCommand.go"},
+		FileSpec: link.LocationMeta{Path: "internal/user/DeleteUserCommand.go"},
 	})
 	addNodeWithPath(graph, "q1", "internal/user/GetUserQuery.go")
-	graph.Nodes = graph.Nodes.Set("q1", &stage4.ResolvedNode{
+	graph.Nodes = graph.Nodes.Set("q1", &link.ResolvedNode{
 		ID: "q1", Name: "GetUserQuery", Kind: "STRUCT",
-		FileSpec: stage4.LocationMeta{Path: "internal/user/GetUserQuery.go"},
+		FileSpec: link.LocationMeta{Path: "internal/user/GetUserQuery.go"},
 	})
 	addNodeWithPath(graph, "q2", "internal/user/ListUsersQuery.go")
-	graph.Nodes = graph.Nodes.Set("q2", &stage4.ResolvedNode{
+	graph.Nodes = graph.Nodes.Set("q2", &link.ResolvedNode{
 		ID: "q2", Name: "ListUsersQuery", Kind: "STRUCT",
-		FileSpec: stage4.LocationMeta{Path: "internal/user/ListUsersQuery.go"},
+		FileSpec: link.LocationMeta{Path: "internal/user/ListUsersQuery.go"},
 	})
 	addNodeWithPath(graph, "h1", "internal/user/CreateUserCommandHandler.go")
-	graph.Nodes = graph.Nodes.Set("h1", &stage4.ResolvedNode{
+	graph.Nodes = graph.Nodes.Set("h1", &link.ResolvedNode{
 		ID: "h1", Name: "CreateUserCommandHandler", Kind: "STRUCT",
-		FileSpec: stage4.LocationMeta{Path: "internal/user/CreateUserCommandHandler.go"},
+		FileSpec: link.LocationMeta{Path: "internal/user/CreateUserCommandHandler.go"},
 	})
 
 	ctx := &RuleContext{Graph: NewGraphSnapshot(graph), Cfg: config.DefaultIntelligenceConfig(), Clock: testClock}
@@ -260,13 +260,13 @@ func TestPR06EventDriven(t *testing.T) {
 		tgt := "sub" + string(rune('a'+i))
 		addNodeWithPath(graph, src, "internal/evt/"+src+".go")
 		addNodeWithPath(graph, tgt, "internal/evt/"+tgt+".go")
-		addStructuralEdge(graph, src, tgt, stage4.EdgePublishes)
+		addStructuralEdge(graph, src, tgt, link.EdgePublishes)
 	}
 	// 30 structural call edges between the caller/callee pairs.
 	for i := 0; i < 30; i++ {
 		src := "caller" + string(rune('a'+i%26)) + string(rune('a'+i/26))
 		tgt := "callee" + string(rune('a'+i%26)) + string(rune('a'+i/26))
-		addStructuralEdge(graph, src, tgt, stage4.EdgeCalls)
+		addStructuralEdge(graph, src, tgt, link.EdgeCalls)
 	}
 	// ratio 10/40 = 0.25 >= 0.15.
 
@@ -285,12 +285,12 @@ func TestPR06EventDriven(t *testing.T) {
 func TestPR07Repository(t *testing.T) {
 	graph := akg.NewCodePropertyGraph("test")
 	addNodeWithPath(graph, "r1", "internal/repo/UserRepository.go")
-	graph.Nodes = graph.Nodes.Set("r1", &stage4.ResolvedNode{
+	graph.Nodes = graph.Nodes.Set("r1", &link.ResolvedNode{
 		ID: "r1", Name: "UserRepository", Kind: "STRUCT",
-		FileSpec: stage4.LocationMeta{Path: "internal/repo/UserRepository.go"},
+		FileSpec: link.LocationMeta{Path: "internal/repo/UserRepository.go"},
 	})
 	addNodeWithPath(graph, "db", "internal/db/db.go")
-	addStructuralEdge(graph, "r1", "db", stage4.EdgeQueriesDB)
+	addStructuralEdge(graph, "r1", "db", link.EdgeQueriesDB)
 
 	ctx := &RuleContext{Graph: NewGraphSnapshot(graph), Cfg: config.DefaultIntelligenceConfig(), Clock: testClock}
 	found := false

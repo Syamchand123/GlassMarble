@@ -75,7 +75,7 @@ type model struct {
 
 // Run launches the program. Progress is forwarded to the spinner label by the
 // worker goroutine via a shared mutex-protected field, so no tea messages are
-// needed for streaming stages.
+// needed for streaming phases.
 func Run(cfg Config) error {
 	m := newModel(cfg)
 	p := tea.NewProgram(m, tea.WithOutput(cfg.Out), tea.WithInput(cfg.In))
@@ -102,8 +102,8 @@ func (m *model) generate() tea.Cmd {
 		opts := m.cfg.Opts
 		var summary *types.GraphSummary
 		opts.OnSummary = func(s *types.GraphSummary) { summary = s }
-		opts.OnProgress = func(stage, detail string) {
-			msg := stage
+		opts.OnProgress = func(step, detail string) {
+			msg := step
 			if detail != "" {
 				msg += " " + detail
 			}

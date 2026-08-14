@@ -17,19 +17,19 @@ type Config struct {
 	OutputFormat  string      `yaml:"output_format"` // "mermaid", "plantuml", "dot"
 	IncludeHidden bool        `yaml:"include_hidden"`
 	Drift         DriftConfig `yaml:"drift"`
-	// Intelligence holds the Stage 5 thresholds (pattern/smell detection).
+	// Intelligence holds the Architecture Intelligence thresholds (pattern/smell detection).
 	// nil means defaults (config.DefaultIntelligenceConfig()).
 	Intelligence *IntelligenceConfig `yaml:"intelligence"`
-	// Fusion holds the Stage 9 multi-source knowledge fusion settings
+	// Fusion holds the knowledge fusion multi-source knowledge fusion settings
 	// (docs globs, technology lexicon, source adapters). nil means defaults
 	// (config.DefaultFusionConfig()). Whether fusion runs at all is decided
 	// by the `gmb analyze --include-docs` flag, not by this section.
 	Fusion *FusionConfig `yaml:"fusion"`
-	// Learning holds the Stage 10 learning-layer settings (correction
+	// Learning holds the convention learning learning-layer settings (correction
 	// overlay on queries, deterministic convention extraction). nil means
 	// defaults (config.DefaultLearningConfig()).
 	Learning *LearningConfig `yaml:"learning"`
-	// Aging holds the Stage 11 knowledge-aging settings (freshness decay
+	// Aging holds the knowledge aging knowledge-aging settings (freshness decay
 	// half-lives, state-transition thresholds). nil means defaults
 	// (config.DefaultAgingConfig()).
 	Aging *AgingConfig `yaml:"aging"`

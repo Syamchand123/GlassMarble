@@ -8,9 +8,9 @@ import (
 	"time"
 
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
-	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/stage1"
-	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/stage2"
-	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/stage3"
+	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/extract"
+	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/layout"
+	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/render"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
@@ -78,7 +78,7 @@ func estimatedBytes(graph *types.NativeGraph) int64 {
 // coordinator defaults to the legacy Turtle parser; callers serving the
 // canonical GraphJSON store (Phase C) install the akg-backed adapter via
 // SetParseFn. The akg package cannot be imported here (import cycle via
-// stage4 → product), so the wiring happens at the request layer.
+// link → product), so the wiring happens at the request layer.
 type ParseFn func(path string, opts types.QueryOptions) (*types.NativeGraph, error)
 
 type EngineCoordinator struct {
@@ -99,17 +99,17 @@ func (ec *EngineCoordinator) SetParseFn(fn ParseFn) {
 	ec.parseFn = fn
 }
 
-func reportProgress(cb func(stage, detail string), stage, detail string) {
+func reportProgress(cb func(step, detail string), step, detail string) {
 	if cb != nil {
-		cb(stage, detail)
+		cb(step, detail)
 	}
 }
 
-// ProjectDiagram runs the full 7-stage pipeline (parse, scope, extract, metrics, cluster, layout, render).
+// ProjectDiagram runs the full 7-phase pipeline (parse, scope, extract, metrics, cluster, layout, render).
 func (ec *EngineCoordinator) ProjectDiagram(t types.DiagramType, opts types.QueryOptions) (string, error) {
 	opts.DiagramType = t
 
-	reportProgress(opts.OnProgress, "StageParse", "Parsing AKG database...")
+	reportProgress(opts.OnProgress, "StepParse", "Parsing AKG database...")
 	full, err := ec.parseGraph(opts)
 	if err != nil {
 		return "", fmt.Errorf("parse failed: %w", err)
@@ -118,7 +118,7 @@ func (ec *EngineCoordinator) ProjectDiagram(t types.DiagramType, opts types.Quer
 	return ProjectDiagramFromGraph(full, t, opts)
 }
 
-// ProjectDiagramFromGraph runs the 6-stage downstream pipeline (scope,
+// ProjectDiagramFromGraph runs the 6-phase downstream pipeline (scope,
 // extract, metrics, cluster, layout, render) over an already-loaded graph.
 // Consumers that hold the AKG in memory (the AI bridge snapshot) use this
 // instead of re-parsing the TTL, so the diagram engine consumes the same
@@ -140,15 +140,15 @@ func ProjectDiagramFromGraph(full *types.NativeGraph, t types.DiagramType, opts 
 	full = full.Clone()
 
 	if opts.Scope != types.ScopeGlobal {
-		reportProgress(opts.OnProgress, "StageScope", fmt.Sprintf("scoping to %v", opts.Scope))
-		stage1.ApplyScope(full, opts)
+		reportProgress(opts.OnProgress, "StepScope", fmt.Sprintf("scoping to %v", opts.Scope))
+		ingest.ApplyScope(full, opts)
 	} else {
-		reportProgress(opts.OnProgress, "StageScope", "global scope")
+		reportProgress(opts.OnProgress, "StepScope", "global scope")
 	}
 
-	cfg := stage1.GetExtractionConfig(t, opts)
-	reportProgress(opts.OnProgress, "StageExtract", fmt.Sprintf("config=%s", cfg.Name))
-	subgraph, effectiveOpts, err := stage1.ExtractFromSubgraph(full, cfg, opts)
+	cfg := ingest.GetExtractionConfig(t, opts)
+	reportProgress(opts.OnProgress, "StepExtract", fmt.Sprintf("config=%s", cfg.Name))
+	subgraph, effectiveOpts, err := ingest.ExtractFromSubgraph(full, cfg, opts)
 	if err != nil {
 		return "", fmt.Errorf("extract failed: %w", err)
 	}
@@ -156,25 +156,25 @@ func ProjectDiagramFromGraph(full *types.NativeGraph, t types.DiagramType, opts 
 		return "", producterrs.Annotate(fmt.Errorf("diagram %s produced an empty subgraph (no nodes match the configured node kinds; try specifying --entry or --scope)", string(t)), producterrs.ErrEmptySubgraph)
 	}
 
-	reportProgress(opts.OnProgress, "StageMetrics", fmt.Sprintf("(SCC=%v, %d nodes)", enableSCC, len(subgraph.Nodes)))
-	var metrics *stage2.DiagramMetrics
+	reportProgress(opts.OnProgress, "StepMetrics", fmt.Sprintf("(SCC=%v, %d nodes)", enableSCC, len(subgraph.Nodes)))
+	var metrics *normalize.DiagramMetrics
 	if enableMetrics {
-		metrics = stage2.ComputeAllMetricsWithOptions(subgraph, enableSCC)
+		metrics = normalize.ComputeAllMetricsWithOptions(subgraph, enableSCC)
 	}
 
-	reportProgress(opts.OnProgress, "StageCluster", "")
+	reportProgress(opts.OnProgress, "StepCluster", "")
 	var clustering map[string]string
 	if enableCommunities {
-		clustering = stage2.DetectCommunities(subgraph)
+		clustering = normalize.DetectCommunities(subgraph)
 	} else if metrics != nil {
 		clustering = metrics.Communities
 	}
 
-	reportProgress(opts.OnProgress, "StageLayout", "")
-	layout := stage2.BuildLayoutTreeEx(subgraph, metrics, clustering, effectiveOpts, t)
+	reportProgress(opts.OnProgress, "StepLayout", "")
+	layout := normalize.BuildLayoutTreeEx(subgraph, metrics, clustering, effectiveOpts, t)
 
-	reportProgress(opts.OnProgress, "StageRender", fmt.Sprintf("rendering %s...", string(t)))
-	markup := stage3.RenderDiagramFormat(layout, t, opts.Format)
+	reportProgress(opts.OnProgress, "StepRender", fmt.Sprintf("rendering %s...", string(t)))
+	markup := aggregate.RenderDiagramFormat(layout, t, opts.Format)
 
 	if opts.OnSummary != nil && layout.Summary != nil {
 		opts.OnSummary(layout.Summary)
@@ -208,11 +208,11 @@ func BuildLayoutTreeFromGraph(full *types.NativeGraph, t types.DiagramType, opts
 
 	full = full.Clone()
 	if opts.Scope != types.ScopeGlobal {
-		stage1.ApplyScope(full, opts)
+		ingest.ApplyScope(full, opts)
 	}
 
-	cfg := stage1.GetExtractionConfig(t, opts)
-	subgraph, effectiveOpts, err := stage1.ExtractFromSubgraph(full, cfg, opts)
+	cfg := ingest.GetExtractionConfig(t, opts)
+	subgraph, effectiveOpts, err := ingest.ExtractFromSubgraph(full, cfg, opts)
 	if err != nil {
 		return nil, fmt.Errorf("extract failed: %w", err)
 	}
@@ -220,19 +220,19 @@ func BuildLayoutTreeFromGraph(full *types.NativeGraph, t types.DiagramType, opts
 		return nil, producterrs.Annotate(fmt.Errorf("diagram %s produced an empty subgraph", string(t)), producterrs.ErrEmptySubgraph)
 	}
 
-	var metrics *stage2.DiagramMetrics
+	var metrics *normalize.DiagramMetrics
 	if enableMetrics {
-		metrics = stage2.ComputeAllMetricsWithOptions(subgraph, enableSCC)
+		metrics = normalize.ComputeAllMetricsWithOptions(subgraph, enableSCC)
 	}
 
 	var clustering map[string]string
 	if enableCommunities {
-		clustering = stage2.DetectCommunities(subgraph)
+		clustering = normalize.DetectCommunities(subgraph)
 	} else if metrics != nil {
 		clustering = metrics.Communities
 	}
 
-	layout := stage2.BuildLayoutTreeEx(subgraph, metrics, clustering, effectiveOpts, t)
+	layout := normalize.BuildLayoutTreeEx(subgraph, metrics, clustering, effectiveOpts, t)
 	return layout, nil
 }
 
@@ -256,16 +256,16 @@ func ComputeGraphSummaryFromGraph(full *types.NativeGraph, t types.DiagramType, 
 	full = full.Clone()
 
 	if opts.Scope != types.ScopeGlobal {
-		stage1.ApplyScope(full, opts)
+		ingest.ApplyScope(full, opts)
 	}
 
-	cfg := stage1.GetExtractionConfig(t, opts)
-	subgraph, _, err := stage1.ExtractFromSubgraph(full, cfg, opts)
+	cfg := ingest.GetExtractionConfig(t, opts)
+	subgraph, _, err := ingest.ExtractFromSubgraph(full, cfg, opts)
 	if err != nil {
 		return nil, fmt.Errorf("extract failed: %w", err)
 	}
 
-	return stage2.ComputeGraphSummary(subgraph), nil
+	return normalize.ComputeGraphSummary(subgraph), nil
 }
 
 func (sc *SubgraphCache) Get(key string, mtime time.Time) *types.NativeGraph {
@@ -382,7 +382,7 @@ func (ec *EngineCoordinator) parseGraph(opts types.QueryOptions) (*types.NativeG
 	parseFn := ec.parseFn
 	if parseFn == nil {
 		parseFn = func(path string, opts types.QueryOptions) (*types.NativeGraph, error) {
-			return stage1.ExtractSubgraph(path, opts.DiagramType, opts)
+			return ingest.ExtractSubgraph(path, opts.DiagramType, opts)
 		}
 	}
 	native, err := parseFn(ec.statePath, opts)

@@ -3,7 +3,7 @@ package akg
 import (
 	"testing"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 func TestShouldApplyRule(t *testing.T) {
@@ -35,19 +35,19 @@ func TestShouldApplyRule(t *testing.T) {
 
 func TestMacroInferenceDisabled(t *testing.T) {
 	graph := NewCodePropertyGraph("test")
-	graph.Nodes = graph.Nodes.Set("test::main", &stage4.ResolvedNode{
+	graph.Nodes = graph.Nodes.Set("test::main", &link.ResolvedNode{
 		ID:   "test::main",
 		Kind: "FUNCTION",
 		Name: "main",
 	})
-	graph.Nodes = graph.Nodes.Set("test::Service", &stage4.ResolvedNode{
+	graph.Nodes = graph.Nodes.Set("test::Service", &link.ResolvedNode{
 		ID:   "test::Service",
 		Kind: "CLASS",
 		Name: "UserService",
 	})
 
 	// Disabled mode should not add any macro rules
-	cfg := stage4.LinkerConfig{MacroInference: "disabled"}
+	cfg := link.LinkerConfig{MacroInference: "disabled"}
 	RunTopologicalMacroInference(graph, cfg)
 
 	graph.MacroRules.Iterate(func(id string, rules []string) {
@@ -59,17 +59,17 @@ func TestMacroInferenceDisabled(t *testing.T) {
 
 func TestMacroInferenceStructural(t *testing.T) {
 	graph := NewCodePropertyGraph("test")
-	graph.Nodes = graph.Nodes.Set("test::UserService", &stage4.ResolvedNode{
+	graph.Nodes = graph.Nodes.Set("test::UserService", &link.ResolvedNode{
 		ID:   "test::UserService",
 		Kind: "CLASS",
 		Name: "UserService",
 	})
-	graph.Nodes = graph.Nodes.Set("test::Controller", &stage4.ResolvedNode{
+	graph.Nodes = graph.Nodes.Set("test::Controller", &link.ResolvedNode{
 		ID:   "test::Controller",
 		Kind: "CLASS",
 		Name: "UserController",
 	})
-	graph.Nodes = graph.Nodes.Set("test::main", &stage4.ResolvedNode{
+	graph.Nodes = graph.Nodes.Set("test::main", &link.ResolvedNode{
 		ID:   "test::main",
 		Kind: "FUNCTION",
 		Name: "main",
@@ -79,11 +79,11 @@ func TestMacroInferenceStructural(t *testing.T) {
 	})
 
 	// Add some structural edges to trigger structural rules
-	graph.OutboundEdges = graph.OutboundEdges.Set("test::main", []stage4.ResolvedEdge{
-		{SourceID: "test::main", TargetID: "test::Controller", Type: stage4.EdgeCalls, LineNumber: 1},
+	graph.OutboundEdges = graph.OutboundEdges.Set("test::main", []link.ResolvedEdge{
+		{SourceID: "test::main", TargetID: "test::Controller", Type: link.EdgeCalls, LineNumber: 1},
 	})
 
-	cfg := stage4.LinkerConfig{MacroInference: "structural"}
+	cfg := link.LinkerConfig{MacroInference: "structural"}
 	RunTopologicalMacroInference(graph, cfg)
 
 	// In structural mode, no heuristic rules should fire
@@ -107,13 +107,13 @@ func TestMacroInferenceStructural(t *testing.T) {
 
 func TestMacroInferenceAll(t *testing.T) {
 	graph := NewCodePropertyGraph("test")
-	graph.Nodes = graph.Nodes.Set("test::Controller", &stage4.ResolvedNode{
+	graph.Nodes = graph.Nodes.Set("test::Controller", &link.ResolvedNode{
 		ID:   "test::Controller",
 		Kind: "CLASS",
 		Name: "UserController",
 	})
 
-	cfg := stage4.LinkerConfig{MacroInference: "all"}
+	cfg := link.LinkerConfig{MacroInference: "all"}
 	RunTopologicalMacroInference(graph, cfg)
 
 	foundHeuristic := false
@@ -135,7 +135,7 @@ func TestMacroInferenceAll(t *testing.T) {
 func TestMacroInferenceDefault(t *testing.T) {
 	// Calling with no config should behave like "all"
 	graph := NewCodePropertyGraph("test")
-	graph.Nodes = graph.Nodes.Set("test::Controller", &stage4.ResolvedNode{
+	graph.Nodes = graph.Nodes.Set("test::Controller", &link.ResolvedNode{
 		ID:   "test::Controller",
 		Kind: "CLASS",
 		Name: "UserController",

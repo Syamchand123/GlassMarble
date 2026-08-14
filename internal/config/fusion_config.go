@@ -2,18 +2,18 @@ package config
 
 import "strings"
 
-// FusionConfig controls the Stage 9 multi-source knowledge fusion pipeline
+// FusionConfig controls the knowledge fusion multi-source knowledge fusion pipeline
 // (v2_master_implementaion_plan.md §7). It is the single canonical definition
 // of the "fusion:" section in .glassmarble/config.yaml.
 //
 // It lives in the config package (not in knowledge_fusion) for the same
 // reason IntelligenceConfig does: knowledge_fusion imports commit_reasoning,
 // and commit_reasoning imports config — placing this type in knowledge_fusion
-// would create an import cycle. Stage packages consume config types; they do
+// would create an import cycle. Phase packages consume config types; they do
 // not define them.
 //
 // All fields are optional; zero values fall back to DefaultFusionConfig via
-// ApplyDefaults. Whether the stage runs at all is controlled by the
+// ApplyDefaults. Whether the phase runs at all is controlled by the
 // `--include-docs` flag on `gmb analyze` (opt-in by design — doc scanning and
 // git-history walks are not free on large repositories).
 type FusionConfig struct {

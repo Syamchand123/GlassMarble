@@ -5,10 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage1"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage2"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage3"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/ingest"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/normalize"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/aggregate"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 // TestBloatRegressionGuard runs the REAL ingestion pipeline over this
@@ -20,18 +20,18 @@ import (
 // (2,308 nodes / 5,479 edges) to (7,865 nodes / 13,967 edges) — an
 // intentional graph-shape change, not noise. The ~1.8× headroom above the
 // new baseline still trips on any future noisy node-producing pass.
-// Recalibrated again at the Stage 10 (learning overlay) sign-off: the
+// Recalibrated again at the the learning overlay sign-off: the
 // developer-learning subsystem (internal/learning + internal/config +
-// cmd/learning_stage.go + memory overlay) raised the healthy baseline to
+// cmd/learning.go + memory overlay) raised the healthy baseline to
 // 25,116 edges — a bounded, deliberate addition of real feature code, not
 // a noisy edge producer (confirmed by stashing: the guard passes without
 // those files). Budget = baseline + ~10% so genuine regressions still trip.
-// Recalibrated again at the Stage 11 (knowledge aging) sign-off: the aging
+// Recalibrated again at the knowledge aging sign-off: the aging
 // layer (internal/knowledge_aging transitions + tests, config aging
 // section, detector fixes) raised the healthy baseline to 26,034 edges —
 // same methodology: an intentional, bounded feature-code addition
 // (confirmed by stashing: the guard passes without those files), NOT a
-// noisy edge producer. The ~3.5% margin (matching the Stage 10 convention)
+// noisy edge producer. The ~3.5% margin (matching the learning convention)
 // still trips on any genuine noisy pass.
 func TestBloatRegressionGuard(t *testing.T) {
 	repoRoot, err := findRepoRoot()
@@ -39,36 +39,36 @@ func TestBloatRegressionGuard(t *testing.T) {
 		t.Skipf("repository root not found: %v", err)
 	}
 
-	cfg := stage1.DefaultConfig(repoRoot)
+	cfg := ingest.DefaultConfig(repoRoot)
 	if _, err := os.Stat(filepath.Join(repoRoot, ".git")); err == nil {
 		cfg.GitTrackedOnly = true
 	}
 
-	stage1Out, err := stage1.RunIngestion(cfg)
+	ingestOut, err := ingest.RunIngestion(cfg)
 	if err != nil {
-		t.Fatalf("stage 1 ingestion failed: %v", err)
+		t.Fatalf("ingestion failed: %v", err)
 	}
 
-	stage2Payload, err := stage2.Normalize(stage1Out, "HEAD")
+	normalizePayload, err := normalize.Normalize(ingestOut, "HEAD")
 	if err != nil {
-		t.Fatalf("stage 2 normalization failed: %v", err)
+		t.Fatalf("normalization failed: %v", err)
 	}
 
-	stage3Out, err := stage3.Aggregate(stage2Payload, nil, repoRoot)
+	aggregateOut, err := aggregate.Aggregate(normalizePayload, nil, repoRoot)
 	if err != nil {
-		t.Fatalf("stage 3 aggregation failed: %v", err)
+		t.Fatalf("aggregation failed: %v", err)
 	}
 
 	var modifiedFiles []string
-	for relPath := range stage2Payload.UpsertedTrees {
+	for relPath := range normalizePayload.UpsertedTrees {
 		modifiedFiles = append(modifiedFiles, relPath)
 	}
-	modifiedFiles = append(modifiedFiles, stage2Payload.DeletedPaths...)
+	modifiedFiles = append(modifiedFiles, normalizePayload.DeletedPaths...)
 
 	// Architecture detail level = the default analysis configuration.
-	cpg, err := stage4.Link(stage3Out, modifiedFiles, nil, stage4.LinkerConfig{LevelOfDetail: stage4.LevelArchitecture})
+	cpg, err := link.Link(aggregateOut, modifiedFiles, nil, link.LinkerConfig{LevelOfDetail: link.LevelArchitecture})
 	if err != nil {
-		t.Fatalf("stage 4 linker failed: %v", err)
+		t.Fatalf("linking failed: %v", err)
 	}
 
 	nodes := len(cpg.GraphNodes)

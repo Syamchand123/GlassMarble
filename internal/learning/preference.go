@@ -7,7 +7,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/developer_memory"
 )
 
@@ -27,7 +27,7 @@ type Convention struct {
 
 // ProjectConventions holds the repository-specific conventions learned
 // from history (master plan §8.4). Every convention carries its evidence
-// and confidence so downstream consumers (naming hints, Stage 12 retrieval)
+// and confidence so downstream consumers (naming hints, evidence retrieval retrieval)
 // can weight weak conventions accordingly.
 //
 // ProjectConventions is persisted to .glassmarble/memory/conventions.json
@@ -213,7 +213,7 @@ func LearnConventions(graph *akg.CodePropertyGraph, mem *developer_memory.Develo
 	suffixCounts := make(map[string]int)
 	totalCandidates := 0
 	if graph.Nodes != nil {
-		graph.Nodes.Iterate(func(_ string, node *stage4.ResolvedNode) {
+		graph.Nodes.Iterate(func(_ string, node *link.ResolvedNode) {
 			if node.Kind != "STRUCT" && node.Kind != "MODULE" {
 				return
 			}
@@ -331,7 +331,7 @@ func adrDirOf(file string) (string, bool) {
 }
 
 // adrDirsFromMemory collects ADR directory references from the evidence of
-// documentation claims in memory (Stage 9 fused claims carry file
+// documentation claims in memory (knowledge fusion fused claims carry file
 // references).
 func adrDirsFromMemory(mem *developer_memory.DeveloperMemory) map[string]bool {
 	dirs := make(map[string]bool)

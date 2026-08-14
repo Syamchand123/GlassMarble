@@ -63,7 +63,7 @@ type QueryOptions struct {
 	DiagramType   DiagramType
 	Format        string
 	ChangedFiles  []string
-	OnProgress    func(stage, detail string)
+	OnProgress    func(step, detail string)
 	OnSummary     func(summary *GraphSummary)
 	Scope         ScopeLevel
 	ScopePath     string
@@ -273,16 +273,16 @@ type PipelineConfig struct {
 	MaxDepth          int
 }
 
-type PipelineStage int
+type PipelineStep int
 
 const (
-	StageParse PipelineStage = iota
-	StageScope
-	StageExtract
-	StageMetrics
-	StageCluster
-	StageLayout
-	StageRender
+	StepParse PipelineStep = iota
+	StepScope
+	StepExtract
+	StepMetrics
+	StepCluster
+	StepLayout
+	StepRender
 )
 
 type GraphSummary struct {
@@ -303,7 +303,7 @@ type GraphSummary struct {
 
 // ParseNodeURI strips the legacy GlassMarble IRI prefix from a URI and
 // returns the bare node ID. It serves the legacy Turtle read path
-// (visualization_engine/stage1 + internal/akg self-heal): the canonical
+// (visualization_engine/extract + internal/akg self-heal): the canonical
 // GraphJSON store carries bare node IDs and never invokes it. Supports
 // glassmarble.org/node/, /file/, and /namespace/ namespaces, as well as
 // plain angle-bracket IRIs. Percent-escapes are decoded (%25, %22, %20,

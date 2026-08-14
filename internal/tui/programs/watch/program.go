@@ -23,8 +23,8 @@ type Options struct {
 	Interval   time.Duration
 }
 
-// RunAnalysisFn executes the analysis pipeline, reporting stage boundaries.
-type RunAnalysisFn func(progress func(stage int, name string, current, total int)) error
+// RunAnalysisFn executes the analysis pipeline, reporting phase boundaries.
+type RunAnalysisFn func(progress func(step int, name string, current, total int)) error
 
 // RegisterFn registers fsnotify watches for a directory tree.
 type RegisterFn func(w *fsnotify.Watcher) error
@@ -47,9 +47,9 @@ type model struct {
 	analyzing       bool
 	lastFingerprint string
 	debounceToken   int
-	currentStage    string
-	stageCurrent    int
-	stageTotal      int
+	currentPhase    string
+	phaseCurrent    int
+	phaseTotal      int
 	started         time.Time
 	width           int
 	height          int
@@ -70,7 +70,7 @@ type fingerprintMsg struct {
 }
 
 type progressMsg struct {
-	stage   int
+	step   int
 	name    string
 	current int
 	total   int
@@ -187,9 +187,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.addLog(tui.StyleMuted.Render(ts()) + " " + tui.StyleAccent.Render("Repository changes detected — running analysis..."))
 		return m, m.startAnalysisCmd(false)
 	case progressMsg:
-		m.currentStage = msg.name
-		m.stageCurrent = msg.current
-		m.stageTotal = msg.total
+		m.currentPhase = msg.name
+		m.phaseCurrent = msg.current
+		m.phaseTotal = msg.total
 		return m, nil
 	case analyzeResultMsg:
 		m.analyzing = false
@@ -227,10 +227,10 @@ func (m *model) View() string {
 	status := tui.StyleMuted.Render(m.spinner.View() + " Idle — waiting for changes")
 	if m.analyzing {
 		s := m.spinner.View()
-		if m.currentStage != "" {
-			s += " — " + m.currentStage
-			if m.stageTotal > 0 {
-				s += fmt.Sprintf(" %d/%d", m.stageCurrent, m.stageTotal)
+		if m.currentPhase != "" {
+			s += " — " + m.currentPhase
+			if m.phaseTotal > 0 {
+				s += fmt.Sprintf(" %d/%d", m.phaseCurrent, m.phaseTotal)
 			}
 		}
 		status = tui.StyleAccent.Render(s)
@@ -259,8 +259,8 @@ func (m *model) addLog(line string) {
 func (m *model) startAnalysisCmd(initial bool) tea.Cmd {
 	return func() tea.Msg {
 		go func() {
-			err := m.runAnalysis(func(stage int, name string, current, total int) {
-				m.p.Send(progressMsg{stage: stage, name: name, current: current, total: total})
+			err := m.runAnalysis(func(step int, name string, current, total int) {
+				m.p.Send(progressMsg{step: step, name: name, current: current, total: total})
 			})
 			m.p.Send(analyzeResultMsg{err: err, initial: initial})
 		}()

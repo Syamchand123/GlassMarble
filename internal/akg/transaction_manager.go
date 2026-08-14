@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	akgerrs "github.com/Syamchand123/GlassMarble/internal/errors"
 	"github.com/Syamchand123/GlassMarble/internal/product/ont"
-	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/stage1"
+	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/extract"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
@@ -30,7 +30,7 @@ type AKGCommitEvent struct {
 	EdgeCount     int       `json:"edge_count"`
 }
 
-// AKGTransactionManager coordinates the 4-Sub-Stage Delta Transaction Lifecycle.
+// AKGTransactionManager coordinates the 4-Sub-Phase Delta Transaction Lifecycle.
 type AKGTransactionManager struct {
 	mu          sync.Mutex
 	container   *MVCCGraphContainer
@@ -134,7 +134,7 @@ func (tm *AKGTransactionManager) ReplaceGraph(graph *CodePropertyGraph) error {
 	// the state file anyway, but failing early with a clearer message beats a
 	// serialization/rename round-trip (AUDIT Issue 5 Phase 5A-1).
 	dangling := 0
-	graph.OutboundEdges.Iterate(func(srcID string, edges []stage4.ResolvedEdge) {
+	graph.OutboundEdges.Iterate(func(srcID string, edges []link.ResolvedEdge) {
 		for _, edge := range edges {
 			if _, ok := graph.Nodes.Get(srcID); !ok {
 				dangling++
@@ -164,13 +164,13 @@ func (tm *AKGTransactionManager) ReplaceGraph(graph *CodePropertyGraph) error {
 // reporting. Shared by import and loadFromDisk.
 func rebuildIndexes(graph *CodePropertyGraph) {
 	if graph.LineIndex == nil {
-		graph.LineIndex = NewCowMap[string, []*stage4.ResolvedNode]()
+		graph.LineIndex = NewCowMap[string, []*link.ResolvedNode]()
 	}
-	graph.Nodes.Iterate(func(_ string, node *stage4.ResolvedNode) {
+	graph.Nodes.Iterate(func(_ string, node *link.ResolvedNode) {
 		normPath := normalizePath(node.FileSpec.Path)
 		if normPath != "" {
 			lineNodes, _ := graph.LineIndex.Get(normPath)
-			newLineNodes := make([]*stage4.ResolvedNode, len(lineNodes)+1)
+			newLineNodes := make([]*link.ResolvedNode, len(lineNodes)+1)
 			copy(newLineNodes, lineNodes)
 			newLineNodes[len(newLineNodes)-1] = node
 			graph.LineIndex = graph.LineIndex.Set(normPath, newLineNodes)
@@ -186,7 +186,7 @@ func rebuildIndexes(graph *CodePropertyGraph) {
 
 	graph.Verified = true
 	graph.VerificationMsg = ""
-	graph.OutboundEdges.Iterate(func(sourceID string, edges []stage4.ResolvedEdge) {
+	graph.OutboundEdges.Iterate(func(sourceID string, edges []link.ResolvedEdge) {
 		for _, edge := range edges {
 			if _, ok := graph.Nodes.Get(sourceID); !ok {
 				graph.Verified = false
@@ -202,8 +202,8 @@ func rebuildIndexes(graph *CodePropertyGraph) {
 	})
 }
 
-// ExecuteDeltaTransaction executes the complete 4-Sub-Stage Delta Transaction Lifecycle on the AKG.
-func (tm *AKGTransactionManager) ExecuteDeltaTransaction(payload *stage4.Stage4Output, modifiedFiles []string) error {
+// ExecuteDeltaTransaction executes the complete 4-Sub-Phase Delta Transaction Lifecycle on the AKG.
+func (tm *AKGTransactionManager) ExecuteDeltaTransaction(payload *link.LinkOutput, modifiedFiles []string) error {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
@@ -220,20 +220,20 @@ func (tm *AKGTransactionManager) ExecuteDeltaTransaction(payload *stage4.Stage4O
 	defer tm.ReleaseLock()
 
 	// ------------------------------------------------------------------------
-	// SUB-STAGE A: TRANSACTION LOGGING & ISOLATION
+	// SUB-PHASE A: TRANSACTION LOGGING & ISOLATION
 	// ------------------------------------------------------------------------
 	// Step A.2: Allocate MVCC Shadow Snapshot for write isolation
 	shadow, txID := tm.container.AllocateShadowSnapshot()
 	shadow.CommitHash = payload.CommitHash
 
-	// Apply delta to shadow snapshot (Sub-Stage B, C, D)
+	// Apply delta to shadow snapshot (Sub-Phase B, C, D)
 	_, err := tm.applyDeltaToShadow(shadow, payload, modifiedFiles)
 	if err != nil {
 		return err
 	}
 
 	// ------------------------------------------------------------------------
-	// SUB-STAGE D.3: Atomic Commit & Persistence
+	// SUB-PHASE D.3: Atomic Commit & Persistence
 	// ------------------------------------------------------------------------
 	// Promote shadow snapshot to active graph snapshot
 	tm.container.PromoteShadowSnapshot(shadow)
@@ -249,7 +249,7 @@ func (tm *AKGTransactionManager) ExecuteDeltaTransaction(payload *stage4.Stage4O
 
 	// Broadcast commit event to visual layout subscribers
 	totalEdges := 0
-	shadow.OutboundEdges.Iterate(func(_ string, edges []stage4.ResolvedEdge) {
+	shadow.OutboundEdges.Iterate(func(_ string, edges []link.ResolvedEdge) {
 		totalEdges += len(edges)
 	})
 
@@ -272,7 +272,7 @@ func (tm *AKGTransactionManager) ExecuteDeltaTransaction(payload *stage4.Stage4O
 	return nil
 }
 
-func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, payload *stage4.Stage4Output, modifiedFiles []string) (map[string]bool, error) {
+func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, payload *link.LinkOutput, modifiedFiles []string) (map[string]bool, error) {
 	// If modifiedFiles is empty, infer from payload
 	if len(modifiedFiles) == 0 {
 		fileMap := make(map[string]bool)
@@ -287,7 +287,7 @@ func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, p
 	}
 
 	// ------------------------------------------------------------------------
-	// SUB-STAGE B: TRANSACTIONAL INVALIDATION (THE SWEEP PHASE)
+	// SUB-PHASE B: TRANSACTIONAL INVALIDATION (THE SWEEP PHASE)
 	// ------------------------------------------------------------------------
 	// Step B.1: Node Context Sweep. Every node of every modified file is
 	// invalidated (removed from the graph and its indexes); the graft phase
@@ -350,7 +350,7 @@ func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, p
 	shadow.macroCache = NewCowMap[string, []string]()
 
 	// ------------------------------------------------------------------------
-	// SUB-STAGE C: NODE AND EDGE HYDRATION (THE GRAFT PHASE)
+	// SUB-PHASE C: NODE AND EDGE HYDRATION (THE GRAFT PHASE)
 	// ------------------------------------------------------------------------
 	// Step C.1: Vertex Grafting
 	updatedPaths := make(map[string]bool)
@@ -389,7 +389,7 @@ func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, p
 			shadow.FileNodeIndex = shadow.FileNodeIndex.Set(normPath, newFileSet)
 
 			lineNodes, _ := shadow.LineIndex.Get(normPath)
-			newLineNodes := make([]*stage4.ResolvedNode, len(lineNodes)+1)
+			newLineNodes := make([]*link.ResolvedNode, len(lineNodes)+1)
 			copy(newLineNodes, lineNodes)
 			newLineNodes[len(newLineNodes)-1] = node
 			shadow.LineIndex = shadow.LineIndex.Set(normPath, newLineNodes)
@@ -407,12 +407,12 @@ func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, p
 
 	// Step C.2: Vector Binding
 	for sourceID, edges := range payload.OutboundEdges {
-		newSlice := make([]stage4.ResolvedEdge, len(edges))
+		newSlice := make([]link.ResolvedEdge, len(edges))
 		copy(newSlice, edges)
 		shadow.OutboundEdges = shadow.OutboundEdges.Set(sourceID, newSlice)
 	}
 
-	// Step C.2.b: Stage 3.8 and 3.9 Metadata Binding.
+	// Step C.2.b: Phase 3.8 and 3.9 Metadata Binding.
 	// Entrypoints are deduplicated: repeated analyses must not accumulate
 	// duplicate entries for the same node (AUDIT Issue 3 §3.3).
 	existingEP := make(map[string]bool, len(shadow.Entrypoints))
@@ -433,7 +433,7 @@ func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, p
 	for sourceID, edges := range payload.OutboundEdges {
 		for _, edge := range edges {
 			targetID := edge.TargetID
-			inboundEdge := stage4.ResolvedEdge{
+			inboundEdge := link.ResolvedEdge{
 				SourceID:   sourceID,
 				TargetID:   targetID,
 				Type:       edge.Type,
@@ -449,7 +449,7 @@ func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, p
 				}
 			}
 			if !exists {
-				newEdges := make([]stage4.ResolvedEdge, len(existingEdges)+1)
+				newEdges := make([]link.ResolvedEdge, len(existingEdges)+1)
 				copy(newEdges, existingEdges)
 				newEdges[len(newEdges)-1] = inboundEdge
 				shadow.InboundEdges = shadow.InboundEdges.Set(targetID, newEdges)
@@ -467,12 +467,12 @@ func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, p
 	// Dropped edges are recorded in shadow.Errors so the loss stays visible
 	// to `gmb status` / `gmb doctor` instead of disappearing silently.
 	shadow.Errors = nil
-	keptOutbound := NewCowMap[string, []stage4.ResolvedEdge]()
-	shadow.OutboundEdges.Iterate(func(sourceID string, edges []stage4.ResolvedEdge) {
+	keptOutbound := NewCowMap[string, []link.ResolvedEdge]()
+	shadow.OutboundEdges.Iterate(func(sourceID string, edges []link.ResolvedEdge) {
 		if _, srcOK := shadow.Nodes.Get(sourceID); !srcOK {
 			return
 		}
-		var kept []stage4.ResolvedEdge
+		var kept []link.ResolvedEdge
 		for _, edge := range edges {
 			if _, tgtOK := shadow.Nodes.Get(edge.TargetID); tgtOK {
 				kept = append(kept, edge)
@@ -495,11 +495,11 @@ func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, p
 	// Inbound edges are derived from outbound edges; rebuild them so the two
 	// views stay mirror-consistent after the sweep (copy-on-write: never
 	// append to a CowMap slice in place).
-	newInbound := NewCowMap[string, []stage4.ResolvedEdge]()
-	shadow.OutboundEdges.Iterate(func(sourceID string, edges []stage4.ResolvedEdge) {
+	newInbound := NewCowMap[string, []link.ResolvedEdge]()
+	shadow.OutboundEdges.Iterate(func(sourceID string, edges []link.ResolvedEdge) {
 		for _, edge := range edges {
 			existing, _ := newInbound.Get(edge.TargetID)
-			newEdges := make([]stage4.ResolvedEdge, len(existing)+1)
+			newEdges := make([]link.ResolvedEdge, len(existing)+1)
 			copy(newEdges, existing)
 			newEdges[len(newEdges)-1] = edge
 			newInbound = newInbound.Set(edge.TargetID, newEdges)
@@ -518,13 +518,13 @@ func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, p
 	}
 
 	// ------------------------------------------------------------------------
-	// SUB-STAGE D: GRAPH INVARIANT VERIFICATION & REASONING
+	// SUB-PHASE D: GRAPH INVARIANT VERIFICATION & REASONING
 	// ------------------------------------------------------------------------
 	// Step D.1: Dangling Reference Audit. The post-graft sweep (Step C.4)
 	// already guarantees every surviving edge has both endpoints; this pass
 	// is the invariant check that catches any future regression before the
 	// zero-dangling guard at write time.
-	shadow.OutboundEdges.Iterate(func(sourceID string, edges []stage4.ResolvedEdge) {
+	shadow.OutboundEdges.Iterate(func(sourceID string, edges []link.ResolvedEdge) {
 		for _, edge := range edges {
 			if _, targetExists := shadow.Nodes.Get(edge.TargetID); !targetExists {
 				errRec := DanglingReferenceError{
@@ -820,21 +820,21 @@ func reconstructFromTTLFileEx(StatePath string, runMacros bool) (*CodePropertyGr
 		return nil, err
 	}
 
-	nodes, edges, err := stage1.ParseTTLFile(StatePath)
+	nodes, edges, err := ingest.ParseTTLFile(StatePath)
 	if err != nil {
 		return nil, fmt.Errorf("TTL parse failed: %w", err)
 	}
 
 	graph := NewCodePropertyGraph("restored_from_ttl")
 
-	mutNodes := make(map[string]*stage4.ResolvedNode, len(nodes))
+	mutNodes := make(map[string]*link.ResolvedNode, len(nodes))
 	mutEntrypoints := make([]string, 0)
 	mutFolderZones := make(map[string]string)
 	mutKindIndex := make(map[string]map[string]bool)
 	mutHashIndex := make(map[string][]string)
 	mutFileNodeIndex := make(map[string]map[string]bool)
 
-	// Convert TTLNode to stage4.ResolvedNode
+	// Convert TTLNode to link.ResolvedNode
 	for id, tNode := range nodes {
 		if id == metadataNodeURI || deletedIDs[id] {
 			continue
@@ -842,12 +842,12 @@ func reconstructFromTTLFileEx(StatePath string, runMacros bool) (*CodePropertyGr
 		kind := mapClassToKind(tNode.Kind)
 		prim := strings.TrimPrefix(tNode.PrimitiveType, ont.PrefixGM)
 
-		resNode := &stage4.ResolvedNode{
+		resNode := &link.ResolvedNode{
 			ID:        id,
 			Kind:      kind,
 			Name:      tNode.Name,
 			Primitive: prim,
-			FileSpec: stage4.LocationMeta{
+			FileSpec: link.LocationMeta{
 				Path:      strings.TrimPrefix(tNode.FileURI, "file:"),
 				LineStart: tNode.LineStart,
 				LineEnd:   tNode.LineEnd,
@@ -894,8 +894,8 @@ func reconstructFromTTLFileEx(StatePath string, runMacros bool) (*CodePropertyGr
 		}
 	}
 
-	mutOutboundEdges := make(map[string][]stage4.ResolvedEdge)
-	mutInboundEdges := make(map[string][]stage4.ResolvedEdge)
+	mutOutboundEdges := make(map[string][]link.ResolvedEdge)
+	mutInboundEdges := make(map[string][]link.ResolvedEdge)
 
 	// Rebuild Outbound and Inbound Edges with canonical edge types
 	for _, tEdge := range edges {
@@ -906,7 +906,7 @@ func reconstructFromTTLFileEx(StatePath string, runMacros bool) (*CodePropertyGr
 			continue
 		}
 
-		resolvedEdge := stage4.ResolvedEdge{
+		resolvedEdge := link.ResolvedEdge{
 			SourceID:   tEdge.SourceID,
 			TargetID:   tEdge.TargetID,
 			Type:       mapPredicateToEdgeType(tEdge.Predicate),
@@ -1017,7 +1017,7 @@ func scanDeletedNodeIDs(StatePath string) (map[string]bool, error) {
 }
 
 // scanTTLMetadata extracts the metadata block fields (gm:commitHash,
-// gm:schemaVersion, gm:version) directly from the raw TTL text. The stage1
+// gm:schemaVersion, gm:version) directly from the raw TTL text. The ingest
 // parser drops the metadata node (ID "metadata") from its node map, so the
 // restore path cannot rely on ParseTTLFile for it. Maxima are used for
 // version/schemaVersion so duplicate blocks from incremental appends can

@@ -1,12 +1,12 @@
 package config
 
-// AgingConfig controls the Stage 11 knowledge aging layer
+// AgingConfig controls the knowledge aging layer
 // (v2_master_implementaion_plan.md §9). It is the single canonical
 // definition of the "aging:" section in .glassmarble/config.yaml.
 //
 // It lives in the config package (not in knowledge_aging) for the same
 // reason LearningConfig, FusionConfig and IntelligenceConfig do: the config
-// package is a leaf that every stage imports; stage packages consume config
+// package is a leaf that every phase imports; phase packages consume config
 // types, they do not define them.
 //
 // All fields are optional; zero values fall back to DefaultAgingConfig via

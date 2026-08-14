@@ -6,7 +6,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
 
 func TestComputeComponentCoupling(t *testing.T) {
@@ -14,8 +14,8 @@ func TestComputeComponentCoupling(t *testing.T) {
 	for _, id := range []string{"a1", "a2", "b1", "c1"} {
 		addTestNode(graph, id, "FUNCTION", id)
 	}
-	addTestEdge(graph, "a1", "b1", stage4.EdgeCalls)
-	addTestEdge(graph, "a2", "c1", stage4.EdgeDependsOn)
+	addTestEdge(graph, "a1", "b1", link.EdgeCalls)
+	addTestEdge(graph, "a2", "c1", link.EdgeDependsOn)
 
 	components := []archmodel.DetectedComponent{
 		{ID: "comp_a", Name: "A", NodeIDs: []string{"a1", "a2"}},
@@ -58,7 +58,7 @@ func TestComputeComponentCoupling_NoCrossEdges(t *testing.T) {
 	for _, id := range []string{"a1", "a2", "b1"} {
 		addTestNode(graph, id, "FUNCTION", id)
 	}
-	addTestEdge(graph, "a1", "a2", stage4.EdgeCalls) // intra-component only
+	addTestEdge(graph, "a1", "a2", link.EdgeCalls) // intra-component only
 
 	components := []archmodel.DetectedComponent{
 		{ID: "comp_a", Name: "A", NodeIDs: []string{"a1", "a2"}},
@@ -91,8 +91,8 @@ func TestCalculateMetricsFromSnapshot_SmallGraph(t *testing.T) {
 	for _, id := range []string{"a", "b", "c"} {
 		addTestNode(graph, id, "FUNCTION", id)
 	}
-	addTestEdge(graph, "a", "b", stage4.EdgeCalls)
-	addTestEdge(graph, "b", "c", stage4.EdgeCalls)
+	addTestEdge(graph, "a", "b", link.EdgeCalls)
+	addTestEdge(graph, "b", "c", link.EdgeCalls)
 
 	m := CalculateMetricsFromSnapshot(NewGraphSnapshot(graph))
 	if m.TotalNodes != 3 {
@@ -120,8 +120,8 @@ func TestCalculateMetrics_Compatibility(t *testing.T) {
 	for _, id := range []string{"a", "b", "c"} {
 		addTestNode(graph, id, "FUNCTION", id)
 	}
-	addTestEdge(graph, "a", "b", stage4.EdgeCalls)
-	addTestEdge(graph, "b", "c", stage4.EdgeCalls)
+	addTestEdge(graph, "a", "b", link.EdgeCalls)
+	addTestEdge(graph, "b", "c", link.EdgeCalls)
 
 	fromGraph := CalculateMetrics(graph)
 	fromSnapshot := CalculateMetricsFromSnapshot(NewGraphSnapshot(graph))

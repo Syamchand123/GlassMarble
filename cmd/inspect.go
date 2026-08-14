@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/stage4"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 	inspectprog "github.com/Syamchand123/GlassMarble/internal/tui/programs/inspect"
@@ -108,7 +108,7 @@ func findNodeAtLine(storageDir, filePath string, line int) (string, error) {
 	norm := normalizeInspectPath(filePath)
 	bestID := ""
 	bestStart := -1
-	err := akg.StreamNodes(storageDir, func(n *stage4.ResolvedNode) bool {
+	err := akg.StreamNodes(storageDir, func(n *link.ResolvedNode) bool {
 		if normalizeInspectPath(n.FileSpec.Path) != norm {
 			return true
 		}
@@ -133,7 +133,7 @@ func findNodeAtLine(storageDir, filePath string, line int) (string, error) {
 func streamNodeList(storageDir string) error {
 	fmt.Println("=== Entry Points & Callable Symbols ===")
 	count := 0
-	err := akg.StreamNodes(storageDir, func(n *stage4.ResolvedNode) bool {
+	err := akg.StreamNodes(storageDir, func(n *link.ResolvedNode) bool {
 		if n.Kind == "FUNCTION" || n.Kind == "METHOD" {
 			if inspectKind == "" || strings.EqualFold(n.Kind, inspectKind) {
 				fmt.Printf("  - [%s] %s (%s:L%d)\n", n.Kind, n.ID, n.FileSpec.Path, n.FileSpec.LineStart)
@@ -153,7 +153,7 @@ func streamNodeSearch(storageDir string) error {
 	fmt.Printf("=== Search Results for '%s' ===\n", inspectSearch)
 	count := 0
 	lowerSearch := strings.ToLower(inspectSearch)
-	err := akg.StreamNodes(storageDir, func(n *stage4.ResolvedNode) bool {
+	err := akg.StreamNodes(storageDir, func(n *link.ResolvedNode) bool {
 		if strings.Contains(strings.ToLower(n.ID), lowerSearch) || strings.Contains(strings.ToLower(n.Name), lowerSearch) {
 			fmt.Printf("  ID: %s\n  Kind: %s | File: %s:L%d\n  Primitive: %s\n\n", n.ID, n.Kind, n.FileSpec.Path, n.FileSpec.LineStart, n.Primitive)
 			count++
@@ -178,7 +178,7 @@ func collectNodeRows(storageDir string, search bool, query string) ([]inspectpro
 	}
 	rows := make([]inspectprog.NodeRow, 0, limit)
 	count := 0
-	err := akg.StreamNodes(storageDir, func(n *stage4.ResolvedNode) bool {
+	err := akg.StreamNodes(storageDir, func(n *link.ResolvedNode) bool {
 		if search {
 			if !strings.Contains(strings.ToLower(n.ID), lower) && !strings.Contains(strings.ToLower(n.Name), lower) {
 				return true
