@@ -13,6 +13,8 @@
 <a href="docs/architecture.md">Architecture Manual</a> ·
   <a href="docs/commands_master_reference.md">CLI Master Reference</a> ·
   <a href="docs/ai.md">AI Architect Guide</a> ·
+  <a href="docs/akg_format.md">AKG Format</a> ·
+  <a href="docs/configuration.md">Configuration</a> ·
   <a href="#quick-start">Quick Start</a> ·
   <a href="#cli-reference">CLI Reference</a> ·
   <a href="#diagram-types">Diagram Types</a>
@@ -24,9 +26,9 @@
 
 Modern codebases suffer from **documentation drift**: architecture diagrams and dependency maps are created during design and become obsolete the moment code changes. GlassMarble eliminates this permanently.
 
-GlassMarble compiles your source code — across **14 languages** — into a semantic **Architecture Knowledge Graph (AKG)** stored as a portable GraphJSON database (`.glassmarble/akg.json`). From this living graph it can:
+GlassMarble compiles your source code — across **17 languages** (14 with full tree-sitter grammars, plus Kotlin/Swift/Scala declaration support) — into a semantic **Architecture Knowledge Graph (AKG)** stored as a portable GraphJSON database (`.glassmarble/akg.json`). From this living graph it can:
 
-- **Generate 31 architecture diagrams** (UML + C4 model) as Mermaid.js markup — always synchronized with your latest code.
+- **Generate 31 architecture diagrams** (UML + C4 + specialized + analysis) as Mermaid, PlantUML, or DOT markup — always synchronized with your latest code.
 - **Detect architectural hotspots**, circular dependencies, and high-coupling bottlenecks automatically.
 - **Answer any question about your codebase** through a grounded AI Architect agent that reads real graph data, not LLM hallucinations.
 - **Track structural changes** between commits using Git-aware incremental analysis.
@@ -42,17 +44,17 @@ GlassMarble compiles your source code — across **14 languages** — into a sem
 │            Multi-Language Source Code                                │
 │  Go · Python · JS/TS · Java · C/C++ · C# · Ruby · PHP · Rust · ...  │
 └─────────────────────┬────────────────────────────────────────────────┘
-                      │  Ingestion–2: Tree-sitter Ingestion & GAST Normalization
+                      │  Ingestion: Tree-sitter Ingestion & GAST Normalization
                       ▼
 ┌──────────────────────────────────────────┐
 │         Code Property Graph (CPG)        │  AST + CFG + DFG + Call Graph
 └─────────────────────┬────────────────────┘
-                      │  Aggregation–4: Topology Mapping & Semantic Linking
+                      │  Aggregation: Topology Mapping & Semantic Linking
                       ▼
 ┌──────────────────────────────────────────┐
-│    Architecture Knowledge Graph (AKG)    │  W3C RDF-star Turtle · MVCC · WAL
+│    Architecture Knowledge Graph (AKG)    │  GraphJSON (schema v3) · MVCC · atomic commits
 └─────────────────────┬────────────────────┘
-                      │  SPARQL-like Virtual Subgraph Extraction
+                      │  Query-based Virtual Subgraph Extraction
                       ▼
 ┌──────────────────────────────────────────┐
 │         Visualization Engine             │  Subgraph → Layout → Mermaid
@@ -93,8 +95,7 @@ The graph lives in `.glassmarble/akg.json` — a deterministic, diff-friendly **
 
 The database layer provides:
 - **MVCC** — atomic snapshot swaps for concurrent read safety.
-- **WAL** — Write-Ahead Logging to `.glassmarble/wal/` for crash durability.
-- **Atomic file swaps** — writes go to `.tmp`, then `os.Rename` — no corrupt half-writes.
+- **Transaction manager** — `db.lock` serializes writers; writes go to `.tmp`, then `os.Rename` (no corrupt half-writes), followed by post-write verification; `--max-json-mb` guards the state-size budget.
 - **Self-healing** — repositories created before the v3 store are migrated in place: a legacy `akg_state.ttl` is parsed once, written as `akg.json`, and archived as `akg_state.ttl.bak`.
 - **File lock** — `db.lock` prevents concurrent write collisions.
 
@@ -169,7 +170,7 @@ Initialize the `.glassmarble` workspace directory and default configuration.
 gmb init [--dir <path>]
 ```
 
-Creates `.glassmarble/`, `.glassmarble/marbles/`, `.glassmarble/config.yaml`, and an empty `akg.json` state file. Appends `.glassmarble` to `.gitignore` automatically.
+Creates `.glassmarble/`, `.glassmarble/marbles/`, `.glassmarble/intelligence/`, `.glassmarble/snapshots/`, `.glassmarble/memory/`, `.glassmarble/config.yaml`, and an empty GraphJSON v3 `akg.json` state file. Appends `.glassmarble` to `.gitignore` automatically.
 
 ---
 
@@ -196,7 +197,7 @@ With `--intelligence` (default `true`, human output only), analysis also runs ar
 
 With `--include-docs` (default `false`, opt-in because doc scanning and git-history walks are not free on large repositories), analysis also runs knowledge fusion: ADR files and READMEs are parsed into knowledge claims, PR/issue references in recent git history become file-level claims, and everything is appended to developer memory — queryable through `gmb memory --ask`. The `fusion:` section of `.glassmarble/config.yaml` tunes the doc globs, technology lexicon and git scan depth; re-analyzing the same tree appends nothing (idempotent).
 
-After analysis, the convention-learning layer refreshes the **project conventions store** (`.glassmarble/conventions/`): it replays all recorded corrections against the new memory state so every view stays self-corrected, and learns project-wide naming and intent conventions (configurable under `learning:` in `.glassmarble/config.yaml`). Corrections recorded with `gmb memory --correct` are the human feedback loop — see the `gmb memory` section below.
+After analysis, the convention-learning layer refreshes the **project conventions store** (`.glassmarble/memory/conventions.json`): it replays all recorded corrections against the new memory state so every view stays self-corrected, and learns project-wide naming and intent conventions (configurable under `learning:` in `.glassmarble/config.yaml`). Corrections recorded with `gmb memory --correct` are the human feedback loop — see the `gmb memory` section below.
 
 ---
 
@@ -206,7 +207,8 @@ Query the developer memory: what do we know about the architecture, when did it 
 
 ```bash
 gmb memory [--dir <path>] [--ask "<question>"] [--component <name>] [--json]
-          [--correct <target> --kind STATE|INTENT|REASON --value <value>] [--corrections]
+          [--correct <target> --kind INTENT|LABEL|STATE|CONFIDENCE|REJECT|ACCEPT
+           --value <value> [--reason <text>] [--author <name>]] [--corrections]
 ```
 
 | Mode | Description |
@@ -235,14 +237,23 @@ gmb visualize <diagram_type> [flags]
 | Flag | Description |
 |---|---|
 | `--entry <id>` | Entry point node ID for BFS/DFS traversal (required for `sequence`) |
-| `--depth <n>` | Maximum traversal depth |
+| `--depth <n>` | Maximum traversal depth (default 7) |
 | `--unused` | Include nodes with no inbound edges |
-| `--scope <value>` | Scope to a package path or folder boundary |
+| `--scope <value>` | Scope the layout: `global` (default), `folder:<path>`, or `file:<path>` |
+| `--link-level <value>` | Graph linkage detail: `architecture` (default), `standard`, or `full` |
+| `--format <value>` | Output format: `mermaid` (default), `plantuml`, or `dot` |
 | `--save <name>` | Save output to `.glassmarble/marbles/<name>.md` |
+| `--output <file>` | Write the diagram to a file instead of stdout |
 | `--summary` | Print graph statistics before the diagram |
 | `--pagerank` | Enable PageRank computation |
 | `--community` | Enable Louvain community detection |
 | `--scc` | Enable Tarjan SCC cycle analysis |
+| `--max-nodes <n>` | Abort with exit code 4 if the node count exceeds this limit |
+| `--changed-files <list>` | Comma-separated changed files for impact analysis |
+| `--render <file>` | Render to an image (`.svg`/`.png`) via Kroki or mermaid-cli |
+| `--relative` | Render paths relative to the folder root under folder scope |
+
+`gmb visualize list` prints the full 31-type catalog; `gmb visualize check <type>` validates a type name.
 
 See [Diagram Types](#diagram-types) for the full list of `<type>` values.
 
@@ -250,7 +261,7 @@ See [Diagram Types](#diagram-types) for the full list of `<type>` values.
 
 ### `gmb status`
 
-Display AKG health, graph statistics, and WAL freshness.
+Display AKG health and graph statistics.
 
 ```bash
 gmb status [--dir <path>]
@@ -259,7 +270,7 @@ gmb status [--dir <path>]
 ```
 === GlassMarble Architecture Knowledge Graph Status ===
   Storage Dir:    .glassmarble
-  Schema Version: 2
+  Schema Version: 3
   Graph Version:  14
   Commit Hash:    a3f9c12e8b7d
   Last Analysis:  2026-08-01T14:00:00+05:30
@@ -269,7 +280,7 @@ gmb status [--dir <path>]
   Entrypoints:    18
   Virtual Nodes:  421 (10.9%)
   Health Errors:  0 dangling reference(s)
-  Storage:        TTL 2.4 MB | WAL 0.0 KB
+  Storage:        akg.json 2.4 MB
   Verification:   verified (no dangling edges)
   Freshness:      ok
 ```
@@ -333,13 +344,13 @@ Outputs both **direct outbound** (`->`) and **direct inbound** (`<-`) callers wi
 
 ### `gmb diff`
 
-Show architectural mutations recorded in the Write-Ahead Log.
+Show the architectural delta between the last two committed GraphJSON states.
 
 ```bash
 gmb diff [--dir <path>]
 ```
 
-Replays WAL transactions to display commit hash, node/edge delta counts, and modified files per transaction. A clean database (WAL truncated after the last atomic write) reports no pending transactions.
+Displays the current and previous commit hash, schema/graph versions, and node/edge delta counts. There is no WAL to replay — the diff is computed directly from the previous committed state.
 
 ---
 
@@ -353,10 +364,9 @@ gmb doctor [--dir <path>]
 
 Checks:
 - **Parse-back integrity** — parses `akg.json` through the canonical parser.
-- **Ontology conformance** — flags any undeclared `gm:` terms.
-- **Dangling edges** — edges pointing to non-existent nodes.
 - **Duplicate node IDs**.
-- **WAL freshness** — uncommitted WAL entries newer than the TTL.
+- **Dangling edges** — edges pointing to non-existent nodes.
+- **Version reporting** — schema/graph version, commit hash, and node/edge counts.
 
 Exits non-zero if any check fails. Run this after a crash or to validate a fresh analysis.
 
@@ -385,7 +395,7 @@ gmb watch [--dir <path>] [--interval 5s]
 
 ### `gmb housekeeping`
 
-Report and prune the `.glassmarble` working set (saved diagrams, AI sessions, WAL segments).
+Report and prune the `.glassmarble` working set (saved diagrams, AI sessions, snapshots).
 
 ```bash
 gmb housekeeping                          # report disk usage only
@@ -405,7 +415,7 @@ A grounded, Bring-Your-Own-Key AI agent that answers questions by querying the l
 # One-time setup
 gmb ai configure
 gmb ai configure --provider openai --model gpt-4o --key sk-...
-gmb ai configure --provider anthropic --model claude-3-5-sonnet-20241022 --key sk-ant-...
+gmb ai configure --provider anthropic --model claude-sonnet-4-5 --key sk-ant-...
 
 # One-shot questions
 gmb ai "how does authentication work?"
@@ -452,6 +462,7 @@ The OpenAI-compatible adapter works with any endpoint speaking the chat-completi
 |---|---|
 | **System** | `system_status`, `system_diagram_types`, `save_artifact` |
 | **AKG Queries** | `akg_status`, `akg_summary`, `akg_search`, `akg_get_node`, `akg_edges`, `akg_traverse`, `akg_path`, `akg_cycles`, `akg_orphans`, `akg_god_objects`, `akg_hotspots`, `akg_page_rank`, `akg_impact_radius`, `akg_communities`, `akg_articulation_points`, `akg_topological_order`, `akg_entrypoints`, `akg_similarity` |
+| **AKG Intelligence** | `query_architecture_memory`, `get_architecture_timeline`, `get_architecture_patterns` |
 | **Code** | `code_read_file`, `code_list_dir`, `code_search_symbol`, `code_definition`, `code_diff` |
 | **Diagrams** | `diagram_generate` (all 31 types), `diagram_summary`, `diagram_types` |
 
@@ -492,7 +503,7 @@ Generated diagrams are saved as Mermaid.js markdown to `.glassmarble/marbles/`.
 | `c4dynamic` | Dynamic interaction flows |
 | `c4deployment` | Infrastructure deployment environment |
 
-### Specialized Diagrams (10)
+### Specialized Diagrams (4)
 
 | Command | Description |
 |---|---|
@@ -500,6 +511,11 @@ Generated diagrams are saved as Mermaid.js markdown to `.glassmarble/marbles/`.
 | `dataflow` | Data movement across system boundaries |
 | `mindmap` | Hierarchical concept structure |
 | `flowchart` | General-purpose process flow |
+
+### Analysis Diagrams (6)
+
+| Command | Description |
+|---|---|
 | `dependency` | Import and package dependency tree |
 | `hotspot` | High-coupling and complexity heatmap |
 | `callgraph` | Function-level call chain traversal |
@@ -530,9 +546,13 @@ GlassMarble uses native [Tree-sitter](https://tree-sitter.github.io/) grammars f
 | CSS | `.css` |
 | JSON | `.json` |
 
+Kotlin, Swift, and Scala are additionally registered with **declaration-only** support (types, functions, and fields are indexed; no intra-method CFG/DFG). See `docs/supported_languages.txt` for details.
+
 ---
 
 ## Configuration
+
+See [docs/configuration.md](docs/configuration.md) for the complete reference — core keys, sub-module configs (`intelligence:`, `fusion:`, `learning:`, `aging:`), and every environment variable.
 
 ### `.glassmarble/config.yaml`
 
@@ -542,6 +562,8 @@ debug: false
 output_format: mermaid
 max_file_bytes: 2097152   # 2 MB — files larger than this are skipped
 worker_count: 0           # 0 = auto (GOMAXPROCS)
+storage_dir: .glassmarble # storage directory name
+include_hidden: false     # include dotfiles/dot-directories in scans
 ```
 
 ### AI Configuration (`.glassmarble/ai.yaml` or `~/.glassmarble/ai.yaml`)
@@ -562,7 +584,7 @@ max_cost_usd: 0               # per-run cost cap in USD (0 = unlimited)
 max_session_messages: 40      # chat history rolling window
 ```
 
-Config precedence: **CLI flag > environment variable > project `ai.yaml` > global `ai.yaml` > defaults**
+Config precedence: **CLI flag > `GLASSMARBLE_*` environment variable > project config (`.glassmarble/config.yaml`, `.glassmarble/ai.yaml`) > global config (`~/.glassmarble/`) > defaults**
 
 Environment variables mirror all fields: `GLASSMARBLE_AI_PROVIDER`, `GLASSMARBLE_AI_MODEL`, `GLASSMARBLE_AI_API_KEY`, `GLASSMARBLE_AI_BASE_URL`, `GLASSMARBLE_AI_TEMPERATURE`, `GLASSMARBLE_AI_MAX_TURNS`, `GLASSMARBLE_AI_STREAM` (`0`/`false` to disable), `GLASSMARBLE_AI_MAX_TOTAL_TOKENS`, `GLASSMARBLE_AI_MAX_COST`, `GLASSMARBLE_AI_MAX_SESSION_MESSAGES`. Provider-specific keys use `GLASSMARBLE_<PROVIDER>_API_KEY`.
 
@@ -575,12 +597,16 @@ After `gmb init` and `gmb analyze`:
 ```
 your-repo/
 ├── .glassmarble/
-│   ├── akg.json             # Primary AKG — GraphJSON (source of truth)
+│   ├── akg.json             # Primary AKG — GraphJSON schema v3 (source of truth)
+│   ├── akg.json.v<ver>.bak  # Pre-migration backups (v1/v2 → v3)
 │   ├── db.lock              # Ephemeral write-lock token (deleted after commit)
 │   ├── config.yaml          # GlassMarble project configuration
 │   ├── ai.yaml              # AI engine BYOK configuration
-│   ├── wal/                 # Write-Ahead Log segments (durability)
 │   ├── marbles/             # Saved diagram markup (.md files)
+│   ├── intelligence/        # latest.json — last architecture-intelligence run
+│   ├── snapshots/           # index.json + snap_<hash8>.json full-state snapshots
+│   ├── memory/              # Developer memory: events/claims/corrections.jsonl,
+│   │                        # conventions.json, memory.json, timeline.json
 │   └── ai/
 │       └── sessions/        # Persistent AI chat sessions (.json, 0600 permissions)
 ```
@@ -591,19 +617,23 @@ your-repo/
 
 ```
 internal/
-├── akg/                          # Database & transaction layer
+├── akg/                          # Database & transaction layer (GraphJSON schema v3)
 │   ├── mvcc.go                   # Multi-Version Concurrency Control
-│   ├── wal.go                    # Write-Ahead Log
-│   ├── transaction_manager.go    # Atomic commits, file locking, self-healing recovery
-│   ├── turtle_serializer.go      # W3C RDF-star Turtle serialization
+│   ├── transaction_manager.go    # Atomic commits, db.lock, post-write verification
+│   ├── graph_json.go             # Canonical GraphJSON serialization
+│   ├── schema_v3.go              # Schema v3 shape & stale-kind folding
+│   ├── migrate.go                # AutoMigrateOnLoad: v1/v2 → v3 (+ legacy TTL self-heal)
+│   ├── vocabulary.go             # RelationshipType → gm: predicate mapping
 │   ├── reasoner.go               # Topological macro-inference rules
-│   └── ontology.ttl              # RDF schema: classes, predicates, axioms
+│   ├── incremental.go            # Delta-transaction merging
+│   ├── doctor.go                 # RunDoctor integrity diagnostics
+│   └── neo4j_export.go           # Deterministic Cypher export
 │
 ├── code_analysis_engine/
 │   ├── ingest/                   # Tree-sitter ingestion; git-delta support
-│   ├── ingest/                   # GAST normalization; 14 language translators
-│   ├── ingest/                   # Topology mapping; namespace clustering
-│   └── ingest/                   # Semantic linking; CPG construction; graph commit
+│   ├── normalize/                # GAST normalization; 17-language translators
+│   ├── aggregate/                # Topology mapping; namespace clustering
+│   └── link/                     # Semantic linking; CPG construction; graph commit
 │       ├── call_linker.go        # Nested selector call resolution
 │       ├── interface_linker.go   # Duck-type interface matching (Go, TS, etc.)
 │       ├── cfg_linker.go         # Control-flow graph construction
@@ -611,26 +641,41 @@ internal/
 │       └── primitive_reasoner.go # DATABASE / NETWORK_IO trait propagation
 │
 ├── visualization_engine/
-│   ├── visualizer.go             # Engine coordinator (3-phase pipeline)
-│   ├── ingest/extractor.go       # SPARQL-like virtual subgraph extraction + BFS
-│   ├── ingest/aggregator.go      # Layout tree; Tarjan SCC cycle detection
-│   └── ingest/mermaid.go         # Mermaid.js markup renderer (31 diagram types)
+│   ├── core.go                   # Engine coordinator; 31-type registry
+│   ├── diagrams.go               # Canonical diagram catalog & entry rules
+│   ├── projection/               # Virtual subgraph extraction (projector, entrypoint)
+│   ├── view/                     # ViewSpec → DiagramSpec builders + extractors
+│   └── adapters/                 # Mermaid / PlantUML / DOT renderers
+│
+├── arch_intelligence/            # Metrics, pattern detection (PR-01..PR-07)
+├── arch_timeline/                # Architecture event timeline
+├── archmodel/                    # ArchEvent kinds, snapshots, stats
+├── developer_memory/             # Memory store (claims, corrections, JSONL)
+├── knowledge_aging/              # Aging pipeline (internal phase)
+├── knowledge_fusion/             # Doc fusion (--include-docs)
+├── learning/                     # Convention learning & correction overlay
+├── commit_reasoning/             # Post-commit reasoning (internal phase)
+├── config/                       # Layered config: flags > env > yaml > defaults
+├── drift/                        # Working-tree vs committed-graph drift
+├── evidence/                     # Confidence & provenance metadata
+├── terminal/  logger/  errors/   # Terminal UX, logging, typed exit codes
 │
 └── ai_engine/
-    ├── engine.go                 # Public facade: New / Ask / AskAgent
-    ├── provider/                 # LLM adapters: OpenAI-compat, Anthropic, Gemini
-    ├── agent/loop.go             # Tool-calling loop; token/cost budgets; streaming
-    ├── tools/                    # akg_tools, code_tools, diagram_tools, system_tools
-    ├── akgbridge/                # Lazy, cached AKG snapshot loader
-    ├── session/                  # Persistent chat sessions
-    └── aiconfig/                 # BYOK config: yaml + env + defaults
+    ├── engine.go                 # Provider-agnostic message loop
+    ├── provider/                 # LLM adapters: OpenAI-compat, Anthropic, Gemini, ...
+    └── tools/                    # system_tools, akg_tools, code_tools,
+                                  # diagram_tools, memory/pattern/timeline tools
 
 cmd/
-├── analyze.go      init.go       status.go
-├── visualize.go    inspect.go    hotspot.go
-├── dependency.go   diff.go       doctor.go
-├── hooks.go        watch.go      housekeeping.go
-└── ai.go           root.go
+├── analyze.go      visualize.go   memory.go      ai.go
+├── inspect.go      dependency.go  hotspot.go     patterns.go
+├── timeline.go     why.go         stats.go       snapshot.go
+├── diff.go         status.go      doctor.go      drift.go
+├── housekeeping.go export.go      import.go      compare.go
+├── tree.go         hooks.go       watch.go       dev.go
+├── version.go      completion.go  init.go        root.go
+└── (aging.go, fusion.go, learning.go, evolution.go, code.go,
+     commit_reasoning_llm.go, memory_pipeline.go — internal pipeline phases)
 ```
 
 ---
@@ -644,7 +689,7 @@ Available on every command:
 | `--root-dir <path>` | Override the repository root directory |
 | `--debug` | Enable verbose debug logging |
 | `--verbose`, `-v` | Print detailed phase-by-phase output |
-| `--max-ttl-mb <n>` | Refuse to load or commit an AKG file larger than N MiB (0 = unlimited) |
+| `--max-json-mb <n>` | Refuse to load or commit a GraphJSON AKG file larger than N MiB (0 = unlimited) |
 
 ---
 

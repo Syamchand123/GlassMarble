@@ -32,10 +32,16 @@
    - [import](#815-gmb-import)
    - [hooks](#816-gmb-hooks)
    - [housekeeping](#817-gmb-housekeeping)
-   - [memory](#821-gmb-memory)
    - [completion](#818-gmb-completion)
    - [version](#819-gmb-version)
    - [ai](#820-gmb-ai-and-subcommands)
+   - [memory](#821-gmb-memory)
+   - [patterns](#822-gmb-patterns)
+   - [snapshot](#823-gmb-snapshot)
+   - [stats](#824-gmb-stats)
+   - [timeline](#825-gmb-timeline)
+   - [why](#826-gmb-why)
+   - [dev](#827-gmb-dev)
 9. [Analysis Pipeline Execution Flow](#9-analysis-pipeline-execution-flow)
 10. [Use Cases & Command Workflows](#10-use-cases--command-workflows)
 11. [Best Practices](#11-best-practices)
@@ -46,19 +52,19 @@
 
 ## 1. Product Overview
 
-GlassMarble builds and maintains a self-evolving **Architecture Knowledge Graph (AKG)** of a software repository. The CLI (`gmb`) ingests source code with tree-sitter grammars, normalizes it into a graph of symbols and dependencies, and persists the result as RDF Turtle (`.ttl`) under `.glassmarble/`.
+GlassMarble builds and maintains a self-evolving **Architecture Knowledge Graph (AKG)** of a software repository. The CLI (`gmb`) ingests source code with tree-sitter grammars, normalizes it into a graph of symbols and dependencies, and persists the result as a portable **GraphJSON** document (`akg.json`) under `.glassmarble/`.
 
-The CLI is organized around four capability areas:
+The CLI is organized around five capability areas:
 
 | Area | Commands |
 |---|---|
 | **Build** (ingest & maintain the graph) | `init`, `analyze`, `watch`, `hooks`, `import`, `export` |
-| **Query** (read the graph) | `status`, `tree`, `dependency`, `hotspot`, `inspect`, `diff`, `doctor` |
-| **Govern** (enforce architecture) | `drift`, `compare` |
-| **Visualize & Reason** | `visualize`, `ai` |
-| **Utility** | `housekeeping`, `completion`, `version` |
+| **Query** (read the graph) | `status`, `tree`, `dependency`, `hotspot`, `inspect`, `diff`, `doctor`, `patterns`, `stats`, `timeline` |
+| **Govern** (enforce architecture) | `drift`, `compare`, `snapshot` |
+| **Visualize & Reason** | `visualize`, `ai`, `why` |
+| **Utility** | `housekeeping`, `completion`, `version`, `dev` |
 
-Supported languages (tree-sitter grammars): Go, C, C++, C#, Python, Java, JavaScript, TypeScript, HTML, CSS, JSON, Ruby, PHP, Rust. See `docs/supported_languages.txt`.
+Supported languages (ingest registry): Go, C, C++, C#, Python, Java, JavaScript, TypeScript, HTML, CSS, JSON, Ruby, PHP, Rust (14 with native tree-sitter grammars) plus Kotlin, Swift, and Scala (declaration-only). See `docs/supported_languages.txt`.
 
 ---
 
@@ -92,21 +98,27 @@ gmb
 ├── watch                         Continuously watch the repo and re-analyze on change
 ├── status                        AKG database status, stats, and health
 ├── doctor                        Integrity diagnostics on the AKG database
-├── diff                          Architectural diff across WAL transactions
+├── diff                          Show the persisted AKG state and committed transaction version
 ├── tree                          Architectural directory & symbol hierarchy tree
 ├── dependency [target]           Inbound/outbound dependency analysis
 ├── hotspot                       High-coupling hotspots (in-degree ranking)
 ├── inspect [node_id]             Node detail, symbol search, entry-point discovery
 ├── drift                         Architecture drift vs declared layers/budgets
-├── visualize <diagram_type>      Generate Mermaid/PlantUML/DOT diagrams (28 types)
+├── patterns                      Component inference + pattern/smell detection (PR-01..PR-07)
+├── stats                         Pipeline telemetry, architecture health, benchmark gates
+├── timeline                      Architecture evolution timeline
+├── snapshot                      Point-in-time architecture snapshots (create/list/at/diff/replay)
+├── visualize <diagram_type>      Generate Mermaid/PlantUML/DOT diagrams (31 types)
 ├── compare [base.json head.json] Diff two AKG snapshots (CI-friendly)
-├── export                        Export snapshot to GraphJSON or Turtle
+├── export                        Export snapshot to GraphJSON or Neo4j Cypher
 ├── import <graph.json>           Replace snapshot from a GraphJSON document
 ├── hooks <install|uninstall>     Manage the git post-commit auto-analyze hook
 ├── housekeeping                  Report & prune .glassmarble working-set storage
 ├── memory                        Query the developer memory (what changed, and why)
+├── why [question]                Grounded architecture Q&A via the AI engine
 ├── completion <shell>            Generate shell completion scripts
 ├── version                       Print version
+├── dev                           Developer utilities (rebase-goldens)
 └── ai [question]                 Ask the AI Architect about the codebase
     ├── chat                      Interactive multi-turn conversation
     ├── configure                 Configure AI provider/model/key (BYOK)
@@ -132,7 +144,7 @@ The root command `gmb` wraps all output with **Fang** (styled help, errors, and 
 | `--debug` | bool | `false` | Enable debug logging |
 | `-c, --config` | string | `""` | Config file (default is `$HOME/.glassmarble.yaml`) |
 | `-v, --verbose` | bool | `false` | Verbose output |
-| `--max-ttl-mb` | int | `0` | Refuse to load or commit an AKG state file larger than this many MiB (`0` = unlimited). A hard bloat guard for the graph database. |
+| `--max-json-mb` | int | `0` | Refuse to load or commit an AKG state file (`akg.json`) larger than this many MiB (`0` = unlimited). A hard bloat guard for the graph database. |
 
 ### Common flags shared by most commands
 
@@ -151,38 +163,41 @@ Created by `gmb init` (or on demand). Lives at `<repo>/.glassmarble/` and is aut
 
 ```
 .glassmarble/
-├── akg.json                     # The AKG graph — canonical GraphJSON (source of truth)
-├── config.yaml                  # Project config (root_dir, debug, output_format, max_file_bytes, drift:)
-├── wal/
-│   └── akg_transactions.wal     # Write-ahead log (transaction replay; truncated after each successful commit)
+├── akg.json                     # The AKG graph — canonical GraphJSON (source of truth, schema v3)
+├── config.yaml                  # Project config (root_dir, debug, output_format, max_file_bytes, drift:, intelligence:, fusion:, aging:, learning:)
+├── ai.yaml                      # Project-scoped AI configuration (BYOK)
 ├── marbles/                     # Saved diagram markdown files
 ├── intelligence/
 │   └── latest.json              # Architecture Intelligence current architectural state (written by `gmb analyze --intelligence`)
 ├── snapshots/
-│   ├── index.json               # Snapshot index (commit → file)
+│   ├── index.json               # Snapshot index (ref → file)
 │   └── snap_<hash8>.json        # Point-in-time ArchSnapshot (skip-written when topology unchanged)
 ├── memory/
 │   ├── events.jsonl             # Append-only event WAL (source of truth for developer memory)
 │   ├── claims.jsonl             # Append-only claim WAL (source of truth for developer memory)
+│   ├── corrections.jsonl        # Append-only learning-correction audit trail
+│   ├── conventions.json         # Learned project conventions
 │   ├── memory.json              # Derived DeveloperMemory aggregate (rebuildable from the WALs)
 │   └── timeline.json            # Derived timeline (fast path for queries)
 ├── ai/
-│   ├── ai.yaml                  # Project-scoped AI configuration
-│   ├── sessions/                # Saved chat sessions
-│   └── *.md                     # Saved AI answers
+│   └── sessions/                # Saved chat sessions (0600)
 └── db.lock                      # Transient transaction lock (auto-reclaimed after 30s staleness)
 ```
 
 | Artifact | Purpose | Guarded by |
 |---|---|---|
-| `akg.json` | The graph itself. Committed atomically with a `.tmp-*` rename. | post-write verification (byte parity + zero-dangling guard), `--max-ttl-mb` budget |
-| `wal/akg_transactions.wal` | Crash-safety: every transaction is appended, then truncated after a successful commit | `gmb doctor` staleness check, `housekeeping --prune` |
+| `akg.json` | The graph itself. Committed atomically with a `.tmp-*` rename. | post-write verification (byte parity + zero-dangling guard), `--max-json-mb` budget |
 | `db.lock` | Mutual exclusion for transactions (30s staleness timeout) | `AcquireLock`/`ReleaseLock` |
 | `marbles/` | Saved diagrams from `visualize --save` and AI artifacts | `housekeeping --prune` |
 | `intelligence/latest.json` | Architecture Intelligence output (current architecture state) | atomic temp+rename write |
-| `snapshots/` | Point-in-time architecture snapshots for event diffing | unchanged-topology skip-write |
-| `memory/` | developer memory: WALs (source of truth) + derived aggregates | corrupt-line tolerance, atomic rebuild |
+| `snapshots/` | Point-in-time architecture snapshots for event diffing and replay | unchanged-topology skip-write |
+| `memory/` | developer memory: WALs (source of truth) + derived aggregates + corrections + conventions | corrupt-line tolerance, atomic rebuild |
 | `ai/` | AI answers, project AI config, chat sessions | `housekeeping --prune`, `ai sessions --delete` |
+
+> **Note:** there is no Write-Ahead Log (`wal/`). Durability is an atomic
+> GraphJSON write (temp file + rename + post-write verification); every
+> committed transaction is fully persisted in `akg.json`, so there is no
+> transaction log to replay.
 
 ---
 
@@ -275,6 +290,10 @@ Environment variables:
 
 Files are written with `0600` permissions; keys are never logged (masked as `sk-...****`).
 
+> Full reference for every config key — including the `intelligence:`,
+> `fusion:`, `aging:`, and `learning:` sub-configs and their defaults — lives
+> in `docs/configuration.md`.
+
 ---
 
 ## 7. Interactive TUI vs Plain Output
@@ -342,7 +361,7 @@ gmb init --dir /path/to/repo
 
 **Purpose:** Run the full 4-phase ingestion pipeline and commit the result to the AKG. The workhorse of GlassMarble.
 
-**Syntax:** `gmb analyze [--dir <path>] [--full] [--workers <n>] [--commit <hash>] [--link-level <level>] [--macro-inference <mode>] [--max-nodes <n>] [--abort-on-limit] [--verbose] [--json]`
+**Syntax:** `gmb analyze [--dir <path>] [--full] [--workers <n>] [--commit <hash>] [--link-level <level>] [--macro-inference <mode>] [--max-nodes <n>] [--abort-on-limit] [--store-code] [--include-docs] [--intelligence] [--bench] [--verbose] [--json]`
 
 **Flags:**
 
@@ -356,6 +375,10 @@ gmb init --dir /path/to/repo
 | `--macro-inference` | string | `all` | `disabled` (no macro inference), `structural` (rules with evidence only), `all` (full heuristic + structural) |
 | `--max-nodes` | int | `0` | Max total CPG nodes before warning/abort (`0` = unlimited) |
 | `--abort-on-limit` | bool | `false` | Abort analysis if `--max-nodes` is exceeded (otherwise warn) |
+| `--store-code` | bool | `false` | Store source code content snippets in AKG nodes |
+| `--include-docs` | bool | `false` | Run knowledge fusion: fuse ADR/README/PR claims from documentation and git history into developer memory |
+| `--intelligence` | bool | `true` | Run architecture intelligence after committing the graph (human output only; non-fatal) |
+| `--bench` | bool | `false` | Run the analysis benchmark battery and verify performance against budget gates (analyze ≤ 20s, commit ≤ 8s, state ≤ 12MB — exit 4 on failure) |
 | `--verbose` | bool | `false` | Phase-by-phase progress on stdout |
 | `--json` | bool | `false` | Machine-readable JSON result |
 
@@ -377,7 +400,7 @@ resolve abs dir
   → Aggregation: topology aggregation → global definition index
   → open AKG transaction manager (.glassmarble)
   → Linking: CPG linking (delta mode against base graph)
-  → ExecuteDeltaTransaction(cpg, modifiedFiles)   # atomic GraphJSON commit, WAL truncation
+  → ExecuteDeltaTransaction(cpg, modifiedFiles)   # atomic GraphJSON commit
   → quality report on the MERGED graph (nodes/edges/virtual/dangling)
   → report skipped files & ingestion warnings
 ```
@@ -390,14 +413,24 @@ Normalization: Normalized 3 syntax trees.
 Aggregation: Built topology with 42 global definition symbols.
 Linker level: architecture (CFG/DFG disabled)
 Linking: Bound Delta CPG with 90 new/modified nodes.
-Analyzed 3 files | 120 nodes | 240 edges | 18 virtual | 0 dangling | state=180.0KB wal=0B | 0.4s
+Analyzed 3 files | 120 nodes | 240 edges | 18 virtual | 0 dangling | state=180.0KB | 0.4s
 WARNING: 1 file(s) skipped during ingestion (oversized or unsupported language):
   - assets/logo.png (exceeds MaxFileBytes)
 Note: 2 ingestion warning(s):
   - internal/x.go (untracked by git)
 ```
 
-**JSON output fields** (`--json`): `target_dir`, `commit_hash`, `files_analyzed`, `nodes`, `edges`, `virtual_nodes`, `dangling_edges`, `state_bytes`, `wal_bytes`, `duration_ms`, `skipped[]`, `warnings[]`, `storage_dir`.
+With `--intelligence` enabled (default), analysis continues after the commit:
+architecture intelligence runs (component coupling, patterns, smells, layer
+consistency), the result is written to `.glassmarble/intelligence/latest.json`,
+a point-in-time snapshot is stored when the topology changed
+(`.glassmarble/snapshots/`), and architectural change events are folded into
+developer memory (`.glassmarble/memory/`). These stages print
+`Intelligence:`, `Memory:`, and (with `--include-docs`) `Fusion:` summary
+lines and are non-fatal. Re-analyzing the same commit never duplicates memory
+events (idempotent).
+
+**JSON output fields** (`--json`): `target_dir`, `commit_hash`, `files_analyzed`, `nodes`, `edges`, `virtual_nodes`, `dangling_edges`, `state_bytes`, `duration_ms`, `skipped[]`, `warnings[]`, `storage_dir`.
 
 **Delta vs full — decision table:**
 
@@ -405,8 +438,8 @@ Note: 2 ingestion warning(s):
 |---|---|
 | No `.glassmarble/akg.json` | **Full scan** (nothing to diff against) |
 | `init` created empty graph | **Full scan** (empty document is not a base) |
-| TTL non-empty, working tree clean | **Full scan** (empty diff) |
-| TTL non-empty, working tree dirty | **Delta** — only changed files re-parsed, merged into base |
+| State non-empty, working tree clean | **Full scan** (empty diff) |
+| State non-empty, working tree dirty | **Delta** — only changed files re-parsed, merged into base |
 | `--full` | **Full scan** of every file at `full` linker detail |
 | `--commit <hash>` | **Delta of that commit** against its parent |
 
@@ -460,7 +493,7 @@ verify .git exists
   → initial analysis (full scan on first run, delta afterwards)
   → register recursive fsnotify watches (skips .git, .glassmarble, node_modules, vendor, dist, build, target, bin, obj, out, coverage, hidden dirs)
   → loop:
-        fs event → filter relevance (source-like paths; ignores .ttl/.wal/.lock + ignored segments)
+        fs event → filter relevance (source-like paths; ignores akg.json/db.lock + ignored segments)
                   → new dirs get registered on the fly
         debounce window → git working-tree fingerprint check (HEAD hash + git status --porcelain)
                   → if fingerprint changed → runAnalysis (delta)
@@ -499,9 +532,9 @@ Press Ctrl+C to stop.
 
 **Behavior:**
 - No database → styled "uninitialized" card (or `{"initialized": false, "error": ...}` with `--json`). **Exit 0** — missing DB is a state, not an error.
-- Database → streams the TTL once (bounded memory, no full graph restore) and reports: node/edge counts, indexed files, entry points, virtual nodes & share, dangling references, TTL/WAL sizes, schema & graph versions, commit hash, last analysis time, freshness (WAL), unpersisted transactions.
+- Database → streams the GraphJSON state once (bounded memory, no full graph restore) and reports: node/edge counts, indexed files, entry points, virtual nodes & share, dangling references, state size, schema & graph versions, commit hash, last analysis time.
 
-**JSON fields:** `initialized`, `storage_dir`, `schema_version`, `graph_version`, `commit_hash`, `last_analysis`, `nodes`, `edges`, `indexed_files`, `entrypoints`, `virtual_nodes`, `virtual_share_pct`, `dangling_references`, `ttl_bytes`, `wal_bytes`, `verified` (true when 0 dangling), `freshness_ok`, `unpersisted_transactions`, `error`, `generated_at`.
+**JSON fields:** `initialized`, `storage_dir`, `schema_version`, `graph_version`, `commit_hash`, `last_analysis`, `nodes`, `edges`, `indexed_files`, `entrypoints`, `virtual_nodes`, `virtual_share_pct`, `dangling_references`, `state_bytes`, `verified` (true when 0 dangling), `freshness_ok`, `error`, `generated_at`.
 
 **Use cases:**
 - "Is my graph up to date?" health check.
@@ -525,14 +558,12 @@ gmb status --json | jq '.verified, .nodes, .dangling_references'
 **Flags:** `--dir` (string, default `.`).
 
 **Checks performed:**
-1. Parse-back integrity (TTL re-parses cleanly through the canonical parser)
-2. Ontology conformance of every `gm:` term
+1. Parse-back integrity (the GraphJSON state re-parses cleanly through the canonical parser)
+2. Duplicate node IDs
 3. Dangling references
-4. Duplicate node IDs
-5. WAL state (stale/leftover transactions)
-6. File freshness
+4. Reports state size/mtime, schema version, graph version, commit hash, node/edge counts
 
-**Exit semantics:** exits **non-zero** when the database fails any integrity check (or when the WAL is stale). A missing database renders an uninitialized report with exit 0.
+**Exit semantics:** exits **non-zero** when the database fails any integrity check. A missing database renders an uninitialized report with exit 0.
 
 **Use cases:**
 - After crashes or manual `.glassmarble` edits.
@@ -543,17 +574,20 @@ gmb status --json | jq '.verified, .nodes, .dangling_references'
 
 ### 8.6 `gmb diff`
 
-**Purpose:** Show architectural diff across committed transactions.
+**Purpose:** Show the persisted AKG state and its committed transaction version.
 
 **Syntax:** `gmb diff [--dir <path>]`
 
 **Flags:** `--dir` (string, default `.`).
 
-**Behavior:** Replays the write-ahead log and prints the structural mutations of every recorded transaction: TxID, commit hash, timestamp, status, nodes added, edges added, modified file count. Because the WAL is truncated after every successful atomic GraphJSON write, a clean database shows **no pending transactions** — the latest state lives in `akg.json`.
+**Behavior:** Reports the commit hash, schema version, and graph version (the
+count of committed transactions captured in `akg.json`). The state file is the
+single source of truth — every committed transaction is fully persisted in
+`akg.json`, so there is no transaction log left to replay.
 
 **Use cases:**
 - Verify that the last analysis committed cleanly.
-- Recover context after a crash (WAL entries that never made it to the state file).
+- Identify the committed snapshot version before `compare` or `snapshot --diff`.
 
 ---
 
@@ -657,6 +691,7 @@ gmb dependency Connect --json
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--list` | bool | `false` | List candidate entry points (FUNCTION/METHOD) for sequence diagrams |
+| `--languages` | bool | `false` | Display the 14-language support matrix report |
 | `--search` | string | `""` | Search nodes by symbol name or path fragment |
 | `--type` | string | `""` | Filter by node kind: `FUNCTION`, `METHOD`, `STRUCT`, `CLASS`, `INTERFACE` |
 | `--file` | string | `""` | File path to look up (used with `--line`) |
@@ -742,9 +777,9 @@ gmb drift --json | jq '.violations'
 
 ### 8.12 `gmb visualize <diagram_type>`
 
-**Purpose:** Generate visual architecture diagrams ("marbles") from the AKG — 28 diagram types.
+**Purpose:** Generate visual architecture diagrams ("marbles") from the AKG — 31 diagram types across 4 families.
 
-**Syntax:** `gmb visualize <diagram_type> [flags]`
+**Syntax:** `gmb visualize <diagram_type> [flags]` — subcommands `list` (print the 31-type catalog) and `check <type>` (validate a type against the live graph).
 
 **Diagram types:**
 
@@ -772,6 +807,10 @@ gmb drift --json | jq '.violations'
 | `--community` | bool | `false` | Enable community detection |
 | `--scc` | bool | `false` | Enable strongly connected components analysis |
 | `--render` | string | `""` | Render to an image file — `.svg` or `.png` — via Kroki (network) then mermaid-cli (local) |
+| `--max-nodes` | int | `0` | Maximum number of nodes to include in diagram (`0` = unlimited) |
+| `--changed-files` | string | `""` | Comma-separated list of changed files for impact analysis |
+| `--relative` | bool | `false` | Render file/symbol paths relative to folder root under folder scope |
+| `--link-level` | string | `architecture` | Detail level of graph linkage: `architecture`, `standard`, `full` |
 
 **Behavior / execution flow:**
 
@@ -853,30 +892,32 @@ gmb compare --dir . --json
 
 **Purpose:** Export the AKG snapshot to a portable, diff-friendly document.
 
-**Syntax:** `gmb export --output <graph.json|graph.ttl> [--dir <path>]`
+**Syntax:** `gmb export -o <file> [-f <format>] [--dir <path>]`
 
 **Flags:**
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--output`, `-o` | string | `""` | **Required.** Output file path |
+| `--format`, `-f` | string | `graphjson` | Export format: `graphjson` or `neo4j` |
 | `--dir` | string | `.` | Database folder |
 
-**Behavior:** extension decides format:
-- `.json` → **GraphJSON** (recommended interchange: lossless — edge confidence, parallel edges — deterministic, reviewable in PRs)
-- `.ttl` / `.turtle` → canonical RDF Turtle (matches on-disk format)
+**Behavior:**
+- `graphjson` (default) → **GraphJSON** (recommended interchange: lossless — edge confidence, parallel edges — deterministic, reviewable in PRs).
+- `neo4j` → a deterministic **Neo4j Cypher** import script (`CREATE` per node with `GMNode:<Kind>` labels; `MATCH ... CREATE` per edge with `:CALLS`-style relationship types). See `docs/neo4j.md`.
 
-Errors if the database is empty or `--output` is missing; unsupported extension → error.
+Errors if the database is empty or `--output` is missing; unsupported format → error.
 
 **Use cases:**
 - Backing up the graph.
 - Feeding `compare` / `import`.
 - Committing an architecture snapshot to the repo for PR diffs.
+- Loading the graph into Neo4j for analysis and Bloom visualization.
 
 **Examples:**
 ```bash
 gmb export -o graph.json
-gmb export -o snapshot.ttl
+gmb export -f neo4j -o dump.cypher
 ```
 
 ---
@@ -893,7 +934,7 @@ gmb export -o snapshot.ttl
 1. Parses GraphJSON.
 2. Opens the AKG transaction manager.
 3. `ReplaceGraph` — **rejects dangling references** so the persisted state always stays verified.
-4. WAL is truncated after import.
+4. Commits the new state atomically (temp + rename, post-write verification).
 5. Prints a success card with node/edge counts.
 
 **Use cases:**
@@ -940,7 +981,7 @@ gmb hooks uninstall
 
 ### 8.17 `gmb housekeeping`
 
-**Purpose:** Report and prune `.glassmarble` working-set storage (marbles, AI sessions, WAL). **Never touches `akg.json`** (guarded by verification and `--max-ttl-mb`).
+**Purpose:** Report and prune `.glassmarble` working-set storage (marbles, AI sessions). **Never touches `akg.json`** (guarded by verification and `--max-json-mb`).
 
 **Syntax:** `gmb housekeeping [--prune] [--older-than <days>] [--dir <path>]`
 
@@ -949,12 +990,12 @@ gmb hooks uninstall
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--dir` | string | `.` | Database folder |
-| `--prune` | bool | `false` | Delete marbles/sessions older than the retention window and truncate the WAL |
+| `--prune` | bool | `false` | Delete marbles/AI-session files older than the retention window |
 | `--older-than` | int | `30` | Retention window in days |
 
 **Behavior:**
-- **Report only** (no `--prune`): per-area sizes for `state (akg.json)`, `wal/`, `marbles/`, `ai/` + totals, plus a hint to run `--prune`.
-- **With `--prune`:** interactive terminals show a preview and ask for confirmation; non-TTY runs prune directly. Deletes marbles/ai files older than the cutoff, then truncates the WAL **if a healthy non-empty state file exists**.
+- **Report only** (no `--prune`): per-area sizes for `state (akg.json)`, `marbles/`, `ai/` + totals, plus a hint to run `--prune`.
+- **With `--prune`:** interactive terminals show a preview and ask for confirmation; non-TTY runs prune directly. Deletes marbles/AI files older than the cutoff. `akg.json` is never pruned.
 
 **Use cases:**
 - Scheduled cleanup: `gmb housekeeping --prune --older-than 7` (cron/CI).
@@ -1022,8 +1063,8 @@ gmb completion fish > ~/.config/fish/completions/gmb.fish
 
 | Category | Tools |
 |---|---|
-| `system` | `system_status`, `system_diagram_types` |
-| `akg` | `akg_status`, `akg_summary`, `akg_search`, `akg_get_node`, `akg_edges`, `akg_traverse`, `akg_path`, `akg_cycles`, `akg_orphans`, `akg_god_objects`, `akg_hotspots`, `akg_page_rank`, `akg_impact_radius`, `akg_communities`, `akg_articulation_points`, `akg_topological_order`, `akg_entrypoints`, `akg_similarity` |
+| `system` | `system_status`, `system_diagram_types`, `save_artifact` |
+| `akg` | `akg_status`, `akg_summary`, `akg_search`, `akg_get_node`, `akg_edges`, `akg_traverse`, `akg_path`, `akg_cycles`, `akg_orphans`, `akg_god_objects`, `akg_hotspots`, `akg_page_rank`, `akg_impact_radius`, `akg_communities`, `akg_articulation_points`, `akg_topological_order`, `akg_entrypoints`, `akg_similarity`, `query_architecture_memory`, `get_architecture_timeline`, `get_architecture_patterns` |
 | `code` | `code_read_file`, `code_list_dir`, `code_search_symbol`, `code_definition`, `code_diff` |
 | `diagram` | `diagram_generate`, `diagram_summary`, `diagram_types` |
 
@@ -1174,8 +1215,10 @@ gmb ai configure --provider NAME --model MODEL --key KEY [--scope global|project
 | `--component` | string | `""` | Show the full history of one component (case-insensitive substring match) |
 | `--json` | bool | `false` | Emit the machine-readable document instead of the human report |
 | `--correct` | string | `""` | Record a learning correction (convention learning). Target is a component name, an event ID, or a claim ID |
-| `--kind` | string | `"STATE"` | What to correct: `STATE` (component state), `INTENT` (event intent), `REASON` (claim stated-reason) |
-| `--value` | string | `""` | The corrected value |
+| `--kind` | string | `"INTENT"` | What to correct: `INTENT` (event intent), `LABEL` (component label), `STATE` (component state), `CONFIDENCE` (claim confidence), `REJECT`/`ACCEPT` (approval of a derived fact) |
+| `--value` | string | `""` | The corrected value (required for INTENT, LABEL, STATE, CONFIDENCE; ignored for REJECT/ACCEPT) |
+| `--author` | string | `""` | Who made the correction (audit trail, optional) |
+| `--reason` | string | `""` | Why the correction was made (audit trail) |
 | `--corrections` | bool | `false` | Show the audit trail of all recorded corrections instead of the overview |
 
 **Data source:** `.glassmarble/memory/` — `events.jsonl`/`claims.jsonl` (append-only WALs, source of truth) + derived `memory.json`/`timeline.json`. Populated by `gmb analyze --intelligence`; re-runs are idempotent. Corrections are appended to `.glassmarble/memory/corrections.jsonl` (append-only audit trail) and replayed in memory order — deterministic, idempotent, and never merged into the WALs.
@@ -1189,6 +1232,153 @@ gmb ai configure --provider NAME --model MODEL --key KEY [--scope global|project
 **Exit codes:** `0` on success; non-zero on load/path failures. An empty memory or a no-match query is a graceful message with exit `0`.
 
 **Use cases:** "what do we know about Redis?", "why was PaymentService added?", onboarding context, pre-refactor impact review, fixing a wrong derived intent/state without re-analyzing.
+
+---
+
+### 8.22 `gmb patterns`
+
+**Purpose:** Detect architectural patterns and smells from the committed AKG, and report inferred components.
+
+**Syntax:** `gmb patterns [--smells] [--json] [--dir <path>]`
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--smells` | bool | `false` | Also run smell detection and include smells in the report |
+| `--json` | bool | `false` | Machine-readable JSON report |
+| `--dir` | string | `.` | Directory containing `.glassmarble/` |
+
+**Behavior:**
+- Runs component inference (each component is a directory subtree with its node count).
+- Runs the deterministic pattern rules **PR-01..PR-07**: Layered Architecture, Clean Architecture, Microservices, DDD Bounded Context, CQRS, Event-Driven, Repository Pattern.
+- With `--smells`, appends smell findings (`[SEVERITY] Title`), e.g. god objects, unstable components.
+- Output: `=== Architecture Intelligence ===` header with `Patterns:` (kind + confidence) and a component list.
+
+**Use cases:** architecture review, DRY checks, onboarding material, CI documentation of detected patterns.
+
+**Examples:**
+```bash
+gmb patterns
+gmb patterns --smells --json
+```
+
+---
+
+### 8.23 `gmb snapshot`
+
+**Purpose:** Create and query point-in-time architecture snapshots, and replay the graph at a historical ref.
+
+**Syntax:** `gmb snapshot [--create] [--list] [--at <ref>] [--diff <base> <head>] [--replay <ref> --diagram <type>]`
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--create` | bool | `false` | Run architecture intelligence at HEAD and store a new snapshot |
+| `--list` | bool | `false` | List indexed snapshots |
+| `--at` | string | `""` | Show the state at a commit/ref (nearest snapshot at or before it) |
+| `--diff` | string | `""` | Architectural diff between two refs: `--diff '<base> <head>'` |
+| `--replay` | string | `""` | Restore the embedded graph at a ref and render a diagram |
+| `--diagram` | string | `dependency` | Diagram type for `--replay` (e.g. dependency, class, layered, c4container) |
+| `--format` | string | `mermaid` | Diagram markup format for `--replay`: mermaid, plantuml, dot |
+| `--no-graph` | bool | `false` | Skip embedding the full graph (smaller files; disables `--replay` and structural diffs) |
+| `--json` | bool | `false` | Machine-readable JSON |
+| `--dir` | string | `.` | Directory containing `.glassmarble/` |
+
+**Behavior:** snapshots are stored under `.glassmarble/snapshots/` as
+`snap_<hash8>.json` plus an `index.json`; topology-unchanged snapshots are
+skip-written.
+
+**Examples:**
+```bash
+gmb snapshot --create                    # snapshot at HEAD
+gmb snapshot --list
+gmb snapshot --at HEAD
+gmb snapshot --diff 'v1.0 main'
+gmb snapshot --replay v1.0 --diagram dependency
+```
+
+---
+
+### 8.24 `gmb stats`
+
+**Purpose:** Display pipeline execution telemetry, architecture health, and benchmark budget status.
+
+**Syntax:** `gmb stats [--last] [--arch] [--bench] [--dir <path>]`
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--last` | bool | `true` | Display telemetry spans for the last pipeline execution |
+| `--arch` | bool | `false` | Architecture health: component coupling (Ca/Ce/Instability) from architecture intelligence |
+| `--bench` | bool | `false` | Display the pipeline benchmark gates and budget status |
+| `--dir` | string | `.` | Directory containing `.glassmarble/` |
+
+**Behavior:**
+- `--arch` prints `=== Architecture Health (Intelligence) ===` with a
+  summary line (`Nodes | Edges | Components | Cycles | Layer violations`) and
+  a per-component table of `Ca`, `Ce`, `Instability`, and `STABLE`/`UNSTABLE`
+  status vs `unstable_threshold`, followed by `Stable component weight` and
+  `Patterns:`/`Smells:` lists.
+- `--bench` lists the 7 budget gates (analyze total ≤ 20s, commit ≤ 8s, full
+  scan ≤ 12s, visualize class ≤ 3s, visualize sequence ≤ 2s, state size ≤
+  12MB, json state ≤ 8MB); the commit gate is live-checked against telemetry.
+
+**Example:**
+```bash
+gmb stats --arch
+gmb stats --bench
+```
+
+---
+
+### 8.25 `gmb timeline`
+
+**Purpose:** Show the architecture evolution timeline from developer memory.
+
+**Syntax:** `gmb timeline [--component <name>] [--from <date|ref>] [--to <date|ref>] [--format text|json|mermaid] [--full] [--dir <path>]`
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--component` | string | `""` | Only entries touching a component (substring match) |
+| `--from` | string | `6 months ago` | Window start: ISO date or git ref (whose author date is used) |
+| `--to` | string | `now` | Window end: ISO date or git ref |
+| `--format` | string | `text` | Output format: text, json, or mermaid |
+| `--full` | bool | `false` | Verbose text output with commit, kind, components, and tags |
+| `--dir` | string | `.` | Directory containing `.glassmarble/` |
+
+**Behavior:** prints chronologically-ordered architecture events (e.g.
+`Coupling Increased`, `Cycle Resolved`, `Pattern Detected`, `Service Added`)
+with commit, kind, and affected components. Event kinds are defined in
+`internal/archmodel/model.go` (see `docs/architecture_intelligence.md`).
+
+---
+
+### 8.26 `gmb why`
+
+**Purpose:** Ask a grounded architecture question — e.g. "why is Redis used?" — answered with evidence from the AKG and developer memory.
+
+**Syntax:** `gmb why [question]`
+
+**Behavior:** retrieves architectural evidence (components, claims, timeline
+entries touching the question's terms) and queries the AI architect; if no
+evidence exists it reports "I don't have evidence for that" rather than
+speculating. Requires AI configuration (`gmb ai configure` / env vars).
+
+---
+
+### 8.27 `gmb dev`
+
+**Purpose:** Developer utility commands for GlassMarble maintenance and testing.
+
+**Syntax:** `gmb dev rebase-goldens [--dir <path>] [--golden-dir <path>]`
+
+**Behavior:** `rebase-goldens` regenerates the golden diagram test fixtures
+from the current pipeline output. Used after intentional renderer changes.
 
 ---
 
@@ -1220,17 +1410,20 @@ The `analyze`/`watch` pipeline is the heart of the product. Four phases, then an
 │   budgets: --max-nodes / --abort-on-limit                            │
 ├──────────────────────────────────────────────────────────────────────┤
 │ COMMIT — ExecuteDeltaTransaction                                     │
-│   append to WAL → merge delta into base graph → atomic TTL write     │
-│   (temp file + rename) → verify → truncate WAL                       │
+│   merge delta into base graph → atomic GraphJSON write               │
+│   (temp file + rename) → post-write verification                     │
 └──────────────────────────────────────────────────────────────────────┘
    Quality report on the MERGED graph: files, nodes, edges, virtual,
-   dangling, ttl/wal sizes, duration
+   dangling, state size, duration
 ```
+
+After the commit, `--intelligence` (default on) runs architecture
+intelligence + developer memory; `--include-docs` adds knowledge fusion.
 
 **Guard rails:**
 - Delta only against a **non-empty** base state (fixed bug — see §8.2 warning).
 - `db.lock` prevents concurrent transactions; stale locks reclaimed after 30s.
-- `--max-ttl-mb` refuses oversized state load/commit.
+- `--max-json-mb` refuses oversized state load/commit.
 - Post-write verification + `doctor` for integrity.
 
 ---
@@ -1340,7 +1533,7 @@ gmb import backup.json             # restore (rejects dangling refs)
 
 ```bash
 gmb housekeeping                          # report sizes
-gmb housekeeping --prune --older-than 7   # prune + truncate WAL (cron-friendly)
+gmb housekeeping --prune --older-than 7   # prune marbles/AI artifacts (cron-friendly)
 ```
 
 ---
@@ -1352,11 +1545,11 @@ gmb housekeeping --prune --older-than 7   # prune + truncate WAL (cron-friendly)
 3. **Use `--full` sparingly.** It forces per-branch CFG+DFG at full linker detail and can be dramatically slower. Prefer `gmb analyze --link-level standard` for a deeper-but-faster pass, or `--full` only for complete rebuilds.
 4. **Never run two analyses concurrently.** `db.lock` exists for a reason; `watch` + manual `analyze` + `hooks` can collide. If you get `ErrLockTimeout`, wait and retry.
 5. **Use `--json` in automation.** Every report command (`status`, `dependency`, `hotspot`, `drift`, `compare`, `analyze`) has a JSON mode that is TUI-free and stable.
-6. **Treat `gmb doctor` as a gate.** Run it after any crash, manual TTL edit, or before upgrades. Non-zero exit = broken DB.
+6. **Treat `gmb doctor` as a gate.** Run it after any crash, manual `akg.json` edit, or before upgrades. Non-zero exit = broken DB.
 7. **Make `gmb drift` a mandatory PR check.** Declare layers + forbidden deps + cycle budget in `config.yaml`; drift exits non-zero on violations.
 8. **Install the post-commit hook or run `watch` in dev** so the AKG never goes stale — stale graphs produce misleading AI answers and diagrams.
 9. **Use `--scope folder:...` on big repos.** `visualize` on a global scope can be heavy; scope to `folder:` or `file:` for focused diagrams.
-10. **`--max-ttl-mb` on shared/CI machines** prevents accidental graph bloat from leaking into every command.
+10. **`--max-json-mb` on shared/CI machines** prevents accidental graph bloat from leaking into every command.
 11. **BYOK keys: prefer env vars or `gmb ai configure` over `--key`** on the command line (shell history exposure). Keys are masked in all output.
 12. **Schedule `housekeeping --prune`** (cron/CI) so marbles and AI sessions don't accumulate unbounded.
 13. **Shell completions:** `source <(gmb completion bash)` (or zsh/fish/powershell) — the scripts are ANSI-clean by design.
@@ -1369,19 +1562,24 @@ gmb housekeeping --prune --older-than 7   # prune + truncate WAL (cron-friendly)
 | Command | Exit 0 | Exit non-zero when |
 |---|---|---|
 | `init` | workspace created/verified | path resolution fails |
-| `analyze` | committed, healthy | any phase fails, commit rejected |
+| `analyze` | committed, healthy | any phase fails, commit rejected, benchmark gate exceeded |
 | `watch` | Ctrl+C stopped | not a git repo; watcher failure |
-| `status` | **always** (missing DB = uninitialized state, not error) | TTL unreadable/corrupt |
-| `doctor` | all integrity checks pass (missing DB also 0) | parse-back failure, dangling, stale WAL, duplicate IDs |
+| `status` | **always** (missing DB = uninitialized state, not error) | state file unreadable/corrupt |
+| `doctor` | all integrity checks pass (missing DB also 0) | parse-back failure, dangling, duplicate IDs |
 | `diff` | printed | missing DB |
 | `tree` | printed | empty DB |
 | `dependency` | printed | empty DB; no matching target |
 | `hotspot` | printed | empty DB |
 | `inspect` | printed | empty DB; node/line not found |
 | `drift` | compliant | forbidden deps > 0 OR cycle_count > cycle_budget |
+| `patterns` | printed | empty DB |
+| `stats` | printed | empty DB |
+| `timeline` | printed | empty DB |
+| `snapshot` | created/listed/replayed | no snapshots for ref; empty DB |
 | `visualize` | markup rendered/saved | bad type, missing DB, sequence without `--entry`, render failure |
+| `why` | answered (or "no evidence") | engine/connection failure |
 | `compare` | diff printed | missing files, empty DB |
-| `export` | file written | missing `--output`, empty DB, bad extension |
+| `export` | file written | missing `--output`, empty DB, bad format |
 | `import` | replaced | parse failure, dangling references rejected |
 | `hooks` | installed/uninstalled | not a git repo; unknown subcommand |
 | `housekeeping` | report/prune done | (prune is best-effort per area) |
@@ -1394,11 +1592,15 @@ gmb housekeeping --prune --older-than 7   # prune + truncate WAL (cron-friendly)
 | `ai models` | printed | — |
 | `ai doctor` | healthy | problems found |
 
+Numeric exit codes (pinned by the real-binary e2e suite): `0` success; `1`
+validation error or unclassified failure; `2` entry point missing/not found;
+`3` empty subgraph; `4` render/node-limit or benchmark budget exceeded.
+
 Common errors:
-- `AKG database is empty -- run 'glassmarble analyze' first` → run `gmb analyze` (or `gmb init` first).
-- `active AKG database not found at ...` → missing `.glassmarble/akg.json`.
+- `AKG database is empty -- run 'gmb analyze' first` → run `gmb analyze` (or `gmb init` first).
+- `no AKG database at ... -- run 'gmb analyze' first` → missing `.glassmarble/akg.json`.
 - `failed to commit AKG transaction` / lock timeouts → concurrent analysis or stale lock (auto-reclaimed after 30s).
-- `Refuse to load ... larger than N MiB` → `--max-ttl-mb` budget hit.
+- `Refuse to load ... larger than N MiB` → `--max-json-mb` budget hit.
 
 ---
 
@@ -1416,8 +1618,7 @@ Common errors:
 | `--render` writes `.txt` instead of image | Kroki unreachable + no `mmdc` | Install mermaid-cli or check network |
 | AI says "doctor found N problem(s)" | missing key/provider/AKG | `gmb ai doctor`, `gmb ai configure`, `gmb analyze` |
 | `ai configure` non-TTY error | interactive wizard needs terminal | Use flag form or env vars |
-| WAL never shrinks | stale transactions | `gmb housekeeping --prune` or run any successful analysis (truncates) |
-| Large graph slow to load | big TTL | `gmb status` uses streaming (fast); use `--scope` on `visualize`; raise `--max-ttl-mb` only if intended |
+| Large graph slow to load | big `akg.json` | `gmb status` uses streaming (fast); use `--scope` on `visualize`; raise `--max-json-mb` only if intended |
 
 ---
 

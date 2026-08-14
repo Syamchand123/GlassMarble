@@ -44,16 +44,16 @@ redact them.
 | Provider name | Adapter | Default base URL | Key env var |
 |---|---|---|---|
 | `openai` | OpenAI-compatible | `https://api.openai.com/v1` | `GLASSMARBLE_OPENAI_API_KEY` |
-| `anthropic` | native | `https://api.anthropic.com` | `GLASSMARBLE_ANTHROPIC_API_KEY` |
-| `gemini` | native | `https://generativelanguage.googleapis.com` | `GLASSMARBLE_GEMINI_API_KEY` |
-| `deepseek` | OpenAI-compatible | `https://api.deepseek.com` | `GLASSMARBLE_DEEPSEEK_API_KEY` |
-| `mistral` | OpenAI-compatible | `https://api.mistral.ai` | `GLASSMARBLE_MISTRAL_API_KEY` |
-| `glm` | OpenAI-compatible | `https://open.bigmodel.cn/api/paas` | `GLASSMARBLE_GLM_API_KEY` |
-| `nvidia` | OpenAI-compatible | `https://integrate.api.nvidia.com` | `GLASSMARBLE_NVIDIA_API_KEY` |
-| `openrouter` | OpenAI-compatible | `https://openrouter.ai/api` | `GLASSMARBLE_OPENROUTER_API_KEY` |
-| `groq` | OpenAI-compatible | `https://api.groq.com/openai` | `GLASSMARBLE_GROQ_API_KEY` |
-| `ollama` | OpenAI-compatible | (custom, e.g. `http://localhost:11434/v1`) | none |
-| `custom` | OpenAI-compatible | (required) | `GLASSMARBLE_AI_API_KEY` |
+| `anthropic` | native | `https://api.anthropic.com/v1` | `GLASSMARBLE_ANTHROPIC_API_KEY` |
+| `gemini` | native | `https://generativelanguage.googleapis.com/v1beta` | `GLASSMARBLE_GEMINI_API_KEY` |
+| `deepseek` | OpenAI-compatible | `https://api.deepseek.com/v1` | `GLASSMARBLE_DEEPSEEK_API_KEY` |
+| `mistral` | OpenAI-compatible | `https://api.mistral.ai/v1` | `GLASSMARBLE_MISTRAL_API_KEY` |
+| `glm` | OpenAI-compatible | `https://open.bigmodel.cn/api/paas/v4` | `GLASSMARBLE_GLM_API_KEY` |
+| `nvidia` | OpenAI-compatible | `https://integrate.api.nvidia.com/v1` | `GLASSMARBLE_NVIDIA_API_KEY` |
+| `openrouter` | OpenAI-compatible | `https://openrouter.ai/api/v1` | `GLASSMARBLE_OPENROUTER_API_KEY` |
+| `groq` | OpenAI-compatible | `https://api.groq.com/openai/v1` | `GLASSMARBLE_GROQ_API_KEY` |
+| `ollama` | OpenAI-compatible | (custom, e.g. `http://localhost:11434/v1`) | none (`GLASSMARBLE_OLLAMA_BASE_URL` for the endpoint) |
+| `custom` | OpenAI-compatible | (required) | `GLASSMARBLE_AI_API_KEY` (optional) |
 
 The OpenAI-compatible adapter covers OpenAI, DeepSeek, Mistral, GLM, NVIDIA
 NIM, OpenRouter, Groq, Ollama, and any endpoint speaking the chat-completions
@@ -119,9 +119,10 @@ tools never mutate state.
 ### Tool catalog
 
 | Group | Tools |
-|---|---|
+|---|---|---|
 | System | `system_status`, `system_diagram_types`, `save_artifact` |
 | AKG queries | `akg_status`, `akg_summary`, `akg_search`, `akg_get_node`, `akg_edges`, `akg_traverse`, `akg_path`, `akg_cycles`, `akg_orphans`, `akg_god_objects`, `akg_hotspots`, `akg_page_rank`, `akg_impact_radius`, `akg_communities`, `akg_articulation_points`, `akg_topological_order`, `akg_entrypoints`, `akg_similarity` |
+| AKG intelligence | `query_architecture_memory`, `get_architecture_timeline`, `get_architecture_patterns` |
 | Code | `code_read_file`, `code_list_dir`, `code_search_symbol`, `code_definition`, `code_diff` |
 | Diagrams | `diagram_generate` (all 31 diagram types), `diagram_summary`, `diagram_types` |
 

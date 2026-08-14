@@ -1,14 +1,29 @@
-go
-c
-c++
-c#
-python
-java
-javascript 
-typescript
-html
-css
-json
-ruby
-php
-rust
+GlassMarble supported languages (ingest registry: internal/code_analysis_engine/ingest/languages.go)
+
+14 languages with native tree-sitter grammars (full parsing + GAST + linking):
+
+  go            .go
+  c             .c  (.h header)
+  c++           .cpp .cc .cxx  (.hpp .hh .hxx .h headers)
+  c#            .cs
+  python        .py .pyi
+  java          .java
+  javascript    .js .mjs .cjs .jsx
+  typescript    .ts .tsx .cts .mts
+  html          .html .htm .xhtml
+  css           .css .scss .less
+  json          .json .jsonc (config-format detection)
+  ruby          .rb (plus Rakefile, Gemfile, config.ru)
+  php           .php
+  rust          .rs
+
+3 languages with declaration-only support (struct/class/function/module
+tokens are recognized, but no tree-sitter grammar is wired yet — call and
+field-level linking is limited):
+
+  kotlin        .kt .kts
+  swift         .swift
+  scala         .scala .sc
+
+`gmb inspect --languages` prints the 14-language support matrix (the three
+declaration-only entries above are not part of that matrix).
