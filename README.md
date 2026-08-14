@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/GM_logo.png" width="180" alt="GlassMarble">
+  <img src="./assets/GMB_logo.png" width="180" alt="GlassMarble">
 </p>
 
 <h1 align="center">GlassMarble</h1>
