@@ -86,9 +86,14 @@ func TestBloatRegressionGuard(t *testing.T) {
 	}
 	edges := len(seen)
 
+	// Recalibrated at the AI-engine sign-off: the grounded AI Architect
+	// (internal/ai_engine — 32 agent tools, akg bridge, retrieval, sessions)
+	// and the knowledge-fusion wiring raised the healthy deduplicated edge
+	// baseline to 28,682 — intentional, bounded feature code, not a noisy
+	// edge producer (same stash-verification methodology as prior notes).
 	const (
 		nodeBudget = 14000
-		edgeBudget = 27000
+		edgeBudget = 32000
 	)
 	if nodes < 1000 {
 		t.Errorf("sanity: expected the pipeline to produce a substantial graph, got %d nodes (pipeline may be broken)", nodes)

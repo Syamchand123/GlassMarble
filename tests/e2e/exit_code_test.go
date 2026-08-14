@@ -63,7 +63,7 @@ func TestExitCodeContractViaRealBinary(t *testing.T) {
 				"import [graph.json] [--flags]",
 				"init [--flags]",
 				"inspect [node_id] [--flags]",
-				"memory [--flags]",
+				"memory [query] [--flags]",
 				"patterns [--flags]",
 				"snapshot [--flags]",
 				"stats [--flags]",

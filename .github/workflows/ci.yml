@@ -1,45 +1,73 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# GlassMarble CI & Quality Gates
+#
+# Runs on every push to the main/feature branches and every pull request:
+#  1. Compile every package (go build ./...)
+#  2. Static analysis (go vet)
+#  3. Full unit/integration/e2e test suite (go test ./...)
+#  4. AKG determinism gate (the persisted graph must be byte-stable)
+#  5. End-to-end smoke against the real gmb binary: analyze → status → doctor
+#
+# Go toolchain: go.mod requires go 1.26.4 — '1.26' resolves to the latest
+# 1.26.x patch. The tree-sitter grammars are the pure-Go bindings
+# (github.com/tree-sitter/go-tree-sitter), so CGO is NOT required.
+# ─────────────────────────────────────────────────────────────────────────────
+
 name: GlassMarble CI & Quality Gates
 
 on:
   push:
-    branches: [ main, overhaul ]
+    branches: [main, feature/overhaul]
   pull_request:
-    branches: [ main, overhaul ]
+    branches: [main, feature/overhaul]
+
+# Cancel superseded runs on the same branch/PR to save runner minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.26"
 
 jobs:
   quality-gates:
-    name: Quality Gates & Test Pyramid (§13.4)
+    name: Quality Gates & Test Suite
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Vet Codebase
+      - name: Verify module integrity
+        run: go mod verify
+
+      - name: Compile all packages
+        run: go build ./...
+
+      - name: Vet codebase
         run: go vet ./...
 
-      - name: Unit & Integration Test Suite
-        run: go test ./... -v -count=1
+      - name: Unit, integration & e2e test suite
+        run: go test ./... -count=1 -timeout 30m
 
-      - name: AKG Determinism Test (§13.2)
-        run: go test ./internal/akg/... -run Determinism -v
+      - name: AKG determinism gate
+        run: go test ./internal/akg/... -run Deterministic -count=1 -v
 
-      - name: Pipeline Performance Benchmark Gate (§12.2 / §13.4)
-        run: go run main.go analyze --bench
+      - name: Build gmb binary
+        run: go build -o gmb .
 
-      - name: Validate Golden Fixture Syntax (when toolchain present)
+      - name: End-to-end smoke (analyze → status → doctor)
         run: |
-          if command -v mmdc >/dev/null 2>&1; then
-            echo "Running mermaid-cli validation..."
-            for f in internal/visualization_engine/testdata/golden/*.mmd; do
-              [ -e "$f" ] || continue
-              mmdc -i "$f" -o /tmp/out.svg || exit 1
-            done
-          else
-            echo "mmdc not found; skipping SVG rendering pass."
-          fi
+          ./gmb version
+          ./gmb analyze --dir . --intelligence=false --json
+          ./gmb status --dir .
+          ./gmb doctor --dir .

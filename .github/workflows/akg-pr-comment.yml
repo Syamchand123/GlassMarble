@@ -13,14 +13,16 @@
 # The comment is idempotent: a second push to the same PR branch re-uses the
 # existing comment rather than creating a new one.
 #
-# CGO_ENABLED=1 is mandatory — tree-sitter grammar libraries are C extensions.
+# Tree-sitter grammars are the pure-Go bindings (github.com/tree-sitter/
+# go-tree-sitter), so CGO is NOT required. go.mod requires go 1.26.4 —
+# '1.26' resolves to the latest 1.26.x patch.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: GlassMarble AKG PR Architecture Comment
 
 on:
   pull_request:
-    branches: [main, master, develop]
+    branches: [main, master, develop, feature/overhaul]
     types: [opened, synchronize, reopened]
 
 # Cancel any in-progress run for the same PR to avoid stale comments.
@@ -33,8 +35,7 @@ permissions:
   pull-requests: write
 
 env:
-  GO_VERSION: "1.24"
-  CGO_ENABLED: "1"
+  GO_VERSION: "1.26"
 
 # ─────────────────────────────────────────────────────────────────────────────
 jobs:
@@ -58,28 +59,21 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      # gcc is required for CGO (tree-sitter grammars are compiled C libraries)
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gcc libc6-dev git
-
       - name: Download modules
         run: go mod download
 
       # ── Build gmb ───────────────────────────────────────────────────────────
       - name: Build gmb binary
         run: |
-          CGO_ENABLED=1 go build \
-            -ldflags="-s -w -X main.version=pr-${{ github.event.pull_request.number }}" \
-            -o "$GITHUB_WORKSPACE/gmb" \
-            .
+          go build -o "$GITHUB_WORKSPACE/gmb" .
           chmod +x "$GITHUB_WORKSPACE/gmb"
 
       # ── Base snapshot (merge-base commit) ──────────────────────────────────
       # Use git worktree to analyse the merge-base without discarding the
       # PR head checkout.  The binary compiled above (from the PR head) is
       # used to analyse both sides so there's no version mismatch.
+      # --intelligence=false keeps the snapshot structural: the comment only
+      # needs the node/edge delta, and intelligence adds minutes of work.
       - name: Compute merge-base SHA
         id: base
         run: |
@@ -92,7 +86,7 @@ jobs:
           git worktree add --detach /tmp/gm-base "${{ steps.base.outputs.sha }}"
           cd /tmp/gm-base
           # Analyse; soft-failure so partial graphs still produce a diff
-          "$GITHUB_WORKSPACE/gmb" analyze --dir . --full --json \
+          "$GITHUB_WORKSPACE/gmb" analyze --dir . --full --intelligence=false --json \
             > /tmp/base-analysis.json 2>&1 || \
             echo "::warning::Base analysis completed with errors (partial graph may be used)"
           "$GITHUB_WORKSPACE/gmb" export --dir . --output /tmp/base.json 2>&1 || \
@@ -103,7 +97,7 @@ jobs:
       # ── Head snapshot (PR branch) ──────────────────────────────────────────
       - name: Analyse head snapshot (PR branch)
         run: |
-          "$GITHUB_WORKSPACE/gmb" analyze --dir . --full --json \
+          "$GITHUB_WORKSPACE/gmb" analyze --dir . --full --intelligence=false --json \
             > /tmp/head-analysis.json 2>&1 || \
             echo "::warning::Head analysis completed with errors (partial graph may be used)"
           "$GITHUB_WORKSPACE/gmb" export --dir . --output /tmp/head.json 2>&1 || \
