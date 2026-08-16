@@ -83,7 +83,7 @@ func NewProcessor(c *cache.Cache) *Processor {
 	}
 
 	// --- snapshot --replay --------------------------------------------------------
-	gmbWant(t, sb, []string{"graph TD"}, "snapshot", "--replay", "HEAD", "--diagram", "dependency")
+	gmbWant(t, sb, []string{"flowchart"}, "snapshot", "--replay", "HEAD", "--diagram", "dependency")
 
 	// --- timeline text -------------------------------------------------------------
 	timelineOut := gmb(t, sb, "timeline", "--full")

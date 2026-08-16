@@ -135,6 +135,8 @@ func (m *model) generate() tea.Cmd {
 				IncludeUnused: opts.IncludeUnused,
 				MaxNodes:      opts.MaxNodes,
 				ChangedFiles:  opts.ChangedFiles,
+				Theme:         opts.Theme,
+				Direction:     opts.Direction,
 			},
 		}
 		markup, summary, err := product.BuildDiagram(req)
@@ -238,6 +240,9 @@ func (m *model) save() error {
 }
 
 func (m *model) writeOutput() error {
+	if dir := filepath.Dir(m.cfg.OutputFlag); dir != "" && dir != "." {
+		_ = os.MkdirAll(dir, 0755)
+	}
 	return os.WriteFile(m.cfg.OutputFlag, []byte(m.markup), 0644)
 }
 

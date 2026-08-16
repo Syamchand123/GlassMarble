@@ -9,6 +9,7 @@ package visualization_engine_test
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
@@ -347,5 +348,77 @@ func TestComputeGraphSummaryAllDiagramTypes(t *testing.T) {
 				t.Fatalf("expected non-nil summary for %s", dt)
 			}
 		})
+	}
+}
+
+// TestAll31DiagramTypesAll3ScopesAll3Formats comprehensively exercises the entire
+// visualization pipeline across all 31 diagram types, all 3 scope levels (Global,
+// Folder, File), and all 3 rendering formats (Mermaid, PlantUML, DOT) on real JSON state.
+func TestAll31DiagramTypesAll3ScopesAll3Formats(t *testing.T) {
+	path := filepath.Join("testdata", "full_graph.json")
+	native, err := akg.ParseGraphFileToNative(path)
+	if err != nil {
+		t.Fatalf("ParseGraphFileToNative failed: %v", err)
+	}
+
+	allTypes := types.AllDiagramTypes()
+	if len(allTypes) != 31 {
+		t.Fatalf("expected 31 diagram types, got %d", len(allTypes))
+	}
+
+	scopes := []struct {
+		name      string
+		scope     types.ScopeLevel
+		scopePath string
+	}{
+		{"Global", types.ScopeGlobal, ""},
+		{"Folder_internal_api", types.ScopeFolder, "internal/api"},
+		{"File_handler_go", types.ScopeFile, "internal/api/handler.go"},
+	}
+
+	formats := []string{"mermaid", "plantuml", "dot"}
+
+	for _, dt := range allTypes {
+		dt := dt
+		for _, sc := range scopes {
+			sc := sc
+			for _, fmtName := range formats {
+				fmtName := fmtName
+				testName := string(dt) + "/" + sc.name + "/" + fmtName
+				t.Run(testName, func(t *testing.T) {
+					opts := types.QueryOptions{
+						Scope:     sc.scope,
+						ScopePath: sc.scopePath,
+					}
+					cfg := ingest.GetExtractionConfig(dt, opts)
+					sub, _, err := ingest.ExtractFromSubgraph(native, cfg, opts)
+					if err != nil {
+						t.Fatalf("ExtractFromSubgraph failed: %v", err)
+					}
+
+					metrics := normalize.ComputeAllMetrics(sub)
+					tree := normalize.BuildLayoutTreeEx(sub, metrics, metrics.Communities, opts, dt)
+					if tree == nil {
+						t.Fatalf("BuildLayoutTreeEx returned nil tree")
+					}
+
+					markup := aggregate.RenderDiagramFormat(tree, dt, fmtName)
+					if markup == "" {
+						t.Fatalf("RenderDiagramFormat returned empty markup")
+					}
+
+					switch fmtName {
+					case "plantuml":
+						if !strings.HasPrefix(markup, "@startuml") || !strings.Contains(markup, "@enduml") {
+							t.Fatalf("PlantUML markup missing start/end tags: %s", markup)
+						}
+					case "dot":
+						if !strings.Contains(markup, "digraph") {
+							t.Fatalf("DOT markup missing digraph: %s", markup)
+						}
+					}
+				})
+			}
+		}
 	}
 }

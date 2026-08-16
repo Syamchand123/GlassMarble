@@ -174,7 +174,7 @@ func ProjectDiagramFromGraph(full *types.NativeGraph, t types.DiagramType, opts 
 	layout := normalize.BuildLayoutTreeEx(subgraph, metrics, clustering, effectiveOpts, t)
 
 	reportProgress(opts.OnProgress, "StepRender", fmt.Sprintf("rendering %s...", string(t)))
-	markup := aggregate.RenderDiagramFormat(layout, t, opts.Format)
+	markup := aggregate.RenderDiagramFormatOptions(layout, t, opts)
 
 	if opts.OnSummary != nil && layout.Summary != nil {
 		opts.OnSummary(layout.Summary)
@@ -234,6 +234,27 @@ func BuildLayoutTreeFromGraph(full *types.NativeGraph, t types.DiagramType, opts
 
 	layout := normalize.BuildLayoutTreeEx(subgraph, metrics, clustering, effectiveOpts, t)
 	return layout, nil
+}
+
+// BuildDiagramAST runs the full pipeline and constructs a validated DiagramAST.
+func (ec *EngineCoordinator) BuildDiagramAST(t types.DiagramType, opts types.QueryOptions) (*types.DiagramAST, error) {
+	opts.DiagramType = t
+	full, err := ec.parseGraph(opts)
+	if err != nil {
+		return nil, fmt.Errorf("parse failed: %w", err)
+	}
+	return BuildDiagramASTFromGraph(full, t, opts)
+}
+
+// BuildDiagramASTFromGraph builds a validated DiagramAST from an existing graph.
+func BuildDiagramASTFromGraph(full *types.NativeGraph, t types.DiagramType, opts types.QueryOptions) (*types.DiagramAST, error) {
+	layout, err := BuildLayoutTreeFromGraph(full, t, opts)
+	if err != nil {
+		return nil, err
+	}
+	ast := normalize.BuildDiagramAST(layout, t, opts)
+	ast = aggregate.ValidateAndOptimizeAST(ast)
+	return ast, nil
 }
 
 // ComputeGraphSummary parses, scopes, and extracts the graph, then returns a summary without rendering.

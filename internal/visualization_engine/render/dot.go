@@ -4,16 +4,21 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
-// RenderDOTDiagram renders the layout tree as a Graphviz DOT digraph with styled nodes and edges.
+// RenderDOTDiagram renders the layout tree as a Graphviz DOT digraph with default theme.
 func RenderDOTDiagram(tree *types.LayoutTree, t types.DiagramType) string {
+	return RenderDOTDiagramWithTheme(tree, t, "modern")
+}
+
+// RenderDOTDiagramWithTheme renders the layout tree as a Graphviz DOT digraph with custom theme attributes.
+func RenderDOTDiagramWithTheme(tree *types.LayoutTree, t types.DiagramType, themeName string) string {
+	theme := GetTheme(themeName)
 	var sb strings.Builder
 	sb.WriteString("digraph G {\n")
 	sb.WriteString("    rankdir=TB;\n")
-	sb.WriteString("    node [shape=box, style=rounded];\n")
+	sb.WriteString(theme.EmitDOTGraphAttrs())
 	sb.WriteString(fmt.Sprintf("    label=\"%s Diagram\";\n", getDiagramTitle(tree, string(t))))
 
 	for _, node := range collectAllNodes(tree) {
@@ -22,17 +27,29 @@ func RenderDOTDiagram(tree *types.LayoutTree, t types.DiagramType) string {
 		if name == "" {
 			name = sanitizeMermaidLabel(node.ID)
 		}
+
+		arch := ClassifyNodeArchetype(node)
 		shape := "box"
-		if node.Kind == ont.PredDatabase || strings.Contains(node.PrimitiveType, "DATABASE") {
+		switch arch {
+		case ArchDataStore:
 			shape = "cylinder"
-		} else if node.Kind == ont.PredExternalSystem {
+		case ArchExternalAPI:
 			shape = "component"
-		} else if node.Kind == ont.PredUser {
-			shape = "ellipse"
-		} else if node.Kind == ont.PredExecutable || node.Kind == ont.PredFunction || node.Kind == ont.PredMethod {
-			shape = "box3d"
+		case ArchEntrypoint:
+			shape = "oval"
+		case ArchEventBus:
+			shape = "hexagon"
+		case ArchGateway:
+			shape = "diamond"
+		case ArchParser, ArchRenderer:
+			shape = "trapezium"
+		default:
+			shape = "box"
 		}
-		sb.WriteString(fmt.Sprintf("    %s [label=\"%s\", shape=%s];\n", id, name, shape))
+
+		style := theme.ArchetypeStyles[arch.ClassName()]
+		sb.WriteString(fmt.Sprintf("    %s [label=\"%s\\n%s\", shape=%s, fillcolor=\"%s\", color=\"%s\", fontcolor=\"%s\"];\n",
+			id, arch.Stereotype(), name, shape, style.Fill, style.Stroke, style.TextColor))
 	}
 
 	for _, edge := range tree.Edges {
@@ -41,19 +58,19 @@ func RenderDOTDiagram(tree *types.LayoutTree, t types.DiagramType) string {
 		label := shortPredicate(edge.Predicate)
 
 		style := "solid"
-		color := "black"
+		color := theme.EdgeColor
 		if edge.IsCycle {
 			style = "bold"
-			color = "red"
+			color = theme.CycleEdge
 		} else if strings.Contains(edge.Predicate, "dataFlow") || strings.Contains(edge.Predicate, "pointsTo") {
+			style = "bold"
+			color = theme.DataFlowEdge
+		} else if strings.Contains(edge.Predicate, "controlFlow") || strings.Contains(edge.Predicate, "async") {
 			style = "dashed"
-			color = "blue"
-		} else if strings.Contains(edge.Predicate, "controlFlow") {
-			style = "dotted"
-			color = "green"
+			color = theme.AsyncEdge
 		}
 
-		sb.WriteString(fmt.Sprintf("    %s -> %s [label=\"%s\", style=%s, color=%s];\n", src, tgt, label, style, color))
+		sb.WriteString(fmt.Sprintf("    %s -> %s [label=\"%s\", style=%s, color=\"%s\"];\n", src, tgt, label, style, color))
 	}
 
 	renderDOTSummaryFooter(tree, &sb)

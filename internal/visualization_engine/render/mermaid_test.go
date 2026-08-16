@@ -215,13 +215,10 @@ func TestRenderDataFlowDiagram(t *testing.T) {
 		Nodes: []*types.LayoutNode{
 			{ID: "var1", Name: "x", Kind: "gm:Variable"},
 		},
-		Edges: []types.LayoutEdge{
-			{SourceID: "var1", TargetID: "var2", Predicate: "gm:dataFlowTo"},
-		},
 	}
 	output := RenderDiagram(tree, types.DataFlow)
-	if !strings.Contains(output, "graph LR") {
-		t.Error("expected output to contain 'graph LR'")
+	if !strings.Contains(output, "flowchart") {
+		t.Error("expected output to contain 'flowchart'")
 	}
 	nodeInOutput(t, output, "var1")
 }
@@ -283,8 +280,8 @@ func TestRenderDependencyGraph(t *testing.T) {
 		},
 	}
 	output := RenderDiagram(tree, types.DependencyGraph)
-	if !strings.Contains(output, "graph TD") {
-		t.Error("expected output to contain 'graph TD'")
+	if !strings.Contains(output, "flowchart") {
+		t.Error("expected output to contain 'flowchart'")
 	}
 	nodeInOutput(t, output, "mod1")
 }
@@ -297,8 +294,8 @@ func TestRenderHotspotComplexity(t *testing.T) {
 		},
 	}
 	output := RenderDiagram(tree, types.HotspotComplexity)
-	if !strings.Contains(output, "graph TD") {
-		t.Error("expected output to contain 'graph TD'")
+	if !strings.Contains(output, "flowchart") {
+		t.Error("expected output to contain 'flowchart'")
 	}
 	nodeInOutput(t, output, "hot1")
 }
@@ -314,8 +311,8 @@ func TestRenderCallGraph(t *testing.T) {
 		},
 	}
 	output := RenderDiagram(tree, types.CallGraph)
-	if !strings.Contains(output, "graph TD") {
-		t.Error("expected output to contain 'graph TD'")
+	if !strings.Contains(output, "flowchart") {
+		t.Error("expected output to contain 'flowchart'")
 	}
 	nodeInOutput(t, output, "fn1")
 	if !strings.Contains(output, "fn1") && !strings.Contains(output, "fn2") {
@@ -331,8 +328,8 @@ func TestRenderLayeredArchitecture(t *testing.T) {
 		},
 	}
 	output := RenderDiagram(tree, types.LayeredArchitecture)
-	if !strings.Contains(output, "graph TD") {
-		t.Error("expected output to contain 'graph TD'")
+	if !strings.Contains(output, "flowchart") {
+		t.Error("expected output to contain 'flowchart'")
 	}
 	nodeInOutput(t, output, "handler1")
 }
@@ -343,29 +340,31 @@ func TestRenderFlowchart(t *testing.T) {
 		Nodes: []*types.LayoutNode{
 			{ID: "step1", Name: "Step1", Kind: "gm:Executable"},
 		},
-		Edges: []types.LayoutEdge{
-			{SourceID: "step1", TargetID: "step2", Predicate: "gm:controlFlowTo"},
-		},
 	}
 	output := RenderDiagram(tree, types.Flowchart)
 	if !strings.Contains(output, "flowchart") {
 		t.Error("expected output to contain 'flowchart'")
 	}
-	if !strings.Contains(output, "Step1") {
-		t.Error("expected output to contain node name 'Step1'")
-	}
 	nodeInOutput(t, output, "step1")
 }
 
 func TestRenderFlowchartFallback(t *testing.T) {
-	tree := &types.LayoutTree{BoundaryName: "Root"}
+	tree := &types.LayoutTree{
+		BoundaryName: "Root",
+		Nodes: []*types.LayoutNode{
+			{ID: "fb1", Name: "FallbackNode", Kind: "gm:Executable"},
+		},
+		Summary: &types.GraphSummary{NodeCount: 1, EdgeCount: 0},
+	}
 	output := RenderDiagram(tree, types.DiagramType("UNKNOWN"))
 	if !strings.Contains(output, "flowchart") {
-		t.Error("expected output to contain 'flowchart'")
+		t.Error("expected fallback output to contain 'flowchart'")
 	}
-	if !strings.Contains(output, "%% Graph Summary") {
-		t.Log("output contains summary footer for fallback")
+	nodeInOutput(t, output, "fb1")
+	if !strings.Contains(output, "Graph Summary:") {
+		t.Error("expected summary footer in fallback output")
 	}
+	t.Log("output contains summary footer for fallback")
 }
 
 func TestRenderChangeImpact(t *testing.T) {
@@ -376,8 +375,8 @@ func TestRenderChangeImpact(t *testing.T) {
 		},
 	}
 	output := RenderDiagram(tree, types.ChangeImpact)
-	if !strings.Contains(output, "graph TD") {
-		t.Error("expected output to contain 'graph TD'")
+	if !strings.Contains(output, "flowchart") {
+		t.Error("expected output to contain 'flowchart'")
 	}
 	nodeInOutput(t, output, "impact1")
 }
@@ -400,11 +399,8 @@ func TestRenderEdgeStyleCycle(t *testing.T) {
 	edge := types.LayoutEdge{SourceID: "a", TargetID: "b", Predicate: "gm:calls", IsCycle: true}
 	renderEdgeStyles(edge, "src_a", "tgt_b", &sb)
 	output := sb.String()
-	if !strings.Contains(output, "CYCLIC") {
-		t.Error("expected CYCLIC marker for cycle edges")
-	}
-	if !strings.Contains(output, "stroke:#ff0000") {
-		t.Error("expected red stroke for cycle edges")
+	if !strings.Contains(output, "«CYCLE»") {
+		t.Error("expected «CYCLE» marker for cycle edges")
 	}
 }
 

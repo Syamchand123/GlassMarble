@@ -425,11 +425,15 @@ func ResolvedNodeToNativeNode(n *link.ResolvedNode) *types.NativeNode {
 	for k, v := range n.Properties {
 		props[k] = v
 	}
+	prim := ""
+	if n.Primitive != "" {
+		prim = ont.PrefixGM + n.Primitive
+	}
 	return &types.NativeNode{
 		ID:            n.ID,
 		Kind:          mapKindToClass(n.Kind),
 		Name:          n.Name,
-		PrimitiveType: ont.PrefixGM + n.Primitive,
+		PrimitiveType: prim,
 		FileURI:       "file:" + n.FileSpec.Path,
 		LineStart:     n.FileSpec.LineStart,
 		LineEnd:       n.FileSpec.LineEnd,

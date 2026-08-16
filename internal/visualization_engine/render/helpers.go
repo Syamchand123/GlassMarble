@@ -11,25 +11,25 @@ import (
 )
 
 func sanitizeName(name string) string {
-	res := name
-	res = strings.ReplaceAll(res, "%20", "_")
-	res = strings.ReplaceAll(res, "%3A", "_")
-	res = strings.ReplaceAll(res, "%2F", "_")
-	res = strings.ReplaceAll(res, "%smell detection", "_")
-	res = strings.ReplaceAll(res, "::", "_")
-	res = strings.ReplaceAll(res, ":", "_")
-	res = strings.ReplaceAll(res, ".", "_")
-	res = strings.ReplaceAll(res, "/", "_")
-	res = strings.ReplaceAll(res, "\\", "_")
-	res = strings.ReplaceAll(res, "-", "_")
-	res = strings.ReplaceAll(res, "%", "_")
-	res = strings.ReplaceAll(res, "(", "_")
-	res = strings.ReplaceAll(res, ")", "_")
-	res = strings.ReplaceAll(res, "<", "_")
-	res = strings.ReplaceAll(res, ">", "_")
-	res = strings.ReplaceAll(res, "[", "_")
-	res = strings.ReplaceAll(res, "]", "_")
-	res = strings.ReplaceAll(res, " ", "_")
+	var sb strings.Builder
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			sb.WriteRune(r)
+		} else {
+			sb.WriteRune('_')
+		}
+	}
+	res := sb.String()
+	for strings.Contains(res, "__") {
+		res = strings.ReplaceAll(res, "__", "_")
+	}
+	res = strings.Trim(res, "_")
+	if res == "" {
+		res = "node"
+	}
+	if res[0] >= '0' && res[0] <= '9' {
+		res = "n_" + res
+	}
 	return res
 }
 
@@ -40,13 +40,33 @@ func sanitizeName(name string) string {
 // Collisions get numeric suffixes. Registration order is deterministic
 // because renderers walk the layout tree, whose nodes and children are sorted.
 type aliasRegistry struct {
-	used  map[string]string
-	count map[string]int
-	byID  map[string]string
+	used     map[string]string
+	count    map[string]int
+	byID     map[string]string
+	declared map[string]bool
 }
 
 func newAliasRegistry() *aliasRegistry {
-	return &aliasRegistry{used: make(map[string]string), count: make(map[string]int), byID: make(map[string]string)}
+	return &aliasRegistry{
+		used:     make(map[string]string),
+		count:    make(map[string]int),
+		byID:     make(map[string]string),
+		declared: make(map[string]bool),
+	}
+}
+
+func (r *aliasRegistry) markDeclared(alias string) {
+	if r.declared == nil {
+		r.declared = make(map[string]bool)
+	}
+	r.declared[alias] = true
+}
+
+func (r *aliasRegistry) isDeclared(alias string) bool {
+	if r.declared == nil {
+		return false
+	}
+	return r.declared[alias]
 }
 
 func (r *aliasRegistry) alias(id string) string {
@@ -335,8 +355,11 @@ func isSystemBoundary(boundary *types.LayoutTree) bool {
 	if boundary == nil {
 		return false
 	}
+	if boundary.BoundaryName != "Root" && boundary.BoundaryName != "" {
+		return len(boundary.Nodes) > 0 || len(boundary.Children) > 0
+	}
 	for _, node := range boundary.Nodes {
-		if node.Kind == ont.PredNamespace || node.Kind == ont.PredModule || node.Kind == ont.PredFile {
+		if node.Kind == ont.PredNamespace || node.Kind == ont.PredModule || node.Kind == ont.PredFile || node.Kind == ont.PredPackage {
 			return true
 		}
 	}
@@ -345,11 +368,11 @@ func isSystemBoundary(boundary *types.LayoutTree) bool {
 
 func detectContainerTechnology(boundary *types.LayoutTree) string {
 	for _, node := range boundary.Nodes {
-		if node.PrimitiveType != "" {
-			return node.PrimitiveType
+		if node.PrimitiveType != "" && node.PrimitiveType != ont.PrefixGM {
+			return strings.TrimPrefix(node.PrimitiveType, ont.PrefixGM)
 		}
 		tech := detectNodeTechnology(node)
-		if tech != "Go Module" {
+		if tech != "Go Module" && tech != "Go/Generic" {
 			return tech
 		}
 	}
@@ -375,18 +398,28 @@ func getContainerDescription(boundary *types.LayoutTree) string {
 }
 
 func getNodeDescription(node *types.LayoutNode) string {
+	if node == nil {
+		return "Component"
+	}
 	if isDatabase(node) {
 		return "Data Store"
 	}
 	if isExternalSystem(node) {
 		return "External Integration"
 	}
-	return fmt.Sprintf("%s Component", node.Kind)
+	kind := getShortKind(node.Kind)
+	if kind == "" {
+		kind = "Go"
+	}
+	return fmt.Sprintf("%s Component", kind)
 }
 
 func detectNodeTechnology(node *types.LayoutNode) string {
-	if node.PrimitiveType != "" {
-		return node.PrimitiveType
+	if node == nil {
+		return "Go/Generic"
+	}
+	if node.PrimitiveType != "" && node.PrimitiveType != ont.PrefixGM {
+		return strings.TrimPrefix(node.PrimitiveType, ont.PrefixGM)
 	}
 	if isDatabase(node) {
 		return "Database"
@@ -397,9 +430,11 @@ func detectNodeTechnology(node *types.LayoutNode) string {
 	switch node.Kind {
 	case ont.PredExecutable, ont.PredFunction, ont.PredMethod:
 		return "Go/Executable"
-	case ont.PredTypeDecl:
+	case ont.PredTypeDecl, ont.PredStruct, ont.PredClass:
 		return "Go/Type"
-	case ont.PredNamespace, ont.PredModule:
+	case ont.PredInterface:
+		return "Go/Interface"
+	case ont.PredNamespace, ont.PredModule, ont.PredPackage:
 		return "Go/Module"
 	default:
 		return "Go/Generic"
@@ -418,7 +453,7 @@ func renderSummaryFooter(tree *types.LayoutTree, sb *strings.Builder) {
 		return
 	}
 	s := tree.Summary
-	sb.WriteString(fmt.Sprintf("    %% Graph Summary: %d nodes, %d edges, density=%.4f, diameter=%d, avg_path=%.2f, clusters=%d, largest_scc=%d, god_objects=%d, components=%d\n",
+	sb.WriteString(fmt.Sprintf("    %%%% Graph Summary: %d nodes, %d edges, density=%.4f, diameter=%d, avg_path=%.2f, clusters=%d, largest_scc=%d, god_objects=%d, components=%d\n",
 		s.NodeCount, s.EdgeCount, s.Density, s.Diameter,
 		s.AvgPathLength, s.ClusterCount, s.LargestSCCSize, s.GodObjectCount, s.ConnectedComponents))
 }
@@ -448,6 +483,9 @@ func renderC4Edges(tree *types.LayoutTree, reg *aliasRegistry, sb *strings.Build
 	for _, edge := range tree.Edges {
 		src := reg.alias(edge.SourceID)
 		tgt := reg.alias(edge.TargetID)
+		if !reg.isDeclared(src) || !reg.isDeclared(tgt) {
+			continue
+		}
 		key := src + "->" + tgt
 		if drawn[key] {
 			continue

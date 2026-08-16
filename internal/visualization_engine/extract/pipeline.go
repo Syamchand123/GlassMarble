@@ -7,5 +7,11 @@ import "github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 func ExtractFromSubgraph(full *types.VirtualSubgraph, cfg types.ExtractionConfig, opts types.QueryOptions) (*types.VirtualSubgraph, types.QueryOptions, error) {
 	opts.IncludeUnused = opts.IncludeUnused || cfg.IncludeUnused
 	sub, err := extractWithConfig(full.Nodes, full.Edges, cfg, opts)
-	return sub, opts, err
+	if err != nil {
+		return nil, opts, err
+	}
+	if opts.DiagramType != "" {
+		sub = ApplySemanticZoom(sub, opts.DiagramType, opts)
+	}
+	return sub, opts, nil
 }

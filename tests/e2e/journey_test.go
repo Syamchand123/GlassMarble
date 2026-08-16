@@ -190,7 +190,7 @@ func (p *Processor) Complete(customer string) string {
 		gmbWant(t, sb, []string{"Architecture diff", "→"}, "snapshot", "--diff", commit1, commit2)
 
 		// --replay renders a diagram from the snapshot's embedded graph.
-		gmbWant(t, sb, []string{"graph TD"}, "snapshot", "--replay", "HEAD", "--diagram", "dependency")
+		gmbWant(t, sb, []string{"flowchart"}, "snapshot", "--replay", "HEAD", "--diagram", "dependency")
 
 		// --create at an unchanged topology skip-writes.
 		out = gmb(t, sb, "snapshot", "--create")
@@ -315,13 +315,13 @@ func (p *Processor) Complete(customer string) string {
 
 	// --- 13. visualize marbles --------------------------------------------------
 	t.Run("visualize stream", func(t *testing.T) {
-		gmbWant(t, sb, []string{"graph TD"}, "visualize", "dependency")
+		gmbWant(t, sb, []string{"flowchart"}, "visualize", "dependency")
 	})
 
 	t.Run("visualize save", func(t *testing.T) {
 		gmbWant(t, sb, []string{"Marble saved successfully to", ".glassmarble", "marbles"}, "visualize", "dependency", "--save", "dep")
 		marble := sb.ReadFile(".glassmarble/marbles/dep.md")
-		if !strings.Contains(marble, "```mermaid") || !strings.Contains(marble, "graph TD") {
+		if !strings.Contains(marble, "```mermaid") || !strings.Contains(marble, "flowchart") {
 			t.Errorf("saved marble is not a mermaid block:\n%s", marble)
 		}
 	})

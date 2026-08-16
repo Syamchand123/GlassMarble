@@ -10,9 +10,15 @@ import (
 
 // RenderPlantUMLDiagram renders the layout tree as a PlantUML diagram with C4 includes and UML stencils.
 func RenderPlantUMLDiagram(tree *types.LayoutTree, t types.DiagramType) string {
+	return RenderPlantUMLDiagramWithTheme(tree, t, "modern")
+}
+
+// RenderPlantUMLDiagramWithTheme renders with explicit theme skinparameters.
+func RenderPlantUMLDiagramWithTheme(tree *types.LayoutTree, t types.DiagramType, themeName string) string {
+	theme := GetTheme(themeName)
 	var sb strings.Builder
 	sb.WriteString("@startuml\n")
-	sb.WriteString("skinparam monochrome true\n")
+	sb.WriteString(theme.EmitPlantUMLSkinparams())
 
 	if tree != nil {
 		writeC4Includes(t, &sb)
@@ -79,17 +85,57 @@ func renderPlantUMLClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 			name = sanitizeName(node.ID)
 		}
 		alias := sanitizeName(node.ID)
+		code := node.Code
+		if code == "" && node.Properties != nil {
+			code = node.Properties["content"]
+		}
+		pFields, pMethods := parseMembersFromCode(code)
+
 		switch node.Kind {
-		case ont.PredTypeDecl:
+		case ont.PredTypeDecl, ont.PredStruct, ont.PredClass:
+			keyword := "class"
 			if strings.Contains(strings.ToLower(node.PrimitiveType), "interface") || strings.Contains(strings.ToLower(node.Name), "iface") {
-				sb.WriteString(fmt.Sprintf("interface \"%s\" as %s\n", name, alias))
-			} else {
-				sb.WriteString(fmt.Sprintf("class \"%s\" as %s\n", name, alias))
+				keyword = "interface"
 			}
-		case ont.PredExecutable:
+			if len(pFields) > 0 || len(pMethods) > 0 {
+				sb.WriteString(fmt.Sprintf("%s \"%s\" as %s {\n", keyword, name, alias))
+				for _, f := range pFields {
+					prefix := memberVisibilityPrefix(f.visibility, f.label)
+					if f.typeName != "" {
+						sb.WriteString(fmt.Sprintf("    %s%s : %s\n", prefix, f.label, f.typeName))
+					} else {
+						sb.WriteString(fmt.Sprintf("    %s%s\n", prefix, f.label))
+					}
+				}
+				for _, m := range pMethods {
+					prefix := memberVisibilityPrefix(m.visibility, m.label)
+					if m.typeName != "" {
+						sb.WriteString(fmt.Sprintf("    %s%s() : %s\n", prefix, m.label, m.typeName))
+					} else {
+						sb.WriteString(fmt.Sprintf("    %s%s()\n", prefix, m.label))
+					}
+				}
+				sb.WriteString("}\n")
+			} else {
+				sb.WriteString(fmt.Sprintf("%s \"%s\" as %s\n", keyword, name, alias))
+			}
+		case ont.PredInterface:
+			if len(pMethods) > 0 {
+				sb.WriteString(fmt.Sprintf("interface \"%s\" as %s {\n", name, alias))
+				for _, m := range pMethods {
+					prefix := memberVisibilityPrefix(m.visibility, m.label)
+					sb.WriteString(fmt.Sprintf("    %s%s()\n", prefix, m.label))
+				}
+				sb.WriteString("}\n")
+			} else {
+				sb.WriteString(fmt.Sprintf("interface \"%s\" as %s\n", name, alias))
+			}
+		case ont.PredExecutable, ont.PredFunction, ont.PredMethod:
 			sb.WriteString(fmt.Sprintf("class \"%s\" as %s <<method>>\n", name, alias))
 		default:
-			sb.WriteString(fmt.Sprintf("rectangle \"%s\" as %s\n", name, alias))
+			if node.Kind != ont.PredMember && node.Kind != "FIELD" {
+				sb.WriteString(fmt.Sprintf("rectangle \"%s\" as %s\n", name, alias))
+			}
 		}
 	}
 
@@ -177,26 +223,32 @@ func renderPlantUMLC4ContextDiagram(tree *types.LayoutTree, sb *strings.Builder)
 	sb.WriteString(fmt.Sprintf("title %s\n", title))
 
 	for _, node := range collectNodesByKind(tree, ont.PredUser) {
-		sb.WriteString(fmt.Sprintf("Person(%s, \"%s\", \"External Actor\")\n",
+		sb.WriteString(fmt.Sprintf("Person(%s, \"%s\", \"User / Client\")\n",
 			sanitizeName(node.ID), sanitizeMermaidLabel(node.Name)))
 	}
 
-	for _, boundary := range tree.Children {
-		if isSystemBoundary(boundary) {
+	if len(tree.Children) > 0 {
+		for _, boundary := range tree.Children {
 			alias := sanitizeName(boundary.BoundaryName)
-			sb.WriteString(fmt.Sprintf("System(%s, \"%s\", \"System\")\n",
+			sb.WriteString(fmt.Sprintf("System(%s, \"%s\", \"System Module\")\n",
 				alias, sanitizeMermaidLabel(boundary.BoundaryName)))
 		}
+	} else if len(tree.Nodes) > 0 {
+		alias := sanitizeName(tree.BoundaryName)
+		sb.WriteString(fmt.Sprintf("System(%s, \"%s\", \"Core System\")\n",
+			alias, sanitizeMermaidLabel(tree.BoundaryName)))
 	}
 
-	for _, node := range collectNodesByKind(tree, ont.PredExternalSystem) {
+	for _, node := range collectExternalNodes(tree) {
 		sb.WriteString(fmt.Sprintf("SystemExt(%s, \"%s\", \"External System\")\n",
 			sanitizeName(node.ID), sanitizeMermaidLabel(node.Name)))
 	}
 
-	for _, node := range collectNodesByPrimitive(tree, "DATABASE") {
-		sb.WriteString(fmt.Sprintf("SystemDb(%s, \"%s\", \"Database\")\n",
-			sanitizeName(node.ID), sanitizeMermaidLabel(node.Name)))
+	for _, node := range collectAllNodes(tree) {
+		if isDatabase(node) {
+			sb.WriteString(fmt.Sprintf("SystemDb(%s, \"%s\", \"Database\")\n",
+				sanitizeName(node.ID), sanitizeMermaidLabel(node.Name)))
+		}
 	}
 
 	renderPlantUMLC4Edges(tree, sb)
@@ -206,20 +258,11 @@ func renderPlantUMLC4ContainerDiagram(tree *types.LayoutTree, sb *strings.Builde
 	title := getDiagramTitle(tree, "Container Diagram")
 	sb.WriteString(fmt.Sprintf("title %s\n", title))
 
-	for _, boundary := range tree.Children {
-		alias := sanitizeName(boundary.BoundaryName)
-		name := sanitizeMermaidLabel(boundary.BoundaryName)
+	if len(tree.Children) == 0 && len(tree.Nodes) > 0 {
+		alias := sanitizeName(tree.BoundaryName)
+		name := sanitizeMermaidLabel(tree.BoundaryName)
 		sb.WriteString(fmt.Sprintf("System_Boundary(%s_sys, \"%s System\") {\n", alias, name))
-
-		for _, subBoundary := range boundary.Children {
-			subAlias := sanitizeName(subBoundary.BoundaryName)
-			subName := sanitizeMermaidLabel(subBoundary.BoundaryName)
-			tech := detectContainerTechnology(subBoundary)
-			sb.WriteString(fmt.Sprintf("    Container(%s, \"%s\", \"%s\", \"%s\")\n",
-				subAlias, subName, tech, getContainerDescription(subBoundary)))
-		}
-
-		for _, node := range boundary.Nodes {
+		for _, node := range tree.Nodes {
 			nodeAlias := sanitizeName(node.ID)
 			nodeName := sanitizeMermaidLabel(node.Name)
 			tech := detectNodeTechnology(node)
@@ -231,8 +274,36 @@ func renderPlantUMLC4ContainerDiagram(tree *types.LayoutTree, sb *strings.Builde
 					nodeAlias, nodeName, tech, getNodeDescription(node)))
 			}
 		}
-
 		sb.WriteString("}\n")
+	} else {
+		for _, boundary := range tree.Children {
+			alias := sanitizeName(boundary.BoundaryName)
+			name := sanitizeMermaidLabel(boundary.BoundaryName)
+			sb.WriteString(fmt.Sprintf("System_Boundary(%s_sys, \"%s System\") {\n", alias, name))
+
+			for _, subBoundary := range boundary.Children {
+				subAlias := sanitizeName(subBoundary.BoundaryName)
+				subName := sanitizeMermaidLabel(subBoundary.BoundaryName)
+				tech := detectContainerTechnology(subBoundary)
+				sb.WriteString(fmt.Sprintf("    Container(%s, \"%s\", \"%s\", \"%s\")\n",
+					subAlias, subName, tech, getContainerDescription(subBoundary)))
+			}
+
+			for _, node := range boundary.Nodes {
+				nodeAlias := sanitizeName(node.ID)
+				nodeName := sanitizeMermaidLabel(node.Name)
+				tech := detectNodeTechnology(node)
+				if isDatabase(node) {
+					sb.WriteString(fmt.Sprintf("    ContainerDb(%s, \"%s\", \"%s\", \"%s\")\n",
+						nodeAlias, nodeName, tech, getNodeDescription(node)))
+				} else {
+					sb.WriteString(fmt.Sprintf("    Container(%s, \"%s\", \"%s\", \"%s\")\n",
+						nodeAlias, nodeName, tech, getNodeDescription(node)))
+				}
+			}
+
+			sb.WriteString("}\n")
+		}
 	}
 
 	renderPlantUMLC4Edges(tree, sb)
@@ -264,7 +335,7 @@ func renderPlantUMLC4ComponentDiagram(tree *types.LayoutTree, sb *strings.Builde
 			if tech == "" {
 				tech = "Go/Core Component"
 			}
-			if node.Kind == ont.PredDatabase || strings.Contains(node.PrimitiveType, "DATABASE") {
+			if isDatabase(node) {
 				sb.WriteString(fmt.Sprintf("%sComponentDb(%s, \"%s\", \"%s\", \"Relational / NoSQL Data Store\")\n", indent, nodeAlias, name, tech))
 			} else if strings.Contains(node.PrimitiveType, "CACHE") {
 				sb.WriteString(fmt.Sprintf("%sComponentDb(%s, \"%s\", \"%s\", \"In-Memory Cache Store\")\n", indent, nodeAlias, name, tech))
@@ -272,7 +343,7 @@ func renderPlantUMLC4ComponentDiagram(tree *types.LayoutTree, sb *strings.Builde
 				sb.WriteString(fmt.Sprintf("%sComponentExt(%s, \"%s\", \"%s\", \"Async Message Queue / Event Bus\")\n", indent, nodeAlias, name, tech))
 			} else if strings.Contains(node.PrimitiveType, "AI_LLM") {
 				sb.WriteString(fmt.Sprintf("%sComponentExt(%s, \"%s\", \"%s\", \"AI / LLM Vector Service\")\n", indent, nodeAlias, name, tech))
-			} else if node.Kind == ont.PredExternalSystem || strings.Contains(node.PrimitiveType, "NETWORK_IO") || strings.Contains(node.PrimitiveType, "CLOUD_SDK") || strings.Contains(node.PrimitiveType, "RPC") {
+			} else if isExternalSystem(node) {
 				sb.WriteString(fmt.Sprintf("%sComponentExt(%s, \"%s\", \"%s\", \"External Cloud / Service Integration\")\n", indent, nodeAlias, name, tech))
 			} else {
 				kind := getShortKind(node.Kind)
@@ -298,16 +369,13 @@ func renderPlantUMLC4LandscapeDiagram(tree *types.LayoutTree, sb *strings.Builde
 	title := getDiagramTitle(tree, "System Landscape Diagram")
 	sb.WriteString(fmt.Sprintf("title %s\n", title))
 
-	for _, boundary := range tree.Children {
-		if !isSystemBoundary(boundary) {
-			continue
-		}
-		alias := sanitizeName(boundary.BoundaryName)
-		name := sanitizeMermaidLabel(boundary.BoundaryName)
+	if len(tree.Children) == 0 && len(tree.Nodes) > 0 {
+		alias := sanitizeName(tree.BoundaryName)
+		name := sanitizeMermaidLabel(tree.BoundaryName)
 		sb.WriteString(fmt.Sprintf("Enterprise_Boundary(%s_ent, \"%s Enterprise\") {\n", alias, name))
 		sb.WriteString(fmt.Sprintf("    System(%s, \"%s\", \"System Module\")\n", alias, name))
-		for _, node := range boundary.Nodes {
-			if node.Kind == ont.PredExternalSystem {
+		for _, node := range tree.Nodes {
+			if isExternalSystem(node) {
 				sb.WriteString(fmt.Sprintf("    SystemExt(%s, \"%s\", \"External System\")\n",
 					sanitizeName(node.ID), sanitizeMermaidLabel(node.Name)))
 			} else if isDatabase(node) {
@@ -316,6 +384,23 @@ func renderPlantUMLC4LandscapeDiagram(tree *types.LayoutTree, sb *strings.Builde
 			}
 		}
 		sb.WriteString("}\n")
+	} else {
+		for _, boundary := range tree.Children {
+			alias := sanitizeName(boundary.BoundaryName)
+			name := sanitizeMermaidLabel(boundary.BoundaryName)
+			sb.WriteString(fmt.Sprintf("Enterprise_Boundary(%s_ent, \"%s Enterprise\") {\n", alias, name))
+			sb.WriteString(fmt.Sprintf("    System(%s, \"%s\", \"System Module\")\n", alias, name))
+			for _, node := range boundary.Nodes {
+				if isExternalSystem(node) {
+					sb.WriteString(fmt.Sprintf("    SystemExt(%s, \"%s\", \"External System\")\n",
+						sanitizeName(node.ID), sanitizeMermaidLabel(node.Name)))
+				} else if isDatabase(node) {
+					sb.WriteString(fmt.Sprintf("    SystemDb(%s, \"%s\", \"Database\")\n",
+						sanitizeName(node.ID), sanitizeMermaidLabel(node.Name)))
+				}
+			}
+			sb.WriteString("}\n")
+		}
 	}
 
 	renderPlantUMLC4Edges(tree, sb)
@@ -349,14 +434,11 @@ func renderPlantUMLC4DeploymentDiagram(tree *types.LayoutTree, sb *strings.Build
 	title := getDiagramTitle(tree, "C4 Deployment Diagram")
 	sb.WriteString(fmt.Sprintf("title %s\n", title))
 
-	for _, boundary := range tree.Children {
-		if !isSystemBoundary(boundary) {
-			continue
-		}
-		alias := sanitizeName(boundary.BoundaryName)
-		name := sanitizeMermaidLabel(boundary.BoundaryName)
+	if len(tree.Children) == 0 && len(tree.Nodes) > 0 {
+		alias := sanitizeName(tree.BoundaryName)
+		name := sanitizeMermaidLabel(tree.BoundaryName)
 		sb.WriteString(fmt.Sprintf("Deployment_Node(%s_node, \"%s Node\", \"Deployment Environment\") {\n", alias, name))
-		for _, node := range boundary.Nodes {
+		for _, node := range tree.Nodes {
 			nodeAlias := sanitizeName(node.ID)
 			nodeName := sanitizeMermaidLabel(node.Name)
 			if isDatabase(node) {
@@ -368,6 +450,24 @@ func renderPlantUMLC4DeploymentDiagram(tree *types.LayoutTree, sb *strings.Build
 			}
 		}
 		sb.WriteString("}\n")
+	} else {
+		for _, boundary := range tree.Children {
+			alias := sanitizeName(boundary.BoundaryName)
+			name := sanitizeMermaidLabel(boundary.BoundaryName)
+			sb.WriteString(fmt.Sprintf("Deployment_Node(%s_node, \"%s Node\", \"Deployment Environment\") {\n", alias, name))
+			for _, node := range boundary.Nodes {
+				nodeAlias := sanitizeName(node.ID)
+				nodeName := sanitizeMermaidLabel(node.Name)
+				if isDatabase(node) {
+					sb.WriteString(fmt.Sprintf("    ContainerDb(%s, \"%s\", \"%s\", \"Data Store\")\n",
+						nodeAlias, nodeName, detectNodeTechnology(node)))
+				} else {
+					sb.WriteString(fmt.Sprintf("    Container(%s, \"%s\", \"%s\", \"%s\")\n",
+						nodeAlias, nodeName, detectNodeTechnology(node), getNodeDescription(node)))
+				}
+			}
+			sb.WriteString("}\n")
+		}
 	}
 
 	renderPlantUMLC4Edges(tree, sb)

@@ -104,8 +104,14 @@ func TestWatchRequiresGit(t *testing.T) {
 // Note: the engine may also read a user-level ~/.glassmarble/ai.yaml; when a
 // real config exists there, this test's no-key expectation cannot hold.
 func TestAIConfigFallback(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	t.Setenv("USERPROFILE", tempHome)
 	t.Setenv("GLASSMARBLE_AI_API_KEY", "")
 	t.Setenv("GLASSMARBLE_OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
 	sb := harness.NewSandbox(t)
 
 	out, err := harness.RunGmb(t, sb, "ai", "doctor")

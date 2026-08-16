@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
+	"github.com/Syamchand123/GlassMarble/internal/product/ids"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
@@ -167,12 +168,54 @@ func StreamGraphEdges(graphPath string, fn func(*types.NativeEdge) bool) error {
 	})
 }
 
+// normalizeScopePath converts a file path, FileURI or node ID into a slash-normalized relative path.
+func normalizeScopePath(p string) string {
+	res := p
+	res = strings.TrimPrefix(res, "http://glassmarble.org/node/")
+	res = strings.TrimPrefix(res, "http://glassmarble.org/file/")
+	res = strings.TrimPrefix(res, "http://glassmarble.org/namespace/")
+	res = strings.TrimPrefix(res, "file:")
+	res = strings.TrimPrefix(res, "module:")
+	res = strings.TrimPrefix(res, "virt:")
+	res = strings.TrimPrefix(res, "./")
+	if norm := ids.NormalizeLegacyID(res); norm != "" {
+		if c, err := ids.ParseCanonicalID(norm); err == nil && c.Path != "" {
+			res = c.Path
+		} else {
+			parts := strings.Split(res, "::")
+			if len(parts) >= 2 {
+				res = parts[0]
+			}
+		}
+	}
+	res = strings.ReplaceAll(res, "\\", "/")
+	return strings.Trim(res, "/")
+}
+
+// isWithinFolder reports whether candidate lives inside the folder scope.
+func isWithinFolder(candidate, scopePath string) bool {
+	if candidate == "" || scopePath == "" {
+		return false
+	}
+	c := normalizeScopePath(candidate)
+	s := normalizeScopePath(scopePath)
+	return c == s || strings.HasPrefix(c, s+"/")
+}
+
+// isWithinFile reports whether candidate names the scoped file (or a node inside it).
+func isWithinFile(candidate, scopePath string) bool {
+	if candidate == "" || scopePath == "" {
+		return false
+	}
+	c := normalizeScopePath(candidate)
+	s := normalizeScopePath(scopePath)
+	return c == s || strings.HasSuffix(c, "/"+s)
+}
+
 // ParseGraphFileToNativeScoped streams the GraphJSON state and materializes
 // ONLY the nodes belonging to scopePath plus the edges whose endpoints are
 // both in that set: file-scope diagrams must load only the file's nodes
-// instead of the whole database. Matching rules mirror
-// ingest.ApplyScope(ScopeFile) exactly, so the result equals a full load
-// followed by ApplyScope.
+// instead of the whole database.
 func ParseGraphFileToNativeScoped(graphPath, scopePath string) (*types.NativeGraph, error) {
 	if scopePath == "" {
 		return nil, fmt.Errorf("file scope requires a non-empty path")
@@ -182,7 +225,6 @@ func ParseGraphFileToNativeScoped(graphPath, scopePath string) (*types.NativeGra
 		Edges: make([]types.NativeEdge, 0),
 	}
 	matched := make(map[string]bool)
-	scopedPath := "/" + strings.TrimPrefix(scopePath, "/")
 
 	entrypoints := make(map[string]bool)
 	if err := streamJSONState(graphPath, jsonStreamHooks{
@@ -197,7 +239,7 @@ func ParseGraphFileToNativeScoped(graphPath, scopePath string) (*types.NativeGra
 	if err := streamJSONState(graphPath, jsonStreamHooks{
 		onNode: func(n GraphNodeJSON) bool {
 			nn := ResolvedNodeToNativeNode(graphNodeToResolved(n))
-			if matchesFileScope(nn, nn.ID, scopePath, scopedPath) {
+			if matchesFileScope(nn, nn.ID, scopePath) {
 				nn.IsEntrypoint = entrypoints[nn.ID]
 				graph.Nodes[nn.ID] = nn
 				matched[nn.ID] = true
@@ -232,17 +274,16 @@ func ParseGraphFileToNativeScoped(graphPath, scopePath string) (*types.NativeGra
 }
 
 // matchesFileScope reproduces ingest.ApplyScope(ScopeFile)'s node predicate.
-func matchesFileScope(n *types.NativeNode, id, scopePath, scopedPath string) bool {
-	return n.FileURI == scopedPath || strings.HasSuffix(n.FileURI, scopedPath) ||
-		strings.HasPrefix(id, scopedPath) || strings.HasPrefix(id, scopePath)
+func matchesFileScope(n *types.NativeNode, id, scopePath string) bool {
+	if n != nil && isWithinFile(n.FileURI, scopePath) {
+		return true
+	}
+	return isWithinFile(id, scopePath)
 }
 
 // ParseGraphForQuery adapts the JSON-store readers to the visualization
 // pipeline's parser contract (visualization_engine.ParseFn): a global load
 // for whole-graph queries and a lazy file-scoped load for ScopeFile queries.
-// It is wired into EngineCoordinator by request-layer callers because akg
-// cannot be imported from visualization_engine or product (import cycle via
-// link → product).
 func ParseGraphForQuery(graphPath string, opts types.QueryOptions) (*types.NativeGraph, error) {
 	if opts.Scope == types.ScopeFile && opts.ScopePath != "" {
 		return ParseGraphFileToNativeScoped(graphPath, opts.ScopePath)

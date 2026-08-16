@@ -74,6 +74,9 @@ type QueryOptions struct {
 	// it into the unified pipeline so interactive diagrams honor the
 	// --link-level flag (GAP-H-05).
 	LinkLevel string
+	Theme        string
+	Direction    string
+	IncludeTests bool
 }
 
 type ScopeLevel int
@@ -242,6 +245,7 @@ type LayoutNode struct {
 	// renderers can emit UML visibility markers instead of ASCII-case
 	// heuristics (GAP-L-02).
 	Visibility string
+	Properties map[string]string
 }
 
 type LayoutEdge struct {
@@ -271,6 +275,9 @@ type PipelineConfig struct {
 	EnableSCC         bool
 	MaxNodes          int
 	MaxDepth          int
+	Theme             string
+	Direction         string
+	IncludeTests      bool
 }
 
 type PipelineStep int

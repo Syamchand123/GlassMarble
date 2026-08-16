@@ -46,6 +46,9 @@ var (
 	changedFiles  []string
 	relativeFlag  bool
 	linkLevelFlag string
+	themeFlag        string
+	directionFlag    string
+	includeTestsFlag bool
 )
 
 var visualizeCmd = &cobra.Command{
@@ -84,6 +87,11 @@ var visualizeCmd = &cobra.Command{
 
 		start := time.Now()
 
+		outputFlag = strings.Trim(outputFlag, "\"'")
+		storagePath = strings.Trim(storagePath, "\"'")
+		saveFile = strings.Trim(saveFile, "\"'")
+		scopeFlag = strings.Trim(scopeFlag, "\"'")
+
 		scope, scopePath, err := parseScope(scopeFlag)
 		if err != nil {
 			return err
@@ -98,7 +106,10 @@ var visualizeCmd = &cobra.Command{
 			ScopePath:     scopePath,
 			MaxNodes:      maxNodesFlag,
 			ChangedFiles:  changedFiles,
-			LinkLevel:     linkLevelFlag,
+			LinkLevel:    linkLevelFlag,
+			Theme:        themeFlag,
+			Direction:    directionFlag,
+			IncludeTests: includeTestsFlag,
 		}
 
 		if cmd.Flags().Changed("pagerank") || cmd.Flags().Changed("community") || cmd.Flags().Changed("scc") {
@@ -225,6 +236,9 @@ var visualizeCmd = &cobra.Command{
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Marble saved successfully to %s\n", filePath)
 		} else if cmd.Flags().Changed("output") && outputFlag != "" {
+			if dir := filepath.Dir(outputFlag); dir != "" && dir != "." {
+				_ = os.MkdirAll(dir, 0755)
+			}
 			if err := os.WriteFile(outputFlag, []byte(markup), 0644); err != nil {
 				return fmt.Errorf("failed to write output file: %w", err)
 			}
@@ -528,7 +542,9 @@ func init() {
 	visualizeCmd.Flags().BoolVar(&includeUnused, "unused", false, "Include unreferenced dead components in the layout")
 	visualizeCmd.Flags().StringVar(&storagePath, "dir", ".", "Directory path containing the .glassmarble/ database folder")
 	visualizeCmd.Flags().StringVar(&saveFile, "save", "", "Save the diagram to a markdown file inside .glassmarble/marbles/")
-	visualizeCmd.Flags().StringVar(&formatFlag, "format", "mermaid", "Output format: mermaid, plantuml, or dot")
+	visualizeCmd.Flags().StringVar(&formatFlag, "format", "mermaid", "Output format: mermaid, plantuml, dot, or html")
+	visualizeCmd.Flags().StringVar(&themeFlag, "theme", "modern", "Color palette theme: modern, dark, nordic, forest, or mono")
+	visualizeCmd.Flags().StringVar(&directionFlag, "direction", "auto", "Layout direction: auto, TB, LR, or TD")
 	visualizeCmd.Flags().StringVar(&scopeFlag, "scope", "", "Filter layout to specific scope: global (default), folder:path, or file:path")
 	visualizeCmd.Flags().StringVar(&outputFlag, "output", "", "Write diagram to file instead of stdout")
 	visualizeCmd.Flags().BoolVar(&summaryFlag, "summary", false, "Print graph summary before the diagram")
@@ -540,6 +556,7 @@ func init() {
 	visualizeCmd.Flags().StringSliceVar(&changedFiles, "changed-files", nil, "Comma-separated list of changed files for impact analysis")
 	visualizeCmd.Flags().BoolVar(&relativeFlag, "relative", false, "Render file/symbol paths relative to folder root under folder scope")
 	visualizeCmd.Flags().StringVar(&linkLevelFlag, "link-level", "architecture", "Detail level of graph linkage: architecture, standard, or full")
+	visualizeCmd.Flags().BoolVar(&includeTestsFlag, "include-tests", false, "Include test files (*_test.go) and test functions in diagram")
 
 	rootCmd.AddCommand(visualizeCmd)
 }

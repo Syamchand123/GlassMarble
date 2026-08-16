@@ -169,6 +169,7 @@ func BuildLayoutTreeEx(sub *types.VirtualSubgraph, metrics *DiagramMetrics, clus
 			OutDegree:     outDeg[id],
 			IsGodObject:   godSet[id],
 			Visibility:    node.Properties["visibility"],
+			Properties:    node.Properties,
 		}
 		if inDeg[id] > 5 {
 			layoutNode.IsHotspot = true
