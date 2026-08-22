@@ -44,14 +44,20 @@ type aliasRegistry struct {
 	count    map[string]int
 	byID     map[string]string
 	declared map[string]bool
+	// boundaryNodeAlias maps each layout node to the alias of the boundary
+	// block that actually contains it, so edge fallback resolution is
+	// position-accurate even when two subtrees share a boundary name
+	// (GAP-C4-03).
+	boundaryNodeAlias map[string]string
 }
 
 func newAliasRegistry() *aliasRegistry {
 	return &aliasRegistry{
-		used:     make(map[string]string),
-		count:    make(map[string]int),
-		byID:     make(map[string]string),
-		declared: make(map[string]bool),
+		used:              make(map[string]string),
+		count:             make(map[string]int),
+		byID:              make(map[string]string),
+		declared:          make(map[string]bool),
+		boundaryNodeAlias: make(map[string]string),
 	}
 }
 
@@ -67,6 +73,38 @@ func (r *aliasRegistry) isDeclared(alias string) bool {
 		return false
 	}
 	return r.declared[alias]
+}
+
+// bindBoundary records that nodeID lives inside the boundary block emitted
+// with the given alias, so renderC4Edges can fall back to a declared alias
+// for aggregated relationships (GAP-C4-03).
+func (r *aliasRegistry) bindBoundary(nodeID, alias string) {
+	if r.boundaryNodeAlias == nil {
+		r.boundaryNodeAlias = make(map[string]string)
+	}
+	r.boundaryNodeAlias[nodeID] = alias
+}
+
+func (r *aliasRegistry) boundaryAliasOf(nodeID string) string {
+	if r.boundaryNodeAlias == nil {
+		return ""
+	}
+	return r.boundaryNodeAlias[nodeID]
+}
+
+// uniqueAlias returns base if it is not yet declared, otherwise base with a
+// numeric suffix (base_2, base_3, ...). Used when a boundary name appears at
+// more than one tree position (e.g. file and package scope subtrees) so
+// renderers never emit duplicate declarations.
+func (r *aliasRegistry) uniqueAlias(base string) string {
+	if !r.isDeclared(base) {
+		return base
+	}
+	n := 2
+	for r.isDeclared(fmt.Sprintf("%s_%d", base, n)) {
+		n++
+	}
+	return fmt.Sprintf("%s_%d", base, n)
 }
 
 func (r *aliasRegistry) alias(id string) string {
@@ -480,10 +518,52 @@ func renderDOTSummaryFooter(tree *types.LayoutTree, sb *strings.Builder) {
 
 func renderC4Edges(tree *types.LayoutTree, reg *aliasRegistry, sb *strings.Builder) {
 	drawn := make(map[string]bool)
+
+	// Resolve undeclared endpoints to the alias of the boundary block that
+	// actually contains them (recorded position-accurately by renderC4Blocks),
+	// so aggregated relationships (cmd -> internal -> tests) survive and
+	// always reference an alias that exists in the markup (GAP-C4-02/03).
+	boundaryOf := make(map[string]string)
+	if len(tree.Children) > 0 {
+		for _, child := range tree.Children {
+			var mark func(t *types.LayoutTree)
+			mark = func(t *types.LayoutTree) {
+				for _, n := range t.Nodes {
+					boundaryOf[n.ID] = child.BoundaryName
+				}
+				for _, c := range t.Children {
+					mark(c)
+				}
+			}
+			mark(child)
+		}
+	}
+
 	for _, edge := range tree.Edges {
 		src := reg.alias(edge.SourceID)
 		tgt := reg.alias(edge.TargetID)
+		if !reg.isDeclared(src) {
+			if bound := reg.boundaryAliasOf(edge.SourceID); bound != "" && reg.isDeclared(bound) {
+				src = bound
+			} else if name, ok := boundaryOf[edge.SourceID]; ok {
+				if base := reg.boundary(name); reg.isDeclared(base) {
+					src = base
+				}
+			}
+		}
+		if !reg.isDeclared(tgt) {
+			if bound := reg.boundaryAliasOf(edge.TargetID); bound != "" && reg.isDeclared(bound) {
+				tgt = bound
+			} else if name, ok := boundaryOf[edge.TargetID]; ok {
+				if base := reg.boundary(name); reg.isDeclared(base) {
+					tgt = base
+				}
+			}
+		}
 		if !reg.isDeclared(src) || !reg.isDeclared(tgt) {
+			continue
+		}
+		if src == tgt {
 			continue
 		}
 		key := src + "->" + tgt

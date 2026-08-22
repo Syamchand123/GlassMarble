@@ -3,6 +3,7 @@ package normalize
 import (
 	"testing"
 
+	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
 
@@ -355,4 +356,71 @@ func aggContainsStr(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// TestGetDirectoryPathC4Community verifies that community labels never leak
+// the synthetic pkg: prefix into boundary dirs (Windows would read the colon
+// as a volume name and split one logical directory across two boundaries,
+// GAP-W-02).
+func TestGetDirectoryPathC4Community(t *testing.T) {
+	communities := map[string]string{
+		"pkg:internal/product":             "pkg:internal/product",
+		"pkg:internal/product/ids":         "pkg:internal/product",
+		"pkg:internal/ai_engine":           "pkg:internal/ai_engine",
+		"pkg:internal/ai_engine/provider":  "pkg:internal/ai_engine",
+	}
+
+	tests := []struct {
+		name      string
+		nodeID    string
+		diagType  types.DiagramType
+		want      string
+		wantEmpty bool
+	}{
+		{
+			name:     "c4 context ignores community labels",
+			nodeID:   "pkg:internal/product",
+			diagType: types.C4Context,
+			want:     "internal/product",
+		},
+		{
+			name:     "c4 landscape ignores community labels",
+			nodeID:   "pkg:internal/product",
+			diagType: types.C4Landscape,
+			want:     "internal/product",
+		},
+		{
+			name:     "c4 context nested pkg dir",
+			nodeID:   "pkg:internal/product/ids",
+			diagType: types.C4Context,
+			want:     "internal/product/ids",
+		},
+		{
+			name:     "c4 container strips pkg prefix from community",
+			nodeID:   "pkg:internal/product/ids",
+			diagType: types.C4Container,
+			want:     "internal/product Component",
+		},
+		{
+			name:     "uml component strips pkg prefix from community",
+			nodeID:   "pkg:internal/ai_engine/provider",
+			diagType: types.UMLComponent,
+			want:     "internal/ai_engine Component",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := getDirectoryPath(tc.nodeID, ont.PredPackage, tc.diagType, communities)
+			if tc.wantEmpty {
+				if got != "" {
+					t.Errorf("expected empty string, got %q", got)
+				}
+				return
+			}
+			if got != tc.want {
+				t.Errorf("expected %q, got %q", tc.want, got)
+			}
+		})
+	}
 }

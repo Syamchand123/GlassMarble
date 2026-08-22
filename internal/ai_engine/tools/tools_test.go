@@ -8,10 +8,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/akgbridge"
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/testutil"
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/tools"
+	"github.com/Syamchand123/GlassMarble/internal/arch_timeline"
+	"github.com/Syamchand123/GlassMarble/internal/archmodel"
+	"github.com/Syamchand123/GlassMarble/internal/developer_memory"
+	"github.com/Syamchand123/GlassMarble/internal/evidence"
 )
 
 // newTestEnv seeds a synthetic AKG plus source files and returns a ready Env.
@@ -643,5 +648,203 @@ func TestSchemaRequired(t *testing.T) {
 				t.Errorf("code_read_file required = %v", req)
 			}
 		}
+	}
+}
+
+func TestQueryArchitectureMemoryTool(t *testing.T) {
+	env := newTestEnv(t)
+
+	// Seed real developer memory data
+	memStore := developer_memory.NewMemoryStore(env.RootDir)
+	mem := &developer_memory.DeveloperMemory{
+		ProjectID: "test-proj",
+	}
+	mem.GlobalMemory = append(mem.GlobalMemory, developer_memory.KnowledgeClaim{
+		Subject:   "RedisStore",
+		Predicate: "CACHES",
+		Object:    "UserSession",
+		ClaimKind: developer_memory.ClaimFact,
+		State:     developer_memory.StateActive,
+	})
+	mem.ComponentMemory = map[string]developer_memory.ComponentHistory{
+		"RedisStore": {
+			Name:  "RedisStore",
+			State: developer_memory.StateActive,
+		},
+	}
+	if err := memStore.SaveMemoryAndTimeline(mem); err != nil {
+		t.Fatalf("SaveMemoryAndTimeline: %v", err)
+	}
+
+	// Successful query
+	res, err := call(t, env, "query_architecture_memory", `{"query": "RedisStore"}`)
+	if err != nil {
+		t.Fatalf("query_architecture_memory: %v", err)
+	}
+	data := dataOf(t, res)
+	if data["ok"] != true {
+		t.Errorf("ok = %v, want true", data["ok"])
+	}
+	claims, _ := data["claims"].([]any)
+	if len(claims) == 0 {
+		t.Errorf("expected claims for RedisStore, got %d", len(claims))
+	}
+
+	// Missing query parameter
+	if _, err := call(t, env, "query_architecture_memory", `{}`); err == nil {
+		t.Error("expected error when query parameter is missing")
+	}
+}
+
+func TestGetArchitectureTimelineTool(t *testing.T) {
+	env := newTestEnv(t)
+
+	// Seed timeline entries
+	memStore := developer_memory.NewMemoryStore(env.RootDir)
+	mem := &developer_memory.DeveloperMemory{
+		ProjectID: "test-proj",
+	}
+	mem.Timeline = []archmodel.TimelineEntry{
+		{
+			Timestamp:   time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC),
+			EventKind:   archmodel.EventCachingAdded,
+			Title:       "Added Redis Cache",
+			Description: "Session caching module",
+			Components:  []string{"redis", "cache"},
+		},
+		{
+			Timestamp:   time.Date(2026, 6, 20, 14, 0, 0, 0, time.UTC),
+			EventKind:   archmodel.EventKind("REFACTOR"),
+			Title:       "Refactored Auth Service",
+			Description: "JWT token migration",
+			Components:  []string{"auth"},
+		},
+	}
+	if err := memStore.SaveMemoryAndTimeline(mem); err != nil {
+		t.Fatalf("SaveMemoryAndTimeline: %v", err)
+	}
+
+	// 1. Full timeline
+	res, err := call(t, env, "get_architecture_timeline", `{}`)
+	if err != nil {
+		t.Fatalf("get_architecture_timeline full: %v", err)
+	}
+	data := dataOf(t, res)
+	timeline, _ := data["timeline"].([]any)
+	if len(timeline) != 2 {
+		t.Errorf("full timeline len = %d, want 2", len(timeline))
+	}
+
+	// 2. Component filter
+	res, err = call(t, env, "get_architecture_timeline", `{"component": "redis"}`)
+	if err != nil {
+		t.Fatalf("get_architecture_timeline component: %v", err)
+	}
+	data = dataOf(t, res)
+	timeline, _ = data["timeline"].([]any)
+	if len(timeline) != 1 {
+		t.Errorf("redis timeline len = %d, want 1", len(timeline))
+	}
+
+	// 3. Date window filter (Jan 2026 only)
+	res, err = call(t, env, "get_architecture_timeline", `{"from_date": "2026-01-01", "to_date": "2026-02-01"}`)
+	if err != nil {
+		t.Fatalf("get_architecture_timeline date filter: %v", err)
+	}
+	data = dataOf(t, res)
+	timeline, _ = data["timeline"].([]any)
+	if len(timeline) != 1 {
+		t.Errorf("january timeline len = %d, want 1", len(timeline))
+	}
+
+	// 4. Invalid date format
+	if _, err := call(t, env, "get_architecture_timeline", `{"from_date": "not-a-date"}`); err == nil {
+		t.Error("expected error for invalid date format")
+	}
+}
+
+func TestGetArchitecturePatternsTool(t *testing.T) {
+	env := newTestEnv(t)
+
+	// Seed architecture snapshot with patterns and smells
+	snapDir := filepath.Join(env.RootDir, ".glassmarble", "snapshots")
+	snapStore, err := arch_timeline.NewSnapshotStore(snapDir)
+	if err != nil {
+		t.Fatalf("NewSnapshotStore: %v", err)
+	}
+
+	evItem := evidence.NewBundle(evidence.EvidenceItem{Source: evidence.SourceCode, Reference: "test", Confidence: 0.95})
+	input := arch_timeline.SnapshotInput{
+		CommitHash: "abc1234",
+		Timestamp:  time.Now(),
+		NoGraph:    true,
+		Patterns: []archmodel.DetectedPattern{
+			{
+				Kind:       archmodel.PatternLayered,
+				Name:       "Layered Architecture",
+				Confidence: 0.95,
+				Components: []string{"api", "service", "db"},
+				Evidence:   evItem,
+			},
+			{
+				Kind:       archmodel.PatternRepository,
+				Name:       "Repository Pattern",
+				Confidence: 0.60,
+				Components: []string{"db"},
+				Evidence:   evItem,
+			},
+		},
+		Smells: []archmodel.ArchSmell{
+			{
+				Kind:     archmodel.SmellGodObject,
+				Title:    "God Object in Store",
+				Severity: archmodel.SeverityHigh,
+				Evidence: evItem,
+			},
+		},
+	}
+	snap, err := arch_timeline.BuildSnapshot(input)
+	if err != nil {
+		t.Fatalf("BuildSnapshot: %v", err)
+	}
+	if _, err := snapStore.Create(snap); err != nil {
+		t.Fatalf("snapStore.Create: %v", err)
+	}
+
+	// 1. Full patterns with smells
+	res, err := call(t, env, "get_architecture_patterns", `{"include_smells": true}`)
+	if err != nil {
+		t.Fatalf("get_architecture_patterns: %v", err)
+	}
+	data := dataOf(t, res)
+	patterns, _ := data["patterns"].([]any)
+	smells, _ := data["smells"].([]any)
+	if len(patterns) != 2 {
+		t.Errorf("patterns count = %d, want 2", len(patterns))
+	}
+	if len(smells) != 1 {
+		t.Errorf("smells count = %d, want 1", len(smells))
+	}
+
+	// 2. High confidence threshold (filters out 0.60)
+	res, err = call(t, env, "get_architecture_patterns", `{"min_confidence": 0.80}`)
+	if err != nil {
+		t.Fatalf("get_architecture_patterns high conf: %v", err)
+	}
+	data = dataOf(t, res)
+	patterns, _ = data["patterns"].([]any)
+	if len(patterns) != 1 {
+		t.Errorf("filtered patterns count = %d, want 1 (0.95 confidence only)", len(patterns))
+	}
+
+	// 3. Exclude smells
+	res, err = call(t, env, "get_architecture_patterns", `{"include_smells": false}`)
+	if err != nil {
+		t.Fatalf("get_architecture_patterns no smells: %v", err)
+	}
+	data = dataOf(t, res)
+	smells, _ = data["smells"].([]any)
+	if len(smells) != 0 {
+		t.Errorf("smells count = %d, want 0", len(smells))
 	}
 }

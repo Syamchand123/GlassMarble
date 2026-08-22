@@ -6,19 +6,16 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/app"
 	"github.com/Syamchand123/GlassMarble/internal/config"
+	"github.com/Syamchand123/GlassMarble/internal/product"
 	"github.com/charmbracelet/fang"
 	"github.com/spf13/cobra"
 )
-
-// version is the GlassMarble CLI version surfaced by `gmb version`, Fang's
-// --version handling, and the build.
-const version = "0.1.0"
 
 var rootCmd = &cobra.Command{
 	Use:     "gmb",
 	Short:   "GlassMarble – Intelligent Architecture Knowledge Graph",
 	Long:    `Build, query, and visualise a self‑evolving Architecture Knowledge Graph.`,
-	Version: version,
+	Version: product.Version,
 	// Fang owns error and usage presentation (see Execute/ExecuteContext), so
 	// Cobra must not print them a second time.
 	SilenceUsage:  true,
@@ -47,13 +44,13 @@ var rootCmd = &cobra.Command{
 
 // Execute runs the CLI wrapped with Fang's styled help/error/version skin.
 func Execute() error {
-	return fang.Execute(context.Background(), rootCmd, fang.WithVersion(version))
+	return fang.Execute(context.Background(), rootCmd, fang.WithVersion(product.Version))
 }
 
 // ExecuteContext runs the CLI with a caller-supplied context (used by main.go
 // to propagate OS signal cancellation) wrapped with Fang's styled output.
 func ExecuteContext(ctx context.Context) error {
-	return fang.Execute(ctx, rootCmd, fang.WithVersion(version))
+	return fang.Execute(ctx, rootCmd, fang.WithVersion(product.Version))
 }
 
 func init() {

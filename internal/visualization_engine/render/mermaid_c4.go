@@ -42,6 +42,20 @@ func renderC4ContextDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 			rootAlias, sanitizeMermaidLabel(tree.BoundaryName)))
 	}
 
+	// Root-level package nodes (cmd, main.go, ...) have no parent directory
+	// and land directly on the root tree; without this they would silently
+	// disappear from the context view while their edges reference them
+	// (GAP-C4-01).
+	for _, node := range tree.Nodes {
+		if isExternalSystem(node) || isDatabase(node) {
+			continue
+		}
+		alias := reg.alias(node.ID)
+		reg.markDeclared(alias)
+		sb.WriteString(fmt.Sprintf("    System(%s, \"%s\", \"System\")\n",
+			alias, sanitizeMermaidLabel(node.Name)))
+	}
+
 	for _, node := range collectExternalNodes(tree) {
 		alias := reg.alias(node.ID)
 		reg.markDeclared(alias)
@@ -51,7 +65,7 @@ func renderC4ContextDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	}
 
 	for _, node := range collectAllNodes(tree) {
-		if isDatabase(node) {
+		if isDatabase(node) && node.Kind != ont.PredPackage {
 			alias := reg.alias(node.ID)
 			reg.markDeclared(alias)
 			tags := getNodeTags(node)
@@ -78,6 +92,119 @@ func hasTreeNodes(t *types.LayoutTree) bool {
 	return false
 }
 
+// countSubtreeNodes returns the total number of layout nodes in the subtree.
+func countSubtreeNodes(t *types.LayoutTree) int {
+	if t == nil {
+		return 0
+	}
+	n := len(t.Nodes)
+	for _, c := range t.Children {
+		n += countSubtreeNodes(c)
+	}
+	return n
+}
+
+// c4BlockRenderer drives the recursive C4 block renderer shared by the
+// container / landscape / deployment / infrastructure diagrams (GAP-C4-03).
+type c4BlockRenderer struct {
+	indent       string
+	blockAlias   func(base string) string
+	openBlock    func(alias, name string) string
+	closeBlock   func(indent string) string
+	selfLine     func(alias, name string) string
+	renderNode   func(node *types.LayoutNode, reg *aliasRegistry) string
+	renderFolded func(boundary *types.LayoutTree, count int, reg *aliasRegistry) string
+}
+
+// renderC4Blocks renders one outer block per content-bearing level-1
+// boundary. Every deeper boundary folds its whole subtree into a single
+// element, so deep boundary trees (folder/file scope) never silently drop
+// nodes while global-scope output keeps its established shape (GAP-C4-03).
+func renderC4Blocks(tree *types.LayoutTree, reg *aliasRegistry, sb *strings.Builder, r *c4BlockRenderer) {
+	emitBlock := func(t *types.LayoutTree, indent string) {
+		base := reg.boundary(t.BoundaryName)
+		emitted := base
+		if r.blockAlias != nil {
+			emitted = r.blockAlias(base)
+		}
+		// A boundary name can appear at more than one tree position (e.g.
+		// file and package scope subtrees); emit a unique alias so no
+		// declaration is duplicated.
+		emitted = reg.uniqueAlias(emitted)
+		reg.markDeclared(emitted)
+		var bind func(st *types.LayoutTree)
+		bind = func(st *types.LayoutTree) {
+			for _, n := range st.Nodes {
+				reg.bindBoundary(n.ID, emitted)
+			}
+			for _, c := range st.Children {
+				bind(c)
+			}
+		}
+		bind(t)
+		sb.WriteString(r.openBlock(emitted, sanitizeMermaidLabel(t.BoundaryName)))
+		inner := indent + "    "
+		if r.selfLine != nil {
+			selfAlias := reg.uniqueAlias(base)
+			reg.markDeclared(selfAlias)
+			sb.WriteString(inner + r.selfLine(selfAlias, sanitizeMermaidLabel(t.BoundaryName)))
+		}
+		for _, node := range t.Nodes {
+			sb.WriteString(inner + r.renderNode(node, reg))
+		}
+		for _, child := range t.Children {
+			if !hasTreeNodes(child) {
+				continue
+			}
+			sb.WriteString(inner + r.renderFolded(child, countSubtreeNodes(child), reg))
+		}
+		sb.WriteString(r.closeBlock(indent))
+	}
+
+	if len(tree.Children) == 0 && len(tree.Nodes) > 0 {
+		emitBlock(tree, r.indent)
+		return
+	}
+	for _, boundary := range tree.Children {
+		if !hasTreeNodes(boundary) {
+			continue
+		}
+		emitBlock(boundary, r.indent)
+	}
+}
+
+// renderContainerElement renders a single layout node as a C4 Container
+// (or ContainerDb for data stores), used by the container, deployment and
+// infrastructure diagrams.
+func renderContainerElement(node *types.LayoutNode, reg *aliasRegistry) string {
+	alias := reg.alias(node.ID)
+	reg.markDeclared(alias)
+	name := sanitizeMermaidLabel(node.Name)
+	if name == "" {
+		name = sanitizeMermaidLabel(node.ID)
+	}
+	if isDatabase(node) {
+		return fmt.Sprintf("ContainerDb(%s, \"%s\", \"%s\", \"%s\")\n",
+			alias, name, detectNodeTechnology(node), getNodeDescription(node))
+	}
+	return fmt.Sprintf("Container(%s, \"%s\", \"%s\", \"%s\")\n",
+		alias, name, detectNodeTechnology(node), getNodeDescription(node))
+}
+
+// renderFoldedContainerElement folds a deeper boundary (and its whole
+// subtree) into a single Container element (GAP-C4-03).
+func renderFoldedContainerElement(boundary *types.LayoutTree, count int, reg *aliasRegistry) string {
+	alias := reg.uniqueAlias(reg.boundary(boundary.BoundaryName))
+	reg.markDeclared(alias)
+	name := sanitizeMermaidLabel(boundary.BoundaryName)
+	desc := getContainerDescription(boundary)
+	if len(boundary.Nodes) == 0 {
+		desc = fmt.Sprintf("Package Container (%d nodes)", count)
+	}
+	return fmt.Sprintf("Container(%s, \"%s\", \"%s\", \"%s\")\n",
+		alias, name, detectContainerTechnology(boundary), desc)
+}
+
 func renderC4ContainerDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	sb.WriteString("C4Container\n")
 	title := getDiagramTitle(tree, "Container Diagram")
@@ -85,62 +212,20 @@ func renderC4ContainerDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	reg := newAliasRegistry()
 	registerTreeAliases(tree, reg)
 
-	if len(tree.Children) == 0 && len(tree.Nodes) > 0 {
-		alias := reg.boundary(tree.BoundaryName)
-		name := sanitizeMermaidLabel(tree.BoundaryName)
-		sb.WriteString(fmt.Sprintf("    System_Boundary(%s_sys, \"%s System\") {\n", alias, name))
-		for _, node := range tree.Nodes {
-			nodeAlias := reg.alias(node.ID)
-			reg.markDeclared(nodeAlias)
-			nodeName := sanitizeMermaidLabel(node.Name)
-			tech := detectNodeTechnology(node)
-			if isDatabase(node) {
-				sb.WriteString(fmt.Sprintf("        ContainerDb(%s, \"%s\", \"%s\", \"%s\")\n",
-					nodeAlias, nodeName, tech, getNodeDescription(node)))
-			} else {
-				sb.WriteString(fmt.Sprintf("        Container(%s, \"%s\", \"%s\", \"%s\")\n",
-					nodeAlias, nodeName, tech, getNodeDescription(node)))
-			}
-		}
-		sb.WriteString("    }\n")
-	} else {
-		for _, boundary := range tree.Children {
-			if !hasTreeNodes(boundary) {
-				continue
-			}
-			alias := reg.boundary(boundary.BoundaryName)
-			name := sanitizeMermaidLabel(boundary.BoundaryName)
-			sb.WriteString(fmt.Sprintf("    System_Boundary(%s_sys, \"%s System\") {\n", alias, name))
-
-			for _, subBoundary := range boundary.Children {
-				if !hasTreeNodes(subBoundary) {
-					continue
-				}
-				subAlias := reg.boundary(subBoundary.BoundaryName)
-				reg.markDeclared(subAlias)
-				subName := sanitizeMermaidLabel(subBoundary.BoundaryName)
-				tech := detectContainerTechnology(subBoundary)
-				sb.WriteString(fmt.Sprintf("        Container(%s, \"%s\", \"%s\", \"%s\")\n",
-					subAlias, subName, tech, getContainerDescription(subBoundary)))
-			}
-
-			for _, node := range boundary.Nodes {
-				nodeAlias := reg.alias(node.ID)
-				reg.markDeclared(nodeAlias)
-				nodeName := sanitizeMermaidLabel(node.Name)
-				tech := detectNodeTechnology(node)
-				if isDatabase(node) {
-					sb.WriteString(fmt.Sprintf("        ContainerDb(%s, \"%s\", \"%s\", \"%s\")\n",
-						nodeAlias, nodeName, tech, getNodeDescription(node)))
-				} else {
-					sb.WriteString(fmt.Sprintf("        Container(%s, \"%s\", \"%s\", \"%s\")\n",
-						nodeAlias, nodeName, tech, getNodeDescription(node)))
-				}
-			}
-
-			sb.WriteString("    }\n")
-		}
-	}
+	renderC4Blocks(tree, reg, sb, &c4BlockRenderer{
+		indent: "    ",
+		blockAlias: func(base string) string {
+			return base + "_sys"
+		},
+		openBlock: func(alias, name string) string {
+			return fmt.Sprintf("    System_Boundary(%s, \"%s System\") {\n", alias, name)
+		},
+		closeBlock: func(indent string) string {
+			return indent + "}\n"
+		},
+		renderNode:   renderContainerElement,
+		renderFolded: renderFoldedContainerElement,
+	})
 
 	renderC4Edges(tree, reg, sb)
 }
@@ -216,47 +301,50 @@ func renderC4LandscapeDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	reg := newAliasRegistry()
 	registerTreeAliases(tree, reg)
 
-	if len(tree.Children) == 0 && len(tree.Nodes) > 0 {
-		alias := reg.boundary(tree.BoundaryName)
-		reg.markDeclared(alias)
-		name := sanitizeMermaidLabel(tree.BoundaryName)
-		sb.WriteString(fmt.Sprintf("    Enterprise_Boundary(%s_ent, \"%s Enterprise\") {\n", alias, name))
-		sb.WriteString(fmt.Sprintf("        System(%s, \"%s\", \"System Module\")\n", alias, name))
-		for _, node := range tree.Nodes {
+	renderC4Blocks(tree, reg, sb, &c4BlockRenderer{
+		indent: "    ",
+		blockAlias: func(base string) string {
+			return base + "_ent"
+		},
+		openBlock: func(alias, name string) string {
+			return fmt.Sprintf("    Enterprise_Boundary(%s, \"%s Enterprise\") {\n", alias, name)
+		},
+		closeBlock: func(indent string) string {
+			return indent + "}\n"
+		},
+		selfLine: func(alias, name string) string {
+			return fmt.Sprintf("System(%s, \"%s\", \"System Module\")\n", alias, name)
+		},
+		renderNode: func(node *types.LayoutNode, reg *aliasRegistry) string {
 			nodeAlias := reg.alias(node.ID)
 			reg.markDeclared(nodeAlias)
+			name := sanitizeMermaidLabel(node.Name)
 			if isExternalSystem(node) {
-				sb.WriteString(fmt.Sprintf("        System_Ext(%s, \"%s\", \"External System\")\n",
-					nodeAlias, sanitizeMermaidLabel(node.Name)))
-			} else if isDatabase(node) {
-				sb.WriteString(fmt.Sprintf("        SystemDb(%s, \"%s\", \"Database\")\n",
-					nodeAlias, sanitizeMermaidLabel(node.Name)))
+				return fmt.Sprintf("System_Ext(%s, \"%s\", \"External System\")\n", nodeAlias, name)
 			}
-		}
-		sb.WriteString("    }\n")
-	} else {
-		for _, boundary := range tree.Children {
-			if !hasTreeNodes(boundary) {
-				continue
+			if isDatabase(node) && node.Kind != ont.PredPackage {
+				return fmt.Sprintf("SystemDb(%s, \"%s\", \"Database\")\n", nodeAlias, name)
 			}
-			alias := reg.boundary(boundary.BoundaryName)
+			return fmt.Sprintf("System(%s, \"%s\", \"System Module\")\n", nodeAlias, name)
+		},
+		renderFolded: func(boundary *types.LayoutTree, count int, reg *aliasRegistry) string {
+			alias := reg.uniqueAlias(reg.boundary(boundary.BoundaryName))
 			reg.markDeclared(alias)
-			name := sanitizeMermaidLabel(boundary.BoundaryName)
-			sb.WriteString(fmt.Sprintf("    Enterprise_Boundary(%s_ent, \"%s Enterprise\") {\n", alias, name))
-			sb.WriteString(fmt.Sprintf("        System(%s, \"%s\", \"System Module\")\n", alias, name))
-			for _, node := range boundary.Nodes {
-				nodeAlias := reg.alias(node.ID)
-				reg.markDeclared(nodeAlias)
-				if isExternalSystem(node) {
-					sb.WriteString(fmt.Sprintf("        System_Ext(%s, \"%s\", \"External System\")\n",
-						nodeAlias, sanitizeMermaidLabel(node.Name)))
-				} else if isDatabase(node) {
-					sb.WriteString(fmt.Sprintf("        SystemDb(%s, \"%s\", \"Database\")\n",
-						nodeAlias, sanitizeMermaidLabel(node.Name)))
-				}
-			}
-			sb.WriteString("    }\n")
+			return fmt.Sprintf("System(%s, \"%s\", \"System Module (%d nodes)\")\n",
+				alias, sanitizeMermaidLabel(boundary.BoundaryName), count)
+		},
+	})
+
+	// Root-level package nodes have no parent directory; render them as
+	// top-level systems so they are not silently dropped (GAP-C4-01).
+	for _, node := range tree.Nodes {
+		if isExternalSystem(node) || isDatabase(node) {
+			continue
 		}
+		nodeAlias := reg.alias(node.ID)
+		reg.markDeclared(nodeAlias)
+		sb.WriteString(fmt.Sprintf("    System(%s, \"%s\", \"System Module\")\n",
+			nodeAlias, sanitizeMermaidLabel(node.Name)))
 	}
 
 	renderC4Edges(tree, reg, sb)
@@ -322,46 +410,20 @@ func renderC4DeploymentDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	reg := newAliasRegistry()
 	registerTreeAliases(tree, reg)
 
-	if len(tree.Children) == 0 && len(tree.Nodes) > 0 {
-		alias := reg.boundary(tree.BoundaryName)
-		name := sanitizeMermaidLabel(tree.BoundaryName)
-		sb.WriteString(fmt.Sprintf("    Deployment_Node(%s_node, \"%s Node\", \"Deployment Environment\") {\n", alias, name))
-		for _, node := range tree.Nodes {
-			nodeAlias := reg.alias(node.ID)
-			reg.markDeclared(nodeAlias)
-			nodeName := sanitizeMermaidLabel(node.Name)
-			if isDatabase(node) {
-				sb.WriteString(fmt.Sprintf("        ContainerDb(%s, \"%s\", \"%s\", \"Data Store\")\n",
-					nodeAlias, nodeName, detectNodeTechnology(node)))
-			} else {
-				sb.WriteString(fmt.Sprintf("        Container(%s, \"%s\", \"%s\", \"%s\")\n",
-					nodeAlias, nodeName, detectNodeTechnology(node), getNodeDescription(node)))
-			}
-		}
-		sb.WriteString("    }\n")
-	} else {
-		for _, boundary := range tree.Children {
-			if !hasTreeNodes(boundary) {
-				continue
-			}
-			alias := reg.boundary(boundary.BoundaryName)
-			name := sanitizeMermaidLabel(boundary.BoundaryName)
-			sb.WriteString(fmt.Sprintf("    Deployment_Node(%s_node, \"%s Node\", \"Deployment Environment\") {\n", alias, name))
-			for _, node := range boundary.Nodes {
-				nodeAlias := reg.alias(node.ID)
-				reg.markDeclared(nodeAlias)
-				nodeName := sanitizeMermaidLabel(node.Name)
-				if isDatabase(node) {
-					sb.WriteString(fmt.Sprintf("        ContainerDb(%s, \"%s\", \"%s\", \"Data Store\")\n",
-						nodeAlias, nodeName, detectNodeTechnology(node)))
-				} else {
-					sb.WriteString(fmt.Sprintf("        Container(%s, \"%s\", \"%s\", \"%s\")\n",
-						nodeAlias, nodeName, detectNodeTechnology(node), getNodeDescription(node)))
-				}
-			}
-			sb.WriteString("    }\n")
-		}
-	}
+	renderC4Blocks(tree, reg, sb, &c4BlockRenderer{
+		indent: "    ",
+		blockAlias: func(base string) string {
+			return base + "_node"
+		},
+		openBlock: func(alias, name string) string {
+			return fmt.Sprintf("    Deployment_Node(%s, \"%s Node\", \"Deployment Environment\") {\n", alias, name)
+		},
+		closeBlock: func(indent string) string {
+			return indent + "}\n"
+		},
+		renderNode:   renderContainerElement,
+		renderFolded: renderFoldedContainerElement,
+	})
 
 	renderC4Edges(tree, reg, sb)
 }

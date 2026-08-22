@@ -2,6 +2,7 @@ package link
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/aggregate"
@@ -34,6 +35,13 @@ func resolveCallSite(callSite aggregate.LinkedCallSite, om *aggregate.OwnershipM
 	method := callSite.MethodName
 
 	if method == "" {
+		return
+	}
+
+	// Type conversions (e.g. string(x), float64(v)) surface as call sites
+	// whose "method" is a predeclared type name. No such symbol exists, so
+	// never fabricate a CALLS edge for them.
+	if isPredeclaredType(method) {
 		return
 	}
 
@@ -282,10 +290,27 @@ func resolveCallTarget(receiver, method, filePath string, localImports []string,
 		}
 	}
 
-	// Attempt 5: Fallback to Step 3.6 External Dependencies
-	if aggregateOut != nil && aggregateOut.ExternalDependencies != nil {
+	// Attempt 5: Fallback to Step 3.6 External Dependencies. The receiver's
+	// first dot-segment must plausibly denote the import (explicit alias or
+	// the import's final path segment, gopkg.in / major-version suffixes
+	// stripped); otherwise the fabricated ext: API node would be noise, so
+	// the edge is dropped instead (GAP-CALL-05). Bare calls never fabricate.
+	if aggregateOut != nil && aggregateOut.ExternalDependencies != nil && receiver != "" {
+		qualifier := receiver
+		if idx := strings.Index(qualifier, "."); idx != -1 {
+			qualifier = qualifier[:idx]
+		}
+		var aliases map[string]string
+		if aggregateOut.LocalTables != nil {
+			if st := aggregateOut.LocalTables[cleanPath]; st != nil {
+				aliases = st.ImportAliases
+			}
+		}
 		for _, imp := range localImports {
 			if aggregate.IsStdlibImport(imp, filePath) {
+				continue
+			}
+			if !qualifierMatchesImport(qualifier, imp, aliases) {
 				continue
 			}
 			// v2 (W1-09): ext:<escaped> primary; raw v1 spelling self-healed
@@ -362,6 +387,46 @@ func resolveCallTarget(receiver, method, filePath string, localImports []string,
 	}
 
 	return "", 0.0
+}
+
+// qualifierMatchesImport reports whether a call-site receiver qualifier can
+// plausibly denote the given import: it matches the import's explicit alias
+// or its final path segment (with gopkg.in / major-version suffixes
+// stripped). This prevents fabricating ext: API nodes for receivers that
+// name a different package (GAP-CALL-05).
+func qualifierMatchesImport(qualifier, imp string, aliases map[string]string) bool {
+	if qualifier == "" {
+		return false
+	}
+	if aliases != nil {
+		if alias, ok := aliases[imp]; ok && alias == qualifier {
+			return true
+		}
+	}
+	base := importBaseName(imp)
+	return base != "" && base == qualifier
+}
+
+// importBaseName returns the package identifier a caller would use for an
+// import path: the final path segment, with version suffixes stripped
+// ("gopkg.in/yaml.v3" → "yaml", "github.com/foo/bar/v2" → "bar").
+func importBaseName(imp string) string {
+	parts := strings.Split(imp, "/")
+	base := parts[len(parts)-1]
+	if i := strings.LastIndex(base, ".v"); i != -1 {
+		if _, err := strconv.Atoi(base[i+2:]); err == nil {
+			base = base[:i]
+		}
+	}
+	if len(parts) > 1 {
+		v := parts[len(parts)-1]
+		if strings.HasPrefix(v, "v") {
+			if _, err := strconv.Atoi(v[1:]); err == nil {
+				base = parts[len(parts)-2]
+			}
+		}
+	}
+	return base
 }
 
 // dbCandidateMatches reports whether a persisted-graph node ID plausibly owns

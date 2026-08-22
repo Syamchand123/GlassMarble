@@ -223,6 +223,31 @@ func TestRenderDataFlowDiagram(t *testing.T) {
 	nodeInOutput(t, output, "var1")
 }
 
+func TestSanitizeERType(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "plain string", in: "string", want: "string"},
+		{name: "qualified type", in: "time.Time", want: "time_Time"},
+		{name: "pointer", in: "*Session", want: "Session"},
+		{name: "slice prefix", in: "[]string", want: "string_Array"},
+		{name: "slice suffix", in: "string[]", want: "string_Array"},
+		{name: "slice of qualified", in: "[]provider.Message", want: "provider_Message_Array"},
+		{name: "slice suffix qualified", in: "tools.Tool[]", want: "tools_Tool_Array"},
+		{name: "empty", in: "", want: "string"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sanitizeERType(tc.in)
+			if got != tc.want {
+				t.Errorf("sanitizeERType(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRenderERDiagram(t *testing.T) {
 	tree := &types.LayoutTree{
 		BoundaryName: "Root",

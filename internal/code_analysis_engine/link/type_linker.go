@@ -191,6 +191,19 @@ func linkNodesInGAST(node *normalize.GASTNode, relPath string, globalIndex map[s
 	}
 }
 
+// isPredeclaredType reports whether a type string is a Go predeclared type
+// or constant. Such names can never be resolved to a user-defined node.
+func isPredeclaredType(t string) bool {
+	switch t {
+	case "bool", "byte", "complex64", "complex128", "error",
+		"float32", "float64", "int", "int8", "int16", "int32", "int64",
+		"rune", "string", "uint", "uint8", "uint16", "uint32", "uint64",
+		"uintptr", "any", "comparable", "true", "false", "iota", "nil":
+		return true
+	}
+	return false
+}
+
 // resolveTypeToFQN attempts to match a raw type string (e.g. "PostgresStore", "database.PostgresStore", "*UserStore")
 // to a universal signature ID in cpg.GraphNodes, GlobalDefinitionIndex, or DB.
 func resolveTypeToFQN(rawType, currentFilePath string, globalIndex map[string][]*normalize.GASTNode, cpg *LinkOutput) string {
@@ -198,6 +211,13 @@ func resolveTypeToFQN(rawType, currentFilePath string, globalIndex map[string][]
 	clean = strings.TrimPrefix(clean, "[]")
 	clean = strings.TrimSpace(clean)
 	if clean == "" {
+		return ""
+	}
+
+	// Predeclared types (string, int, error, ...) never denote user-defined
+	// nodes; emitting COMPOSES/REFERENCES edges to a struct that merely
+	// shares a primitive name is false truth (GAP-TYP-03).
+	if isPredeclaredType(clean) {
 		return ""
 	}
 

@@ -156,10 +156,18 @@ func renderFlowchartGraph(tree *types.LayoutTree, sb *strings.Builder, theme *Th
 	}
 	renderNodes(tree, "    ")
 
+	drawn := make(map[string]bool)
 	for _, edge := range tree.Edges {
 		srcAlias := reg.alias(edge.SourceID)
 		tgtAlias := reg.alias(edge.TargetID)
-		renderEdgeStyles(edge, srcAlias, tgtAlias, sb)
+		var buf strings.Builder
+		renderEdgeStyles(edge, srcAlias, tgtAlias, &buf)
+		block := strings.TrimRight(buf.String(), "\n")
+		if block == "" || drawn[block] {
+			continue
+		}
+		drawn[block] = true
+		sb.WriteString(buf.String())
 	}
 
 	sb.WriteString(theme.EmitMermaidClassDefs())
@@ -299,6 +307,11 @@ func sanitizeERType(t string) string {
 	t = strings.TrimPrefix(t, "&")
 	if strings.HasPrefix(t, "[]") {
 		return sanitizeERType(t[2:]) + "_Array"
+	}
+	if strings.HasSuffix(t, "[]") {
+		// parseMembersFromCode normalizes "[]X" to "X[]"; render both the
+		// same way instead of mangling the bracket into a trailing "_".
+		return sanitizeERType(strings.TrimSuffix(t, "[]")) + "_Array"
 	}
 	t = strings.ReplaceAll(t, ".", "_")
 	t = strings.ReplaceAll(t, "[", "_")
@@ -629,6 +642,15 @@ func renderStateDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 		}
 	}
 	renderStates(tree)
+
+	if len(states) == 0 {
+		// The AKG has no state-transition nodes for this query; an empty
+		// stateDiagram-v2 renders as a blank box. Emit an explicit note
+		// instead of pretending there are states (GAP-ST-01).
+		sb.WriteString("    state \"no state transitions detected in model\" as _no_state_data\n")
+		sb.WriteString("    [*] --> _no_state_data\n")
+		return
+	}
 
 	if len(states) > 0 {
 		for _, edge := range tree.Edges {
@@ -1035,46 +1057,20 @@ func renderInfrastructureDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 	reg := newAliasRegistry()
 	registerTreeAliases(tree, reg)
 
-	if len(tree.Children) == 0 && len(tree.Nodes) > 0 {
-		alias := reg.boundary(tree.BoundaryName)
-		name := sanitizeMermaidLabel(tree.BoundaryName)
-		sb.WriteString(fmt.Sprintf("    System_Boundary(%s_sys, \"%s Infrastructure\") {\n", alias, name))
-		for _, node := range tree.Nodes {
-			nodeAlias := reg.alias(node.ID)
-			reg.markDeclared(nodeAlias)
-			nodeName := sanitizeMermaidLabel(node.Name)
-			if isDatabase(node) {
-				sb.WriteString(fmt.Sprintf("        ContainerDb(%s, \"%s\", \"%s\", \"Data Store\")\n",
-					nodeAlias, nodeName, detectNodeTechnology(node)))
-			} else {
-				sb.WriteString(fmt.Sprintf("        Container(%s, \"%s\", \"%s\", \"%s\")\n",
-					nodeAlias, nodeName, detectNodeTechnology(node), getNodeDescription(node)))
-			}
-		}
-		sb.WriteString("    }\n")
-	} else {
-		for _, boundary := range tree.Children {
-			if !hasTreeNodes(boundary) {
-				continue
-			}
-			alias := reg.boundary(boundary.BoundaryName)
-			name := sanitizeMermaidLabel(boundary.BoundaryName)
-			sb.WriteString(fmt.Sprintf("    System_Boundary(%s_sys, \"%s Infrastructure\") {\n", alias, name))
-			for _, node := range boundary.Nodes {
-				nodeAlias := reg.alias(node.ID)
-				reg.markDeclared(nodeAlias)
-				nodeName := sanitizeMermaidLabel(node.Name)
-				if isDatabase(node) {
-					sb.WriteString(fmt.Sprintf("        ContainerDb(%s, \"%s\", \"%s\", \"Data Store\")\n",
-						nodeAlias, nodeName, detectNodeTechnology(node)))
-				} else {
-					sb.WriteString(fmt.Sprintf("        Container(%s, \"%s\", \"%s\", \"%s\")\n",
-						nodeAlias, nodeName, detectNodeTechnology(node), getNodeDescription(node)))
-				}
-			}
-			sb.WriteString("    }\n")
-		}
-	}
+	renderC4Blocks(tree, reg, sb, &c4BlockRenderer{
+		indent: "    ",
+		blockAlias: func(base string) string {
+			return base + "_sys"
+		},
+		openBlock: func(alias, name string) string {
+			return fmt.Sprintf("    System_Boundary(%s, \"%s Infrastructure\") {\n", alias, name)
+		},
+		closeBlock: func(indent string) string {
+			return indent + "}\n"
+		},
+		renderNode:   renderContainerElement,
+		renderFolded: renderFoldedContainerElement,
+	})
 
 	for _, node := range collectExternalNodes(tree) {
 		tags := getNodeTags(node)

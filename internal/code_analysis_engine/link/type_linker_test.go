@@ -78,6 +78,22 @@ func TestTransitiveImplementsClosure(t *testing.T) {
 	assert.True(t, targets["Z"], "transitive interface (inheritsFrom)")
 }
 
+// TestResolveTypeToFQNPredeclared (GAP-TYP-03): predeclared Go types never
+// resolve to user-defined nodes, even when a node shares the primitive name.
+func TestResolveTypeToFQNPredeclared(t *testing.T) {
+	cpg := NewLinkOutput("HEAD")
+	cpg.GraphNodes["svc.go::string"] = &ResolvedNode{ID: "svc.go::string", Kind: "STRUCT", Name: "string"}
+	cpg.GraphNodes["svc.go::Error"] = &ResolvedNode{ID: "svc.go::Error", Kind: "STRUCT", Name: "Error"}
+
+	for _, raw := range []string{"string", "*string", "[]byte", "int64", "error", "any", "bool", "uintptr"} {
+		assert.Equal(t, "", resolveTypeToFQN(raw, "svc.go", nil, cpg), "predeclared %q must not resolve", raw)
+	}
+
+	// Non-predeclared names still resolve normally.
+	got := resolveTypeToFQN("Error", "svc.go", nil, cpg)
+	assert.Equal(t, "svc.go::Error", got, "user-defined type still resolves")
+}
+
 // TestNameToNodeIDIndex (W1-12 / A-15): the type-name index resolves
 // exactly and the delta map shadows the shared base on collisions.
 func TestNameToNodeIDIndex(t *testing.T) {

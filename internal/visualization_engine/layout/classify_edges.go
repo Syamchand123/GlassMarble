@@ -14,8 +14,16 @@ import (
 // (type:path:owner:symbol, master_overhaul_plan.md §4.1) are accepted:
 // legacy IDs are normalized onto the canonical grammar first
 // (ids.NormalizeLegacyID is idempotent) and then parsed, so URL-encoded
-// path segments come back decoded (GAP-C-02 / GAP-C-03).
+// path segments come back decoded (GAP-C-02 / GAP-C-03). The synthetic
+// `pkg:` prefix produced by semantic zoom is a display prefix, not part of
+// the path grammar: it is stripped so Windows path operations never see a
+// colon (which would otherwise be misread as a volume name, splitting one
+// logical directory across two layout boundaries).
 func parseIDParts(id string) (path, receiver, symbol string) {
+	if strings.HasPrefix(id, "pkg:") {
+		rest := strings.TrimPrefix(id, "pkg:")
+		return rest, "", ""
+	}
 	norm := ids.NormalizeLegacyID(id)
 	if c, err := ids.ParseCanonicalID(norm); err == nil {
 		return c.Path, c.Owner, c.Symbol

@@ -290,7 +290,10 @@ func getDirectoryPath(nodeID string, kind string, diagramType types.DiagramType,
 	filePath, _, _ := parseIDParts(nodeID)
 
 	var dir string
-	if kind == ont.PredNamespace || kind == ont.PredModule {
+	if kind == ont.PredNamespace || kind == ont.PredModule || kind == ont.PredPackage {
+		// Package/module nodes name their own directory, so the full path is
+		// the boundary (a package must sit inside its own boundary, not as a
+		// sibling of it).
 		dir = filePath
 	} else {
 		dir = filepath.Dir(filePath)
@@ -306,9 +309,12 @@ func getDirectoryPath(nodeID string, kind string, diagramType types.DiagramType,
 	case types.UMLPackage, types.DependencyGraph, types.Mindmap:
 		return slashPath
 	case types.C4Context, types.C4Landscape:
-		if comm, ok := communities[nodeID]; ok && comm != nodeID {
-			return comm + " Community"
-		}
+		// Context diagrams must show the real package structure (cmd /
+		// internal / tests / externals). Community labels are raw node IDs
+		// (e.g. "pkg:internal/product"), which on Windows would split at the
+		// "pkg:" volume colon and spawn duplicate boundaries; and a single
+		// repo-wide community collapses the whole system into one boundary,
+		// defeating the context view (GAP-W-02).
 		return slashPath
 	case types.LayeredArchitecture:
 		// §8.1 grouping uses the schema-v3-migrated kind set (STRUCT /
@@ -327,6 +333,10 @@ func getDirectoryPath(nodeID string, kind string, diagramType types.DiagramType,
 		return "Core Layer"
 	case types.UMLComponent, types.C4Container:
 		if comm, ok := communities[nodeID]; ok && comm != nodeID {
+			// Community labels are raw node IDs; strip the synthetic pkg:
+			// prefix so the resulting dir never carries a colon that Windows
+			// would read as a volume name (GAP-W-02).
+			comm = strings.TrimPrefix(comm, "pkg:")
 			return comm + " Component"
 		}
 		if strings.HasPrefix(slashPath, "internal/") {
@@ -356,12 +366,18 @@ func isLayeredKind(kind string) bool {
 	return false
 }
 
+// getOrCreateBoundary fetches or creates the layout boundary for dir. The
+// directory is canonicalized to forward slashes before any map lookup or
+// recursion: filepath.Dir returns native separators on Windows while
+// getDirectoryPath emits slashed paths, so without normalization one
+// logical directory would split across two boundaries (GAP-W-01).
 func getOrCreateBoundary(dir string, treeMap map[string]*types.LayoutTree, root *types.LayoutTree) *types.LayoutTree {
+	dir = filepath.ToSlash(dir)
 	if tree, exists := treeMap[dir]; exists {
 		return tree
 	}
 
-	parentDir := filepath.Dir(dir)
+	parentDir := filepath.ToSlash(filepath.Dir(dir))
 	if parentDir == "." || parentDir == "/" || parentDir == "\\" || parentDir == dir {
 		parentDir = ""
 	}

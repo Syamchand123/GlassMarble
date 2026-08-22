@@ -79,6 +79,9 @@ func aggregateToPackageLevel(graph *types.NativeGraph) *types.NativeGraph {
 		pkgID := getPackageIDForNode(id, node)
 		nodeToPkg[id] = pkgID
 
+		if pkgID == "" {
+			continue
+		}
 		if _, exists := res.Nodes[pkgID]; !exists {
 			pkgName := getPackageNameFromID(pkgID)
 			res.Nodes[pkgID] = &types.NativeNode{
@@ -96,7 +99,7 @@ func aggregateToPackageLevel(graph *types.NativeGraph) *types.NativeGraph {
 		srcPkg, srcOk := nodeToPkg[edge.SourceID]
 		tgtPkg, tgtOk := nodeToPkg[edge.TargetID]
 
-		if !srcOk || !tgtOk || srcPkg == tgtPkg {
+		if !srcOk || !tgtOk || srcPkg == "" || tgtPkg == "" || srcPkg == tgtPkg {
 			continue
 		}
 
@@ -117,6 +120,13 @@ func aggregateToPackageLevel(graph *types.NativeGraph) *types.NativeGraph {
 }
 
 func getPackageIDForNode(id string, node *types.NativeNode) string {
+	// Code-snippet node IDs (multiline variable initializers, error strings,
+	// URL-encoded fragments) never denote a package path; reject them before
+	// any grammar parsing (GAP-W-02).
+	if strings.ContainsAny(id, " \t\r\n{}=%()<>[]&|!\"'`") {
+		return ""
+	}
+
 	norm := ids.NormalizeLegacyID(id)
 	if c, err := ids.ParseCanonicalID(norm); err == nil && c.Path != "" {
 		dir := c.Path
@@ -125,6 +135,9 @@ func getPackageIDForNode(id string, node *types.NativeNode) string {
 		}
 		if dir == "" || dir == "." {
 			return "root"
+		}
+		if !isValidPackageDir(dir) {
+			return ""
 		}
 		return "pkg:" + dir
 	}
@@ -140,7 +153,35 @@ func getPackageIDForNode(id string, node *types.NativeNode) string {
 	if clean == "" || clean == "." {
 		return "root"
 	}
+	if !isValidPackageDir(clean) {
+		return ""
+	}
 	return "pkg:" + clean
+}
+
+// isValidPackageDir reports whether dir is a plausible package path. AKG node
+// IDs occasionally carry code-snippet names (multiline variable initializers,
+// error strings, URL-encoded fragments); those must never become package
+// boundaries (GAP-W-02). A valid package dir either contains a slash (nested
+// package) or is a known root-level package name / Go file.
+func isValidPackageDir(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	if strings.ContainsAny(dir, " \t\r\n{}=%()<>[]&|!\"'`") {
+		return false
+	}
+	if strings.Contains(dir, "/") {
+		return true
+	}
+	switch dir {
+	case "cmd", "internal", "tests", "pkg", "main", "main.go",
+		"tools", "scripts", "vendor", "external", "build", "testdata",
+		"docs", "assets", "config", "deploy", "migrations", "examples", "hack",
+		"src", "lib", "app", "api", "web", "server", "client", "core", "bin", "data":
+		return true
+	}
+	return strings.HasSuffix(dir, ".go")
 }
 
 func getPackageNameFromID(pkgID string) string {
