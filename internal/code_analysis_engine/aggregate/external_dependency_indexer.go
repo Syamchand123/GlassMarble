@@ -48,10 +48,8 @@ func moduleNameOf(imp, modulePrefix string) string {
 // they are not part of the project domain and fabricating EXTERNAL_SDK nodes for them
 // bloats the graph (AUDIT Issue 1.4).
 func IndexExternalDependencies(output *AggregateOutput) {
-	if output.ExternalDependencies == nil {
-		output.ExternalDependencies = make(map[string]*normalize.GASTNode)
-	}
-
+	// Rebuild from scratch to purge orphans from deleted files (C2-10).
+	newDeps := make(map[string]*normalize.GASTNode)
 	for relPath, symTable := range output.LocalTables {
 		if symTable == nil || len(symTable.Imports) == 0 {
 			continue
@@ -65,7 +63,7 @@ func IndexExternalDependencies(output *AggregateOutput) {
 			}
 			if !isLocalImport(imp, relPath, output) {
 				key := ExternalKey(imp)
-				if _, exists := output.ExternalDependencies[key]; !exists {
+				if _, exists := newDeps[key]; !exists {
 					modulePrefix := ""
 					if output.WorkspaceCtx != nil {
 						modulePrefix = output.WorkspaceCtx.ModulePrefix
@@ -89,7 +87,7 @@ func IndexExternalDependencies(output *AggregateOutput) {
 						node.Properties["alias"] = alias
 						node.Properties[ont.PredImportAlias] = alias
 					}
-					output.ExternalDependencies[key] = node
+					newDeps[key] = node
 				}
 			} else if output.WorkspaceCtx != nil && output.WorkspaceCtx.ModulePrefix != "" {
 				// v2 (W1-09, §5.3.5 TestExternalIDs): an ALIASED import of
@@ -100,8 +98,8 @@ func IndexExternalDependencies(output *AggregateOutput) {
 				if hasAlias && strings.HasPrefix(imp, prefix) {
 					rel := strings.TrimPrefix(imp, prefix)
 					key := ExternalKey(rel)
-					if _, exists := output.ExternalDependencies[key]; !exists {
-						output.ExternalDependencies[key] = &normalize.GASTNode{
+					if _, exists := newDeps[key]; !exists {
+						newDeps[key] = &normalize.GASTNode{
 							Type:       normalize.GASTTypeDeclaration,
 							Name:       rel,
 							Visibility: "External",
@@ -123,6 +121,7 @@ func IndexExternalDependencies(output *AggregateOutput) {
 			}
 		}
 	}
+	output.ExternalDependencies = newDeps
 }
 
 // IsStdlibImport reports whether an import path belongs to the language's

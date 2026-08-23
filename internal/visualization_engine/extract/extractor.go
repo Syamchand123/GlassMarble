@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -663,19 +664,28 @@ func getEntryPoints(nodes map[string]*types.TTLNode, opts types.QueryOptions, de
 			startIDs = append(startIDs, id)
 		}
 	}
+	// Deterministic: sorted node IDs for each pass
+	sortedIDs := make([]string, 0, len(nodes))
+	for id := range nodes {
+		sortedIDs = append(sortedIDs, id)
+	}
+	sort.Strings(sortedIDs)
 
 	// Pass 1: explicit entry-point markers from the analyzer.
-	for id, n := range nodes {
+	for _, id := range sortedIDs {
+		n := nodes[id]
 		if defaultFilter(n) && n.IsEntrypoint && inScope(id) {
 			add(id)
 		}
 	}
 	if len(startIDs) > 0 {
+		sort.Strings(startIDs)
 		return startIDs
 	}
 
 	// Pass 2: canonical "main" entry points.
-	for id, n := range nodes {
+	for _, id := range sortedIDs {
+		n := nodes[id]
 		if defaultFilter(n) && inScope(id) {
 			lower := strings.ToLower(id + " " + n.Name)
 			if strings.Contains(lower, ".main") || strings.Contains(lower, "::main") || strings.HasSuffix(strings.ToLower(n.Name), " main") || strings.EqualFold(n.Name, "main") {
@@ -684,11 +694,13 @@ func getEntryPoints(nodes map[string]*types.TTLNode, opts types.QueryOptions, de
 		}
 	}
 	if len(startIDs) > 0 {
+		sort.Strings(startIDs)
 		return startIDs
 	}
 
 	// Pass 3: handler / controller / api naming.
-	for id, n := range nodes {
+	for _, id := range sortedIDs {
+		n := nodes[id]
 		if defaultFilter(n) && inScope(id) {
 			lower := strings.ToLower(id + " " + n.Name)
 			if strings.Contains(lower, "main") || strings.Contains(lower, "handler") || strings.Contains(lower, "controller") || strings.Contains(lower, "api") {
@@ -697,30 +709,34 @@ func getEntryPoints(nodes map[string]*types.TTLNode, opts types.QueryOptions, de
 		}
 	}
 	if len(startIDs) > 0 {
+		sort.Strings(startIDs)
 		return startIDs
 	}
 
 	// Pass 4: last-resort fallback to every matching node.
-	for id, n := range nodes {
+	for _, id := range sortedIDs {
+		n := nodes[id]
 		if defaultFilter(n) && inScope(id) {
 			add(id)
 		}
 	}
+	sort.Strings(startIDs)
 	return startIDs
 }
 
-// filterNodes applies ScopePrefix and MaxNodes filters.
+// filterNodes applies ScopePrefix and MaxNodes filters deterministically.
 func filterNodes(nodes map[string]*types.TTLNode, opts types.QueryOptions, filter func(*types.TTLNode) bool) []string {
 	var ids []string
 	for id, n := range nodes {
 		if filter(n) {
 			if opts.ScopePrefix == "" || strings.HasPrefix(id, opts.ScopePrefix) {
 				ids = append(ids, id)
-				if opts.MaxNodes > 0 && len(ids) >= opts.MaxNodes {
-					break
-				}
 			}
 		}
+	}
+	sort.Strings(ids)
+	if opts.MaxNodes > 0 && len(ids) > opts.MaxNodes {
+		ids = ids[:opts.MaxNodes]
 	}
 	return ids
 }

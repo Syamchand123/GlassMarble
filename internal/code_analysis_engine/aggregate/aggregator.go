@@ -93,6 +93,7 @@ func Aggregate(payload *normalize.NormalizeOutput, existingState *AggregateOutpu
 				}
 			}
 			delete(output.FileToSymbols, relPath)
+			delete(output.FileToMembers, relPath)
 			delete(output.FileToCalls, relPath)
 			delete(output.LocalTables, relPath)
 			pruneMu.Unlock()
