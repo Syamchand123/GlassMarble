@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -56,8 +57,9 @@ var analyzeCmd = &cobra.Command{
 			abortOnLimit:   abortOnLimit,
 			json:           asJSON,
 			bench:          isBench,
-			intelligence:         intelligence,
+			intelligence:   intelligence,
 			includeDocs:    includeDocs,
+			out:            cmd.OutOrStdout(),
 		}
 		if isBench {
 			return runAnalysisBenchmark(cmd, opts)
@@ -101,6 +103,10 @@ type runAnalysisOptions struct {
 	// claims) runs after the graph is committed. Opt-in by design — doc
 	// scanning and git-history walks are not free on large repositories.
 	includeDocs bool
+	// out is the writer for human-readable output. When nil, os.Stdout or
+	// cmd.OutOrStdout() is used. TUI mode sets progress != nil and suppresses
+	// direct writes (C6-2).
+	out io.Writer
 }
 
 // analysisSummary carries the QA numbers of a completed analysis run for the
@@ -155,7 +161,25 @@ func runAnalysis(cmd *cobra.Command, opts runAnalysisOptions) error {
 		}
 	}
 
-	fmt.Printf("Starting GlassMarble Analysis on %s...\n", absDir)
+	// Resolve output writer (C6-2): route through io.Writer passed via
+	// runAnalysisOptions or cmd.OutOrStdout(); gate on progress==nil so the
+	// bubbletea TUI is not corrupted by raw fmt.Printf lines.
+	outWriter := opts.out
+	if outWriter == nil {
+		if cmd != nil {
+			outWriter = cmd.OutOrStdout()
+		} else {
+			outWriter = os.Stdout
+		}
+	}
+	gatedPrintf := func(format string, a ...any) {
+		if opts.progress != nil {
+			return
+		}
+		fmt.Fprintf(outWriter, format, a...)
+	}
+
+	gatedPrintf("Starting GlassMarble Analysis on %s...\n", absDir)
 
 	if opts.progress != nil {
 		opts.progress(1, "Tree-sitter Ingestion", 0, 0)
@@ -229,8 +253,15 @@ func runAnalysis(cmd *cobra.Command, opts runAnalysisOptions) error {
 			ingestOut, err = ingest.RunIngestionForDelta(cfg, diff)
 			if err == nil {
 				if verbose {
-					fmt.Printf("Ingestion (delta): parsed %d changed files, %d deleted.\n",
+					gatedPrintf("Ingestion (delta): parsed %d changed files, %d deleted.\n",
 						len(ingestOut.Updated), len(ingestOut.Deleted))
+				}
+			} else if verbose || opts.progress == nil {
+				// C6-12: delta fallback warning — surface the delta error
+				// before silently promoting to full rescan.
+				gatedPrintf("Note: delta ingestion failed (%v); falling back to full scan.\n", err)
+				if opts.progress != nil {
+					fmt.Fprintf(os.Stderr, "Note: delta ingestion failed (%v); falling back to full scan.\n", err)
 				}
 			}
 		}
@@ -243,7 +274,7 @@ func runAnalysis(cmd *cobra.Command, opts runAnalysisOptions) error {
 			return fmt.Errorf("ingestion failed: %w", err)
 		}
 		if verbose {
-			fmt.Printf("Ingestion (full): discovered and parsed %d source files.\n", len(ingestOut.Updated))
+			gatedPrintf("Ingestion (full): discovered and parsed %d source files.\n", len(ingestOut.Updated))
 		}
 	}
 	doneParse()
@@ -266,7 +297,7 @@ func runAnalysis(cmd *cobra.Command, opts runAnalysisOptions) error {
 		opts.progress(2, "GAST Normalization", len(normalizePayload.UpsertedTrees), len(normalizePayload.UpsertedTrees))
 	}
 	if verbose {
-		fmt.Printf("Normalization: Normalized %d syntax trees.\n", len(normalizePayload.UpsertedTrees))
+		gatedPrintf("Normalization: Normalized %d syntax trees.\n", len(normalizePayload.UpsertedTrees))
 	}
 
 	// Aggregation: Topology Aggregation
@@ -284,7 +315,7 @@ func runAnalysis(cmd *cobra.Command, opts runAnalysisOptions) error {
 		opts.progress(3, "Topology Aggregation", 1, 1)
 	}
 	if verbose {
-		fmt.Printf("Aggregation: Built topology with %d global definition symbols.\n", len(aggregateOut.GlobalDefinitionIndex))
+		gatedPrintf("Aggregation: Built topology with %d global definition symbols.\n", len(aggregateOut.GlobalDefinitionIndex))
 	}
 
 	// Initialize AKG before Linking so we have a persistent GraphDB for incremental lookups
@@ -336,7 +367,7 @@ func runAnalysis(cmd *cobra.Command, opts runAnalysisOptions) error {
 		opts.progress(4, "Semantic Linking", len(cpg.GraphNodes), len(cpg.GraphNodes))
 	}
 	if verbose {
-		fmt.Printf("Linking: Bound Delta CPG with %d new/modified nodes.\n", len(cpg.GraphNodes))
+		gatedPrintf("Linking: Bound Delta CPG with %d new/modified nodes.\n", len(cpg.GraphNodes))
 	}
 
 	if opts.progress != nil {
@@ -395,17 +426,17 @@ func runAnalysis(cmd *cobra.Command, opts runAnalysisOptions) error {
 			Warnings:      ingestOut.Warnings,
 			StorageDir:    storageDir,
 		}, "", "  ")
-		fmt.Println(string(out))
+		fmt.Fprintln(outWriter, string(out))
 		return nil
 	}
 
-	fmt.Printf("Analyzed %d files | %d nodes (+%d) | %d edges (+%d) | %d virtual (+%d) | %d dangling | state=%s | %.1fs\n",
+	gatedPrintf("Analyzed %d files | %d nodes (+%d) | %d edges (+%d) | %d virtual (+%d) | %d dangling | state=%s | %.1fs\n",
 		len(ingestOut.Updated), q.TotalNodes, q.TotalNodes-baseQ.TotalNodes,
 		q.TotalEdges, q.TotalEdges-baseQ.TotalEdges,
 		q.VirtualNodes, q.VirtualNodes-baseQ.VirtualNodes,
 		q.DanglingEdges, humanBytes(stateSize), duration.Seconds())
 	if q.DanglingEdges > 0 {
-		fmt.Printf("WARNING: %d edges reference missing nodes (dangling). Run `gmb analyze --full` to rebuild.\n", q.DanglingEdges)
+		gatedPrintf("WARNING: %d edges reference missing nodes (dangling). Run `gmb analyze --full` to rebuild.\n", q.DanglingEdges)
 	}
 	// architecture intelligence + developer memory
 	// (human mode only; the JSON contract above must stay stable for
@@ -432,20 +463,20 @@ func runAnalysis(cmd *cobra.Command, opts runAnalysisOptions) error {
 	// produced warnings so silent data loss stays visible (AUDIT Issue 1
 	// Phase 1C-10: skipped/warnings were collected but never printed).
 	if len(ingestOut.Skipped) > 0 {
-		fmt.Printf("WARNING: %d file(s) skipped during ingestion (oversized or unsupported language):\n", len(ingestOut.Skipped))
+		gatedPrintf("WARNING: %d file(s) skipped during ingestion (oversized or unsupported language):\n", len(ingestOut.Skipped))
 		for _, s := range ingestOut.Skipped {
-			fmt.Printf("  - %s\n", s)
+			gatedPrintf("  - %s\n", s)
 		}
 	}
 	if len(ingestOut.Warnings) > 0 {
-		fmt.Printf("Note: %d ingestion warning(s):\n", len(ingestOut.Warnings))
+		gatedPrintf("Note: %d ingestion warning(s):\n", len(ingestOut.Warnings))
 		for _, w := range ingestOut.Warnings {
-			fmt.Printf("  - %s\n", w)
+			gatedPrintf("  - %s\n", w)
 		}
 	}
 
 	if verbose {
-		fmt.Printf("AKG database updated at %s\n", filepath.Join(storageDir, "akg.json"))
+		gatedPrintf("AKG database updated at %s\n", filepath.Join(storageDir, "akg.json"))
 	}
 
 	return nil
@@ -566,7 +597,7 @@ func runAnalysisBenchmark(cmd *cobra.Command, opts runAnalysisOptions) error {
 	fmt.Fprintf(out, "%-22s %-12s %-10s %s\n", "state size", fmt.Sprintf("%.2fMB", stateMB), "<= 12.0MB", statusStr(passState))
 
 	if !passTotal || !passCommit || !passState {
-		return producterrs.Tagged("benchmark gate exceeded performance budget", producterrs.ErrRenderLimit)
+		return producterrs.Tagged("benchmark gate exceeded performance budget", producterrs.ErrValidation)
 	}
 	return nil
 }

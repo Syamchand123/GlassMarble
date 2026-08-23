@@ -22,7 +22,7 @@ func New(flagConfig config.Config) (*App, error) {
 	}
 
 	// 2. Init logger
-	log := logger.New(cfg.Debug)
+	log := logger.New(cfg.IsDebug())
 
 	// 3. Init AKG (if available)
 	akgPath := filepath.Join(cfg.RootDir, cfg.StorageDir)

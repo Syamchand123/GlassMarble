@@ -36,7 +36,10 @@ type BuilderOption func(*MemoryBuilder)
 // WithProjectID stamps the repository identifier onto the memory aggregate
 // on first ingestion (sha256 of the absolute repo directory — master plan
 // §1.5). The ID is only set when the aggregate has none, so it survives
-// rebuilds and is never overwritten.
+// rebuilds and is never overwritten. ProjectID is also persisted durably in
+// the sidecar file .glassmarble/memory/project.id so future Rebuilds can
+// derive it without requiring WithProjectID; passing WithProjectID remains
+// optional once the sidecar exists.
 func WithProjectID(id string) BuilderOption {
 	return func(b *MemoryBuilder) {
 		b.projectID = id

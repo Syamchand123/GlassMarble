@@ -2,6 +2,7 @@ package layout
 
 import (
 	"math"
+	"sort"
 
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
@@ -69,6 +70,7 @@ func ComputeBetweenness(sub *types.VirtualSubgraph) map[string]float64 {
 	for id := range sub.Nodes {
 		nodes = append(nodes, id)
 	}
+	sort.Strings(nodes)
 	scale := 1.0
 	sources := sampleSources(nodes, betweennessSourceCap)
 	if len(sources) < len(nodes) {
@@ -198,11 +200,49 @@ func ComputeAllMetricsWithOptions(sub *types.VirtualSubgraph, includeSCC bool) *
 	godObjects := DetectGodObjects(sub, inDeg, outDeg)
 	kcore := ComputeKCores(sub)
 	var sccs [][]string
+	var largestSCC int
 	if includeSCC {
-		sccs, _ = CountSCCs(sub)
+		sccs, largestSCC = CountSCCs(sub)
 	}
-	summary := ComputeGraphSummary(sub)
 	communities := ComputeWeightedModularity(sub)
+
+	// Build summary reusing already-computed values to avoid double work (C3-12).
+	// ComputeGraphSummary would recompute communities/SCC/godObjects/degrees.
+	summarySCCs := sccs
+	summaryLargest := largestSCC
+	if !includeSCC {
+		summarySCCs, summaryLargest = CountSCCs(sub)
+	}
+	summary := &types.GraphSummary{
+		NodeCount:      len(sub.Nodes),
+		EdgeCount:      len(sub.Edges),
+		SCCCount:       len(summarySCCs),
+		LargestSCCSize: summaryLargest,
+	}
+	if summary.NodeCount > 1 {
+		maxEdges := summary.NodeCount * (summary.NodeCount - 1)
+		if maxEdges > 0 {
+			summary.Density = float64(summary.EdgeCount) / float64(maxEdges)
+			if summary.Density > 1 {
+				summary.Density = 1
+			}
+		}
+		summary.Diameter = ComputeDiameter(sub)
+		summary.AvgPathLength = ComputeAvgPathLength(sub)
+		summary.BipartiteScore = ComputeBipartiteScore(sub)
+	}
+	communitySet := make(map[string]bool)
+	for _, c := range communities {
+		communitySet[c] = true
+	}
+	summary.ClusterCount = len(communitySet)
+	if summary.ClusterCount == 0 {
+		summary.ClusterCount = len(summarySCCs)
+	}
+	summary.GodObjectCount = len(godObjects)
+	cc := CountConnectedComponents(sub)
+	summary.ConnectedComponents = cc
+	summary.WeakComponents = cc
 
 	return &DiagramMetrics{
 		PageRank:    pr,

@@ -55,8 +55,8 @@ func TestLoadDefaults(t *testing.T) {
 	assert.Equal(t, "mermaid", cfg.OutputFormat)
 	assert.Equal(t, ".glassmarble", cfg.StorageDir)
 	assert.Equal(t, ".", cfg.RootDir)
-	assert.False(t, cfg.Debug)
-	assert.False(t, cfg.IncludeHidden)
+	assert.False(t, cfg.IsDebug())
+	assert.False(t, cfg.IsIncludeHidden())
 }
 
 func TestLoadLocalYAMLOverridesDefaults(t *testing.T) {
@@ -72,17 +72,20 @@ func TestLoadLocalYAMLOverridesDefaults(t *testing.T) {
 	assert.Equal(t, int64(5000), cfg.MaxFileBytes)
 	assert.Equal(t, "yamlstorage", cfg.StorageDir)
 	assert.Equal(t, "dot", cfg.OutputFormat)
-	assert.True(t, cfg.IncludeHidden)
-	assert.True(t, cfg.Debug)
+	assert.True(t, cfg.IsIncludeHidden())
+	assert.True(t, cfg.IsDebug())
 
 	// A second Load with a non-empty flagConfig overrides the yaml values.
+	// C7-1: effectiveRoot is now flagConfig.RootDir, so a different root that
+	// has no config file falls back to defaults for unset fields. The original
+	// yaml file lives in the temp dir ("."), not in "flagroot".
 	cfg2, err := Load(Config{RootDir: "flagroot", WorkerCount: 16, OutputFormat: "plantuml"})
 	require.NoError(t, err)
 	assert.Equal(t, "flagroot", cfg2.RootDir)
 	assert.Equal(t, 16, cfg2.WorkerCount)
 	assert.Equal(t, "plantuml", cfg2.OutputFormat)
-	// Unset flags still fall back to the yaml-loaded value.
-	assert.Equal(t, "yamlstorage", cfg2.StorageDir)
+	// Unset flags fall back to defaults when the new root has no yaml (C7-1).
+	assert.Equal(t, ".glassmarble", cfg2.StorageDir)
 }
 
 func TestLoadEnvOverrides(t *testing.T) {
@@ -101,11 +104,11 @@ func TestLoadEnvOverrides(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 6, cfg.WorkerCount)
 	assert.Equal(t, int64(12345), cfg.MaxFileBytes)
-	assert.True(t, cfg.Debug)
+	assert.True(t, cfg.IsDebug())
 	assert.Equal(t, "envroot", cfg.RootDir)
 	assert.Equal(t, "envstorage", cfg.StorageDir)
 	assert.Equal(t, "plantuml", cfg.OutputFormat)
-	assert.True(t, cfg.IncludeHidden)
+	assert.True(t, cfg.IsIncludeHidden())
 }
 
 func TestEnvParseFailureIgnored(t *testing.T) {
@@ -120,7 +123,7 @@ func TestEnvParseFailureIgnored(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 4, cfg.WorkerCount)
 	assert.Equal(t, int64(10*1024*1024), cfg.MaxFileBytes)
-	assert.False(t, cfg.Debug)
+	assert.False(t, cfg.IsDebug())
 }
 
 func TestFlagsOverrideEnv(t *testing.T) {
@@ -140,11 +143,20 @@ func TestBoolFlagCannotDisableYAMLTrue(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeLocalConfig(t, "debug: true\n")
 
-	// Flags only merge booleans when true, so Debug:false cannot override
-	// a true value already loaded from yaml.
-	cfg, err := Load(Config{Debug: false})
+	// After C7-2 fix, tri-state via *bool allows explicit false to override YAML true.
+	cfg, err := Load(Config{Debug: BoolPtr(false)})
 	require.NoError(t, err)
-	assert.True(t, cfg.Debug)
+	assert.False(t, cfg.IsDebug())
+
+	// Unset flag (nil) must still keep YAML true.
+	cfg2, err := Load(Config{})
+	require.NoError(t, err)
+	assert.True(t, cfg2.IsDebug())
+
+	// Explicit true also wins.
+	cfg3, err := Load(Config{Debug: BoolPtr(true)})
+	require.NoError(t, err)
+	assert.True(t, cfg3.IsDebug())
 }
 
 func TestLoadGlobalConfigApplied(t *testing.T) {

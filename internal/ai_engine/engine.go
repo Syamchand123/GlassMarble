@@ -93,7 +93,10 @@ func (e *Engine) Ask(ctx context.Context, query string, history []provider.Messa
 	if history == nil {
 		history = []provider.Message{}
 	}
-	msgs := append(history, provider.Message{Role: provider.RoleUser, Content: query})
+	// Copy history to avoid aliasing the caller's backing array.
+	msgs := make([]provider.Message, 0, len(history)+1)
+	msgs = append(msgs, history...)
+	msgs = append(msgs, provider.Message{Role: provider.RoleUser, Content: query})
 
 	return e.Provider.Complete(ctx, provider.Request{
 		Model:           e.Config.Model,

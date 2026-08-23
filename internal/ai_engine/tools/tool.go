@@ -68,6 +68,8 @@ type Prop struct {
 }
 
 // Schema builds a JSON-Schema (draft-07) object from property descriptions.
+// Required fields are sorted for deterministic wire payloads; property map keys
+// are sorted by Go's json.Marshal.
 func Schema(props map[string]Prop) map[string]any {
 	properties := make(map[string]any, len(props))
 	var required []string
@@ -84,6 +86,7 @@ func Schema(props map[string]Prop) map[string]any {
 			required = append(required, name)
 		}
 	}
+	sort.Strings(required)
 	schema := map[string]any{"type": "object", "properties": properties}
 	if len(required) > 0 {
 		schema["required"] = required

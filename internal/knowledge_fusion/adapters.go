@@ -179,6 +179,9 @@ func (a *LocalGitAdapter) scanCommits(ctx context.Context) ([]*git.CommitMeta, e
 	hashes := splitLines(string(out))
 	metas := make([]*git.CommitMeta, 0, len(hashes))
 	for _, h := range hashes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if h == "" {
 			continue
 		}
@@ -195,9 +198,9 @@ func (a *LocalGitAdapter) scanCommits(ctx context.Context) ([]*git.CommitMeta, e
 }
 
 // pullGroup accumulates the commits that reference one PR/issue ID into a
-// deterministic aggregate: earliest author time, first commit subject as
-// title, joined bodies as description, and the sorted, deduplicated union
-// of changed files.
+// deterministic aggregate: earliest author time, newest commit's subject as
+// title (walked newest-first, first-seen wins), joined bodies as
+// description, and the sorted, deduplicated union of changed files.
 type pullGroup struct {
 	id          string
 	title       string

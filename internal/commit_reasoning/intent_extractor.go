@@ -217,8 +217,8 @@ func (e *IntentExtractor) extractStructural(meta *git.CommitMeta) (IntentResult,
 		return IntentResult{}, false
 	}
 	excerpt := "only touched: " + strings.Join(files, ", ")
-	if len(excerpt) > 512 {
-		excerpt = excerpt[:512]
+	if len([]rune(excerpt)) > 512 {
+		excerpt = string([]rune(excerpt)[:512])
 	}
 	return IntentResult{
 		Intent:     intent,
@@ -287,7 +287,7 @@ func matchKeywordText(msg string) (IntentResult, bool) {
 	return IntentResult{}, false
 }
 
-// excerptLine returns the trimmed line containing index i, capped at 512.
+// excerptLine returns the trimmed line containing index i, capped at 512 runes (rune-boundary safe).
 func excerptLine(msg string, i int) string {
 	start := strings.LastIndex(msg[:i], "\n") + 1
 	endRel := strings.IndexByte(msg[i:], '\n')
@@ -296,8 +296,8 @@ func excerptLine(msg string, i int) string {
 		end = i + endRel
 	}
 	line := strings.TrimSpace(msg[start:end])
-	if len(line) > 512 {
-		line = line[:512]
+	if len([]rune(line)) > 512 {
+		line = string([]rune(line)[:512])
 	}
 	return line
 }

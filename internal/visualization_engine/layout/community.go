@@ -2,6 +2,7 @@ package layout
 
 import (
 	"math"
+	"sort"
 
 	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
@@ -34,7 +35,13 @@ func ComputeWeightedModularity(sub *types.VirtualSubgraph) map[string]string {
 
 	for iter := 0; iter < 30; iter++ {
 		changed := false
+		// Deterministic: sorted node IDs (C3-3 Louvain).
+		nodeIDs := make([]string, 0, len(sub.Nodes))
 		for id := range sub.Nodes {
+			nodeIDs = append(nodeIDs, id)
+		}
+		sort.Strings(nodeIDs)
+		for _, id := range nodeIDs {
 			bestCommunity := communities[id]
 			neighborCommunities := make(map[string]float64)
 
@@ -102,16 +109,22 @@ func communityEdgeWeight(predicate string) float64 {
 // modularityGain returns the best neighbor community for a node along with its
 // modularity gain, or the current community with gain 0 when no move improves
 // modularity. Never returns an empty-string community (AUDIT Issue 2 §2.4).
+// Deterministic: neighborCommunities keys are sorted before comparison (C3-3).
 func modularityGain(currentCommunity string, neighborCommunities map[string]float64, totalWeight float64, nodeDegree float64) (string, float64) {
 	bestCommunity := currentCommunity
 	bestGain := 0.0
 
-	for nc, weightToCommunity := range neighborCommunities {
-		if nc == "" {
-			continue
+	keys := make([]string, 0, len(neighborCommunities))
+	for k := range neighborCommunities {
+		if k != "" {
+			keys = append(keys, k)
 		}
+	}
+	sort.Strings(keys)
+	for _, nc := range keys {
+		weightToCommunity := neighborCommunities[nc]
 		gain := weightToCommunity/totalWeight - (nodeDegree*nodeDegree)/(2*totalWeight*totalWeight)
-		if gain > bestGain {
+		if gain > bestGain || (gain == bestGain && nc < bestCommunity) {
 			bestGain = gain
 			bestCommunity = nc
 		}

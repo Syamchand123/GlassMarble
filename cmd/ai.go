@@ -48,19 +48,47 @@ var (
 )
 
 // aiFlagConfig builds a flag-level aiconfig.Config from the AI command flags.
-func aiFlagConfig() aiconfig.Config {
-	return aiconfig.Config{
+// Temperature is a *float64 sentinel: nil means unset (provider default), 0.0
+// means explicit 0. The flag is only set when the user explicitly passed
+// --temperature (including 0).
+func aiFlagConfig(cmd *cobra.Command) aiconfig.Config {
+	cfg := aiconfig.Config{
 		Provider:           aiProviderFlag,
 		Model:              aiModelFlag,
 		APIKey:             aiAPIKeyFlag,
 		BaseURL:            aiBaseURLFlag,
-		Temperature:        aiTemperatureFlag,
 		MaxTurns:           aiMaxTurnsFlag,
 		TimeoutSec:         aiTimeoutFlag,
 		MaxTotalTokens:     aiMaxTotalTokensFlag,
 		MaxCostUSD:         aiMaxCostFlag,
 		MaxSessionMessages: aiMaxSessionMsgFlag,
 	}
+	if isTempFlagChanged(cmd) {
+		v := aiTemperatureFlag
+		cfg.Temperature = &v
+	}
+	return cfg
+}
+
+func isTempFlagChanged(cmd *cobra.Command) bool {
+	if cmd == nil {
+		return false
+	}
+	if f := cmd.Flags().Lookup("temperature"); f != nil && f.Changed {
+		return true
+	}
+	if f := cmd.PersistentFlags().Lookup("temperature"); f != nil && f.Changed {
+		return true
+	}
+	for c := cmd.Parent(); c != nil; c = c.Parent() {
+		if f := c.PersistentFlags().Lookup("temperature"); f != nil && f.Changed {
+			return true
+		}
+	}
+	if f := cmd.Root().PersistentFlags().Lookup("temperature"); f != nil && f.Changed {
+		return true
+	}
+	return false
 }
 
 // aiRootDir resolves the repository root from the persistent --root-dir flag.
@@ -74,7 +102,7 @@ func aiRootDir(cmd *cobra.Command) string {
 
 // newAIEngine loads the effective configuration and constructs the engine.
 func newAIEngine(cmd *cobra.Command) (*ai_engine.Engine, error) {
-	cfg, err := aiconfig.Load(aiFlagConfig())
+	cfg, err := aiconfig.LoadForDir(aiRootDir(cmd), aiFlagConfig(cmd))
 	if err != nil {
 		return nil, err
 	}
@@ -606,7 +634,8 @@ and are never logged.
 				cfg.BaseURL = aiBaseURLFlag
 			}
 			if cmd.Flags().Changed("temperature") {
-				cfg.Temperature = aiTemperatureFlag
+				v := aiTemperatureFlag
+				cfg.Temperature = &v
 			}
 			if cmd.Flags().Changed("max-turns") {
 				cfg.MaxTurns = aiMaxTurnsFlag
@@ -667,7 +696,7 @@ var aiDoctorCmd = &cobra.Command{
 	Long: `Validate the AI configuration, test provider connectivity, and check
 the state of the Architecture Knowledge Graph.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := aiconfig.Load(aiFlagConfig())
+		cfg, err := aiconfig.LoadForDir(aiRootDir(cmd), aiFlagConfig(cmd))
 		if err != nil {
 			return err
 		}

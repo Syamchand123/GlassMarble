@@ -386,7 +386,7 @@ func mapEdgeTypeToPredicate(edgeType string) string {
 	case "CALLS":
 		return ont.PredCalls
 	case "IMPLEMENTS":
-		return ont.PredInheritsFrom
+		return ont.PredImplements
 	case "EXTENDS":
 		return ont.PredExtends
 	case "COMPOSES":
@@ -809,8 +809,13 @@ func ParseTTLFile(StatePath string) (map[string]*types.TTLNode, []types.TTLEdge,
 	}
 
 	parsedEdges := make([]types.TTLEdge, 0, len(edgeMap))
-	for _, e := range edgeMap {
-		parsedEdges = append(parsedEdges, *e)
+	keys := make([]string, 0, len(edgeMap))
+	for k := range edgeMap {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		parsedEdges = append(parsedEdges, *edgeMap[k])
 	}
 	return nodes, parsedEdges, nil
 }
@@ -1225,8 +1230,13 @@ func ParseTTLFileToNativeScoped(StatePath, scopePath string) (*types.NativeGraph
 		return nil, err
 	}
 
-	for _, e := range edgeMap {
-		graph.Edges = append(graph.Edges, *e)
+	edgeKeys := make([]string, 0, len(edgeMap))
+	for k := range edgeMap {
+		edgeKeys = append(edgeKeys, k)
+	}
+	sort.Strings(edgeKeys)
+	for _, k := range edgeKeys {
+		graph.Edges = append(graph.Edges, *edgeMap[k])
 	}
 	return graph, nil
 }
@@ -1375,8 +1385,13 @@ func ParseTTLNodeByID(StatePath, nodeID string) (*types.TTLNode, []types.TTLEdge
 	}
 
 	edges := make([]types.TTLEdge, 0, len(edgeMap))
-	for _, e := range edgeMap {
-		edges = append(edges, *e)
+	keys := make([]string, 0, len(edgeMap))
+	for k := range edgeMap {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		edges = append(edges, *edgeMap[k])
 	}
 	return found, edges, nil
 }

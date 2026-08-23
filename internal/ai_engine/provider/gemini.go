@@ -51,10 +51,10 @@ func (p *GeminiProvider) Complete(ctx context.Context, req Request) (*Response, 
 	if len(req.Tools) > 0 {
 		payload.Tools = []geminiTool{{FunctionDeclarations: buildGeminiTools(req.Tools)}}
 	}
-	if req.MaxOutputTokens > 0 || req.Temperature > 0 {
+	if req.MaxOutputTokens > 0 || req.Temperature != nil {
 		cfg := geminiGenConfig{MaxOutputTokens: req.MaxOutputTokens}
 		if temp := effectiveTemperature(req.Temperature); temp != nil {
-			cfg.Temperature = *temp
+			cfg.Temperature = temp
 		}
 		payload.GenerationConfig = &cfg
 	}
@@ -81,19 +81,19 @@ func (p *GeminiProvider) Complete(ctx context.Context, req Request) (*Response, 
 	return p.parseResponse(resp.Body, req.OnStream)
 }
 
-// completeStream parses the Gemini SSE stream; every chunk carries the same
-// response shape as a non-streamed call, with usageMetadata on the final one.
+// completeStream parses the Gemini SSE stream incrementally; every chunk carries
+// the same response shape as a non-streamed call, with usageMetadata on the
+// final one. Capped at 8 MiB via LimitReader.
 func (p *GeminiProvider) completeStream(body io.Reader, req Request) (*Response, error) {
-	buf, err := io.ReadAll(io.LimitReader(body, 8<<20))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read provider stream: %w", err)
-	}
+	limited := io.LimitReader(body, 8<<20)
+	var capture bytes.Buffer
+	tee := io.TeeReader(limited, &capture)
 
 	out := &Response{}
 	callID := 0
 	sawEvent := false
 
-	scanSSE(bytes.NewReader(buf), func(event, data string) {
+	scanSSE(tee, func(event, data string) {
 		if data == "" {
 			return
 		}
@@ -130,7 +130,7 @@ func (p *GeminiProvider) completeStream(body io.Reader, req Request) (*Response,
 
 	if !sawEvent {
 		var parsed geminiResponse
-		if err := json.Unmarshal(buf, &parsed); err != nil {
+		if err := json.Unmarshal(capture.Bytes(), &parsed); err != nil {
 			return nil, fmt.Errorf("failed to decode provider response: %w", err)
 		}
 		return mapGeminiResponse(&parsed, req.OnStream), nil
@@ -273,8 +273,8 @@ type geminiFunctionDeclaration struct {
 }
 
 type geminiGenConfig struct {
-	MaxOutputTokens int     `json:"maxOutputTokens,omitempty"`
-	Temperature     float64 `json:"temperature,omitempty"`
+	MaxOutputTokens int      `json:"maxOutputTokens,omitempty"`
+	Temperature     *float64 `json:"temperature,omitempty"`
 }
 
 type geminiResponse struct {

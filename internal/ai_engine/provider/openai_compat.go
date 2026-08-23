@@ -101,22 +101,23 @@ func (p *OpenAICompatProvider) Complete(ctx context.Context, req Request) (*Resp
 	return out, nil
 }
 
-// completeStream parses an SSE chat-completions stream. Text deltas are
-// forwarded to req.OnStream; tool-call fragments are reassembled by index and
-// usage is taken from the final chunk. If the body contains no SSE events at
-// all it is treated as a plain JSON response (non-streaming fallback).
+// completeStream parses an SSE chat-completions stream incrementally from
+// resp.Body. Text deltas are forwarded to req.OnStream as they arrive;
+// tool-call fragments are reassembled by index and usage is taken from the
+// final chunk. If the body contains no SSE events at all it is treated as a
+// plain JSON response (non-streaming fallback). The body is capped at 8 MiB
+// via LimitReader.
 func (p *OpenAICompatProvider) completeStream(body io.Reader, req Request) (*Response, error) {
-	buf, err := io.ReadAll(io.LimitReader(body, 8<<20))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read provider stream: %w", err)
-	}
+	limited := io.LimitReader(body, 8<<20)
+	var capture bytes.Buffer
+	tee := io.TeeReader(limited, &capture)
 
 	out := &Response{}
 	var toolCalls []openAICompatToolCall
 	toolIdx := make(map[int]int)
 	sawEvent := false
 
-	scanSSE(bytes.NewReader(buf), func(event, data string) {
+	scanSSE(tee, func(event, data string) {
 		if data == "[DONE]" {
 			return
 		}
@@ -161,7 +162,7 @@ func (p *OpenAICompatProvider) completeStream(body io.Reader, req Request) (*Res
 		// Non-SSE body: one-shot JSON response (stream flag ignored by the
 		// endpoint, or a non-streaming test double).
 		var parsed openAICompatResponse
-		if err := json.Unmarshal(buf, &parsed); err != nil {
+		if err := json.Unmarshal(capture.Bytes(), &parsed); err != nil {
 			return nil, fmt.Errorf("failed to decode provider response: %w", err)
 		}
 		if len(parsed.Choices) > 0 {
@@ -374,11 +375,11 @@ func buildOpenAICompatTools(tools []Tool) []openAICompatTool {
 	return out
 }
 
-func effectiveTemperature(t float64) *float64 {
-	if t <= 0 {
+func effectiveTemperature(t *float64) *float64 {
+	if t == nil {
 		return nil
 	}
-	return &t
+	return t
 }
 
 func intPtr(v int) *int { return &v }

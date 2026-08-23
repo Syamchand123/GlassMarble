@@ -441,6 +441,10 @@ func sortLayoutTree(tree *types.LayoutTree) {
 	// Sort layout nodes based on names and lines
 	sortNodes(tree.Nodes)
 
+	// Deterministic: sort child boundaries by name (C3-3).
+	sort.SliceStable(tree.Children, func(i, j int) bool {
+		return tree.Children[i].BoundaryName < tree.Children[j].BoundaryName
+	})
 	// Sort child boundaries recursively
 	for _, child := range tree.Children {
 		sortLayoutTree(child)

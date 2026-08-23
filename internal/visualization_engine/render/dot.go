@@ -21,8 +21,11 @@ func RenderDOTDiagramWithTheme(tree *types.LayoutTree, t types.DiagramType, them
 	sb.WriteString(theme.EmitDOTGraphAttrs())
 	sb.WriteString(fmt.Sprintf("    label=\"%s Diagram\";\n", getDiagramTitle(tree, string(t))))
 
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
+
 	for _, node := range collectAllNodes(tree) {
-		id := sanitizeName(node.ID)
+		id := reg.alias(node.ID)
 		name := sanitizeMermaidLabel(node.Name)
 		if name == "" {
 			name = sanitizeMermaidLabel(node.ID)
@@ -53,8 +56,8 @@ func RenderDOTDiagramWithTheme(tree *types.LayoutTree, t types.DiagramType, them
 	}
 
 	for _, edge := range tree.Edges {
-		src := sanitizeName(edge.SourceID)
-		tgt := sanitizeName(edge.TargetID)
+		src := reg.alias(edge.SourceID)
+		tgt := reg.alias(edge.TargetID)
 		label := shortPredicate(edge.Predicate)
 
 		style := "solid"

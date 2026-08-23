@@ -308,7 +308,11 @@ func (s *Store) LoadAll() ([]Correction, error) {
 			s.warn("learning: skipping corrupt correction line: %v", err)
 			continue
 		}
-		if c.ID == "" || seen[c.ID] {
+		if c.ID == "" {
+			s.warn("learning: skipping correction with empty ID: %s", string(line))
+			continue
+		}
+		if seen[c.ID] {
 			continue
 		}
 		seen[c.ID] = true

@@ -1,6 +1,7 @@
 package link
 
 import (
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -12,10 +13,17 @@ func ReasonWholeProgramPrimitives(cpg *LinkOutput) {
 	}
 
 	// 1. Propagate primitives from target callee nodes back to caller nodes along CALLS / SPAWNS edges
+	// Deterministic Bellman-Ford frontier: sorted vertices, fixed-point until !changed (cap 10).
 	changed := true
-	for i := 0; i < 5 && changed; i++ { // max 5 depth passes
+	for iter := 0; iter < 10 && changed; iter++ {
 		changed = false
-		for sourceID, edges := range cpg.OutboundEdges {
+		keys := make([]string, 0, len(cpg.OutboundEdges))
+		for k := range cpg.OutboundEdges {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, sourceID := range keys {
+			edges := cpg.OutboundEdges[sourceID]
 			sourceNode, ok := cpg.GetNode(sourceID)
 			if !ok || sourceNode == nil {
 				continue

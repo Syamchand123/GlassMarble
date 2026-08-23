@@ -19,7 +19,7 @@ import (
 // (v2_master_implementaion_plan.md §6.4, evidence source reliability
 // SourceLLM = 0.65).
 func newIntentLLM(rootDir string) commit_reasoning.IntentLLMFunc {
-	cfg, err := aiconfig.Load(aiconfig.Config{})
+	cfg, err := aiconfig.LoadForDir(rootDir, aiconfig.Config{})
 	if err != nil || cfg == nil {
 		return nil
 	}

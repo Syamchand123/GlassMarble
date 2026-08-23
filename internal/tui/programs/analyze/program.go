@@ -115,6 +115,11 @@ func newModel(opts Options, run RunFn) model {
 func RunAnalyze(opts Options, run RunFn, in io.Reader, out io.Writer) error {
 	p := tea.NewProgram(newModel(opts, run), tea.WithOutput(out), tea.WithInput(in))
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				p.Send(AnalysisErrMsg{err: fmt.Errorf("analysis panicked: %v", r)})
+			}
+		}()
 		summary, err := run(func(phase int, name string, current, total int) {
 			if current == 0 {
 				p.Send(PhaseStartMsg{phase: phase, name: name})

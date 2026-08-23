@@ -1,6 +1,10 @@
 package layout
 
-import "github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
+import (
+	"sort"
+
+	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
+)
 
 // FindShortestPath returns the shortest path (by BFS) between source and target nodes, or nil if unreachable.
 func FindShortestPath(sub *types.VirtualSubgraph, src, tgt string) []string {
@@ -168,13 +172,22 @@ const pathMetricSourceCap = 1200
 
 // sampleSources returns up to cap node IDs spread evenly across nodes in
 // deterministic order, or all of them when the graph is small enough.
+// It sorts a copy of nodes to guarantee determinism even if the caller
+// supplied a map-order slice (C3-3).
 func sampleSources(nodes []string, cap int) []string {
-	if len(nodes) <= cap {
+	if len(nodes) == 0 {
 		return nodes
+	}
+	// Deterministic: work on a sorted copy.
+	sorted := make([]string, len(nodes))
+	copy(sorted, nodes)
+	sort.Strings(sorted)
+	if len(sorted) <= cap {
+		return sorted
 	}
 	res := make([]string, 0, cap)
 	for i := 0; i < cap; i++ {
-		res = append(res, nodes[int(float64(i)*float64(len(nodes))/float64(cap))])
+		res = append(res, sorted[int(float64(i)*float64(len(sorted))/float64(cap))])
 	}
 	return res
 }
@@ -194,6 +207,7 @@ func ComputeDiameter(sub *types.VirtualSubgraph) int {
 	for id := range sub.Nodes {
 		nodes = append(nodes, id)
 	}
+	sort.Strings(nodes)
 
 	maxDist := 0
 	for _, s := range sampleSources(nodes, pathMetricSourceCap) {
@@ -234,6 +248,7 @@ func ComputeAvgPathLength(sub *types.VirtualSubgraph) float64 {
 	for id := range sub.Nodes {
 		nodes = append(nodes, id)
 	}
+	sort.Strings(nodes)
 
 	for _, s := range sampleSources(nodes, pathMetricSourceCap) {
 		dist := make(map[string]int)

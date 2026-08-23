@@ -42,6 +42,11 @@ type BuildDiagramRequest struct {
 	// legacy Turtle reader (pre-migration state files only).
 	ParseFn visualization_engine.ParseFn
 
+	// IncludeAST, when true, builds the typed DiagramAST (second full
+	// extract→layout pass) for callers that need programmatic access.
+	// Default false avoids roughly doubling generation time (C6-8).
+	IncludeAST bool
+
 	// Legacy flat fields for backward compatibility
 	Type          types.DiagramType
 	Scope         types.ScopeLevel
@@ -184,19 +189,21 @@ func BuildDiagramWithContext(ctx context.Context, req BuildDiagramRequest) (*Bui
 		OnSummary:     req.OnSummary,
 	}
 
-	// Record Telemetry Spans (11.4 / W7-02)
-	doneExtract := StartSpan("extract")
+	// Record Telemetry Spans (11.4 / W7-02) — C6-10: rename misleading labels.
+	// "extract" previously covered only coordinator construction; real
+	// extraction/layout happens inside BuildLayoutTree.
+	doneCoordinator := StartSpan("coordinator")
 	ec := visualization_engine.NewEngineCoordinator(req.StatePath)
 	// The request layer installs the canonical GraphJSON reader (Phase C);
 	// without it the coordinator keeps its built-in legacy Turtle fallback.
 	if req.ParseFn != nil {
 		ec.SetParseFn(req.ParseFn)
 	}
-	doneExtract()
+	doneCoordinator()
 
-	doneProject := StartSpan("project")
+	donePipeline := StartSpan("pipeline")
 	tree, err := ec.BuildLayoutTree(diagType, opts)
-	doneProject()
+	donePipeline()
 
 	doneRender := StartSpan("render")
 	var renderer visualization_engine.Renderer
@@ -214,12 +221,11 @@ func BuildDiagramWithContext(ctx context.Context, req BuildDiagramRequest) (*Bui
 		markup, err = renderer.Render(tree, diagType)
 	}
 	if err != nil {
-		// Fallback to direct ProjectDiagram if tree build failed
-		markup, err = ec.ProjectDiagram(diagType, opts)
-		if err != nil {
-			doneRender()
-			return nil, err
-		}
+		// C6-9: do not discard the original error and re-run the same
+		// deterministic pipeline via ProjectDiagram (doubling latency for
+		// the same failure). Return the original error directly.
+		doneRender()
+		return nil, err
 	}
 
 	// Summary comes from the already-built layout tree — never a second
@@ -246,8 +252,11 @@ func BuildDiagramWithContext(ctx context.Context, req BuildDiagramRequest) (*Bui
 	// Prepend header comment if missing (11.5)
 	markup = injectHeaderComment(markup, diagType, scope, entry, nodeCount, edgeCount, format)
 
+	// C6-8: build AST lazily only when caller explicitly needs it; the
+	// second full pipeline pass roughly doubles generation time and almost
+	// no caller reads AST (visualize uses Markup/Summary only).
 	var ast *types.DiagramAST
-	if tree != nil {
+	if req.IncludeAST && tree != nil {
 		ast, _ = ec.BuildDiagramAST(diagType, opts)
 	}
 

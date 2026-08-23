@@ -101,14 +101,14 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req Request) (*Respons
 	return out, nil
 }
 
-// completeStream parses the Anthropic SSE event stream: message_start carries
-// the input token count, content_block_delta carries text or partial JSON for
-// tool_use blocks, and message_delta carries the output token count.
+// completeStream parses the Anthropic SSE event stream incrementally from
+// resp.Body: message_start carries the input token count, content_block_delta
+// carries text or partial JSON for tool_use blocks, and message_delta carries
+// the output token count. Capped at 8 MiB via LimitReader.
 func (p *AnthropicProvider) completeStream(body io.Reader, req Request) (*Response, error) {
-	buf, err := io.ReadAll(io.LimitReader(body, 8<<20))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read provider stream: %w", err)
-	}
+	limited := io.LimitReader(body, 8<<20)
+	var capture bytes.Buffer
+	tee := io.TeeReader(limited, &capture)
 
 	out := &Response{}
 	type block struct {
@@ -118,7 +118,7 @@ func (p *AnthropicProvider) completeStream(body io.Reader, req Request) (*Respon
 	var blockOrder []int
 	sawEvent := false
 
-	scanSSE(bytes.NewReader(buf), func(event, data string) {
+	scanSSE(tee, func(event, data string) {
 		if data == "" {
 			return
 		}
@@ -164,7 +164,7 @@ func (p *AnthropicProvider) completeStream(body io.Reader, req Request) (*Respon
 
 	if !sawEvent {
 		var parsed anthropicResponse
-		if err := json.Unmarshal(buf, &parsed); err != nil {
+		if err := json.Unmarshal(capture.Bytes(), &parsed); err != nil {
 			return nil, fmt.Errorf("failed to decode provider response: %w", err)
 		}
 		for _, block := range parsed.Content {

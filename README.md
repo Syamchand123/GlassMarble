@@ -248,7 +248,7 @@ gmb visualize <diagram_type> [flags]
 | `--pagerank` | Enable PageRank computation |
 | `--community` | Enable Louvain community detection |
 | `--scc` | Enable Tarjan SCC cycle analysis |
-| `--max-nodes <n>` | Abort with exit code 4 if the node count exceeds this limit |
+| `--max-nodes <n>` | Truncate to the N highest-degree nodes when the count exceeds N (sets `GraphSummary.Truncated = true`); the diagram is still rendered. For a hard budget abort, use `analyze --abort-on-limit` (link phase). |
 | `--changed-files <list>` | Comma-separated changed files for impact analysis |
 | `--render <file>` | Render to an image (`.svg`/`.png`) via Kroki or mermaid-cli |
 | `--relative` | Render paths relative to the folder root under folder scope |

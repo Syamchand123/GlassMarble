@@ -45,6 +45,7 @@ func newTestAgent(t *testing.T, p provider.Provider, maxTurns int) *agent.Agent 
 	t.Helper()
 	dir := t.TempDir()
 	testutil.SeedAKG(t, dir)
+	tmp := 0.2
 	return &agent.Agent{
 		Provider:        p,
 		Model:           "test-model",
@@ -53,7 +54,7 @@ func newTestAgent(t *testing.T, p provider.Provider, maxTurns int) *agent.Agent 
 		Env:             &tools.Env{RootDir: dir, Bridge: akgbridge.New(dir)},
 		MaxTurns:        maxTurns,
 		MaxResultBytes:  8192,
-		Temperature:     0.2,
+		Temperature:     &tmp,
 		MaxOutputTokens: 512,
 	}
 }

@@ -58,7 +58,7 @@ func TestOpenAICompatComplete(t *testing.T) {
 			{Role: RoleTool, ToolResults: []ToolResult{{ID: "call_1", Content: `{"nodes":[]}`}}},
 		},
 		Tools:       []Tool{{Name: "akg_search", Description: "Search the AKG", Parameters: map[string]any{"type": "object"}}},
-		Temperature: 0.5,
+		Temperature: FloatPtr(0.5),
 	})
 	if err != nil {
 		t.Fatalf("Complete() failed: %v", err)
@@ -167,7 +167,7 @@ func TestOpenAICompatNoTools(t *testing.T) {
 		t.Errorf("tools should be omitted when empty")
 	}
 	if _, hasTemp := payload["temperature"]; hasTemp {
-		t.Errorf("temperature should be omitted when 0")
+		t.Errorf("temperature should be omitted when nil")
 	}
 }
 

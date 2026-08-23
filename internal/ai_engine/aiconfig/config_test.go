@@ -15,7 +15,7 @@ func TestDefaults(t *testing.T) {
 	if cfg.Model != "gpt-4o" {
 		t.Errorf("Default model = %q, want gpt-4o", cfg.Model)
 	}
-	if cfg.Temperature != 0.2 {
+	if cfg.Temperature == nil || *cfg.Temperature != 0.2 {
 		t.Errorf("Default temperature = %v, want 0.2", cfg.Temperature)
 	}
 	if cfg.MaxTurns != 15 {
@@ -43,12 +43,13 @@ func TestDefaults(t *testing.T) {
 
 func TestSaveLoadRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ai.yaml")
+	tmp := 0.5
 	cfg := &Config{
 		Provider:           "gemini",
 		Model:              "gemini-2.5-flash",
 		APIKey:             "secret-key-123",
 		BaseURL:            "https://example.com/v1beta",
-		Temperature:        0.5,
+		Temperature:        &tmp,
 		MaxTurns:           7,
 		MaxToolResultBytes: 4096,
 		MaxOutputTokens:    2048,
@@ -65,8 +66,8 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if loaded.Provider != cfg.Provider || loaded.Model != cfg.Model || loaded.APIKey != cfg.APIKey {
 		t.Errorf("round trip mismatch: got %+v", loaded)
 	}
-	if loaded.BaseURL != cfg.BaseURL || loaded.Temperature != cfg.Temperature {
-		t.Errorf("round trip mismatch (base/temp): got %+v", loaded)
+	if loaded.BaseURL != cfg.BaseURL || (loaded.Temperature == nil) != (cfg.Temperature == nil) || (loaded.Temperature != nil && *loaded.Temperature != *cfg.Temperature) {
+		t.Errorf("round trip mismatch (base/temp): got %+v want %+v", loaded, cfg)
 	}
 	if loaded.MaxTurns != cfg.MaxTurns || loaded.MaxToolResultBytes != cfg.MaxToolResultBytes {
 		t.Errorf("round trip mismatch (limits): got %+v", loaded)
@@ -108,7 +109,7 @@ func TestLoadEnvPrecedence(t *testing.T) {
 	if cfg.APIKey != "env-key" || cfg.BaseURL != "https://env.example.com" {
 		t.Errorf("env not applied (key/base): %+v", cfg)
 	}
-	if cfg.Temperature != 0.9 || cfg.MaxTurns != 3 {
+	if cfg.Temperature == nil || *cfg.Temperature != 0.9 || cfg.MaxTurns != 3 {
 		t.Errorf("env not applied (temp/turns): %+v", cfg)
 	}
 	if cfg.MaxOutputTokens != 1024 || cfg.TimeoutSec != 42 {
@@ -178,7 +179,7 @@ func TestLoadYAMLProjectOverridesGlobal(t *testing.T) {
 		t.Errorf("project max_turns = %d, want 9", cfg.MaxTurns)
 	}
 	// Defaults preserved under both files.
-	if cfg.Temperature != 0.2 || cfg.Stream != true || cfg.MaxSessionMessages != 40 {
+	if cfg.Temperature == nil || *cfg.Temperature != 0.2 || cfg.Stream != true || cfg.MaxSessionMessages != 40 {
 		t.Errorf("defaults not preserved: %+v", cfg)
 	}
 

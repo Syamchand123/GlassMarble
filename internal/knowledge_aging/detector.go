@@ -153,7 +153,7 @@ func (p presentEntities) hasComponent(name string) bool {
 
 func (p presentEntities) hasNode(id string) bool {
 	if id == "" {
-		return true // no node ID asserted → not a resolvable reference
+		return false
 	}
 	_, ok := p.nodes[id]
 	return ok

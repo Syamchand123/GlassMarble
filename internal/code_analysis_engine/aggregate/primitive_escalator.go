@@ -1,8 +1,10 @@
 package aggregate
 
 import (
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/normalize"
+	"sort"
 	"strings"
+
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/normalize"
 )
 
 // EscalatePrimitives performs a bottom-up traversal of the directory tree
@@ -38,12 +40,18 @@ func EscalatePrimitives(dir *DirectoryNode) map[string]int {
 	highestCount := 0
 
 	// Security and Crypto are highly infectious
-	if primitiveCounts["SECURITY_SINK"] > 0 || primitiveCounts["CRYPTO_OPS"] > 0 {
+	if primitiveCounts["CRYPTO_OPS"] > 0 || primitiveCounts["CRYPTO"] > 0 {
 		dominantZone = "SECURITY_ZONE"
-	} else if primitiveCounts["DATABASE_IO"] > 0 || primitiveCounts["ORM_MODEL"] > 0 {
+	} else if primitiveCounts["DATABASE_SQL"] > 0 || primitiveCounts["DATABASE_NOSQL"] > 0 {
 		dominantZone = "DATABASE_ZONE"
 	} else {
-		for prim, count := range primitiveCounts {
+		keys := make([]string, 0, len(primitiveCounts))
+		for k := range primitiveCounts {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, prim := range keys {
+			count := primitiveCounts[prim]
 			if count > highestCount {
 				highestCount = count
 				dominantZone = prim + "_ZONE"

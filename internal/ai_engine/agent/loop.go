@@ -58,7 +58,7 @@ type Agent struct {
 	Env             *tools.Env
 	MaxTurns        int
 	MaxResultBytes  int
-	Temperature     float64
+	Temperature     *float64
 	MaxOutputTokens int
 	OnEvent         func(Event)
 	// OnStream receives text deltas of every completion (tool rounds and the

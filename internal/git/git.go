@@ -2,6 +2,7 @@ package git
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,8 +14,14 @@ import (
 )
 
 // Helper executing a git command within a specific working directory.
+// Uses exec.CommandContext so a hung git (credential helper, NFS stall, large
+// diff-tree) is bounded by the caller's context (C7-3).
 func runGitCommand(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+	return runGitCommandContext(context.Background(), dir, args...)
+}
+
+func runGitCommandContext(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 
 	var stdout, stderr bytes.Buffer

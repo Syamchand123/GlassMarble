@@ -21,13 +21,16 @@ var rootCmd = &cobra.Command{
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		// Build flag config
-		debug, _ := cmd.Flags().GetBool("debug")
+		// Build flag config — debug is tri-state via *bool (C7-2): only set
+		// when the flag was explicitly supplied, so YAML debug:false can be
+		// overridden to false from CLI.
 		rootDir, _ := cmd.Flags().GetString("root-dir")
-
 		flagConfig := config.Config{
-			Debug:   debug,
 			RootDir: rootDir,
+		}
+		if cmd.Flags().Changed("debug") {
+			b, _ := cmd.Flags().GetBool("debug")
+			flagConfig.Debug = config.BoolPtr(b)
 		}
 
 		application, err := app.New(flagConfig)

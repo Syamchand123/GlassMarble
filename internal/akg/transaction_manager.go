@@ -1076,8 +1076,10 @@ func scanTTLMetadata(StatePath string) (commitHash string, schemaVersion int, ve
 
 // staleLockAge is how long a db.lock file may remain untouched before it is
 // considered stale and stolen. Transactions hold the lock for milliseconds to
-// seconds; anything older is a crashed holder.
-const staleLockAge = 30 * time.Second
+// seconds; anything older is a crashed holder. Raised to 60s (== lockTimeout)
+// so a slow disk / AV scan cannot cause a concurrent writer to steal the lock
+// mid-transaction (C2b-1).
+const staleLockAge = 60 * time.Second
 
 // lockTimeout bounds how long AcquireLock waits before failing.
 const lockTimeout = 60 * time.Second

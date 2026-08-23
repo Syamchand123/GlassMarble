@@ -25,9 +25,9 @@ func gastRootWithPrimitive(prim string) *normalize.GASTNode {
 func TestEscalatePrimitivesZones(t *testing.T) {
 	root := NewDirectoryNode("root", ".")
 
-	GraftFileNode(root, "security/auth.go", gastRootWithPrimitive("SECURITY_SINK"), nil, "go")
+	GraftFileNode(root, "security/auth.go", gastRootWithPrimitive("CRYPTO"), nil, "go")
 	GraftFileNode(root, "security/crypto.go", gastRootWithPrimitive("CRYPTO_OPS"), nil, "go")
-	GraftFileNode(root, "db/store.go", gastRootWithPrimitive("DATABASE_IO"), nil, "go")
+	GraftFileNode(root, "db/store.go", gastRootWithPrimitive("DATABASE_SQL"), nil, "go")
 	GraftFileNode(root, "net/client.go", gastRootWithPrimitive("network_io"), nil, "go")
 	GraftFileNode(root, "net/http.go", gastRootWithPrimitive("  NETWORK_IO  "), nil, "go")
 
@@ -47,14 +47,14 @@ func TestEscalatePrimitivesZones(t *testing.T) {
 	// Counts aggregate bottom-up and primitive names are normalized (lowercase
 	// and padded values become UPPERCASE).
 	assert.Equal(t, 2, counts["NETWORK_IO"])
-	assert.Equal(t, 1, counts["SECURITY_SINK"])
-	assert.Equal(t, 1, counts["DATABASE_IO"])
+	assert.Equal(t, 1, counts["CRYPTO"])
+	assert.Equal(t, 1, counts["DATABASE_SQL"])
 }
 
 func TestEscalatePrimitivesSecurityPriority(t *testing.T) {
 	root := NewDirectoryNode("root", ".")
-	GraftFileNode(root, "mixed/app.go", gastRootWithPrimitive("DATABASE_IO"), nil, "go")
-	GraftFileNode(root, "mixed/handler.go", gastRootWithPrimitive("SECURITY_SINK"), nil, "go")
+	GraftFileNode(root, "mixed/app.go", gastRootWithPrimitive("DATABASE_SQL"), nil, "go")
+	GraftFileNode(root, "mixed/handler.go", gastRootWithPrimitive("CRYPTO_OPS"), nil, "go")
 
 	EscalatePrimitives(root)
 
@@ -63,7 +63,7 @@ func TestEscalatePrimitivesSecurityPriority(t *testing.T) {
 
 func TestEscalatePrimitivesDatabasePriority(t *testing.T) {
 	root := NewDirectoryNode("root", ".")
-	GraftFileNode(root, "db/model.go", gastRootWithPrimitive("ORM_MODEL"), nil, "go")
+	GraftFileNode(root, "db/model.go", gastRootWithPrimitive("DATABASE_SQL"), nil, "go")
 
 	EscalatePrimitives(root)
 

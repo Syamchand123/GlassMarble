@@ -121,6 +121,20 @@ func IndexExternalDependencies(output *AggregateOutput) {
 			}
 		}
 	}
+	// Preserve legacy v1 raw keys for self-healing reads when the import still exists (C2-10 orphan-aware).
+	if old := output.ExternalDependencies; old != nil {
+		for k, v := range old {
+			if strings.HasPrefix(k, ont.PrefixExt) {
+				continue
+			}
+			v2 := ExternalKey(k)
+			if _, exists := newDeps[v2]; exists {
+				if _, already := newDeps[k]; !already {
+					newDeps[k] = v
+				}
+			}
+		}
+	}
 	output.ExternalDependencies = newDeps
 }
 

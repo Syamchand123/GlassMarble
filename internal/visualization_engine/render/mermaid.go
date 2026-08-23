@@ -579,9 +579,15 @@ func renderObjectDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 		}
 	}
 	renderObjects(tree)
+	drawnObj := make(map[string]bool)
 	for _, edge := range tree.Edges {
 		srcAlias := reg.alias(edge.SourceID)
 		tgtAlias := reg.alias(edge.TargetID)
+		key := srcAlias + "->" + tgtAlias
+		if drawnObj[key] {
+			continue
+		}
+		drawnObj[key] = true
 		sb.WriteString(fmt.Sprintf("    %s --- %s : link\n", srcAlias, tgtAlias))
 	}
 }
@@ -605,9 +611,15 @@ func renderActivityDiagram(tree *types.LayoutTree, sb *strings.Builder, theme *T
 		}
 	}
 
+	drawnAct := make(map[string]bool)
 	for _, edge := range tree.Edges {
 		srcAlias := reg.alias(edge.SourceID)
 		tgtAlias := reg.alias(edge.TargetID)
+		key := srcAlias + "->" + tgtAlias
+		if drawnAct[key] {
+			continue
+		}
+		drawnAct[key] = true
 		sb.WriteString(fmt.Sprintf("    %s --> %s\n", srcAlias, tgtAlias))
 	}
 	sb.WriteString("    End([■ End]):::entrypoint\n")
@@ -664,20 +676,23 @@ func renderStateDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 			}
 		}
 
-		initialWritten := false
+		// Deterministic: sort state aliases before picking initial and emitting terminals.
+		sortedStates := make([]string, 0, len(states))
 		for alias := range states {
+			sortedStates = append(sortedStates, alias)
+		}
+		sort.Strings(sortedStates)
+
+		initialWritten := false
+		for _, alias := range sortedStates {
 			if !hasIncoming[alias] && !initialWritten {
 				sb.WriteString(fmt.Sprintf("    [*] --> %s\n", alias))
 				initialWritten = true
-			}
-		}
-		if !initialWritten && len(states) > 0 {
-			var first string
-			for alias := range states {
-				first = alias
 				break
 			}
-			sb.WriteString(fmt.Sprintf("    [*] --> %s\n", first))
+		}
+		if !initialWritten && len(sortedStates) > 0 {
+			sb.WriteString(fmt.Sprintf("    [*] --> %s\n", sortedStates[0]))
 		}
 
 		for _, edge := range tree.Edges {
@@ -691,7 +706,7 @@ func renderStateDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 			}
 		}
 
-		for alias := range states {
+		for _, alias := range sortedStates {
 			if !hasOutgoing[alias] {
 				sb.WriteString(fmt.Sprintf("    %s --> [*]\n", alias))
 			}
@@ -786,10 +801,16 @@ func renderCommunicationDiagram(tree *types.LayoutTree, sb *strings.Builder, the
 		sb.WriteString(fmt.Sprintf("    %s\n", FormatMermaidNode(arch, alias, name, "")))
 	}
 
+	drawnComm := make(map[string]bool)
 	for i, edge := range tree.Edges {
 		srcAlias := reg.alias(edge.SourceID)
 		tgtAlias := reg.alias(edge.TargetID)
 		_, _, symbol := parseFQN(edge.TargetID)
+		key := srcAlias + "->" + tgtAlias + "|" + symbol
+		if drawnComm[key] {
+			continue
+		}
+		drawnComm[key] = true
 		sb.WriteString(fmt.Sprintf("    %s -->|%d: %s()| %s\n", srcAlias, i+1, symbol, tgtAlias))
 	}
 	sb.WriteString(theme.EmitMermaidClassDefs())
@@ -810,9 +831,15 @@ func renderInteractionOverviewDiagram(tree *types.LayoutTree, sb *strings.Builde
 		sb.WriteString(fmt.Sprintf("    %s[[\"ref: %s()\"]]\n", alias, name))
 	}
 
+	drawnIO := make(map[string]bool)
 	for _, edge := range tree.Edges {
 		srcAlias := reg.alias(edge.SourceID)
 		tgtAlias := reg.alias(edge.TargetID)
+		key := srcAlias + "->" + tgtAlias
+		if drawnIO[key] {
+			continue
+		}
+		drawnIO[key] = true
 		sb.WriteString(fmt.Sprintf("    %s --> %s\n", srcAlias, tgtAlias))
 	}
 	sb.WriteString(theme.EmitMermaidClassDefs())
@@ -894,9 +921,15 @@ func renderDataFlowDiagram(tree *types.LayoutTree, sb *strings.Builder, theme *T
 	}
 	renderDFD(tree)
 
+	drawnDFD := make(map[string]bool)
 	for _, edge := range tree.Edges {
 		srcAlias := reg.alias(edge.SourceID)
 		tgtAlias := reg.alias(edge.TargetID)
+		key := srcAlias + "|" + edge.Predicate + "|" + tgtAlias
+		if drawnDFD[key] {
+			continue
+		}
+		drawnDFD[key] = true
 		label := shortPredicate(edge.Predicate)
 		if edge.Predicate == ont.PredMutatesGlobal || edge.Predicate == ont.PredVulnerableTaint {
 			sb.WriteString(fmt.Sprintf("    %s ==>|%s| %s\n", srcAlias, label, tgtAlias))

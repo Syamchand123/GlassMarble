@@ -12,10 +12,10 @@ type Config struct {
 	RootDir       string      `yaml:"root_dir"`
 	WorkerCount   int         `yaml:"worker_count"`
 	MaxFileBytes  int64       `yaml:"max_file_bytes"`
-	Debug         bool        `yaml:"debug"`
+	Debug         *bool       `yaml:"debug"`
 	StorageDir    string      `yaml:"storage_dir"`
 	OutputFormat  string      `yaml:"output_format"` // "mermaid", "plantuml", "dot"
-	IncludeHidden bool        `yaml:"include_hidden"`
+	IncludeHidden *bool       `yaml:"include_hidden"`
 	Drift         DriftConfig `yaml:"drift"`
 	// Intelligence holds the Architecture Intelligence thresholds (pattern/smell detection).
 	// nil means defaults (config.DefaultIntelligenceConfig()).
@@ -63,15 +63,26 @@ type ForbiddenDepRule struct {
 	Reason string `yaml:"reason,omitempty"`
 }
 
+// BoolPtr is a helper for constructing *bool flag values (C7-2 tri-state).
+func BoolPtr(b bool) *bool { return &b }
+
+// IsDebug reports whether debug is enabled (nil treated as false).
+func (c *Config) IsDebug() bool { return c != nil && c.Debug != nil && *c.Debug }
+
+// IsIncludeHidden reports whether hidden files are included.
+func (c *Config) IsIncludeHidden() bool { return c != nil && c.IncludeHidden != nil && *c.IncludeHidden }
+
 // Load loads configuration with precedence:
 // flags > GLASSMARBLE_* env vars > .glassmarble/config.yaml > ~/.glassmarble/config.yaml > defaults
 func Load(flagConfig Config) (*Config, error) {
 	// 1. Defaults
 	cfg := &Config{
-		WorkerCount:  4,
-		MaxFileBytes: 10 * 1024 * 1024, // 10MB
-		OutputFormat: "mermaid",
-		StorageDir:   ".glassmarble",
+		WorkerCount:   4,
+		MaxFileBytes:  10 * 1024 * 1024, // 10MB
+		OutputFormat:  "mermaid",
+		StorageDir:    ".glassmarble",
+		Debug:         BoolPtr(false),
+		IncludeHidden: BoolPtr(false),
 	}
 
 	// 2. ~/.glassmarble/config.yaml
@@ -108,7 +119,8 @@ func Load(flagConfig Config) (*Config, error) {
 	}
 	if val := os.Getenv("GLASSMARBLE_DEBUG"); val != "" {
 		if b, err := strconv.ParseBool(val); err == nil {
-			cfg.Debug = b
+			v := b
+			cfg.Debug = &v
 		}
 	}
 	if val := os.Getenv("GLASSMARBLE_STORAGE_DIR"); val != "" {
@@ -119,11 +131,12 @@ func Load(flagConfig Config) (*Config, error) {
 	}
 	if val := os.Getenv("GLASSMARBLE_INCLUDE_HIDDEN"); val != "" {
 		if b, err := strconv.ParseBool(val); err == nil {
-			cfg.IncludeHidden = b
+			v := b
+			cfg.IncludeHidden = &v
 		}
 	}
 
-	// 5. Flags (overwrite if set)
+	// 5. Flags (overwrite if set) — tri-state via *bool (C7-2)
 	if flagConfig.RootDir != "" {
 		cfg.RootDir = flagConfig.RootDir
 	}
@@ -133,10 +146,8 @@ func Load(flagConfig Config) (*Config, error) {
 	if flagConfig.MaxFileBytes != 0 {
 		cfg.MaxFileBytes = flagConfig.MaxFileBytes
 	}
-	// Booleans from flags are tricky if false is the intended override,
-	// but for simplicity we merge if true
-	if flagConfig.Debug {
-		cfg.Debug = true
+	if flagConfig.Debug != nil {
+		cfg.Debug = flagConfig.Debug
 	}
 	if flagConfig.StorageDir != "" {
 		cfg.StorageDir = flagConfig.StorageDir
@@ -144,8 +155,8 @@ func Load(flagConfig Config) (*Config, error) {
 	if flagConfig.OutputFormat != "" {
 		cfg.OutputFormat = flagConfig.OutputFormat
 	}
-	if flagConfig.IncludeHidden {
-		cfg.IncludeHidden = true
+	if flagConfig.IncludeHidden != nil {
+		cfg.IncludeHidden = flagConfig.IncludeHidden
 	}
 
 	if cfg.RootDir == "" {
@@ -161,7 +172,9 @@ func mergeYAML(path string, cfg *Config) {
 		return
 	}
 
-	// Decode into a temporary config to only overwrite set values
+	// Decode into a temporary config to only overwrite set values.
+	// Booleans use *bool so we can distinguish "absent" (nil) from explicit
+	// false (C7-2). Other scalars use zero-value checks as before.
 	var temp Config
 	if err := yaml.Unmarshal(data, &temp); err != nil {
 		return
@@ -176,7 +189,7 @@ func mergeYAML(path string, cfg *Config) {
 	if temp.MaxFileBytes != 0 {
 		cfg.MaxFileBytes = temp.MaxFileBytes
 	}
-	if temp.Debug {
+	if temp.Debug != nil {
 		cfg.Debug = temp.Debug
 	}
 	if temp.StorageDir != "" {
@@ -185,7 +198,7 @@ func mergeYAML(path string, cfg *Config) {
 	if temp.OutputFormat != "" {
 		cfg.OutputFormat = temp.OutputFormat
 	}
-	if temp.IncludeHidden {
+	if temp.IncludeHidden != nil {
 		cfg.IncludeHidden = temp.IncludeHidden
 	}
 	if temp.Drift.Layers != nil || temp.Drift.ForbiddenDeps != nil {

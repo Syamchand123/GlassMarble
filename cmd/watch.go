@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/ingest"
@@ -54,6 +55,7 @@ changes made outside the watcher's scope are also picked up.`,
 			macroInference: macroInference,
 			maxNodes:       maxNodes,
 			abortOnLimit:   abortOnLimit,
+			out:            cmd.OutOrStdout(),
 		}
 
 		if tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout()) {
@@ -84,6 +86,8 @@ func runWatchTUI(c *cobra.Command, opts runAnalysisOptions) error {
 
 // runWatchPlain runs the non-interactive ticker loop with plain-text output.
 // Its behavior and output are unchanged from the pre-TUI implementation.
+// C6-4: pending / lastFingerprint are guarded by sync.Mutex and a single
+// serialized worker channel prevents concurrent analyses and data races.
 func runWatchPlain(cmd *cobra.Command, opts runAnalysisOptions) error {
 	absDir := opts.targetDir
 
@@ -95,6 +99,7 @@ func runWatchPlain(cmd *cobra.Command, opts runAnalysisOptions) error {
 		fmt.Printf("[%s] Initial analysis failed: %v\n", time.Now().Format("15:04:05"), err)
 	}
 
+	var mu sync.Mutex
 	lastFingerprint := workingTreeFingerprint(absDir, opts.commitHash)
 
 	watcher, err := fsnotify.NewWatcher()
@@ -113,29 +118,56 @@ func runWatchPlain(cmd *cobra.Command, opts runAnalysisOptions) error {
 	if debounce <= 0 {
 		debounce = 500 * time.Millisecond
 	}
-	var pending chan struct{}
-	runNow := func() {
-		if pending != nil {
-			close(pending)
-			pending = nil
-		}
-		pending = make(chan struct{})
-		go func(done chan struct{}) {
+
+	// Single-worker channel: only one analysis runs at a time; bursts are
+	// coalesced by the buffered channel (size 1) with non-blocking sends.
+	workCh := make(chan struct{}, 1)
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		for range workCh {
+			// Debounce window — coalesces rapid bursts into one check.
 			select {
 			case <-time.After(debounce):
-			case <-done:
+			case <-cmd.Context().Done():
 				return
 			}
+			mu.Lock()
 			fp := workingTreeFingerprint(absDir, opts.commitHash)
 			if fp == lastFingerprint {
-				return
+				mu.Unlock()
+				continue
 			}
 			lastFingerprint = fp
+			mu.Unlock()
 			fmt.Printf("[%s] Repository changes detected, running analysis...\n", time.Now().Format("15:04:05"))
 			if err := runAnalysis(cmd, opts); err != nil {
 				fmt.Printf("[%s] Analysis failed: %v\n", time.Now().Format("15:04:05"), err)
 			}
-		}(pending)
+			// Drain any additional coalesced signal that arrived while we were
+			// busy, so we immediately loop for another debounced check.
+			select {
+			case <-workCh:
+				// Re-queue one signal so the for loop iterates again.
+				select {
+				case workCh <- struct{}{}:
+				default:
+				}
+			default:
+			}
+		}
+	}()
+	defer func() {
+		close(workCh)
+		<-doneCh
+	}()
+
+	enqueue := func() {
+		select {
+		case workCh <- struct{}{}:
+		default:
+			// Already pending — coalesce.
+		}
 	}
 
 	for {
@@ -148,7 +180,7 @@ func runWatchPlain(cmd *cobra.Command, opts runAnalysisOptions) error {
 				return nil
 			}
 			if watchEventRelevant(watcher, ev) {
-				runNow()
+				enqueue()
 			}
 		case err, ok := <-watcher.Errors:
 			if !ok {
@@ -221,6 +253,8 @@ func watchTree(w *fsnotify.Watcher, root string) error {
 }
 
 // addWatchTree registers watches for a newly-created directory subtree.
+// C6-14: filters ignored directories (node_modules/.git/etc) the same way
+// watchTree does so ignored trees do not accumulate handles.
 func addWatchTree(w *fsnotify.Watcher, root string) error {
 	if w == nil {
 		return nil
@@ -230,6 +264,17 @@ func addWatchTree(w *fsnotify.Watcher, root string) error {
 			return nil
 		}
 		if d.IsDir() {
+			name := d.Name()
+			// Mirror watchTree ignore list so handles don't accumulate for
+			// churny ignored dirs (C6-14).
+			if path != root && (strings.HasPrefix(name, ".") || name == "node_modules" || name == "vendor" || name == "dist" || name == "build" || name == "target" || name == "bin" || name == "obj" || name == "out" || name == "coverage") {
+				return filepath.SkipDir
+			}
+			// Also respect hasIgnoredSegment for absolute paths that cross
+			// ignored segments deeper than one level.
+			if hasIgnoredSegment(filepath.ToSlash(path)) && path != root {
+				return filepath.SkipDir
+			}
 			return w.Add(path)
 		}
 		return nil

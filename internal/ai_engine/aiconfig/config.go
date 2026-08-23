@@ -19,15 +19,15 @@ import (
 
 // Config holds all AI engine settings.
 type Config struct {
-	Provider           string  `yaml:"provider"`
-	Model              string  `yaml:"model"`
-	APIKey             string  `yaml:"api_key"`
-	BaseURL            string  `yaml:"base_url,omitempty"`
-	Temperature        float64 `yaml:"temperature"`
-	MaxTurns           int     `yaml:"max_turns"`
-	MaxToolResultBytes int     `yaml:"max_tool_result_bytes"`
-	MaxOutputTokens    int     `yaml:"max_output_tokens"`
-	TimeoutSec         int     `yaml:"timeout_sec"`
+	Provider           string   `yaml:"provider"`
+	Model              string   `yaml:"model"`
+	APIKey             string   `yaml:"api_key"`
+	BaseURL            string   `yaml:"base_url,omitempty"`
+	Temperature        *float64 `yaml:"temperature,omitempty"`
+	MaxTurns           int      `yaml:"max_turns"`
+	MaxToolResultBytes int      `yaml:"max_tool_result_bytes"`
+	MaxOutputTokens    int      `yaml:"max_output_tokens"`
+	TimeoutSec         int      `yaml:"timeout_sec"`
 	// Stream enables token-level streaming output when the provider supports it.
 	Stream bool `yaml:"stream"`
 	// MaxTotalTokens caps the summed prompt+completion tokens per run; 0 = unlimited.
@@ -57,12 +57,17 @@ func GlobalPath() string {
 	return filepath.Join(home, ".glassmarble", GlobalConfigFile)
 }
 
+func floatPtr(v float64) *float64 { return &v }
+
+// FloatPtr is exported for tests and external callers.
+func FloatPtr(v float64) *float64 { return &v }
+
 // Default returns the built-in defaults for the AI engine configuration.
 func Default() *Config {
 	return &Config{
 		Provider:           "openai",
 		Model:              "gpt-4o",
-		Temperature:        0.2,
+		Temperature:        floatPtr(0.2),
 		MaxTurns:           15,
 		MaxToolResultBytes: 8192,
 		MaxOutputTokens:    8192,
@@ -75,10 +80,26 @@ func Default() *Config {
 // Load resolves the effective configuration with precedence:
 // flags > GLASSMARBLE_AI_* environment variables > project ai.yaml >
 // global ai.yaml > defaults.
+// Project config is resolved relative to the current working directory.
+// For repository-aware resolution use LoadForDir.
 func Load(flagConfig Config) (*Config, error) {
+	return LoadForDir(".", flagConfig)
+}
+
+// LoadForDir resolves the effective configuration with precedence:
+// flags > GLASSMARBLE_AI_* environment variables > project ai.yaml >
+// global ai.yaml > defaults. ProjectConfigPath is resolved against rootDir
+// (the effective repository root, e.g. --root-dir). An empty rootDir is
+// treated as ".".
+func LoadForDir(rootDir string, flagConfig Config) (*Config, error) {
 	cfg := Default()
 	mergeYAML(GlobalPath(), cfg)
-	mergeYAML(ProjectConfigPath, cfg)
+	effectiveRoot := rootDir
+	if effectiveRoot == "" {
+		effectiveRoot = "."
+	}
+	projectPath := filepath.Join(effectiveRoot, ProjectConfigPath)
+	mergeYAML(projectPath, cfg)
 	applyEnv(cfg)
 	applyFlags(flagConfig, cfg)
 	return cfg, nil
@@ -105,6 +126,9 @@ func Save(path string, cfg *Config) error {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write config: %w", err)
 	}
+	// Ensure permissions 0600 even when the file already existed (WriteFile
+	// only applies mode on creation).
+	_ = os.Chmod(path, 0o600)
 	return nil
 }
 
@@ -137,11 +161,13 @@ func EffectiveBaseURL(cfg *Config) string {
 }
 
 // EffectiveTemperature resolves the sampling temperature.
-func EffectiveTemperature(cfg *Config) float64 {
-	if cfg != nil && cfg.Temperature > 0 {
+// Nil means unset (provider default); a non-nil pointer may be 0.0 for
+// explicit deterministic sampling.
+func EffectiveTemperature(cfg *Config) *float64 {
+	if cfg != nil {
 		return cfg.Temperature
 	}
-	return 0
+	return nil
 }
 
 func applyEnv(cfg *Config) {
@@ -159,7 +185,7 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("GLASSMARBLE_AI_TEMPERATURE"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			cfg.Temperature = f
+			cfg.Temperature = floatPtr(f)
 		}
 	}
 	if v := os.Getenv("GLASSMARBLE_AI_MAX_TURNS"); v != "" {
@@ -215,7 +241,7 @@ func applyFlags(flagConfig Config, cfg *Config) {
 	if flagConfig.BaseURL != "" {
 		cfg.BaseURL = flagConfig.BaseURL
 	}
-	if flagConfig.Temperature > 0 {
+	if flagConfig.Temperature != nil {
 		cfg.Temperature = flagConfig.Temperature
 	}
 	if flagConfig.MaxTurns > 0 {
@@ -255,13 +281,20 @@ func mergeYAML(path string, cfg *Config) {
 		return
 	}
 
-	// "stream" defaults to true, so a bare false in YAML must be
-	// distinguishable from "absent".
+	// "stream" and "temperature" need nil-aware handling: stream defaults to
+	// true (so false must be distinguished from absent), temperature may be
+	// 0.0 explicitly (deterministic) vs absent (provider default).
 	var probe struct {
-		Stream *bool `yaml:"stream"`
+		Stream      *bool    `yaml:"stream"`
+		Temperature *float64 `yaml:"temperature"`
 	}
-	if err := yaml.Unmarshal(data, &probe); err == nil && probe.Stream != nil {
-		cfg.Stream = *probe.Stream
+	if err := yaml.Unmarshal(data, &probe); err == nil {
+		if probe.Stream != nil {
+			cfg.Stream = *probe.Stream
+		}
+		if probe.Temperature != nil {
+			cfg.Temperature = probe.Temperature
+		}
 	}
 
 	if temp.Provider != "" {
@@ -275,9 +308,6 @@ func mergeYAML(path string, cfg *Config) {
 	}
 	if temp.BaseURL != "" {
 		cfg.BaseURL = temp.BaseURL
-	}
-	if temp.Temperature > 0 {
-		cfg.Temperature = temp.Temperature
 	}
 	if temp.MaxTurns > 0 {
 		cfg.MaxTurns = temp.MaxTurns

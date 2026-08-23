@@ -25,8 +25,8 @@ type IntelligenceConfig struct {
 	PageRankIterations          int     `json:"page_rank_iterations" yaml:"page_rank_iterations"`
 	PageRankDamping             float64 `json:"page_rank_damping" yaml:"page_rank_damping"`
 
-	// ArchLayers defines the optional layering used by the architectural
-	// consistency pattern (PR-07) and by --arch stats output. When empty the
+	// ArchLayers defines the optional layering used by the layered
+	// architecture pattern (PR-01) and by --arch stats output. When empty the
 	// layer index degrades to root-level grouping.
 	ArchLayers []DriftLayer `json:"arch_layers,omitempty" yaml:"arch_layers"`
 

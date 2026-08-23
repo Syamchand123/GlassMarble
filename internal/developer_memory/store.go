@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
@@ -16,11 +17,12 @@ import (
 // write-ahead logs and the source of truth; the JSON files are derived
 // aggregates rebuilt from the logs (see Rebuild).
 const (
-	eventsFile   = "events.jsonl"  // append-only WAL of ArchEvents
-	claimsFile   = "claims.jsonl"  // append-only WAL of KnowledgeClaims
-	memoryFile   = "memory.json"   // derived aggregate (DeveloperMemory)
-	timelineFile = "timeline.json" // derived timeline entries (fast path for `gmb timeline`)
-	memoryDir    = ".glassmarble"  // workspace root inside the repo
+	eventsFile    = "events.jsonl"  // append-only WAL of ArchEvents
+	claimsFile    = "claims.jsonl"  // append-only WAL of KnowledgeClaims
+	memoryFile    = "memory.json"   // derived aggregate (DeveloperMemory)
+	timelineFile  = "timeline.json" // derived timeline entries (fast path for `gmb timeline`)
+	projectIDFile = "project.id"    // durable sidecar for ProjectID (survives Rebuild)
+	memoryDir     = ".glassmarble"  // workspace root inside the repo
 )
 
 // MemoryStore handles file persistence for developer memory.
@@ -77,6 +79,25 @@ func (s *MemoryStore) ensureDir() error {
 		return fmt.Errorf("developer_memory: create memory dir: %w", err)
 	}
 	return nil
+}
+
+// readProjectID returns the durable ProjectID from the sidecar file, or "" if absent.
+// It is best-effort and never returns an error; callers treat "" as unknown.
+func (s *MemoryStore) readProjectID() string {
+	data, err := os.ReadFile(filepath.Join(s.dir, projectIDFile))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// writeProjectID persists id to the sidecar file atomically. Empty ids are no-ops.
+func (s *MemoryStore) writeProjectID(id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	return s.writeFileAtomic(projectIDFile, []byte(id+"\n"))
 }
 
 // --- Write-ahead logs (append-only, source of truth) ---
@@ -231,18 +252,41 @@ func (s *MemoryStore) Rebuild() (*DeveloperMemory, error) {
 		applyEvent(mem, ev)
 	}
 	sortTimeline(mem.Timeline)
+	// ProjectID is not WAL-derived — derive durably so it survives Rebuild
+	// even when the caller does not pass WithProjectID. Sidecar is authoritative;
+	// persisted memory.json is the fallback for repos that set it before the sidecar existed.
+	if mem.ProjectID == "" {
+		if pid := s.readProjectID(); pid != "" {
+			mem.ProjectID = pid
+		} else {
+			if data, err := os.ReadFile(filepath.Join(s.dir, memoryFile)); err == nil {
+				var existing DeveloperMemory
+				if json.Unmarshal(data, &existing) == nil && existing.ProjectID != "" {
+					mem.ProjectID = existing.ProjectID
+				}
+			}
+		}
+	}
 	return mem, nil
 }
 
 // SaveMemory atomically persists the DeveloperMemory aggregate to
 // memory.json. Writes go to a temp file and are renamed into place, so a
-// crash mid-write can never leave a truncated aggregate behind.
+// crash mid-write can never leave a truncated aggregate behind. When the
+// aggregate carries a ProjectID, the sidecar file is also updated so future
+// Rebuilds can derive the ID without requiring WithProjectID.
 func (s *MemoryStore) SaveMemory(mem *DeveloperMemory) error {
 	data, err := json.MarshalIndent(mem, "", "  ")
 	if err != nil {
 		return fmt.Errorf("developer_memory: marshal memory: %w", err)
 	}
-	return s.writeFileAtomic(memoryFile, data)
+	if err := s.writeFileAtomic(memoryFile, data); err != nil {
+		return err
+	}
+	if mem != nil && strings.TrimSpace(mem.ProjectID) != "" {
+		_ = s.writeProjectID(mem.ProjectID)
+	}
+	return nil
 }
 
 // SaveTimeline atomically persists the derived timeline entries to
@@ -266,7 +310,8 @@ func (s *MemoryStore) SaveMemoryAndTimeline(mem *DeveloperMemory) error {
 // LoadMemory returns the current memory aggregate. It prefers the cached
 // memory.json but self-heals: if the aggregate is missing or corrupt it is
 // rebuilt from the WALs (which are authoritative). A nil result is never
-// returned for a valid store.
+// returned for a valid store. When the persisted aggregate lacks a ProjectID
+// but the sidecar exists, the sidecar value is used (durable derivation).
 func (s *MemoryStore) LoadMemory() (*DeveloperMemory, error) {
 	s.mu.RLock()
 	data, err := os.ReadFile(filepath.Join(s.dir, memoryFile))
@@ -276,6 +321,11 @@ func (s *MemoryStore) LoadMemory() (*DeveloperMemory, error) {
 		if err := json.Unmarshal(data, &mem); err == nil {
 			if mem.ComponentMemory == nil {
 				mem.ComponentMemory = make(map[string]ComponentHistory)
+			}
+			if mem.ProjectID == "" {
+				if pid := s.readProjectID(); pid != "" {
+					mem.ProjectID = pid
+				}
 			}
 			return &mem, nil
 		}

@@ -75,7 +75,14 @@ func aggregateToPackageLevel(graph *types.NativeGraph) *types.NativeGraph {
 
 	nodeToPkg := make(map[string]string)
 
-	for id, node := range graph.Nodes {
+	// Deterministic: sorted node IDs so PrimitiveType first-wins is stable (C3-3).
+	sortedIDs := make([]string, 0, len(graph.Nodes))
+	for id := range graph.Nodes {
+		sortedIDs = append(sortedIDs, id)
+	}
+	sort.Strings(sortedIDs)
+	for _, id := range sortedIDs {
+		node := graph.Nodes[id]
 		pkgID := getPackageIDForNode(id, node)
 		nodeToPkg[id] = pkgID
 
@@ -112,7 +119,14 @@ func aggregateToPackageLevel(graph *types.NativeGraph) *types.NativeGraph {
 		}
 	}
 
-	for _, edge := range edgeMap {
+	// Deterministic: sorted edge keys (C3-3).
+	edgeKeys := make([]string, 0, len(edgeMap))
+	for k := range edgeMap {
+		edgeKeys = append(edgeKeys, k)
+	}
+	sort.Strings(edgeKeys)
+	for _, k := range edgeKeys {
+		edge := edgeMap[k]
 		res.Edges = append(res.Edges, *edge)
 	}
 

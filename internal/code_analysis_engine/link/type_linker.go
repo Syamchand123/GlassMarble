@@ -55,9 +55,13 @@ func emitTransitiveHierarchy(cpg *LinkOutput) {
 	}
 
 	// ancestors returns the transitive targets at depth 2..max, skipping the
-	// direct parents already linked.
+	// direct parents already linked. Seed visited with direct parents to avoid
+	// duplicate EXTENDS/IMPLEMENTS at depth>=2 (C2-20).
 	ancestors := func(root string, parents map[string][]string) []string {
 		visited := map[string]bool{}
+		for _, p := range parents[root] {
+			visited[p] = true
+		}
 		var acc []string
 		prev := parents[root]
 		for depth := 2; depth <= maxInheritanceDepth && len(prev) > 0; depth++ {

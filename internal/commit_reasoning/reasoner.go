@@ -223,11 +223,11 @@ func titleFor(c ClassifiedChange) string {
 	return head
 }
 
-// excerpt caps the commit message evidence at 512 characters.
+// excerpt caps the commit message evidence at 512 characters (rune-boundary safe).
 func excerpt(subject, body string) string {
 	msg := strings.TrimSpace(subject + "\n" + body)
-	if len(msg) > 512 {
-		msg = msg[:512]
+	if len([]rune(msg)) > 512 {
+		msg = string([]rune(msg)[:512])
 	}
 	return msg
 }

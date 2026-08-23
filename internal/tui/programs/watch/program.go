@@ -202,7 +202,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			m.addLog(tui.StyleMuted.Render(ts()) + " " + tui.StyleOK.Render("✓ Analysis complete"))
 		}
-		return m, nil
+		// Re-check fingerprint after analysis to catch changes that arrived while analyzing (C3-7).
+		return m, fingerprintCmd(m)
 	case fsErrMsg:
 		m.addLog(tui.StyleMuted.Render(ts()) + " " + tui.StyleWarningText.Render("watcher error: "+msg.err.Error()))
 		return m, nil
@@ -259,6 +260,11 @@ func (m *model) addLog(line string) {
 func (m *model) startAnalysisCmd(initial bool) tea.Cmd {
 	return func() tea.Msg {
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					m.p.Send(analyzeResultMsg{err: fmt.Errorf("analysis panicked: %v", r), initial: initial})
+				}
+			}()
 			err := m.runAnalysis(func(step int, name string, current, total int) {
 				m.p.Send(progressMsg{step: step, name: name, current: current, total: total})
 			})

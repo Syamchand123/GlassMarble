@@ -49,12 +49,13 @@ func streamingCompletionsServer(t *testing.T, sseBodies []string) (*httptest.Ser
 
 func streamTestEngine(t *testing.T, srv *httptest.Server, rootDir string) *Engine {
 	t.Helper()
+	tmp := 0.2
 	cfg := &aiconfig.Config{
 		Provider:           "custom",
 		Model:              "test-model",
 		APIKey:             "sk-test",
 		BaseURL:            srv.URL,
-		Temperature:        0.2,
+		Temperature:        &tmp,
 		MaxTurns:           5,
 		MaxToolResultBytes: 4096,
 		MaxOutputTokens:    512,
@@ -143,12 +144,13 @@ func TestAskAgentNoStreamBlocksDeltas(t *testing.T) {
 	})
 	defer srv.Close()
 
+	tmp2 := 0.2
 	cfg := &aiconfig.Config{
 		Provider:           "custom",
 		Model:              "test-model",
 		APIKey:             "sk-test",
 		BaseURL:            srv.URL,
-		Temperature:        0.2,
+		Temperature:        &tmp2,
 		MaxTurns:           5,
 		MaxToolResultBytes: 4096,
 		MaxOutputTokens:    512,

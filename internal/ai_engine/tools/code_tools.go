@@ -41,6 +41,10 @@ func codeTools() []Tool {
 				if fi.IsDir() {
 					return nil, fmt.Errorf("%q is a directory — use code_list_dir", rel)
 				}
+				const maxFileBytes = 1 << 20 // 1 MiB guard before ReadFile
+				if fi.Size() > maxFileBytes {
+					return nil, fmt.Errorf("file %q is too large (%d bytes > %d bytes) — use start_line/end_line to read a range", rel, fi.Size(), maxFileBytes)
+				}
 				data, err := os.ReadFile(full)
 				if err != nil {
 					return nil, fmt.Errorf("cannot read %q: %v", rel, err)
@@ -271,7 +275,7 @@ func codeTools() []Tool {
 }
 
 // safeJoin resolves rel (a repo-relative path) against root and rejects any
-// path that would escape the workspace.
+// path that would escape the workspace, including via symlinks.
 func safeJoin(root, rel string) (string, error) {
 	if rel == "" {
 		rel = "."
@@ -287,6 +291,26 @@ func safeJoin(root, rel string) (string, error) {
 	}
 	if r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path %q escapes the workspace", rel)
+	}
+	// Symlink check: evaluate symlinks and re-verify containment.
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		realRoot = root
+	}
+	realJoined := joined
+	if eval, err := filepath.EvalSymlinks(joined); err == nil {
+		realJoined = eval
+	} else {
+		// File may not exist; evaluate parent directory.
+		parent := filepath.Dir(joined)
+		if evalParent, err2 := filepath.EvalSymlinks(parent); err2 == nil {
+			realJoined = filepath.Join(evalParent, filepath.Base(joined))
+		}
+	}
+	if r2, err := filepath.Rel(realRoot, realJoined); err == nil {
+		if r2 == ".." || strings.HasPrefix(r2, ".."+string(filepath.Separator)) {
+			return "", fmt.Errorf("path %q escapes the workspace via symlink", rel)
+		}
 	}
 	return joined, nil
 }

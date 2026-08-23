@@ -17,9 +17,9 @@ var whyCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		question := args[0]
-		rootDir := "." // Defaulting to current dir for CLI
+		rootDir := aiRootDir(cmd)
 
-		cfg, err := aiconfig.Load(aiconfig.Config{})
+		cfg, err := aiconfig.LoadForDir(rootDir, aiconfig.Config{})
 		if err != nil {
 			return fmt.Errorf("failed to load AI config: %w", err)
 		}

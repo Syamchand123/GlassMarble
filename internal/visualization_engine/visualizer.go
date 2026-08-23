@@ -164,10 +164,10 @@ func ProjectDiagramFromGraph(full *types.NativeGraph, t types.DiagramType, opts 
 
 	reportProgress(opts.OnProgress, "StepCluster", "")
 	var clustering map[string]string
-	if enableCommunities {
-		clustering = layout.DetectCommunities(subgraph)
-	} else if metrics != nil {
+	if metrics != nil && metrics.Communities != nil {
 		clustering = metrics.Communities
+	} else if enableCommunities {
+		clustering = layout.DetectCommunities(subgraph)
 	}
 
 	reportProgress(opts.OnProgress, "StepLayout", "")
@@ -226,10 +226,10 @@ func BuildLayoutTreeFromGraph(full *types.NativeGraph, t types.DiagramType, opts
 	}
 
 	var clustering map[string]string
-	if enableCommunities {
-		clustering = layout.DetectCommunities(subgraph)
-	} else if metrics != nil {
+	if metrics != nil && metrics.Communities != nil {
 		clustering = metrics.Communities
+	} else if enableCommunities {
+		clustering = layout.DetectCommunities(subgraph)
 	}
 
 	ltree := layout.BuildLayoutTreeEx(subgraph, metrics, clustering, effectiveOpts, t)
@@ -289,6 +289,8 @@ func ComputeGraphSummaryFromGraph(full *types.NativeGraph, t types.DiagramType, 
 	return layout.ComputeGraphSummary(subgraph), nil
 }
 
+// Get returns the cached graph pointer. Callers must Clone before mutating
+// to avoid corrupting the shared cache entry (C3-11).
 func (sc *SubgraphCache) Get(key string, mtime time.Time) *types.NativeGraph {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
@@ -344,6 +346,10 @@ func (sc *SubgraphCache) Set(key string, mtime time.Time, graph *types.NativeGra
 	}
 
 	entryBytes := estimatedBytes(graph) + 512
+	// Reject oversized entries that would exceed the budget on their own (C3-9).
+	if entryBytes > sc.maxBytes {
+		return
+	}
 	for sc.lruList.Len() > 0 && sc.currentBytes+entryBytes > sc.maxBytes {
 		oldest := sc.lruList.Back()
 		oldestKey := oldest.Value.(string)

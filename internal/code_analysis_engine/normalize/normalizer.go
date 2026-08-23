@@ -3,12 +3,19 @@ package normalize
 import (
 	"log"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/ingest"
 	"github.com/Syamchand123/GlassMarble/internal/product"
+)
+
+var (
+	evalRegex = regexp.MustCompile(`\beval\s*\(`)
+	execRegex = regexp.MustCompile(`\bexec\s*\(`)
+	spawnWordRegex = regexp.MustCompile(`\bspawn\b`)
 )
 
 func Normalize(ingestOut *ingest.IngestOutput, commitHash string) (*NormalizeOutput, error) {
@@ -539,7 +546,7 @@ func extractAdvancedSemantics(node *GASTNode, tok ingest.RichToken, symTable *Fi
 	}
 
 	// 9. Security Sinks
-	if strings.Contains(content, "eval(") || strings.Contains(content, "exec(") {
+	if evalRegex.MatchString(content) || execRegex.MatchString(content) {
 		symTable.SecuritySinks = append(symTable.SecuritySinks, SecuritySinkMeta{
 			SinkType:   "Code Injection",
 			Severity:   "CRITICAL",
@@ -723,7 +730,7 @@ func isConcurrencySpawn(content string) bool {
 	switch {
 	case strings.HasPrefix(content, "go "):
 		return true
-	case strings.Contains(lower, "spawn"):
+	case spawnWordRegex.MatchString(lower):
 		return true
 	case strings.Contains(lower, "thread("):
 		return true

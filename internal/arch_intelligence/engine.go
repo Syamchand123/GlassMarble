@@ -185,12 +185,12 @@ func rulesEnabled(cfg *config.IntelligenceConfig, family string) bool {
 
 // RunContext executes the full Architecture Intelligence pipeline: snapshot capture, metrics,
 // component inference, coupling, pattern detection, smell detection. Phases
-// check ctx cancellation between each phase.
+// check ctx cancellation between each phase. A cancelled context returns
+// early before any graph capture to avoid wasted work.
 func (e *Engine) RunContext(ctx context.Context) IntelligenceResult {
-	if ctx != nil {
-		if err := ctx.Err(); err != nil {
-			e.logf("Intelligence: cancelled before start (%v)", err)
-		}
+	if ctx != nil && ctx.Err() != nil {
+		e.logf("Intelligence: cancelled before start (%v)", ctx.Err())
+		return IntelligenceResult{}
 	}
 	cfg := e.cfg
 	snap := e.Snapshot()

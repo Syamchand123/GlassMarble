@@ -27,9 +27,22 @@ func (d *Dispatcher) maxBytes() int {
 }
 
 // Dispatch executes every call and returns results correlated by ID.
+// Context is checked before each tool execution; if cancelled, remaining
+// calls receive an error result and no further handlers run.
 func (d *Dispatcher) Dispatch(ctx context.Context, env *tools.Env, calls []provider.ToolCall) []provider.ToolResult {
 	out := make([]provider.ToolResult, 0, len(calls))
-	for _, call := range calls {
+	for i, call := range calls {
+		if ctx.Err() != nil {
+			for _, rc := range calls[i:] {
+				out = append(out, provider.ToolResult{
+					ID:      rc.ID,
+					Name:    rc.Name,
+					IsError: true,
+					Content: wrapError(fmt.Sprintf("tool dispatch cancelled: %v", ctx.Err())),
+				})
+			}
+			break
+		}
 		out = append(out, d.dispatch(ctx, env, call))
 	}
 	return out

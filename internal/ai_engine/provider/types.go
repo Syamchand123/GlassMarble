@@ -72,8 +72,9 @@ type Request struct {
 	System   string
 	Messages []Message
 	Tools    []Tool
-	// Temperature 0 means the provider default.
-	Temperature float64
+	// Temperature nil means provider default; non-nil may be 0.0 for
+	// deterministic sampling.
+	Temperature *float64
 	// MaxOutputTokens caps the completion length; 0 means provider default.
 	MaxOutputTokens int
 	// OnStream receives text deltas as they are produced when the provider
@@ -108,3 +109,6 @@ func DurationFor(timeout time.Duration) time.Duration {
 	}
 	return timeout
 }
+
+// FloatPtr is a helper for tests and callers constructing explicit temperature values.
+func FloatPtr(v float64) *float64 { return &v }

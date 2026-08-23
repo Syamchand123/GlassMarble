@@ -6,7 +6,7 @@ package cmd
 //   1: Validation error (ErrValidation) or invalid scope/format
 //   2: Entry point missing (ErrEntryMissing) or entry symbol not found (ErrEntryNotFound)
 //   3: Empty subgraph / no nodes matched (ErrEmptySubgraph)
-//   4: Render or node limit exceeded (ErrRenderLimit)
+//   4: Render limit / renderer unavailable (ErrRenderLimit) — --max-nodes truncates (sets Truncated flag) and does not abort
 
 import (
 	"bytes"
@@ -189,7 +189,10 @@ var visualizeCmd = &cobra.Command{
 		}
 		fmt.Fprintf(os.Stderr, "Done in %.1fs\n", time.Since(start).Seconds())
 		if err != nil {
-			return producterrs.Annotate(fmt.Errorf("failed to generate diagram: %w", err), producterrs.ErrRenderLimit)
+			// C6-6: propagate original error taxonomy; only renderer-unavailable
+			// paths are classified as ErrRenderLimit (exit 4). This preserves
+			// ErrEmptySubgraph (3), ErrEntryMissing (2), ErrValidation (1).
+			return fmt.Errorf("failed to generate diagram: %w", err)
 		}
 
 		// Print summary before diagram if requested
@@ -380,7 +383,11 @@ func renderMermaidToImageWithEndpoint(markup, targetPath, formatFlag, krokiBase 
 		return fmt.Errorf("failed to build render request: %w", err)
 	}
 	req.Header.Set("Content-Type", "text/plain; charset=utf-8")
-	resp, err := http.DefaultClient.Do(req)
+	// C6-5: use a client with a timeout so a hung/firewalled Kroki does not
+	// block forever; DefaultClient has no timeout.
+	krokiClient := &http.Client{Timeout: 10 * time.Second}
+	resp, err := krokiClient.Do(req)
+	var krokiErrMsg string
 	if err == nil {
 		defer resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
@@ -394,23 +401,38 @@ func renderMermaidToImageWithEndpoint(markup, targetPath, formatFlag, krokiBase 
 			fmt.Fprintf(os.Stdout, "Rendered %s image to %s (via Kroki)\n", imgFormat, targetPath)
 			return nil
 		}
+		var bodyBuf bytes.Buffer
+		_, _ = bodyBuf.ReadFrom(resp.Body)
+		if bodyBuf.Len() > 0 {
+			krokiErrMsg = strings.TrimSpace(bodyBuf.String())
+		} else {
+			krokiErrMsg = resp.Status
+		}
+	} else {
+		krokiErrMsg = err.Error()
 	}
 
 	mmdc, findErr := exec.LookPath("mmdc")
 	if findErr == nil {
-		cmd := exec.CommandContext(ctx, mmdc, "-i", "-", "-o", targetPath)
-		cmd.Stdin = strings.NewReader(markup)
+		mmdcCmd := exec.CommandContext(ctx, mmdc, "-i", "-", "-o", targetPath)
+		mmdcCmd.Stdin = strings.NewReader(markup)
 		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		if runErr := cmd.Run(); runErr == nil {
+		mmdcCmd.Stderr = &stderr
+		if runErr := mmdcCmd.Run(); runErr == nil {
 			fmt.Fprintf(os.Stdout, "Rendered %s image to %s (via mermaid-cli)\n", imgFormat, targetPath)
 			return nil
 		}
-		_ = stderr
+		// C6-13: include mmdc stderr in the final error instead of discarding.
+		if s := strings.TrimSpace(stderr.String()); s != "" {
+			krokiErrMsg = fmt.Sprintf("%s; mermaid-cli: %s", krokiErrMsg, s)
+		}
 	}
 
 	markupPath := targetPath + ".txt"
 	_ = os.WriteFile(markupPath, []byte(markup), 0o644)
+	if krokiErrMsg != "" {
+		return producterrs.Tagged(fmt.Sprintf("no diagram renderer available (Kroki: %s; mermaid-cli not installed or failed); markup written to %s", krokiErrMsg, markupPath), producterrs.ErrRenderLimit)
+	}
 	return producterrs.Tagged(fmt.Sprintf("no diagram renderer available (Kroki unreachable and mermaid-cli not installed); markup written to %s", markupPath), producterrs.ErrRenderLimit)
 }
 
@@ -511,6 +533,8 @@ func printDiagramTypeCheck(cmd *cobra.Command, name string) error {
 		resolvedEntry = "auto"
 	}
 
+	var markup string
+	var buildErr error
 	if _, statErr := os.Stat(statePath); statErr == nil {
 		req := product.BuildDiagramRequest{
 			StatePath:   statePath,
@@ -523,16 +547,63 @@ func printDiagramTypeCheck(cmd *cobra.Command, name string) error {
 			},
 		}
 		res, err := product.BuildDiagramEx(req)
-		if err == nil && res != nil {
+		if err != nil {
+			buildErr = err
+		} else if res != nil {
 			nodeCount = res.NodeCount
 			edgeCount = res.EdgeCount
+			markup = res.Markup
 		}
+	}
+
+	if buildErr != nil {
+		fmt.Fprintf(out, "Diagram type %q: INVALID (entry %s) — %v\n", name, entryReq, buildErr)
+		fmt.Fprintf(out, "  Resolved Entry: %s\n", resolvedEntry)
+		fmt.Fprintf(out, "  Node Count: %d, Edge Count: %d\n", nodeCount, edgeCount)
+		fmt.Fprintf(out, "  Mermaid CLI Validation: INVALID (%v)\n", buildErr)
+		return nil
 	}
 
 	fmt.Fprintf(out, "Diagram type %q: VALID (entry %s)\n", name, entryReq)
 	fmt.Fprintf(out, "  Resolved Entry: %s\n", resolvedEntry)
 	fmt.Fprintf(out, "  Node Count: %d, Edge Count: %d\n", nodeCount, edgeCount)
-	fmt.Fprintf(out, "  Mermaid CLI Validation: VALID\n")
+
+	// C6-7: do not hardcode VALID — attempt mermaid-cli validation when
+	// available, otherwise report SKIP. This avoids false claims when markup
+	// is syntactically broken.
+	if markup != "" {
+		if mmdc, err := exec.LookPath("mmdc"); err == nil {
+			tmpIn, err := os.CreateTemp("", "gmb-check-*.mmd")
+			if err == nil {
+				_, _ = tmpIn.WriteString(markup)
+				tmpIn.Close()
+				tmpOut := tmpIn.Name() + ".svg"
+				chkCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				chkCmd := exec.CommandContext(chkCtx, mmdc, "-i", tmpIn.Name(), "-o", tmpOut)
+				var stderr bytes.Buffer
+				chkCmd.Stderr = &stderr
+				runErr := chkCmd.Run()
+				cancel()
+				_ = os.Remove(tmpIn.Name())
+				_ = os.Remove(tmpOut)
+				if runErr == nil {
+					fmt.Fprintf(out, "  Mermaid CLI Validation: VALID\n")
+				} else {
+					msg := strings.TrimSpace(stderr.String())
+					if msg == "" {
+						msg = runErr.Error()
+					}
+					fmt.Fprintf(out, "  Mermaid CLI Validation: INVALID (%s)\n", msg)
+				}
+			} else {
+				fmt.Fprintf(out, "  Mermaid CLI Validation: SKIP (temp file error)\n")
+			}
+		} else {
+			fmt.Fprintf(out, "  Mermaid CLI Validation: SKIP (mermaid-cli not installed)\n")
+		}
+	} else {
+		fmt.Fprintf(out, "  Mermaid CLI Validation: SKIP (no markup to validate)\n")
+	}
 	return nil
 }
 

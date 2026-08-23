@@ -12,7 +12,7 @@ import (
 // skipped. Trailing \r is stripped so CRLF streams parse cleanly.
 func scanSSE(r io.Reader, fn func(event, data string)) {
 	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
+	sc.Buffer(make([]byte, 0, 64<<10), 8<<20)
 	var event, data string
 	flush := func() {
 		if data != "" || event != "" {

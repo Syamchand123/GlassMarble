@@ -8,9 +8,7 @@ import (
 // and maps the base symbol name to its instantiated or template signature.
 // This allows the linker to resolve calls like Repository<User>.Find() to Repository<T>.Find()
 func IndexGenerics(output *AggregateOutput) {
-	if output.GenericsRegistry == nil {
-		output.GenericsRegistry = make(map[string]string)
-	}
+	output.GenericsRegistry = make(map[string]string)
 
 	for fqn := range output.GlobalDefinitionIndex {
 		// Detect <T> syntax (Java, C++, TS, C#)

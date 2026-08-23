@@ -35,11 +35,16 @@ func FindEntryPoints(output *AggregateOutput) []EntryPoint {
 		return entries
 	}
 
+	seen := make(map[*normalize.GASTNode]bool)
 	for fqn, nodes := range output.GlobalDefinitionIndex {
 		for _, node := range nodes {
 			if node == nil {
 				continue
 			}
+			if seen[node] {
+				continue
+			}
+			seen[node] = true
 			kind := entryPointKindOf(node)
 			if kind == "" {
 				continue
@@ -61,6 +66,12 @@ func FindEntryPoints(output *AggregateOutput) []EntryPoint {
 func entryPointKindOf(node *normalize.GASTNode) EntryPointKind {
 	nameLower := strings.ToLower(node.Name)
 	if nameLower == "main" || nameLower == "init" {
+		if strings.EqualFold(node.Kind, "method") {
+			return ""
+		}
+		if node.Type != "" && node.Type != normalize.GASTFunction {
+			return ""
+		}
 		return EntryPointMain
 	}
 
@@ -89,8 +100,15 @@ func IndexEntrypoints(output *AggregateOutput) {
 	if output == nil {
 		return
 	}
-	if output.EntrypointRegistry == nil {
-		output.EntrypointRegistry = make([]string, 0)
+	output.EntrypointRegistry = make([]string, 0)
+	// Purge stale entrypoint markers from previous incremental run (C2-10).
+	for _, nodes := range output.GlobalDefinitionIndex {
+		for _, n := range nodes {
+			if n != nil && n.Properties != nil {
+				delete(n.Properties, "is_entrypoint")
+				delete(n.Properties, ont.PredIsMain)
+			}
+		}
 	}
 
 	for _, ep := range FindEntryPoints(output) {

@@ -42,12 +42,13 @@ func scriptedCompletionsServer(t *testing.T, responses []string) (*httptest.Serv
 
 func testEngine(t *testing.T, srv *httptest.Server, rootDir string) *Engine {
 	t.Helper()
+	tmp := 0.2
 	cfg := &aiconfig.Config{
 		Provider:           "custom",
 		Model:              "test-model",
 		APIKey:             "sk-test",
 		BaseURL:            srv.URL,
-		Temperature:        0.2,
+		Temperature:        &tmp,
 		MaxTurns:           5,
 		MaxToolResultBytes: 4096,
 		MaxOutputTokens:    512,
