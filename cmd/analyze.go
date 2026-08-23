@@ -64,12 +64,12 @@ var analyzeCmd = &cobra.Command{
 		}
 		// --json is machine-readable and must bypass the interactive layer.
 		if asJSON {
-			return runAnalysis(opts)
+			return runAnalysis(cmd, opts)
 		}
 		if tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout()) {
 			return runAnalyzeTUI(cmd, opts)
 		}
-		return runAnalysis(opts)
+		return runAnalysis(cmd, opts)
 	},
 }
 
@@ -135,7 +135,7 @@ type analysisJSON struct {
 
 // runAnalysis executes the full four-phase pipeline. It is shared by
 // `gmb analyze` and `gmb watch` so both commands drive the same engine.
-func runAnalysis(opts runAnalysisOptions) error {
+func runAnalysis(cmd *cobra.Command, opts runAnalysisOptions) error {
 	start := time.Now()
 	targetDir := opts.targetDir
 	commitHash := opts.commitHash
@@ -289,7 +289,7 @@ func runAnalysis(opts runAnalysisOptions) error {
 
 	// Initialize AKG before Linking so we have a persistent GraphDB for incremental lookups
 	storageDir := filepath.Join(absDir, ".glassmarble")
-	tm, err := newAKGManager(storageDir, nil)
+	tm, err := newAKGManager(storageDir, cmd)
 	if err != nil {
 		return fmt.Errorf("failed to initialize AKG transaction manager: %w", err)
 	}
@@ -469,7 +469,7 @@ func runAnalyzeTUI(c *cobra.Command, opts runAnalysisOptions) error {
 				Duration:      s.duration,
 			}
 		}
-		err := runAnalysis(opts)
+		err := runAnalysis(c, opts)
 		return summary, err
 	}
 	return analyze.RunAnalyze(analyze.Options{
@@ -524,7 +524,7 @@ func runAnalysisBenchmark(cmd *cobra.Command, opts runAnalysisOptions) error {
 	}
 
 	start := time.Now()
-	err := runAnalysis(opts)
+	err := runAnalysis(cmd, opts)
 	if err != nil {
 		return err
 	}

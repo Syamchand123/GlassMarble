@@ -3,6 +3,7 @@ package link
 import (
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/aggregate"
@@ -184,6 +185,38 @@ func Link(aggregateOut *aggregate.AggregateOutput, modifiedFiles []string, db Gr
 	}()
 
 	mergeWg.Wait()
+
+	// Post-merge interface dispatch fix (C2-3): call graph may have missed
+	// polymorphic calls because InboundEdges[interface] was empty in its
+	// private buffer. Re-evaluate interface-typed call sites using the
+	// fully-merged graph.
+	if !disabled["callgraph"] && !disabled["interface"] {
+		for _, callSite := range aggregateOut.GlobalCallQueue {
+			if callSite.MethodName == "" || callSite.ReceiverName == "" {
+				continue
+			}
+			ifaceFQN := resolveTypeToFQN(callSite.ReceiverName, callSite.SourceFilePath, aggregateOut.GlobalDefinitionIndex, cpg)
+			if ifaceFQN == "" {
+				continue
+			}
+			if node, ok := cpg.GetNode(ifaceFQN); !ok || node.Kind != "INTERFACE" {
+				continue
+			}
+			callerID := callSite.SourceFileNodeID
+			if callerID == "" || !strings.Contains(callerID, "::") {
+				callerID = "file:" + aggregate.NormalizeRelativePath(callSite.SourceFilePath)
+			}
+			for _, e := range cpg.InboundEdges[ifaceFQN] {
+				if e.Type != EdgeImplements {
+					continue
+				}
+				targetMethodFQN := e.SourceID + "::" + callSite.MethodName
+				if _, ok := cpg.GetNode(targetMethodFQN); ok {
+					cpg.AddEdge(callerID, targetMethodFQN, EdgeCalls, callSite.LineNumber)
+				}
+			}
+		}
+	}
 
 	// Step 2: MaxTotalNodes check — warn or abort if the graph exceeds the limit
 	if cfg.MaxTotalNodes > 0 && len(cpg.GraphNodes) > cfg.MaxTotalNodes {

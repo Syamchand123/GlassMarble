@@ -98,7 +98,7 @@ func loadWorkingTreeSnapshots(dir string, cmd *cobra.Command) (*akg.CodeProperty
 	// Clone the base so the head analysis does not mutate the snapshot.
 	baseClone := base.Clone()
 
-	if err := runAnalysis(runAnalysisOptions{targetDir: absDir, full: true}); err != nil {
+	if err := runAnalysis(cmd, runAnalysisOptions{targetDir: absDir, full: true}); err != nil {
 		return nil, nil, fmt.Errorf("working-tree analysis failed: %w", err)
 	}
 

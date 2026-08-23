@@ -117,7 +117,7 @@ func GetChangedFiles(repoDir string, oldCommit, newCommit string) ([]string, err
 		return []string{}, nil // No changes
 	}
 
-	output, err := runGitCommand(repoDir, "diff", "--name-only", oldRes, newRes)
+	output, err := runGitCommand(repoDir, "diff", "--name-only", "--no-renames", oldRes, newRes)
 	if err != nil {
 		return nil, err
 	}

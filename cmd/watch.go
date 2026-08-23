@@ -70,7 +70,7 @@ changes made outside the watcher's scope are also picked up.`,
 func runWatchTUI(c *cobra.Command, opts runAnalysisOptions) error {
 	runFn := func(progress func(step int, name string, current, total int)) error {
 		opts.progress = progress
-		return runAnalysis(opts)
+		return runAnalysis(c, opts)
 	}
 	register := func(w *fsnotify.Watcher) error { return watchTree(w, opts.targetDir) }
 	relevant := func(w *fsnotify.Watcher, ev fsnotify.Event) bool { return watchEventRelevant(w, ev) }
@@ -91,7 +91,7 @@ func runWatchPlain(cmd *cobra.Command, opts runAnalysisOptions) error {
 
 	// Run an initial analysis so the AKG is current before watching.
 	fmt.Printf("[%s] Initial analysis...\n", time.Now().Format("15:04:05"))
-	if err := runAnalysis(opts); err != nil {
+	if err := runAnalysis(cmd, opts); err != nil {
 		fmt.Printf("[%s] Initial analysis failed: %v\n", time.Now().Format("15:04:05"), err)
 	}
 
@@ -132,7 +132,7 @@ func runWatchPlain(cmd *cobra.Command, opts runAnalysisOptions) error {
 			}
 			lastFingerprint = fp
 			fmt.Printf("[%s] Repository changes detected, running analysis...\n", time.Now().Format("15:04:05"))
-			if err := runAnalysis(opts); err != nil {
+			if err := runAnalysis(cmd, opts); err != nil {
 				fmt.Printf("[%s] Analysis failed: %v\n", time.Now().Format("15:04:05"), err)
 			}
 		}(pending)

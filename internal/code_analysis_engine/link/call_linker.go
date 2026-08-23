@@ -49,18 +49,31 @@ func resolveCallSite(callSite aggregate.LinkedCallSite, om *aggregate.OwnershipM
 	interfaceFQN := resolveTypeToFQN(receiver, callSite.SourceFilePath, aggregateOut.GlobalDefinitionIndex, cpg)
 	if interfaceFQN != "" {
 		if ifaceNode, exists := cpg.GetNode(interfaceFQN); exists && ifaceNode.Kind == "INTERFACE" {
-			// Find all concrete implementations of this interface
-			for _, e := range cpg.InboundEdges[interfaceFQN] {
+			added := 0
+			// Use DB as fallback when InboundEdges not yet populated (concurrent buffers)
+			edges := cpg.InboundEdges[interfaceFQN]
+			if len(edges) == 0 && cpg.db != nil {
+				edges = cpg.db.GetInboundEdges(interfaceFQN)
+			}
+			for _, e := range edges {
 				if e.Type == EdgeImplements {
 					structID := e.SourceID
-					// Look for matching method on concrete struct
 					targetMethodFQN := structID + "::" + method
 					if _, ok := cpg.GetNode(targetMethodFQN); ok {
 						cpg.AddEdge(callerID, targetMethodFQN, EdgeCalls, callSite.LineNumber)
+						added++
+					} else if cpg.db != nil {
+						if _, ok2 := cpg.db.GetNode(targetMethodFQN); ok2 {
+							cpg.AddEdge(callerID, targetMethodFQN, EdgeCalls, callSite.LineNumber)
+							added++
+						}
 					}
 				}
 			}
-			return
+			if added > 0 {
+				return
+			}
+			// Fall through to static resolution when no interface dispatch matched
 		}
 	}
 
