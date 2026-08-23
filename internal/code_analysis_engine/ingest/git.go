@@ -45,17 +45,65 @@ func CollectGitDiff(rootDir string, commitHash string) ([]FileTask, error) {
 	now := time.Now()
 
 	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
+		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		parts := strings.Fields(line)
-		if len(parts) < 2 {
+		// --name-status is TAB-separated: "M\tpath" or "R100\told\tnew" or "R100\told.go\tnew.go"
+		// Using Fields would break on spaces in paths.
+		tabParts := strings.Split(line, "\t")
+		if len(tabParts) < 2 {
+			// Fallback: try Fields for legacy output
+			parts := strings.Fields(line)
+			if len(parts) < 2 {
+				continue
+			}
+			tabParts = parts
+			// If status contains tab parts failed, reconstruct as single file entry
+			if !strings.HasPrefix(tabParts[0], "R") {
+				tabParts = []string{tabParts[0], parts[len(parts)-1]}
+			}
+		}
+		status := strings.TrimSpace(tabParts[0])
+		isRename := strings.HasPrefix(status, "R")
+		if isRename && len(tabParts) >= 3 {
+			oldRel := strings.TrimSpace(tabParts[1])
+			newRel := strings.TrimSpace(tabParts[2])
+			// Emit delete for old path
+			tasks = append(tasks, FileTask{
+				FilePath: filepath.Join(absRoot, oldRel),
+				RelPath:  oldRel,
+				Language: LangUnknown,
+				Change:   ChangeDeleted,
+				Commit:   commitHash,
+				Time:     now,
+			})
+			// Emit add/modify for new path if language matches
+			newFull := filepath.Join(absRoot, newRel)
+			if lang2, _, ok2 := DetectLanguage(newFull, reg); ok2 {
+				if !deltaPathFiltered(newRel) {
+					tasks = append(tasks, FileTask{
+						FilePath: newFull,
+						RelPath:  newRel,
+						Language: lang2,
+						Change:   ChangeAdded,
+						Commit:   commitHash,
+						Time:     now,
+					})
+				}
+			}
 			continue
 		}
-
-		status := parts[0]
-		relPath := parts[len(parts)-1]
+		// Non-rename: single path
+		var relPath string
+		if len(tabParts) >= 2 {
+			relPath = strings.TrimSpace(tabParts[1])
+			// For tabParts from Fields fallback with spaces, take last
+			if relPath == "" && len(tabParts) > 2 {
+				relPath = strings.TrimSpace(tabParts[len(tabParts)-1])
+			}
+		} else {
+			continue
+		}
 		fullPath := filepath.Join(absRoot, relPath)
 
 		lang, _, ok := DetectLanguage(fullPath, reg)
@@ -150,7 +198,39 @@ func collectGitStatus(absRoot string) ([]FileTask, error) {
 			continue
 		}
 		status := line[:2]
-		relPath := strings.TrimSpace(line[3:])
+		rawPath := strings.TrimSpace(line[3:])
+		// Handle renames: "old -> new" or "{old => new}" forms. Expand to D+A.
+		if strings.Contains(status, "R") && strings.Contains(rawPath, "->") {
+			parts := strings.SplitN(rawPath, "->", 2)
+			if len(parts) == 2 {
+				oldRel := strings.TrimSpace(parts[0])
+				newRel := strings.TrimSpace(parts[1])
+				// Strip brace prefix like "dir/{old => new}/file" handled by normalizeNumstatPath logic,
+				// but for porcelain we just handle simple "old -> new"
+				// Emit delete for old
+				tasks = append(tasks, FileTask{
+					FilePath: filepath.Join(absRoot, oldRel),
+					RelPath:  oldRel,
+					Language: LangUnknown,
+					Change:   ChangeDeleted,
+					Time:     time.Now(),
+				})
+				newFull := filepath.Join(absRoot, newRel)
+				if lang2, _, ok2 := DetectLanguage(newFull, reg); ok2 {
+					if !deltaPathFiltered(newRel) {
+						tasks = append(tasks, FileTask{
+							FilePath: newFull,
+							RelPath:  newRel,
+							Language: lang2,
+							Change:   ChangeAdded,
+							Time:     time.Now(),
+						})
+					}
+				}
+				continue
+			}
+		}
+		relPath := rawPath
 		fullPath := filepath.Join(absRoot, relPath)
 
 		lang, _, ok := DetectLanguage(fullPath, reg)

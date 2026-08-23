@@ -820,7 +820,7 @@ func reconstructFromTTLFileEx(StatePath string, runMacros bool) (*CodePropertyGr
 		return nil, err
 	}
 
-	nodes, edges, err := ingest.ParseTTLFile(StatePath)
+	nodes, edges, err := extract.ParseTTLFile(StatePath)
 	if err != nil {
 		return nil, fmt.Errorf("TTL parse failed: %w", err)
 	}

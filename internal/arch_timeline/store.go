@@ -45,12 +45,18 @@ func NewSnapshotStore(dir string) (*SnapshotStore, error) {
 	return &SnapshotStore{dir: dir}, nil
 }
 
-// computeTopologyHash computes the sha256 of sorted (source, edge_type, target) tuples.
+// computeTopologyHash computes the sha256 of sorted node IDs plus sorted (source, edge_type, target) tuples.
 func computeTopologyHash(snap *archmodel.ArchSnapshot) (string, error) {
 	graph, err := Replay(snap)
 	if err != nil {
 		return "", fmt.Errorf("failed to replay graph to compute hash: %w", err)
 	}
+
+	var nodeIDs []string
+	graph.Nodes.Iterate(func(id string, _ *link.ResolvedNode) {
+		nodeIDs = append(nodeIDs, id)
+	})
+	sort.Strings(nodeIDs)
 
 	var edgeTuples []string
 	graph.OutboundEdges.Iterate(func(source string, edges []link.ResolvedEdge) {
@@ -62,8 +68,13 @@ func computeTopologyHash(snap *archmodel.ArchSnapshot) (string, error) {
 	sort.Strings(edgeTuples)
 
 	h := sha256.New()
+	for _, id := range nodeIDs {
+		h.Write([]byte(id))
+		h.Write([]byte{0})
+	}
 	for _, tuple := range edgeTuples {
 		h.Write([]byte(tuple))
+		h.Write([]byte{0})
 	}
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }

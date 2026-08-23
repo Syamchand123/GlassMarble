@@ -64,18 +64,26 @@ func Normalize(ingestOut *ingest.IngestOutput, commitHash string) (*NormalizeOut
 	for w := 0; w < workerCount; w++ {
 		go func() {
 			defer wg.Done()
-			defer func() {
-				if r := recover(); r != nil {
-					log.Printf("normalize: normalizer worker panicked: %v", r)
-				}
-			}()
 			for res := range taskCh {
-				root, symTable := processFileResult(res)
-				resultCh <- procResult{
-					relPath:  res.RelPath,
-					root:     root,
-					symTable: symTable,
-				}
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							log.Printf("normalize: normalizer panic for %s: %v", res.RelPath, r)
+							// Emit empty result to avoid silent loss; file will be skipped via error handling upstream
+							resultCh <- procResult{
+								relPath:  res.RelPath,
+								root:     nil,
+								symTable: nil,
+							}
+						}
+					}()
+					root, symTable := processFileResult(res)
+					resultCh <- procResult{
+						relPath:  res.RelPath,
+						root:     root,
+						symTable: symTable,
+					}
+				}()
 			}
 		}()
 	}

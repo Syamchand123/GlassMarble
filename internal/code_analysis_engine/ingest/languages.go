@@ -23,7 +23,7 @@ import (
 	tree_sitter_typescript "github.com/tree-sitter/tree-sitter-typescript/bindings/go"
 )
 
-// LanguageSpec pairs a language identifier with the grammar binding, thelangrusr
+// LanguageSpec pairs a language identifier with the grammar binding, the language
 // file extensions it claims, and the tree-sitter node kinds that the
 // engine cares about.  Extending the engine to a new language is a one-
 // line addition to the Registry() slice below.
@@ -331,22 +331,26 @@ func Registry() []LanguageSpec {
 			Calls:   []string{},
 		},
 		{
+			// Kotlin: declaration-only pending — no tree-sitter grammar wired yet.
+			// Extensions disabled to avoid nil NewLanguage panic; re-enable when binding added.
 			Lang:       LangKotlin,
-			Extensions: []string{".kt", ".kts"},
+			Extensions: []string{},
 			Declarations: []string{
 				"class_declaration", "function_declaration", "object_declaration",
 			},
 		},
 		{
+			// Swift: declaration-only pending — no tree-sitter grammar wired yet.
 			Lang:       LangSwift,
-			Extensions: []string{".swift"},
+			Extensions: []string{},
 			Declarations: []string{
 				"class_declaration", "function_declaration", "protocol_declaration",
 			},
 		},
 		{
+			// Scala: declaration-only pending — no tree-sitter grammar wired yet.
 			Lang:       LangScala,
-			Extensions: []string{".scala", ".sc"},
+			Extensions: []string{},
 			Declarations: []string{
 				"class_definition", "function_definition", "object_definition",
 			},

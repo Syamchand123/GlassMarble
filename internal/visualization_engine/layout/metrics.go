@@ -1,4 +1,4 @@
-package normalize
+package layout
 
 import (
 	"math"

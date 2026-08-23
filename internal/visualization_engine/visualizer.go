@@ -141,14 +141,14 @@ func ProjectDiagramFromGraph(full *types.NativeGraph, t types.DiagramType, opts 
 
 	if opts.Scope != types.ScopeGlobal {
 		reportProgress(opts.OnProgress, "StepScope", fmt.Sprintf("scoping to %v", opts.Scope))
-		ingest.ApplyScope(full, opts)
+		extract.ApplyScope(full, opts)
 	} else {
 		reportProgress(opts.OnProgress, "StepScope", "global scope")
 	}
 
-	cfg := ingest.GetExtractionConfig(t, opts)
+	cfg := extract.GetExtractionConfig(t, opts)
 	reportProgress(opts.OnProgress, "StepExtract", fmt.Sprintf("config=%s", cfg.Name))
-	subgraph, effectiveOpts, err := ingest.ExtractFromSubgraph(full, cfg, opts)
+	subgraph, effectiveOpts, err := extract.ExtractFromSubgraph(full, cfg, opts)
 	if err != nil {
 		return "", fmt.Errorf("extract failed: %w", err)
 	}
@@ -157,27 +157,27 @@ func ProjectDiagramFromGraph(full *types.NativeGraph, t types.DiagramType, opts 
 	}
 
 	reportProgress(opts.OnProgress, "StepMetrics", fmt.Sprintf("(SCC=%v, %d nodes)", enableSCC, len(subgraph.Nodes)))
-	var metrics *normalize.DiagramMetrics
+	var metrics *layout.DiagramMetrics
 	if enableMetrics {
-		metrics = normalize.ComputeAllMetricsWithOptions(subgraph, enableSCC)
+		metrics = layout.ComputeAllMetricsWithOptions(subgraph, enableSCC)
 	}
 
 	reportProgress(opts.OnProgress, "StepCluster", "")
 	var clustering map[string]string
 	if enableCommunities {
-		clustering = normalize.DetectCommunities(subgraph)
+		clustering = layout.DetectCommunities(subgraph)
 	} else if metrics != nil {
 		clustering = metrics.Communities
 	}
 
 	reportProgress(opts.OnProgress, "StepLayout", "")
-	layout := normalize.BuildLayoutTreeEx(subgraph, metrics, clustering, effectiveOpts, t)
+	ltree := layout.BuildLayoutTreeEx(subgraph, metrics, clustering, effectiveOpts, t)
 
 	reportProgress(opts.OnProgress, "StepRender", fmt.Sprintf("rendering %s...", string(t)))
-	markup := aggregate.RenderDiagramFormatOptions(layout, t, opts)
+	markup := render.RenderDiagramFormatOptions(ltree, t, opts)
 
-	if opts.OnSummary != nil && layout.Summary != nil {
-		opts.OnSummary(layout.Summary)
+	if opts.OnSummary != nil && ltree.Summary != nil {
+		opts.OnSummary(ltree.Summary)
 	}
 
 	return markup, nil
@@ -208,11 +208,11 @@ func BuildLayoutTreeFromGraph(full *types.NativeGraph, t types.DiagramType, opts
 
 	full = full.Clone()
 	if opts.Scope != types.ScopeGlobal {
-		ingest.ApplyScope(full, opts)
+		extract.ApplyScope(full, opts)
 	}
 
-	cfg := ingest.GetExtractionConfig(t, opts)
-	subgraph, effectiveOpts, err := ingest.ExtractFromSubgraph(full, cfg, opts)
+	cfg := extract.GetExtractionConfig(t, opts)
+	subgraph, effectiveOpts, err := extract.ExtractFromSubgraph(full, cfg, opts)
 	if err != nil {
 		return nil, fmt.Errorf("extract failed: %w", err)
 	}
@@ -220,20 +220,20 @@ func BuildLayoutTreeFromGraph(full *types.NativeGraph, t types.DiagramType, opts
 		return nil, producterrs.Annotate(fmt.Errorf("diagram %s produced an empty subgraph", string(t)), producterrs.ErrEmptySubgraph)
 	}
 
-	var metrics *normalize.DiagramMetrics
+	var metrics *layout.DiagramMetrics
 	if enableMetrics {
-		metrics = normalize.ComputeAllMetricsWithOptions(subgraph, enableSCC)
+		metrics = layout.ComputeAllMetricsWithOptions(subgraph, enableSCC)
 	}
 
 	var clustering map[string]string
 	if enableCommunities {
-		clustering = normalize.DetectCommunities(subgraph)
+		clustering = layout.DetectCommunities(subgraph)
 	} else if metrics != nil {
 		clustering = metrics.Communities
 	}
 
-	layout := normalize.BuildLayoutTreeEx(subgraph, metrics, clustering, effectiveOpts, t)
-	return layout, nil
+	ltree := layout.BuildLayoutTreeEx(subgraph, metrics, clustering, effectiveOpts, t)
+	return ltree, nil
 }
 
 // BuildDiagramAST runs the full pipeline and constructs a validated DiagramAST.
@@ -248,12 +248,12 @@ func (ec *EngineCoordinator) BuildDiagramAST(t types.DiagramType, opts types.Que
 
 // BuildDiagramASTFromGraph builds a validated DiagramAST from an existing graph.
 func BuildDiagramASTFromGraph(full *types.NativeGraph, t types.DiagramType, opts types.QueryOptions) (*types.DiagramAST, error) {
-	layout, err := BuildLayoutTreeFromGraph(full, t, opts)
+	ltree, err := BuildLayoutTreeFromGraph(full, t, opts)
 	if err != nil {
 		return nil, err
 	}
-	ast := normalize.BuildDiagramAST(layout, t, opts)
-	ast = aggregate.ValidateAndOptimizeAST(ast)
+	ast := layout.BuildDiagramAST(ltree, t, opts)
+	ast = render.ValidateAndOptimizeAST(ast)
 	return ast, nil
 }
 
@@ -277,16 +277,16 @@ func ComputeGraphSummaryFromGraph(full *types.NativeGraph, t types.DiagramType, 
 	full = full.Clone()
 
 	if opts.Scope != types.ScopeGlobal {
-		ingest.ApplyScope(full, opts)
+		extract.ApplyScope(full, opts)
 	}
 
-	cfg := ingest.GetExtractionConfig(t, opts)
-	subgraph, _, err := ingest.ExtractFromSubgraph(full, cfg, opts)
+	cfg := extract.GetExtractionConfig(t, opts)
+	subgraph, _, err := extract.ExtractFromSubgraph(full, cfg, opts)
 	if err != nil {
 		return nil, fmt.Errorf("extract failed: %w", err)
 	}
 
-	return normalize.ComputeGraphSummary(subgraph), nil
+	return layout.ComputeGraphSummary(subgraph), nil
 }
 
 func (sc *SubgraphCache) Get(key string, mtime time.Time) *types.NativeGraph {
@@ -403,7 +403,7 @@ func (ec *EngineCoordinator) parseGraph(opts types.QueryOptions) (*types.NativeG
 	parseFn := ec.parseFn
 	if parseFn == nil {
 		parseFn = func(path string, opts types.QueryOptions) (*types.NativeGraph, error) {
-			return ingest.ExtractSubgraph(path, opts.DiagramType, opts)
+			return extract.ExtractSubgraph(path, opts.DiagramType, opts)
 		}
 	}
 	native, err := parseFn(ec.statePath, opts)

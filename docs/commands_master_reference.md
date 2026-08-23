@@ -425,7 +425,7 @@ architecture intelligence runs (component coupling, patterns, smells, layer
 consistency), the result is written to `.glassmarble/intelligence/latest.json`,
 a point-in-time snapshot is stored when the topology changed
 (`.glassmarble/snapshots/`), and architectural change events are folded into
-developer memory (`.glassmarble/memory/`). These stages print
+developer memory (`.glassmarble/memory/`). These phases print
 `Intelligence:`, `Memory:`, and (with `--include-docs`) `Fusion:` summary
 lines and are non-fatal. Re-analyzing the same commit never duplicates memory
 events (idempotent).

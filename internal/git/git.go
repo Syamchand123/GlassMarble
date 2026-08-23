@@ -328,10 +328,27 @@ func applyNumstat(out string, meta *CommitMeta) {
 }
 
 // normalizeNumstatPath strips rename arrows from diff-tree output:
-// "{old => new}" or "old => new" both reduce to "new".
+// "{old => new}" or "old => new" both reduce to "new" preserving directory prefix.
 func normalizeNumstatPath(path string) string {
-	if i := strings.Index(path, "=>"); i >= 0 {
-		rest := strings.TrimSpace(path[i+2:])
+	if !strings.Contains(path, "=>") {
+		return path
+	}
+	// Brace form: "pkg/{old.go => new.go}" or "a/{b => c}/d.go"
+	if open := strings.Index(path, "{"); open >= 0 {
+		if close := strings.Index(path, "}"); close > open {
+			prefix := path[:open]
+			suffix := path[close+1:]
+			inside := path[open+1 : close]
+			parts := strings.SplitN(inside, "=>", 2)
+			if len(parts) == 2 {
+				newPart := strings.TrimSpace(parts[1])
+				return strings.TrimSpace(prefix + newPart + suffix)
+			}
+		}
+	}
+	// Plain "old => new" without braces
+	if idx := strings.Index(path, "=>"); idx >= 0 {
+		rest := strings.TrimSpace(path[idx+2:])
 		rest = strings.TrimSuffix(strings.TrimSuffix(rest, "}"), ")")
 		return strings.TrimSpace(rest)
 	}

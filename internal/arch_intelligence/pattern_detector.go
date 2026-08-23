@@ -235,11 +235,15 @@ func (r *PR03Microservices) Evaluate(ctx *RuleContext) *archmodel.DetectedPatter
 		return nil
 	}
 	// Services must be independent: no dependency edges between candidates.
+	candidateSet := make(map[string]bool, len(candidates))
+	for _, c := range candidates {
+		candidateSet[c.ID] = true
+	}
 	names := make([]string, 0, len(candidates))
 	for _, c := range candidates {
 		names = append(names, c.ID)
 		for _, dep := range c.Dependencies {
-			if _, ok := compIndex[dep]; ok {
+			if candidateSet[dep] {
 				return nil // candidates depend on each other — not independent services
 			}
 		}

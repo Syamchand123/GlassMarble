@@ -146,7 +146,14 @@ skipDFGNode:
 		}
 
 		if strings.Contains(content, "(") || strings.Contains(content, ".") {
-			targetID, _ := resolveCallTarget(node.Name, node.Name, relPath, nil, om, cpg, aggregateOut)
+			recv := node.ReceiverType
+			if recv == "" {
+				// Fallback: try to derive receiver from Name if it contains dot
+				if idx := strings.LastIndex(node.Name, "."); idx > 0 {
+					recv = node.Name[:idx]
+				}
+			}
+			targetID, _ := resolveCallTarget(recv, node.Name, relPath, nil, om, cpg, aggregateOut)
 			if targetID != "" {
 				cpg.AddEdge(funcID, targetID, EdgeDataFlow, int(node.StartLine))
 			}

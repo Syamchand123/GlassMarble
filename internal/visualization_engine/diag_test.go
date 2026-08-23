@@ -39,8 +39,8 @@ func TestDiagAllTypes(t *testing.T) {
 		types.LayeredArchitecture, types.ChangeImpact, types.Infrastructure,
 	}
 	for _, dt := range all {
-		cfg := ingest.GetExtractionConfig(dt, types.QueryOptions{})
-		sub, _, err := ingest.ExtractFromSubgraph(full, cfg, types.QueryOptions{})
+		cfg := extract.GetExtractionConfig(dt, types.QueryOptions{})
+		sub, _, err := extract.ExtractFromSubgraph(full, cfg, types.QueryOptions{})
 		if err != nil {
 			fmt.Printf("%-22s ERROR: %v\n", dt, err)
 			continue
@@ -160,20 +160,20 @@ func TestDiagComponent(t *testing.T) {
 	}
 	t1 := nowMs()
 	fmt.Printf("PARSE: %d ms\n", t1-t0)
-	cfg := ingest.GetExtractionConfig(types.UMLComponent, types.QueryOptions{})
-	sub, _, err := ingest.ExtractFromSubgraph(&types.NativeGraph{Nodes: nodes, Edges: edges}, cfg, types.QueryOptions{})
+	cfg := extract.GetExtractionConfig(types.UMLComponent, types.QueryOptions{})
+	sub, _, err := extract.ExtractFromSubgraph(&types.NativeGraph{Nodes: nodes, Edges: edges}, cfg, types.QueryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t2 := nowMs()
 	fmt.Printf("EXTRACT: %d ms (nodes=%d edges=%d)\n", t2-t1, len(sub.Nodes), len(sub.Edges))
-	_ = normalize.ComputeAllMetrics(sub)
+	_ = layout.ComputeAllMetrics(sub)
 	t3 := nowMs()
 	fmt.Printf("METRICS: %d ms\n", t3-t2)
-	_ = normalize.DetectCommunities(sub)
+	_ = layout.DetectCommunities(sub)
 	t4 := nowMs()
 	fmt.Printf("CLUSTER: %d ms\n", t4-t3)
-	_ = normalize.BuildLayoutTreeEx(sub, &normalize.DiagramMetrics{}, nil, types.QueryOptions{}, types.UMLComponent)
+	_ = layout.BuildLayoutTreeEx(sub, &layout.DiagramMetrics{}, nil, types.QueryOptions{}, types.UMLComponent)
 	t5 := nowMs()
 	fmt.Printf("LAYOUT: %d ms\n", t5-t4)
 }
@@ -189,20 +189,20 @@ func TestDiagTiming(t *testing.T) {
 	}
 	t1 := nowMs()
 	fmt.Printf("PARSE: %d ms\n", t1-t0)
-	cfg := ingest.GetExtractionConfig(types.UMLClass, types.QueryOptions{})
-	sub, _, err := ingest.ExtractFromSubgraph(&types.NativeGraph{Nodes: nodes, Edges: edges}, cfg, types.QueryOptions{})
+	cfg := extract.GetExtractionConfig(types.UMLClass, types.QueryOptions{})
+	sub, _, err := extract.ExtractFromSubgraph(&types.NativeGraph{Nodes: nodes, Edges: edges}, cfg, types.QueryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t2 := nowMs()
 	fmt.Printf("EXTRACT: %d ms (nodes=%d edges=%d)\n", t2-t1, len(sub.Nodes), len(sub.Edges))
-	_ = normalize.ComputeAllMetrics(sub)
+	_ = layout.ComputeAllMetrics(sub)
 	t3 := nowMs()
 	fmt.Printf("METRICS: %d ms\n", t3-t2)
-	_ = normalize.DetectCommunities(sub)
+	_ = layout.DetectCommunities(sub)
 	t4 := nowMs()
 	fmt.Printf("CLUSTER: %d ms\n", t4-t3)
-	_ = normalize.BuildLayoutTreeEx(sub, &normalize.DiagramMetrics{}, nil, types.QueryOptions{}, types.UMLClass)
+	_ = layout.BuildLayoutTreeEx(sub, &layout.DiagramMetrics{}, nil, types.QueryOptions{}, types.UMLClass)
 	t5 := nowMs()
 	fmt.Printf("LAYOUT: %d ms\n", t5-t4)
 }
@@ -259,10 +259,10 @@ func TestDiagParse(t *testing.T) {
 	}
 	fmt.Printf("DANGLING src=%d tgt=%d\n", danglingSrc, danglingTgt)
 
-	cfg := ingest.GetExtractionConfig(types.UMLClass, types.QueryOptions{})
+	cfg := extract.GetExtractionConfig(types.UMLClass, types.QueryOptions{})
 	fmt.Printf("UMLClass cfg: kinds=%v groups=%v strategy=%v maxDepth=%d dir=%v includeUnused=%v\n",
 		cfg.NodeKindFilter, cfg.PredicateGroup, cfg.EntryStrategy, cfg.MaxDepth, cfg.Direction, cfg.IncludeUnused)
-	sub, _, err := ingest.ExtractFromSubgraph(&types.NativeGraph{Nodes: nodes, Edges: edges}, cfg, types.QueryOptions{})
+	sub, _, err := extract.ExtractFromSubgraph(&types.NativeGraph{Nodes: nodes, Edges: edges}, cfg, types.QueryOptions{})
 	if err != nil {
 		t.Fatal("UMLExtract error:", err)
 	}
@@ -276,8 +276,8 @@ func TestDiagParse(t *testing.T) {
 			fmt.Printf("  sub-edge %s: %d\n", p, c)
 		}
 	}
-	normalize.ComputeAllMetrics(sub)
-	s := normalize.ComputeGraphSummary(sub)
+	layout.ComputeAllMetrics(sub)
+	s := layout.ComputeGraphSummary(sub)
 	fmt.Printf("SUMMARY: nodes=%d edges=%d clusters=%d comps=%d\n", s.NodeCount, s.EdgeCount, s.ClusterCount, s.ConnectedComponents)
 
 	// Dump sample edges with endpoint kinds

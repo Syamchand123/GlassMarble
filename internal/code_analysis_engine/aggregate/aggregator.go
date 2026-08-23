@@ -4,6 +4,7 @@ import (
 	"log"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -182,6 +183,19 @@ func Aggregate(payload *normalize.NormalizeOutput, existingState *AggregateOutpu
 		}
 	}
 
+	// Determinize GlobalDefinitionIndex value slices (completion-order nondeterminism → canonical by file_path, then ID)
+	for key, nodes := range output.GlobalDefinitionIndex {
+		sort.Slice(nodes, func(i, j int) bool {
+			fi := nodes[i].Properties["file_path"]
+			fj := nodes[j].Properties["file_path"]
+			if fi != fj {
+				return fi < fj
+			}
+			return nodes[i].ID < nodes[j].ID
+		})
+		output.GlobalDefinitionIndex[key] = nodes
+	}
+
 	// Step 3.4: Rebuild GlobalCallQueue instantly from cached FileToCalls
 	output.GlobalCallQueue = make([]LinkedCallSite, 0)
 	for _, calls := range output.FileToCalls {
@@ -282,6 +296,17 @@ func SynthesizeGlobalDefinitionIndex(root *DirectoryNode) map[string][]*normaliz
 		for _, idxNode := range nodes {
 			index[idxNode.Key] = append(index[idxNode.Key], idxNode.Node)
 		}
+	}
+	for key, nodes := range index {
+		sort.Slice(nodes, func(i, j int) bool {
+			fi := nodes[i].Properties["file_path"]
+			fj := nodes[j].Properties["file_path"]
+			if fi != fj {
+				return fi < fj
+			}
+			return nodes[i].ID < nodes[j].ID
+		})
+		index[key] = nodes
 	}
 	return index
 }

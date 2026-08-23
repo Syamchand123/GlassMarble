@@ -24,7 +24,7 @@ func LinkConcurrencyAndAsyncControlFlow(aggregateOut *aggregate.AggregateOutput,
 				callerID = "file:" + callSite.SourceFilePath
 			}
 
-			targetID, _ := resolveCallTarget(callSite.ReceiverName, callSite.MethodName, callSite.SourceFolderPath, callSite.LocalImports, om, cpg, aggregateOut)
+			targetID, _ := resolveCallTarget(callSite.ReceiverName, callSite.MethodName, callSite.SourceFilePath, callSite.LocalImports, om, cpg, aggregateOut)
 			if targetID != "" {
 				edgeType := EdgeSpawnsConcurrent
 				if strings.Contains(strings.ToLower(callSite.MethodName+callSite.ReceiverName), "event") || strings.Contains(strings.ToLower(callSite.MethodName), "notify") {

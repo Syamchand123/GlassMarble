@@ -81,23 +81,23 @@ func TestPipelineParseExtractRender(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseGraphFileToNative failed: %v", err)
 	}
-	cfg := ingest.GetExtractionConfig(types.UMLClass, types.QueryOptions{EntryPointID: "main.go::Main"})
-	sub, _, err := ingest.ExtractFromSubgraph(native, cfg, types.QueryOptions{EntryPointID: "main.go::Main"})
+	cfg := extract.GetExtractionConfig(types.UMLClass, types.QueryOptions{EntryPointID: "main.go::Main"})
+	sub, _, err := extract.ExtractFromSubgraph(native, cfg, types.QueryOptions{EntryPointID: "main.go::Main"})
 	if err != nil {
 		t.Fatalf("ExtractFromSubgraph failed: %v", err)
 	}
 	if len(sub.Nodes) == 0 {
 		t.Fatal("expected at least one extracted node")
 	}
-	metrics := normalize.ComputeAllMetrics(sub)
+	metrics := layout.ComputeAllMetrics(sub)
 	if metrics == nil {
 		t.Fatal("expected non-nil metrics")
 	}
-	layout := normalize.BuildLayoutTreeEx(sub, metrics, metrics.Communities, types.QueryOptions{}, types.UMLClass)
+	layout := layout.BuildLayoutTreeEx(sub, metrics, metrics.Communities, types.QueryOptions{}, types.UMLClass)
 	if layout == nil {
 		t.Fatal("expected non-nil layout tree")
 	}
-	markup := aggregate.RenderDiagramFormat(layout, types.UMLClass, "mermaid")
+	markup := render.RenderDiagramFormat(layout, types.UMLClass, "mermaid")
 	if markup == "" {
 		t.Error("expected non-empty render output")
 	}
@@ -108,7 +108,7 @@ func TestPipelineParseExtractRender(t *testing.T) {
 // point must keep working so pre-v3 repositories self-heal on first load.
 func TestLegacyTTLFallbackParse(t *testing.T) {
 	path := filepath.Join("testdata", "minimal.ttl")
-	native, err := ingest.ParseTTLFileToNative(path)
+	native, err := extract.ParseTTLFileToNative(path)
 	if err != nil {
 		t.Fatalf("ParseTTLFileToNative failed: %v", err)
 	}
@@ -390,19 +390,19 @@ func TestAll31DiagramTypesAll3ScopesAll3Formats(t *testing.T) {
 						Scope:     sc.scope,
 						ScopePath: sc.scopePath,
 					}
-					cfg := ingest.GetExtractionConfig(dt, opts)
-					sub, _, err := ingest.ExtractFromSubgraph(native, cfg, opts)
+					cfg := extract.GetExtractionConfig(dt, opts)
+					sub, _, err := extract.ExtractFromSubgraph(native, cfg, opts)
 					if err != nil {
 						t.Fatalf("ExtractFromSubgraph failed: %v", err)
 					}
 
-					metrics := normalize.ComputeAllMetrics(sub)
-					tree := normalize.BuildLayoutTreeEx(sub, metrics, metrics.Communities, opts, dt)
+					metrics := layout.ComputeAllMetrics(sub)
+					tree := layout.BuildLayoutTreeEx(sub, metrics, metrics.Communities, opts, dt)
 					if tree == nil {
 						t.Fatalf("BuildLayoutTreeEx returned nil tree")
 					}
 
-					markup := aggregate.RenderDiagramFormat(tree, dt, fmtName)
+					markup := render.RenderDiagramFormat(tree, dt, fmtName)
 					if markup == "" {
 						t.Fatalf("RenderDiagramFormat returned empty markup")
 					}

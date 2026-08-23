@@ -1,4 +1,4 @@
-package ingest
+package extract
 
 import "github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 

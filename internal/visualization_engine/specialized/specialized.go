@@ -1,4 +1,4 @@
-package link
+package specialized
 
 import (
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/render"
@@ -8,5 +8,5 @@ import (
 // RenderSpecializedDiagram renders one of the 10 specialized diagram types (W4-04 / §8.3)
 // to the requested markup format (mermaid, plantuml, dot).
 func RenderSpecializedDiagram(tree *types.LayoutTree, t types.DiagramType, format string) string {
-	return aggregate.RenderDiagramFormat(tree, t, format)
+	return render.RenderDiagramFormat(tree, t, format)
 }

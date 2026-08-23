@@ -1,4 +1,4 @@
-package aggregate
+package render
 
 import (
 	"os"
@@ -17,18 +17,18 @@ import (
 // pipeline on real data instead of a hand-inlined stub tree (GAP-M-07).
 func buildTreeFromTTLFixture(t *testing.T, relTTL string, dt types.DiagramType, opts types.QueryOptions) *types.LayoutTree {
 	t.Helper()
-	native, err := ingest.ParseTTLFileToNative(relTTL)
+	native, err := extract.ParseTTLFileToNative(relTTL)
 	require.NoError(t, err, "ParseTTLFileToNative(%s)", relTTL)
 	require.NotEmpty(t, native.Nodes, "fixture %s must contain nodes", relTTL)
 
-	cfg := ingest.GetExtractionConfig(dt, opts)
-	sub, _, err := ingest.ExtractFromSubgraph(native, cfg, opts)
+	cfg := extract.GetExtractionConfig(dt, opts)
+	sub, _, err := extract.ExtractFromSubgraph(native, cfg, opts)
 	require.NoError(t, err, "ExtractFromSubgraph(%s)", dt)
 
-	metrics := normalize.ComputeAllMetrics(sub)
+	metrics := layout.ComputeAllMetrics(sub)
 	require.NotNil(t, metrics, "ComputeAllMetrics(%s)", dt)
 
-	tree := normalize.BuildLayoutTreeEx(sub, metrics, metrics.Communities, opts, dt)
+	tree := layout.BuildLayoutTreeEx(sub, metrics, metrics.Communities, opts, dt)
 	require.NotNil(t, tree, "BuildLayoutTreeEx(%s)", dt)
 	return tree
 }

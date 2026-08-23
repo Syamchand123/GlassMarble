@@ -210,7 +210,7 @@ func writeJSONFixture(t *testing.T, content string) string {
 }
 
 // TestParseGraphFileToNativeScopedEqualsFullPlusScope: the file-scoped lazy
-// load equals a full load followed by ingest.ApplyScope(ScopeFile),
+// load equals a full load followed by extract.ApplyScope(ScopeFile),
 // mirroring the TTL lazy-parser guarantee (AUDIT Issue 4 Phase 4A-2).
 func TestParseGraphFileToNativeScopedEqualsFullPlusScope(t *testing.T) {
 	path := writeJSONFixture(t, lazyScopedFixtureJSON)
@@ -220,7 +220,7 @@ func TestParseGraphFileToNativeScopedEqualsFullPlusScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	expected := full.Clone()
-	ingest.ApplyScope(expected, types.QueryOptions{Scope: types.ScopeFile, ScopePath: "a.go"})
+	extract.ApplyScope(expected, types.QueryOptions{Scope: types.ScopeFile, ScopePath: "a.go"})
 
 	got, err := akg.ParseGraphFileToNativeScoped(path, "a.go")
 	if err != nil {

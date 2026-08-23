@@ -1,4 +1,4 @@
-package normalize
+package layout
 
 import (
 	"fmt"
@@ -420,6 +420,15 @@ func collapseEdges(edges []types.TTLEdge) []types.LayoutEdge {
 	for _, edge := range counts {
 		result = append(result, *edge)
 	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].SourceID != result[j].SourceID {
+			return result[i].SourceID < result[j].SourceID
+		}
+		if result[i].TargetID != result[j].TargetID {
+			return result[i].TargetID < result[j].TargetID
+		}
+		return result[i].Predicate < result[j].Predicate
+	})
 	return result
 }
 

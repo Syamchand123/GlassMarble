@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -44,7 +45,7 @@ func RunIngestionForDelta(cfg Config, diff []FileTask) (*IngestOutput, error) {
 	var skipped, warnings []string
 
 	for _, t := range diff {
-		if t.Change == ChangeDeleted || t.Change == ChangeRenamed {
+		if t.Change == ChangeDeleted {
 			deletes = append(deletes, &DeleteEvent{
 				FilePath: t.FilePath,
 				RelPath:  t.RelPath,
@@ -55,10 +56,31 @@ func RunIngestionForDelta(cfg Config, diff []FileTask) (*IngestOutput, error) {
 			})
 			continue
 		}
+		if t.Change == ChangeRenamed {
+			// Renamed: emit delete for old path and also parse new path.
+			// When git.go already expanded R into D+A, this branch is rarely hit,
+			// but direct callers may still send ChangeRenamed with the new path.
+			deletes = append(deletes, &DeleteEvent{
+				FilePath: t.FilePath,
+				RelPath:  t.RelPath,
+				Language: t.Language,
+				Commit:   t.Commit,
+				Author:   t.Author,
+				Time:     t.Time,
+			})
+			// fallthrough to try parsing the new file as well
+		}
 
 		if _, _, ok := DetectLanguage(t.FilePath, reg); !ok {
 			skipped = append(skipped, t.RelPath+" (no matching grammar)")
 			continue
+		}
+		// Enforce MaxFileBytes for delta tasks (mirrors walker guard)
+		if cfg.MaxFileBytes > 0 {
+			if st, err := os.Stat(t.FilePath); err == nil && st.Size() > cfg.MaxFileBytes {
+				skipped = append(skipped, t.RelPath+" (exceeds max_file_bytes)")
+				continue
+			}
 		}
 		parseTasks = append(parseTasks, t)
 	}
@@ -119,27 +141,40 @@ func streamTasks(pathCh <-chan string, errorCh <-chan error, skipWarnCh <-chan s
 	for w := 0; w < cfg.WorkerCount; w++ {
 		go func() {
 			defer workerWg.Done()
-			defer func() {
-				if r := recover(); r != nil {
-					log.Printf("ingest: worker panicked: %v", r)
-				}
-			}()
 			p := newParser()
 			defer p.Close()
 			for it := range taskCh {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-				spec := lookupSpec(it.task.Language, reg)
-				if spec == nil {
-					continue
-				}
-				res := processFile(p, it.task, spec)
-				if res != nil {
-					resultCh <- res
-				}
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							log.Printf("ingest: worker task panicked for %s: %v", it.task.RelPath, r)
+							// Emit a result with error so caller sees the failure instead of silent loss
+							resultCh <- &IngestionResult{
+								FilePath: it.task.FilePath,
+								RelPath:  it.task.RelPath,
+								Language: it.task.Language,
+								Error:    fmt.Errorf("ingest: panic processing %s: %v", it.task.RelPath, r),
+							}
+						}
+					}()
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+					spec := lookupSpec(it.task.Language, reg)
+					if spec == nil {
+						return
+					}
+					if spec.NewLanguage == nil {
+						// No grammar — treat as skipped, not panic
+						return
+					}
+					res := processFile(p, it.task, spec)
+					if res != nil {
+						resultCh <- res
+					}
+				}()
 			}
 		}()
 	}
@@ -181,7 +216,7 @@ func streamTasks(pathCh <-chan string, errorCh <-chan error, skipWarnCh <-chan s
 				rel = p
 			}
 			rel = filepath.ToSlash(rel)
-			taskCh <- indexTask{
+			task := indexTask{
 				idx: idx,
 				task: FileTask{
 					FilePath: p,
@@ -189,6 +224,12 @@ func streamTasks(pathCh <-chan string, errorCh <-chan error, skipWarnCh <-chan s
 					Language: lang,
 					Change:   ChangeModified,
 				},
+			}
+			select {
+			case taskCh <- task:
+			case <-ctx.Done():
+				close(taskCh)
+				return
 			}
 			idx++
 		}
@@ -251,27 +292,47 @@ func runTasks(tasks []indexTask, cfg Config, warnings, skipped []string) (*Inges
 	for w := 0; w < cfg.WorkerCount; w++ {
 		go func() {
 			defer wg.Done()
-			defer func() {
-				if r := recover(); r != nil {
-					log.Printf("ingest: runTasks worker panicked: %v", r)
-				}
-			}()
 			p := newParser()
 			defer p.Close()
 			for it := range taskCh {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-				spec := lookupSpec(it.task.Language, reg)
-				if spec == nil {
-					continue
-				}
-				results[it.idx] = processFile(p, it.task, spec)
-				if onProgress != nil {
-					onProgress(int(atomic.AddInt64(&done, 1)), n)
-				}
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							log.Printf("ingest: runTasks worker panicked for %s: %v", it.task.RelPath, r)
+							results[it.idx] = &IngestionResult{
+								FilePath: it.task.FilePath,
+								RelPath:  it.task.RelPath,
+								Language: it.task.Language,
+								Error:    fmt.Errorf("ingest: panic processing %s: %v", it.task.RelPath, r),
+							}
+							if onProgress != nil {
+								onProgress(int(atomic.AddInt64(&done, 1)), n)
+							}
+						}
+					}()
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+					spec := lookupSpec(it.task.Language, reg)
+					if spec == nil {
+						if onProgress != nil {
+							onProgress(int(atomic.AddInt64(&done, 1)), n)
+						}
+						return
+					}
+					if spec.NewLanguage == nil {
+						if onProgress != nil {
+							onProgress(int(atomic.AddInt64(&done, 1)), n)
+						}
+						return
+					}
+					results[it.idx] = processFile(p, it.task, spec)
+					if onProgress != nil {
+						onProgress(int(atomic.AddInt64(&done, 1)), n)
+					}
+				}()
 			}
 		}()
 	}

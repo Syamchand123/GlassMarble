@@ -66,6 +66,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
@@ -225,7 +226,14 @@ func (a *Ager) Age(snap *archmodel.ArchSnapshot, now time.Time) ([]TransitionRes
 
 	var results []TransitionResult
 	var pending []archmodel.ArchEvent
-	for compName, history := range mem.ComponentMemory {
+	// Deterministic iteration: sort component names
+	compNames := make([]string, 0, len(mem.ComponentMemory))
+	for n := range mem.ComponentMemory {
+		compNames = append(compNames, n)
+	}
+	sort.Strings(compNames)
+	for _, compName := range compNames {
+		history := mem.ComponentMemory[compName]
 		if _, pinned := a.pins[compName]; pinned {
 			// convention learning STATE corrections win over aging: the developer
 			// owns this component's temporal state.

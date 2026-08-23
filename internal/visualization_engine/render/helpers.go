@@ -1,4 +1,4 @@
-package aggregate
+package render
 
 import (
 	"fmt"
@@ -304,7 +304,7 @@ func sanitizeMermaidLabel(s string) string {
 	s = strings.ReplaceAll(s, "%20", " ")
 	s = strings.ReplaceAll(s, "%3A", ":")
 	s = strings.ReplaceAll(s, "%2F", "/")
-	s = strings.ReplaceAll(s, "%smell detection", "\\")
+	s = strings.ReplaceAll(s, "%5C", "\\")
 	s = strings.ReplaceAll(s, "%", "")
 	s = strings.ReplaceAll(s, "\"", "'")
 	s = strings.ReplaceAll(s, "()", "")

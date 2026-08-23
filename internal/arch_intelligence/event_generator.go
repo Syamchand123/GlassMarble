@@ -221,11 +221,11 @@ func GenerateEvents(
 	for _, k := range patternKinds {
 		if !basePatterns[k] {
 			events = append(events, newEvent(commitMeta, archmodel.EventPatternDetected,
-				"Pattern Detected: "+string(k), nil, []string{string(k)},
+				"Pattern Detected: "+string(k), []string{string(k)}, []string{string(k)},
 				"Architecture pattern "+string(k)+" was detected.", 0.9))
 		} else if !headPatterns[k] {
 			events = append(events, newEvent(commitMeta, archmodel.EventPatternLost,
-				"Pattern Lost: "+string(k), nil, []string{string(k)},
+				"Pattern Lost: "+string(k), []string{string(k)}, []string{string(k)},
 				"Architecture pattern "+string(k)+" is no longer detected.", 0.9))
 		}
 	}

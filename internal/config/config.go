@@ -81,8 +81,15 @@ func Load(flagConfig Config) (*Config, error) {
 		mergeYAML(globalCfgPath, cfg)
 	}
 
-	// 3. .glassmarble/config.yaml
-	localCfgPath := filepath.Join(".glassmarble", "config.yaml")
+	// 3. .glassmarble/config.yaml (resolved against RootDir, not CWD)
+	effectiveRoot := flagConfig.RootDir
+	if effectiveRoot == "" {
+		effectiveRoot = os.Getenv("GLASSMARBLE_ROOT_DIR")
+	}
+	if effectiveRoot == "" {
+		effectiveRoot = "."
+	}
+	localCfgPath := filepath.Join(effectiveRoot, ".glassmarble", "config.yaml")
 	mergeYAML(localCfgPath, cfg)
 
 	// 4. Environment Variables

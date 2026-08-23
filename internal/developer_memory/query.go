@@ -76,7 +76,12 @@ func QueryMemoryFromMemory(mem *DeveloperMemory, query string, topK int) *Memory
 			score:   m * stateWeight(history.State),
 		})
 	}
-	sort.SliceStable(components, func(i, j int) bool { return components[i].score > components[j].score })
+	sort.SliceStable(components, func(i, j int) bool {
+		if components[i].score != components[j].score {
+			return components[i].score > components[j].score
+		}
+		return components[i].history.Name < components[j].history.Name
+	})
 	for _, c := range components {
 		if len(result.Components) >= topK {
 			break

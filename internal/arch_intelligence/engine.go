@@ -149,7 +149,9 @@ func (e *Engine) Snapshot() *GraphSnapshot {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	ttl := time.Duration(e.cfg.SnapshotTTLSeconds) * time.Second
-	if e.snap != nil && !e.cfg.SnapshotNoGraph && (ttl <= 0 || time.Since(e.snapAt) < ttl) {
+	// Use wall time for cache expiry; e.clock() is deterministic (hash-anchored)
+	// and must not drive TTL.
+	if e.snap != nil && (ttl <= 0 || time.Since(e.snapAt) < ttl) {
 		return e.snap
 	}
 	nodeCount := 0
@@ -158,7 +160,7 @@ func (e *Engine) Snapshot() *GraphSnapshot {
 	}
 	e.logf("Intelligence: capturing graph snapshot (%d nodes)", nodeCount)
 	e.snap = NewGraphSnapshot(e.graph)
-	e.snapAt = e.clock()
+	e.snapAt = time.Now()
 	return e.snap
 }
 

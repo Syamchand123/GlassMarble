@@ -43,12 +43,18 @@ func (p *parser) bind(spec *LanguageSpec) (*sitter.Language, error) {
 	if p.parser == nil {
 		return nil, errors.New("ingest: parser already closed")
 	}
+	if spec.NewLanguage == nil {
+		return nil, fmt.Errorf("ingest: no grammar for %s — skipping", spec.Lang)
+	}
 
 	var lang *sitter.Language
 	if cached, ok := globalLangCache.Load(spec.Lang); ok {
 		lang = cached.(*sitter.Language)
 	} else {
 		lang = spec.NewLanguage()
+		if lang == nil {
+			return nil, fmt.Errorf("ingest: grammar for %s returned nil", spec.Lang)
+		}
 		globalLangCache.Store(spec.Lang, lang)
 	}
 
