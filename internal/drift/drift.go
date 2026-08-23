@@ -96,7 +96,7 @@ func Analyze(graph *akg.CodePropertyGraph, driftCfg config.DriftConfig) *Report 
 	li := &LayerIndex{Layers: driftCfg.Layers}
 
 	// nodeLayer caches file->layer assignment per node id. Node file paths are
-	// absolute on disk; strip any project prefix by matching the trailing path.
+	// repo-relative (e.g., internal/akg/graph.go); no project prefix stripping needed.
 	nodeLayer := make(map[string]string)
 	layerGraph := make(map[string]map[string]bool) // layer -> set of layers it depends on
 	layerEdgeCount := make(map[string]int)         // "src\x00tgt" -> count
@@ -159,7 +159,16 @@ func Analyze(graph *akg.CodePropertyGraph, driftCfg config.DriftConfig) *Report 
 		if rep.Violations[i].SourceLayer != rep.Violations[j].SourceLayer {
 			return rep.Violations[i].SourceLayer < rep.Violations[j].SourceLayer
 		}
-		return rep.Violations[i].TargetLayer < rep.Violations[j].TargetLayer
+		if rep.Violations[i].TargetLayer != rep.Violations[j].TargetLayer {
+			return rep.Violations[i].TargetLayer < rep.Violations[j].TargetLayer
+		}
+		if rep.Violations[i].SourceID != rep.Violations[j].SourceID {
+			return rep.Violations[i].SourceID < rep.Violations[j].SourceID
+		}
+		if rep.Violations[i].TargetID != rep.Violations[j].TargetID {
+			return rep.Violations[i].TargetID < rep.Violations[j].TargetID
+		}
+		return rep.Violations[i].EdgeType < rep.Violations[j].EdgeType
 	})
 
 	return rep

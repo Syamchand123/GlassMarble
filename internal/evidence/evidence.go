@@ -138,9 +138,9 @@ type Bundle struct {
 // Add appends a new EvidenceItem to the bundle and updates AggConfidence and PrimarySource.
 // This is the preferred way to build bundles — never append to Items directly.
 func (b *Bundle) Add(e EvidenceItem) {
-	// Clamp excerpt to 512 characters to avoid bloating persisted JSON.
-	if len(e.Excerpt) > 512 {
-		e.Excerpt = e.Excerpt[:512]
+	// Clamp excerpt to 512 runes to avoid bloating persisted JSON (rune-boundary safe).
+	if len([]rune(e.Excerpt)) > 512 {
+		e.Excerpt = string([]rune(e.Excerpt)[:512])
 	}
 	b.Items = append(b.Items, e)
 	b.Aggregate()
