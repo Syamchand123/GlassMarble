@@ -86,12 +86,26 @@ func (r *TSImportResolver) Resolve(importPath, fromFile, rootDir string, wc *Wor
 		target := filepath.Clean(filepath.Join(dir, clean))
 		return []string{filepath.ToSlash(target)}
 	}
-	// Check explicit WorkspaceContext aliases
+	// Check explicit WorkspaceContext aliases (longest-prefix, boundary-aware)
 	if wc != nil {
 		wc.mu.RLock()
-		for alias, actualPath := range wc.Aliases {
-			if strings.HasPrefix(clean, alias) {
-				clean = strings.Replace(clean, alias, actualPath, 1)
+		type kv struct{ k, v string }
+		var sorted []kv
+		for k, v := range wc.Aliases {
+			sorted = append(sorted, kv{k, v})
+		}
+		// longest alias first
+		for i := 0; i < len(sorted); i++ {
+			for j := i + 1; j < len(sorted); j++ {
+				if len(sorted[j].k) > len(sorted[i].k) {
+					sorted[i], sorted[j] = sorted[j], sorted[i]
+				}
+			}
+		}
+		for _, kv := range sorted {
+			alias, actualPath := kv.k, kv.v
+			if clean == alias || strings.HasPrefix(clean, alias+"/") {
+				clean = actualPath + clean[len(alias):]
 				break
 			}
 		}

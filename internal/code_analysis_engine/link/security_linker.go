@@ -55,15 +55,13 @@ func hasScore(node *ResolvedNode, prim string) bool {
 }
 
 func dfsTaint(originID string, currentID string, cpg *LinkOutput, sinks map[string]bool, visited map[string]bool, depth int) {
-	if depth > 15 { // Context-Sensitive Depth Bound
+	if depth > 15 {
 		return
 	}
 	if visited[currentID] {
 		return
 	}
-	// We don't mark visited globally for context-sensitive paths, but we do prevent infinite loops locally
 	visited[currentID] = true
-	defer func() { visited[currentID] = false }()
 
 	if sinks[currentID] && originID != currentID {
 		cpg.AddEdge(originID, currentID, EdgeVulnerable, 0)

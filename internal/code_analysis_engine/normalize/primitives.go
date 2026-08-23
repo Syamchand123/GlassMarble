@@ -262,6 +262,15 @@ func stripCommentsAndStrings(s string) string {
 			continue
 		}
 		if r == '#' {
+			// Language-aware: `this.#cache` (JS private) and CSS hex ` #fff` mid-line should not start a comment.
+			// Only treat `#` as comment when not part of an identifier or hex color.
+			if i > 0 {
+				prev := runes[i-1]
+				if (prev >= 'a' && prev <= 'z') || (prev >= 'A' && prev <= 'Z') || (prev >= '0' && prev <= '9') || prev == '_' || prev == '.' || prev == '$' || prev == ':' {
+					result.WriteRune(r)
+					continue
+				}
+			}
 			inSingleComment = true
 			continue
 		}
