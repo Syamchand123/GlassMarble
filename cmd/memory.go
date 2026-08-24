@@ -125,7 +125,6 @@ func latestSnapshotOrNil(absRepoDir string) *archmodel.ArchSnapshot {
 // emits the whole aggregate so machine consumers get everything. convention learning
 // corrections (e.g. a STATE override) are reflected in the projection.
 func renderOverview(cmd *cobra.Command, learner *learning.Learner, store *developer_memory.MemoryStore, snap *archmodel.ArchSnapshot, asJSON bool, repoDir string) error {
-	_ = repoDir // C6-D8: repoDir threaded for future pin consistency; Freshen currently takes cfg not pins
 	mem, err := store.LoadMemory()
 	if err != nil {
 		return fmt.Errorf("failed to load memory: %w", err)
@@ -137,7 +136,10 @@ func renderOverview(cmd *cobra.Command, learner *learning.Learner, store *develo
 	// knowledge aging: recompute freshness live and project temporal states
 	// (including missing-entity marking against the latest snapshot), so
 	// the view always reflects the clock, never a stale persisted score.
-	proj = knowledge_aging.FreshenMemoryWithSnapshot(proj, snap, time.Now(), nil)
+	// C6-D8: use same aging config as runAging (and pin-derived states are
+	// already WAL-derived, so no extra pin threading needed for Freshen).
+	agingCfg, _ := loadAgingConfig(filepath.Join(repoDir, ".glassmarble"))
+	proj = knowledge_aging.FreshenMemoryWithSnapshot(proj, snap, time.Now(), agingCfg)
 	if asJSON {
 		out, _ := json.MarshalIndent(proj, "", "  ")
 		fmt.Fprintln(cmd.OutOrStdout(), string(out))
@@ -219,12 +221,12 @@ func appliedCount(applied []learning.AppliedCorrection) int {
 // against the latest snapshot), so decayed knowledge sinks in the results
 // without ever being hidden.
 func renderQuery(cmd *cobra.Command, learner *learning.Learner, store *developer_memory.MemoryStore, snap *archmodel.ArchSnapshot, ask string, asJSON bool, repoDir string) error {
-	_ = repoDir
 	mem, err := store.LoadMemory()
 	if err != nil {
 		return fmt.Errorf("failed to load memory: %w", err)
 	}
-	freshed := knowledge_aging.FreshenMemoryWithSnapshot(mem, snap, time.Now(), nil)
+	agingCfg, _ := loadAgingConfig(filepath.Join(repoDir, ".glassmarble"))
+	freshed := knowledge_aging.FreshenMemoryWithSnapshot(mem, snap, time.Now(), agingCfg)
 	proj, err := learner.OverlayQuery(developer_memory.QueryMemoryFromMemory(freshed, ask, developer_memory.DefaultTopK))
 	if err != nil {
 		return fmt.Errorf("failed to apply corrections: %w", err)
@@ -285,7 +287,6 @@ func renderQuery(cmd *cobra.Command, learner *learning.Learner, store *developer
 // renderComponent prints the longitudinal history of one component and the
 // timeline entries that mention it, with corrections applied.
 func renderComponent(cmd *cobra.Command, learner *learning.Learner, store *developer_memory.MemoryStore, snap *archmodel.ArchSnapshot, component string, asJSON bool, repoDir string) error {
-	_ = repoDir
 	mem, err := store.LoadMemory()
 	if err != nil {
 		return fmt.Errorf("failed to load memory: %w", err)
@@ -296,7 +297,9 @@ func renderComponent(cmd *cobra.Command, learner *learning.Learner, store *devel
 	}
 	// knowledge aging temporal projection: live freshness + aged claim states +
 	// missing-entity marking against the latest snapshot.
-	proj = knowledge_aging.FreshenMemoryWithSnapshot(proj, snap, time.Now(), nil)
+	// C6-D8: same aging config as runAging for consistency.
+	agingCfg, _ := loadAgingConfig(filepath.Join(repoDir, ".glassmarble"))
+	proj = knowledge_aging.FreshenMemoryWithSnapshot(proj, snap, time.Now(), agingCfg)
 	history := findComponent(proj, component)
 
 	if asJSON {

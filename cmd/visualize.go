@@ -6,7 +6,7 @@ package cmd
 //   1: Validation error (ErrValidation) or invalid scope/format
 //   2: Entry point missing (ErrEntryMissing) or entry symbol not found (ErrEntryNotFound)
 //   3: Empty subgraph / no nodes matched (ErrEmptySubgraph)
-//   4: Render limit / renderer unavailable (ErrRenderLimit) — --max-nodes truncates to N highest-degree nodes (sets GraphSummary.Truncated = true); hard abort only via analyze --abort-on-limit
+//   4: Render limit / renderer unavailable (ErrRenderLimit) — Truncate to N highest-degree nodes (sets Truncated) — hard abort only via analyze --abort-on-limit
 
 import (
 	"bytes"

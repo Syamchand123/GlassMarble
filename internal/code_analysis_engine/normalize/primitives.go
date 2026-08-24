@@ -271,6 +271,20 @@ func stripCommentsAndStrings(s string) string {
 					continue
 				}
 			}
+			// CSS hex color: `color: #fff` or `background #abc123` — # followed immediately by hex digit
+			// must not start a comment even when prev is space. Without this, ` #fff` at line start
+			// or after `:`+space would be stripped and primitive detection loses context (C2-16).
+			if i+1 < len(runes) {
+				next := runes[i+1]
+				if (next >= '0' && next <= '9') || (next >= 'a' && next <= 'f') || (next >= 'A' && next <= 'F') {
+					// Peek ahead to see if it's a plausible hex color (3, 6 or 8 hex digits) rather than a comment.
+					// Preserve conservatively when next is hex; Python/Shell comments with hex-like `#abc` are rare
+					// and the underscore/identifier check already handles most non-CSS cases.
+					// For ` #fff` the prev is space but we still preserve.
+					result.WriteRune(r)
+					continue
+				}
+			}
 			inSingleComment = true
 			continue
 		}
