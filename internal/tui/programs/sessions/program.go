@@ -10,6 +10,7 @@ import (
 	"sort"
 
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/session"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/components"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
@@ -44,6 +45,7 @@ type model struct {
 	selected string
 	sortCol  sortCol
 	sortDesc bool
+	help     components.HelpOverlay
 }
 
 // Run shows the session table and handles navigation, delete confirmation,
@@ -60,7 +62,7 @@ func Run(dir string, in io.Reader, out io.Writer, onDelete func(id string) error
 		}
 
 		m := newModel(list)
-		p := tea.NewProgram(m, tea.WithOutput(out), tea.WithInput(in))
+		p := tea.NewProgram(m, tea.WithOutput(out), tea.WithInput(in), tea.WithAltScreen(), tea.WithMouseCellMotion())
 		final, err := p.Run()
 		if err != nil {
 			return err
@@ -88,7 +90,15 @@ func Run(dir string, in io.Reader, out io.Writer, onDelete func(id string) error
 }
 
 func newModel(list []session.Summary) model {
-	m := model{list: list, count: len(list), width: 80, height: 14, sortCol: sortUpdated, sortDesc: true}
+	m := model{
+		list:     list,
+		count:    len(list),
+		width:    80,
+		height:   14,
+		sortCol:  sortUpdated,
+		sortDesc: true,
+		help:     components.NewHelpOverlay(tui.DefaultKeyMap()),
+	}
 	m.rebuild()
 	return m
 }
@@ -114,10 +124,20 @@ func (m *model) rebuild() {
 		return less
 	})
 
+	idWidth := 22
+	updatedWidth := 20
+	provWidth := 36
+	if m.width > 0 && m.width < 80 {
+		provWidth = m.width - idWidth - updatedWidth - 6
+		if provWidth < 12 {
+			provWidth = 12
+		}
+	}
+
 	columns := []table.Column{
-		{Title: "ID", Width: 22},
-		{Title: "UPDATED", Width: 20},
-		{Title: "PROVIDER/MODEL", Width: 36},
+		{Title: "ID", Width: idWidth},
+		{Title: "UPDATED", Width: updatedWidth},
+		{Title: "PROVIDER/MODEL", Width: provWidth},
 	}
 	tblRows := make([]table.Row, 0, len(rows))
 	for _, s := range rows {
@@ -144,7 +164,7 @@ func confirmDelete(id string, in io.Reader, out io.Writer) (bool, error) {
 	).
 		WithInput(in).
 		WithOutput(out).
-		WithTheme(huh.ThemeBase())
+		WithTheme(tui.HuhTheme())
 
 	if err := form.Run(); err != nil {
 		return false, err
@@ -161,11 +181,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.rebuild()
 		m.tbl.SetWidth(msg.Width - 4)
 		m.tbl.SetHeight(msg.Height - 6)
 		return m, nil
 	case tea.KeyMsg:
+		if m.help.Visible && msg.String() != "?" && msg.String() != "q" && msg.String() != "esc" {
+			m.help.Visible = false
+		}
 		switch msg.String() {
+		case "?":
+			m.help.Toggle()
+			return m, nil
 		case "q", "esc", "ctrl+c":
 			m.action = actionQuit
 			return m, tea.Quit
@@ -176,13 +203,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.action = actionDelete
 				return m, tea.Quit
 			}
-		case "r":
+		case "r", "enter":
 			row := m.tbl.SelectedRow()
 			if len(row) > 0 {
 				m.selected = row[0]
 				m.action = actionResume
 				return m, tea.Quit
 			}
+		case "g", "home":
+			m.tbl.GotoTop()
+			return m, nil
+		case "G", "end":
+			m.tbl.GotoBottom()
+			return m, nil
 		case "1", "2", "3":
 			next := sortID
 			if msg.String() == "2" {
@@ -207,14 +240,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
+	if m.help.Visible {
+		return m.help.View()
+	}
 	header := components.RenderHeader("AI Chat Sessions",
 		fmt.Sprintf("%d session(s)", m.count), m.width)
 	body := m.tbl.View()
 	keyRow := components.JoinKeyHints(
-		components.KeyHint("↑↓", "navigate"),
+		components.KeyHint("↑↓/jk", "navigate"),
 		components.KeyHint("1/2/3", "sort"),
+		components.KeyHint("enter/r", "resume"),
 		components.KeyHint("d", "delete"),
-		components.KeyHint("r", "resume"),
+		components.KeyHint("?", "help"),
 		components.KeyHint("q", "quit"),
 	)
 	status := components.RenderStatusBar(keyRow, m.sortLabel(), m.width)

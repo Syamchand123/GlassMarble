@@ -2,6 +2,7 @@ package components
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/tui"
@@ -44,6 +45,14 @@ func NewPhaseProgress(label string, width int) PhaseProgress {
 	return PhaseProgress{model: p, label: label, total: 1}
 }
 
+// SetWidth resizes the progress bar.
+func (s *PhaseProgress) SetWidth(width int) {
+	if width <= 0 {
+		width = 40
+	}
+	s.model.Width = width
+}
+
 // SetProgress updates current/total and eases the bar toward the new fraction
 // with the spring. It returns the command that drives the animation frames.
 func (s *PhaseProgress) SetProgress(current, total int) tea.Cmd {
@@ -56,6 +65,10 @@ func (s *PhaseProgress) SetProgress(current, total int) tea.Cmd {
 	if fraction > 1 {
 		fraction = 1
 	}
+	if os.Getenv("DISABLE_ANIMATIONS") == "1" {
+		s.model.SetPercent(fraction)
+		return nil
+	}
 	return s.model.SetPercent(fraction)
 }
 
@@ -64,6 +77,10 @@ func (s *PhaseProgress) MarkDone(d time.Duration) tea.Cmd {
 	s.done = true
 	s.elapsed = d
 	s.current = s.total
+	if os.Getenv("DISABLE_ANIMATIONS") == "1" {
+		s.model.SetPercent(1)
+		return nil
+	}
 	return s.model.SetPercent(1)
 }
 
@@ -90,6 +107,9 @@ func (s *PhaseProgress) View() string {
 
 // Update forwards a message to the underlying progress model.
 func (s *PhaseProgress) Update(msg tea.Msg) (PhaseProgress, tea.Cmd) {
+	if os.Getenv("DISABLE_ANIMATIONS") == "1" {
+		return *s, nil
+	}
 	model, cmd := s.model.Update(msg)
 	if p, ok := model.(progress.Model); ok {
 		s.model = p

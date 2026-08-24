@@ -54,6 +54,9 @@ func RenderDoctor(rep *akg.DoctorReport) string {
 	if rep.Dangling > 0 {
 		failures++
 	}
+	if len(rep.DuplicateIDs) > 0 {
+		failures++
+	}
 	if failures == 0 {
 		rows = append(rows, tui.BadgeOK.Render("  DOCTOR: OK — all checks passed  "))
 	} else {
@@ -67,6 +70,6 @@ func RenderDoctor(rep *akg.DoctorReport) string {
 func RenderDoctorUninitialized(statePath string) string {
 	return tui.StyleCard.Render(joinLines([]string{
 		"  GlassMarble Doctor: Uninitialized",
-		"  No active AKG database found at " + tui.StyleCode.Render(statePath) + ". Run 'glassmarble analyze' first.",
+		"  No active AKG database found at " + tui.StyleCode.Render(statePath) + ". Run 'gmb analyze' first.",
 	}))
 }

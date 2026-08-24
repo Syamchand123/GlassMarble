@@ -152,3 +152,10 @@ const LogoBanner = `
      ██║╚██╔╝██║██╔══██║██╔══██╗██╔══██╗██║     ██╔══╝
      ██║ ╚═╝ ██║██║  ██║██║  ██║██████╔╝███████╗███████║
      ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ ╚══════╝╚══════╝`
+
+// RenderLogoBanner returns the GlassMarble ASCII art logo banner styled in brand colors.
+func RenderLogoBanner() string {
+	banner := R.NewStyle().Foreground(ColorPrimary).Bold(true).Render(LogoBanner)
+	tagline := StyleMuted.Render("       AI Architecture Intelligence Platform")
+	return banner + "\n" + tagline + "\n"
+}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/charmbracelet/huh"
 )
 
@@ -25,7 +26,7 @@ func ConfirmPrune(in io.Reader, out io.Writer, desc string) (bool, error) {
 				Negative("No, cancel").
 				Value(&confirmed),
 		),
-	)
+	).WithTheme(tui.HuhTheme())
 	form.WithInput(in)
 	form.WithOutput(out)
 

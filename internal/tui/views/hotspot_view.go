@@ -28,9 +28,9 @@ func RenderHotspot(top int, rows []HotspotRow) string {
 	medals := []string{"🥇", "🥈", "🥉"}
 	var body []string
 	for _, r := range rows {
-		rank := fmt.Sprintf("%d", r.Rank)
+		rank := fmt.Sprintf("%2d.", r.Rank)
 		if r.Rank-1 < len(medals) {
-			rank = medals[r.Rank-1] + " " + rank
+			rank = fmt.Sprintf("%2d. %s", r.Rank, medals[r.Rank-1])
 		}
 		name := truncateLeft(r.Name, 46)
 		inStyle := tui.StyleOK

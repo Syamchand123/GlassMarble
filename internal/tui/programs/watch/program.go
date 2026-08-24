@@ -70,7 +70,7 @@ type fingerprintMsg struct {
 }
 
 type progressMsg struct {
-	step   int
+	step    int
 	name    string
 	current int
 	total   int
@@ -85,7 +85,7 @@ type startAnalysisMsg struct{}
 
 type tickMsg time.Time
 
-// RunWatch runs the interactive watcher until Ctrl+C is pressed.
+// RunWatch runs the interactive watcher until Ctrl+C or q is pressed.
 func RunWatch(opts Options, register RegisterFn, relevant EventRelevantFn, fingerprint FingerprintFn, runAnalysis RunAnalysisFn, in io.Reader, out io.Writer) error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -98,7 +98,7 @@ func RunWatch(opts Options, register RegisterFn, relevant EventRelevantFn, finge
 	}
 
 	m := newModel(opts, fingerprint, runAnalysis)
-	p := tea.NewProgram(m, tea.WithOutput(out), tea.WithInput(in))
+	p := tea.NewProgram(m, tea.WithOutput(out), tea.WithInput(in), tea.WithMouseCellMotion())
 	m.p = p
 
 	go func() {
@@ -145,6 +145,8 @@ func (m *model) Init() tea.Cmd {
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -153,8 +155,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.Height = maxInt(3, msg.Height-14)
 		return m, nil
 	case tea.KeyMsg:
-		if msg.String() == "ctrl+c" {
+		switch msg.String() {
+		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "g", "home":
+			m.viewport.GotoTop()
+			return m, nil
+		case "G", "end":
+			m.viewport.GotoBottom()
+			return m, nil
+		}
+		var vpCmd tea.Cmd
+		m.viewport, vpCmd = m.viewport.Update(msg)
+		if vpCmd != nil {
+			cmds = append(cmds, vpCmd)
 		}
 	case tickMsg:
 		return m, tickCmd()
@@ -202,15 +216,22 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			m.addLog(tui.StyleMuted.Render(ts()) + " " + tui.StyleOK.Render("✓ Analysis complete"))
 		}
-		// Re-check fingerprint after analysis to catch changes that arrived while analyzing (C3-7).
 		return m, fingerprintCmd(m)
 	case fsErrMsg:
 		m.addLog(tui.StyleMuted.Render(ts()) + " " + tui.StyleWarningText.Render("watcher error: "+msg.err.Error()))
 		return m, nil
 	}
-	var cmd tea.Cmd
-	m.spinner, cmd = m.spinner.Update(msg)
-	return m, cmd
+
+	var spinnerCmd tea.Cmd
+	m.spinner, spinnerCmd = m.spinner.Update(msg)
+	if spinnerCmd != nil {
+		cmds = append(cmds, spinnerCmd)
+	}
+
+	if len(cmds) > 0 {
+		return m, tea.Batch(cmds...)
+	}
+	return m, nil
 }
 
 func (m *model) View() string {
@@ -219,7 +240,7 @@ func (m *model) View() string {
 		width = 80
 	}
 	var b strings.Builder
-	b.WriteString(components.RenderHeader("watch", "Ctrl+C to stop", width))
+	b.WriteString(components.RenderHeader("watch", "q/Ctrl+C to stop", width))
 	b.WriteString("\n\n")
 	b.WriteString(tui.KV("Watching", m.opts.TargetDir))
 	b.WriteString("\n")
@@ -244,7 +265,11 @@ func (m *model) View() string {
 	b.WriteString(m.viewport.View())
 	b.WriteString("\n")
 	b.WriteString(components.RenderStatusBar(
-		components.JoinKeyHints(components.KeyHint("Ctrl+C", "stop")),
+		components.JoinKeyHints(
+			components.KeyHint("↑↓/jk", "scroll"),
+			components.KeyHint("g/G", "top/bottom"),
+			components.KeyHint("q", "stop"),
+		),
 		"Running for: "+formatDuration(time.Since(m.started)),
 		width,
 	))

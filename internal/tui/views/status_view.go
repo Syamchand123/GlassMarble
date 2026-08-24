@@ -31,7 +31,7 @@ type StatusData struct {
 func RenderStatusUninitialized(StatePath string) string {
 	return tui.StyleCard.Render(joinLines([]string{
 		"  GlassMarble Status: Uninitialized",
-		"  No active AKG database found at " + tui.StyleCode.Render(StatePath) + ". Run 'glassmarble analyze' first.",
+		"  No active AKG database found at " + tui.StyleCode.Render(StatePath) + ". Run 'gmb analyze' first.",
 	}))
 }
 
