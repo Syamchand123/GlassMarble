@@ -102,6 +102,38 @@ func Aggregate(payload *normalize.NormalizeOutput, existingState *AggregateOutpu
 	pruneWg.Wait()
 	pruneEmptyDirectories(output.RootNode)
 
+	// C2-10: purge stale GlobalDefinitionIndex entries for modified files before re-indexing.
+	// UpsertedTrees contains new + modified files; for modified ones the old FileToSymbols
+	// must be removed from GDI so that definitions deleted inside a file do not linger
+	// and pollute GenericsRegistry/EntrypointRegistry which rebuild from GDI.
+	for relPath := range payload.UpsertedTrees {
+		normRel := NormalizeRelativePath(relPath)
+		if oldSyms, ok := output.FileToSymbols[normRel]; ok {
+			for _, sym := range oldSyms {
+				if nodes, exists := output.GlobalDefinitionIndex[sym]; exists {
+					var kept []*normalize.GASTNode
+					for _, n := range nodes {
+						if n == nil {
+							continue
+						}
+						fp := ""
+						if n.Properties != nil {
+							fp = n.Properties["file_path"]
+						}
+						if fp != normRel {
+							kept = append(kept, n)
+						}
+					}
+					if len(kept) == 0 {
+						delete(output.GlobalDefinitionIndex, sym)
+					} else {
+						output.GlobalDefinitionIndex[sym] = kept
+					}
+				}
+			}
+		}
+	}
+
 	// Step 3.2 & 3.3 (Grafting & Visibility): Graft updated files incrementally
 	var graftWg sync.WaitGroup
 	type graftResult struct {

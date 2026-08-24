@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -43,19 +42,19 @@ func runMemoryPipeline(storageDir string, tm *akg.AKGTransactionManager, commitH
 
 	res := runIntelligence(graph, storageDir, verbose)
 
-	fmt.Printf("Intelligence: %d components | %d patterns | %d smells | %d cycles | %d layer violations\n",
+	tuiPrintf("Intelligence: %d components | %d patterns | %d smells | %d cycles | %d layer violations\n",
 		len(res.Components), len(res.Patterns), len(res.Smells), res.Metrics.CycleCount, res.Metrics.LayerViolationCount)
 	for _, p := range res.Patterns {
-		fmt.Printf("  pattern: %s (confidence %.2f)\n", p.Name, p.Confidence)
+		tuiPrintf("  pattern: %s (confidence %.2f)\n", p.Name, p.Confidence)
 	}
 	for _, s := range res.Smells {
-		fmt.Printf("  smell: [%s] %s\n", s.Severity, s.Title)
+		tuiPrintf("  smell: [%s] %s\n", s.Severity, s.Title)
 	}
 
 	// 1. Persist the intelligence result (watch mode also updates this file on
 	// uncommitted saves — it is the "current state" contract).
 	if err := writeIntelligenceLatest(storageDir, res); err != nil && verbose {
-		fmt.Printf("warning: could not persist intelligence/latest.json: %v\n", err)
+		tuiPrintf("warning: could not persist intelligence/latest.json: %v\n", err)
 	}
 
 	// 2. Snapshot. Failures here are warnings: snapshots and memory are
@@ -64,7 +63,7 @@ func runMemoryPipeline(storageDir string, tm *akg.AKGTransactionManager, commitH
 	store, err := arch_timeline.NewSnapshotStore(snapshotDir(storageDir))
 	if err != nil {
 		if verbose {
-			fmt.Printf("warning: snapshot store unavailable: %v\n", err)
+			tuiPrintf("warning: snapshot store unavailable: %v\n", err)
 		}
 		return
 	}
@@ -73,7 +72,7 @@ func runMemoryPipeline(storageDir string, tm *akg.AKGTransactionManager, commitH
 	snap, _, err := buildAndStoreSnapshot(filepath.Dir(storageDir), graph, commitHash, res, store, false)
 	if err != nil {
 		if verbose {
-			fmt.Printf("warning: snapshot build failed: %v\n", err)
+			tuiPrintf("warning: snapshot build failed: %v\n", err)
 		}
 		return
 	}
@@ -118,12 +117,12 @@ func runMemoryPipeline(storageDir string, tm *akg.AKGTransactionManager, commitH
 		})
 		if rerr != nil {
 			if verbose {
-				fmt.Printf("warning: commit reasoning failed: %v\n", rerr)
+				tuiPrintf("warning: commit reasoning failed: %v\n", rerr)
 			}
 		} else {
 			events = append(events, reasoned...)
 			if len(reasoned) > 0 {
-				fmt.Printf("Commit reasoning: reasoned %d architectural change(s)\n", len(reasoned))
+				tuiPrintf("Commit reasoning: reasoned %d architectural change(s)\n", len(reasoned))
 			}
 		}
 
@@ -132,25 +131,25 @@ func runMemoryPipeline(storageDir string, tm *akg.AKGTransactionManager, commitH
 			Timestamp: snap.Timestamp,
 		})...)
 	} else if verbose {
-		fmt.Println("Memory: no previous snapshot — skipping event generation (first analysis)")
+		tuiPrintln("Memory: no previous snapshot — skipping event generation (first analysis)")
 	}
 
 	store6 := developer_memory.NewStoreForRepo(filepath.Dir(storageDir)).WithLogger(func(format string, args ...any) {
-		fmt.Printf("warning: "+format+"\n", args...)
+		tuiPrintf("warning: "+format+"\n", args...)
 	})
 	builder := developer_memory.NewMemoryBuilderWithOptions(store6,
 		developer_memory.WithProjectID(projectIDFor(filepath.Dir(storageDir))))
 
 	appended, err := builder.ProcessEvents(events)
 	if err != nil {
-		fmt.Printf("warning: developer memory ingestion failed: %v\n", err)
+		tuiPrintf("warning: developer memory ingestion failed: %v\n", err)
 		return
 	}
 	if appended > 0 {
-		fmt.Printf("Memory: recorded %d architectural event(s) into developer memory\n", appended)
+		tuiPrintf("Memory: recorded %d architectural event(s) into developer memory\n", appended)
 	} else if len(events) == 0 {
 		if verbose {
-			fmt.Println("Memory: no architectural changes since the previous analysis")
+			tuiPrintln("Memory: no architectural changes since the previous analysis")
 		}
 	}
 }
@@ -168,7 +167,7 @@ func runIntelligence(graph *akg.CodePropertyGraph, storageDir string, verbose bo
 	}
 	if verbose {
 		opts = append(opts, arch_intelligence.WithLogger(func(format string, args ...any) {
-			fmt.Printf(format+"\n", args...)
+			tuiPrintf(format+"\n", args...)
 		}))
 	}
 	return arch_intelligence.NewEngineWithOptions(graph, opts...).Run()

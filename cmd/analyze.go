@@ -22,6 +22,26 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// isTUI reports whether the current analysis is running under the
+// bubbletea TUI. Sub-pipeline helpers (memory, fusion, learning, aging)
+// check it to avoid raw fmt.Printf lines corrupting the TUI viewport
+// (C6-2).
+var isTUI bool
+
+func tuiPrintf(format string, a ...any) {
+	if isTUI {
+		return
+	}
+	fmt.Printf(format, a...)
+}
+
+func tuiPrintln(a ...any) {
+	if isTUI {
+		return
+	}
+	fmt.Println(a...)
+}
+
 var analyzeCmd = &cobra.Command{
 	Use:   "analyze",
 	Short: "Run full source code ingestion and build Architecture Knowledge Graph (AKG)",
@@ -142,6 +162,8 @@ type analysisJSON struct {
 // runAnalysis executes the full four-phase pipeline. It is shared by
 // `gmb analyze` and `gmb watch` so both commands drive the same engine.
 func runAnalysis(cmd *cobra.Command, opts runAnalysisOptions) error {
+	isTUI = opts.progress != nil
+	defer func() { isTUI = false }()
 	start := time.Now()
 	targetDir := opts.targetDir
 	commitHash := opts.commitHash
@@ -256,12 +278,16 @@ func runAnalysis(cmd *cobra.Command, opts runAnalysisOptions) error {
 					gatedPrintf("Ingestion (delta): parsed %d changed files, %d deleted.\n",
 						len(ingestOut.Updated), len(ingestOut.Deleted))
 				}
-			} else if verbose || opts.progress == nil {
-				// C6-12: delta fallback warning — surface the delta error
-				// before silently promoting to full rescan.
-				gatedPrintf("Note: delta ingestion failed (%v); falling back to full scan.\n", err)
+			} else {
+				// C6-12: delta fallback warning — always surface the delta
+				// error before silently promoting to full rescan (at least
+				// under --verbose, but now unconditional so TUI non-verbose
+				// is not silent). TUI mode writes to stderr to avoid
+				// corrupting the bubbletea viewport.
 				if opts.progress != nil {
 					fmt.Fprintf(os.Stderr, "Note: delta ingestion failed (%v); falling back to full scan.\n", err)
+				} else {
+					gatedPrintf("Note: delta ingestion failed (%v); falling back to full scan.\n", err)
 				}
 			}
 		}

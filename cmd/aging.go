@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -32,25 +31,25 @@ import (
 func runAging(storageDir string, verbose bool) {
 	cfg, err := loadAgingConfig(storageDir)
 	if err != nil && verbose {
-		fmt.Printf("warning: could not load aging config: %v\n", err)
+		tuiPrintf("warning: could not load aging config: %v\n", err)
 	}
 	if !cfg.AgingEnabled() {
 		if verbose {
-			fmt.Println("Aging: knowledge aging disabled by config (aging.enabled=false)")
+			tuiPrintln("Aging: knowledge aging disabled by config (aging.enabled=false)")
 		}
 		return
 	}
 
 	repoDir := filepath.Dir(storageDir)
 	store6 := developer_memory.NewStoreForRepo(repoDir).WithLogger(func(format string, args ...any) {
-		fmt.Printf("warning: "+format+"\n", args...)
+		tuiPrintf("warning: "+format+"\n", args...)
 	})
 	pins := agingPinsFromCorrections(repoDir, store6, verbose)
 	ager := knowledge_aging.NewAger(store6,
 		knowledge_aging.WithConfig(cfg),
 		knowledge_aging.WithPinnedStates(pins),
 		knowledge_aging.WithLogger(func(format string, args ...any) {
-			fmt.Printf("warning: "+format+"\n", args...)
+			tuiPrintf("warning: "+format+"\n", args...)
 		}))
 
 	var snap *archmodel.ArchSnapshot
@@ -61,26 +60,26 @@ func runAging(storageDir string, verbose bool) {
 	now := time.Now()
 	transitions, aerr := ager.Age(snap, now)
 	if aerr != nil {
-		fmt.Printf("warning: knowledge aging failed: %v\n", aerr)
+		tuiPrintf("warning: knowledge aging failed: %v\n", aerr)
 		return
 	}
 
 	mem, err := store6.LoadMemory()
 	if err != nil {
 		if verbose {
-			fmt.Printf("warning: could not load memory for summary: %v\n", err)
+			tuiPrintf("warning: could not load memory for summary: %v\n", err)
 		}
 		return
 	}
 	avg, claims := averageFreshness(mem, now)
 	if len(transitions) > 0 {
-		fmt.Printf("Aging: %d state transition(s) | %d claim(s) aged | average freshness %.0f%%\n",
+		tuiPrintf("Aging: %d state transition(s) | %d claim(s) aged | average freshness %.0f%%\n",
 			len(transitions), claims, avg*100)
 		for _, tr := range transitions {
-			fmt.Printf("  %s: %s → %s (%s)\n", tr.Component, tr.OldState, tr.NewState, tr.RuleID)
+			tuiPrintf("  %s: %s → %s (%s)\n", tr.Component, tr.OldState, tr.NewState, tr.RuleID)
 		}
 	} else if verbose {
-		fmt.Printf("Aging: no state transitions | %d claim(s) aged | average freshness %.0f%%\n",
+		tuiPrintf("Aging: no state transitions | %d claim(s) aged | average freshness %.0f%%\n",
 			claims, avg*100)
 	}
 }
@@ -97,7 +96,7 @@ func agingPinsFromCorrections(repoDir string, store *developer_memory.MemoryStor
 	corrections, err := learning.NewStore(repoDir).LoadAll()
 	if err != nil {
 		if verbose {
-			fmt.Printf("warning: could not load corrections for aging pins: %v\n", err)
+			tuiPrintf("warning: could not load corrections for aging pins: %v\n", err)
 		}
 		return pins
 	}
@@ -124,7 +123,7 @@ func agingPinsFromCorrections(repoDir string, store *developer_memory.MemoryStor
 		}
 		sort.Strings(names)
 		for _, name := range names {
-			fmt.Printf("Aging: component %q pinned to %s by a STATE correction (aging will not transition it)\n",
+			tuiPrintf("Aging: component %q pinned to %s by a STATE correction (aging will not transition it)\n",
 				name, pins[name])
 		}
 	}

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -32,12 +31,12 @@ func runLearning(storageDir string, tm *akg.AKGTransactionManager, verbose bool)
 	cfg, err := loadLearningConfig(storageDir)
 	if err != nil {
 		if verbose {
-			fmt.Printf("warning: could not load learning config: %v\n", err)
+			tuiPrintf("warning: could not load learning config: %v\n", err)
 		}
 	}
 	if !cfg.LearnConventionsEnabled() {
 		if verbose {
-			fmt.Println("Learning: convention learning disabled by config (learning.conventions_enabled=false)")
+			tuiPrintln("Learning: convention learning disabled by config (learning.conventions_enabled=false)")
 		}
 		return
 	}
@@ -48,21 +47,21 @@ func runLearning(storageDir string, tm *akg.AKGTransactionManager, verbose bool)
 	}
 
 	store6 := developer_memory.NewStoreForRepo(repoDir).WithLogger(func(format string, args ...any) {
-		fmt.Printf("warning: "+format+"\n", args...)
+		tuiPrintf("warning: "+format+"\n", args...)
 	})
 	mem, err := store6.LoadMemory()
 	if err != nil {
-		fmt.Printf("warning: convention learning could not load developer memory: %v\n", err)
+		tuiPrintf("warning: convention learning could not load developer memory: %v\n", err)
 		mem = nil
 	}
 
 	corrStore := learning.NewStore(repoDir).WithLogger(func(format string, args ...any) {
-		fmt.Printf("warning: "+format+"\n", args...)
+		tuiPrintf("warning: "+format+"\n", args...)
 	})
 	learner := learning.NewLearner(corrStore, learning.WithConfig(cfg))
 	preferred, rejected, perr := learner.PatternFeedback(mem)
 	if perr != nil && verbose {
-		fmt.Printf("warning: convention learning could not read pattern feedback: %v\n", perr)
+		tuiPrintf("warning: convention learning could not read pattern feedback: %v\n", perr)
 	}
 
 	conv := learning.LearnConventions(graph, mem,
@@ -71,12 +70,12 @@ func runLearning(storageDir string, tm *akg.AKGTransactionManager, verbose bool)
 
 	convStore := learning.NewConventionsStore(repoDir)
 	if err := convStore.Save(conv); err != nil {
-		fmt.Printf("warning: convention learning could not persist conventions: %v\n", err)
+		tuiPrintf("warning: convention learning could not persist conventions: %v\n", err)
 		return
 	}
 
 	if verbose {
-		fmt.Printf("Learning: learned conventions (service=%q test=%q adr=%q layers=%d patterns=%d, %d preferred %d rejected)\n",
+		tuiPrintf("Learning: learned conventions (service=%q test=%q adr=%q layers=%d patterns=%d, %d preferred %d rejected)\n",
 			conv.ServiceNamingPattern.Value, conv.TestFilePattern.Value, conv.ADRDirectory.Value,
 			len(conv.LayerDirectories), len(conv.LearnedPatterns),
 			len(conv.PreferredPatterns), len(conv.RejectedPatterns))

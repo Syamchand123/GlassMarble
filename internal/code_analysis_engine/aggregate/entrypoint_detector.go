@@ -1,6 +1,7 @@
 package aggregate
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/normalize"
@@ -35,16 +36,21 @@ func FindEntryPoints(output *AggregateOutput) []EntryPoint {
 		return entries
 	}
 
-	seen := make(map[*normalize.GASTNode]bool)
+	seen := make(map[string]bool)
 	for fqn, nodes := range output.GlobalDefinitionIndex {
 		for _, node := range nodes {
 			if node == nil {
 				continue
 			}
-			if seen[node] {
+			// C2-18: dedupe by node ID (same GASTNode indexed under ~4 keys). Fallback to pointer when ID empty (test fixtures).
+			key := node.ID
+			if key == "" {
+				key = fmt.Sprintf("%p", node)
+			}
+			if seen[key] {
 				continue
 			}
-			seen[node] = true
+			seen[key] = true
 			kind := entryPointKindOf(node)
 			if kind == "" {
 				continue
@@ -66,10 +72,16 @@ func FindEntryPoints(output *AggregateOutput) []EntryPoint {
 func entryPointKindOf(node *normalize.GASTNode) EntryPointKind {
 	nameLower := strings.ToLower(node.Name)
 	if nameLower == "main" || nameLower == "init" {
-		if strings.EqualFold(node.Kind, "method") {
+		// C2-18: main/init must be a FUNCTION (not a method, etc.). Allow empty Kind (fallback to Type check)
+		// and accept both "function" and test alias "func".
+		if node.Kind != "" && !strings.EqualFold(node.Kind, "function") && !strings.EqualFold(node.Kind, "func") {
 			return ""
 		}
 		if node.Type != "" && node.Type != normalize.GASTFunction {
+			return ""
+		}
+		// Explicitly reject method Kind even if Type check passes (defense in depth).
+		if strings.EqualFold(node.Kind, "method") {
 			return ""
 		}
 		return EntryPointMain

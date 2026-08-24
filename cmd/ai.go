@@ -678,7 +678,7 @@ var aiModelsCmd = &cobra.Command{
 	Use:   "models",
 	Short: "List supported AI providers and their models",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := aiconfig.Load(aiconfig.Config{})
+		cfg, err := aiconfig.LoadForDir(aiRootDir(cmd), aiconfig.Config{})
 		if err != nil {
 			return err
 		}

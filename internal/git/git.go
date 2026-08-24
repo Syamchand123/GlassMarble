@@ -15,9 +15,12 @@ import (
 
 // Helper executing a git command within a specific working directory.
 // Uses exec.CommandContext so a hung git (credential helper, NFS stall, large
-// diff-tree) is bounded by the caller's context (C7-3).
+// diff-tree) is bounded by the caller's context or a 30s fallback timeout
+// (C7-3).
 func runGitCommand(dir string, args ...string) (string, error) {
-	return runGitCommandContext(context.Background(), dir, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return runGitCommandContext(ctx, dir, args...)
 }
 
 func runGitCommandContext(ctx context.Context, dir string, args ...string) (string, error) {

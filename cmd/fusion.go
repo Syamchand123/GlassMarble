@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -33,16 +32,16 @@ func runFusion(storageDir string, tm *akg.AKGTransactionManager, verbose bool) {
 
 	cfg, err := loadFusionConfig(storageDir)
 	if err != nil && verbose {
-		fmt.Printf("warning: could not load fusion config: %v\n", err)
+		tuiPrintf("warning: could not load fusion config: %v\n", err)
 	}
 
 	store := developer_memory.NewStoreForRepo(repoDir).WithLogger(func(format string, args ...any) {
-		fmt.Printf("warning: "+format+"\n", args...)
+		tuiPrintf("warning: "+format+"\n", args...)
 	})
 
 	opts := []knowledge_fusion.Option{
 		knowledge_fusion.WithLogger(func(format string, args ...any) {
-			fmt.Printf("warning: "+format+"\n", args...)
+			tuiPrintf("warning: "+format+"\n", args...)
 		}),
 	}
 	if cfg.GitSourcesEnabled() {
@@ -51,14 +50,14 @@ func runFusion(storageDir string, tm *akg.AKGTransactionManager, verbose bool) {
 				RepoDir:    repoDir,
 				MaxCommits: cfg.MaxCommits,
 				Warnf: func(format string, args ...any) {
-					fmt.Printf("warning: "+format+"\n", args...)
+					tuiPrintf("warning: "+format+"\n", args...)
 				},
 			}),
 			knowledge_fusion.WithIssueAdapter(&knowledge_fusion.LocalGitAdapter{
 				RepoDir:    repoDir,
 				MaxCommits: cfg.MaxCommits,
 				Warnf: func(format string, args ...any) {
-					fmt.Printf("warning: "+format+"\n", args...)
+					tuiPrintf("warning: "+format+"\n", args...)
 				},
 			}),
 		)
@@ -66,14 +65,14 @@ func runFusion(storageDir string, tm *akg.AKGTransactionManager, verbose bool) {
 
 	res, err := knowledge_fusion.NewFusionEngine(cfg, store, opts...).Run(context.Background(), repoDir, graph)
 	if err != nil {
-		fmt.Printf("warning: knowledge fusion failed: %v\n", err)
+		tuiPrintf("warning: knowledge fusion failed: %v\n", err)
 		return
 	}
 	if verbose {
-		fmt.Printf("Fusion: fused %d claims from %d sources (ADR=%d README=%d PR=%d issue=%d, %d new)\n",
+		tuiPrintf("Fusion: fused %d claims from %d sources (ADR=%d README=%d PR=%d issue=%d, %d new)\n",
 			res.TotalClaims, res.Sources, res.AdrFiles, res.ReadmeFiles, res.PRs, res.Issues, res.NewClaims)
 	} else if res.TotalClaims > 0 {
-		fmt.Printf("Fusion: fused %d knowledge claim(s) from %d source(s)\n", res.TotalClaims, res.Sources)
+		tuiPrintf("Fusion: fused %d knowledge claim(s) from %d source(s)\n", res.TotalClaims, res.Sources)
 	}
 }
 

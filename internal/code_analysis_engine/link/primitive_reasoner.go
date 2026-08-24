@@ -76,14 +76,7 @@ func ReasonWholeProgramPrimitives(cpg *LinkOutput) {
 								newPrimStrs = append(newPrimStrs, k)
 							}
 
-							// Sort for deterministic hashing
-							for i := 0; i < len(newPrimStrs); i++ {
-								for j := i + 1; j < len(newPrimStrs); j++ {
-									if newPrimStrs[i] > newPrimStrs[j] {
-										newPrimStrs[i], newPrimStrs[j] = newPrimStrs[j], newPrimStrs[i]
-									}
-								}
-							}
+							sort.Strings(newPrimStrs)
 
 							newPrimStr := strings.Join(newPrimStrs, ",")
 							if sourceNode.Primitive != newPrimStr {
@@ -160,8 +153,14 @@ func ReasonWholeProgramPrimitives(cpg *LinkOutput) {
 		}
 	}
 
-	// 2. Propagate whole-program primitives up to FILE and MODULE nodes
-	for _, node := range cpg.GraphNodes {
+	// 2. Propagate whole-program primitives up to FILE and MODULE nodes (deterministic vertex order).
+	nodeIDs := make([]string, 0, len(cpg.GraphNodes))
+	for id := range cpg.GraphNodes {
+		nodeIDs = append(nodeIDs, id)
+	}
+	sort.Strings(nodeIDs)
+	for _, id := range nodeIDs {
+		node := cpg.GraphNodes[id]
 		if node.Kind == "FUNCTION" || node.Kind == "METHOD" {
 			if node.Primitive == "" {
 				continue
@@ -208,13 +207,7 @@ func mergePrimitives(existing, newStr string) string {
 		list = append(list, k)
 	}
 
-	for i := 0; i < len(list); i++ {
-		for j := i + 1; j < len(list); j++ {
-			if list[i] > list[j] {
-				list[i], list[j] = list[j], list[i]
-			}
-		}
-	}
+	sort.Strings(list)
 	return strings.Join(list, ",")
 }
 
