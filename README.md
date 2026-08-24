@@ -101,33 +101,82 @@ The database layer provides:
 
 ---
 
-## Quick Start
+## Quick Start & Installation
 
-### Prerequisites
+Install GlassMarble in seconds using the official zero-dependency one-line installers for your platform:
 
-- Go 1.22+
-- A Git repository to analyze (recommended, not required)
-
-### Build
+### 📦 Linux & macOS (Apple Silicon & Intel)
 
 ```bash
-git clone https://github.com/Syamchand123/GlassMarble
-cd GlassMarble
-go build -o gmb.exe main.go       # Windows
-go build -o gmb main.go           # Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/Syamchand123/GlassMarble/main/install.sh | sh
 ```
 
-### Initialize & Analyze
+### 🪟 Windows (PowerShell 5.1 & 7+)
+
+```powershell
+irm https://raw.githubusercontent.com/Syamchand123/GlassMarble/main/install.ps1 | iex
+```
+
+### 🐳 Docker Container
 
 ```bash
-# 1. Initialize the .glassmarble workspace in your repo
-gmb init --dir /path/to/your/repo
+docker run --rm -v "$(pwd):/workspace" ghcr.io/syamchand123/glassmarble:latest analyze --dir /workspace
+```
+
+### 🛠️ Go Toolchain (Go 1.22+)
+
+```bash
+go install github.com/Syamchand123/GlassMarble@latest
+```
+
+### 🔨 Build From Source
+
+```bash
+git clone https://github.com/Syamchand123/GlassMarble.git
+cd GlassMarble
+make build
+```
+
+---
+
+## 💻 Platform Support Matrix
+
+| Operating System | Architecture | Binary Package | Installer |
+|---|---|---|---|
+| **macOS** 12+ | Apple Silicon (`arm64` M1–M4) | `gmb_*_darwin_arm64.tar.gz` | `curl \| sh` |
+| **macOS** 12+ | Intel 64-bit (`amd64`) | `gmb_*_darwin_amd64.tar.gz` | `curl \| sh` |
+| **Linux** (glibc / musl) | 64-bit (`x86_64` / `amd64`) | `gmb_*_linux_amd64.tar.gz` | `curl \| sh` |
+| **Linux** (ARM) | ARM64 (`aarch64`) | `gmb_*_linux_arm64.tar.gz` | `curl \| sh` |
+| **Windows** 10 / 11 | 64-bit (`x64` / `amd64`) | `gmb_*_windows_amd64.zip` | `irm \| iex` |
+| **Windows** 11 | ARM64 | `gmb_*_windows_arm64.zip` | `irm \| iex` |
+
+---
+
+## 🚦 Exit Codes Reference
+
+GlassMarble follows strict semantic exit codes for deterministic automation and CI/CD pipelines:
+
+| Exit Code | Classification | Meaning | Example Scenario |
+|---|---|---|---|
+| `0` | **Success** | Command completed successfully with no errors | Analysis finished; graph healthy |
+| `1` | **General Error** | Unhandled runtime exception or filesystem error | Permission denied reading file |
+| `2` | **Usage Error** | Invalid flags, missing required arguments | Unknown flag `--foo` passed |
+| `3` | **Scope / Target Error** | Target symbol or scoped file was not found in graph | `gmb visualize sequence --entry nonExistent` |
+| `4` | **Integrity Failure** | `gmb doctor` detected corruption, dangling edges, or invalid state | Dangling unresolved references found |
+
+---
+
+### Initialize & Analyze Your Codebase
+
+```bash
+# 1. Initialize the .glassmarble workspace in your repository
+gmb init
 
 # 2. Run full analysis — builds the AKG from scratch
-gmb analyze --dir /path/to/your/repo --full
+gmb analyze --full
 
-# 3. Check AKG health
-gmb status --dir /path/to/your/repo
+# 3. Check AKG health and graph metrics
+gmb status
 ```
 
 ### Generate a Diagram

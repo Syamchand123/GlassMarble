@@ -1,201 +1,79 @@
 # GlassMarble CLI Master Reference (`gmb`)
 
-`gmb` is the command-line interface for the GlassMarble Architectural
-Knowledge Graph (AKG) and Diagram Visualization Engine. The complete command,
-flag, and exit-code reference is `docs/commands_master_reference.md`; this
-file is the condensed quick reference.
+`gmb` is the unified command-line interface for the GlassMarble Architectural Knowledge Graph (AKG) and Diagram Visualization Engine.
 
 ---
 
-## Commands (28 total)
+## Global Flags & Environment Variables
 
-### Build & maintain
-- `gmb init [--dir <path>]` — create the `.glassmarble` workspace
-  (`marbles/`, `config.yaml`, empty `akg.json`, `.gitignore` entry).
-- `gmb analyze [flags]` — run the 4-phase ingestion pipeline
-  (ingestion → normalization → aggregation → linking) and commit the
-  resulting CPG to `.glassmarble/akg.json` (GraphJSON, schema v3).
-- `gmb watch [flags]` — continuously watch the repo (fsnotify + git
-  fingerprint) and re-analyze on change.
-- `gmb hooks install|uninstall [--dir <path>]` — manage the git
-  post-commit hook that runs `gmb analyze` after every commit.
-- `gmb import <graph.json> [--dir <path>]` — replace the active AKG snapshot
-  from a GraphJSON document (rejects dangling references).
-- `gmb export [--format graphjson|neo4j] -o <file>` — export the snapshot to
-  GraphJSON (default) or a Neo4j Cypher script.
+These flags apply across all commands:
 
-### Query
-- `gmb status [--json]` — AKG health, node statistics, graph versions
-  (missing DB = exit 0, "uninitialized").
-- `gmb doctor` — integrity diagnostics: parse-back, duplicate node IDs,
-  dangling references.
-- `gmb diff` — show the persisted AKG state and its committed transaction
-  version (commit hash, schema version, graph version).
-- `gmb tree [--depth <n>]` — architectural directory & symbol hierarchy.
-- `gmb dependency [target] [--json]` — inbound/outbound dependency analysis.
-- `gmb hotspot [--top <n>] [--json]` — in-degree ranking of hotspots.
-- `gmb inspect [node_id] [--list|--search <q>|--file F --line L|--languages]`
-  — node detail, symbol search, entry-point discovery, language matrix.
-- `gmb patterns [--smells] [--json]` — component inference and pattern
-  detection (PR-01..PR-07), optional smell detection.
-- `gmb snapshot --create|--list|--at <ref>|--diff <base> <head>|--replay`
-  — point-in-time architecture snapshots with graph replay.
-- `gmb timeline [--component <n>] [--from <ref>] [--to <ref>] [--format
-  text|json|mermaid] [--full]` — architecture evolution timeline.
-- `gmb stats [--arch] [--bench] [--last]` — pipeline telemetry,
-  architecture health (Ca/Ce/Instability), benchmark budget status.
-
-### Govern
-- `gmb drift [--json]` — architecture drift vs declared layering and cycle
-  budgets (fails CI when violations exist).
-- `gmb compare [base.json head.json] | --dir <path> [--json]` — diff two AKG
-  snapshots; `--dir` compares committed AKG vs a fresh working-tree analysis.
-
-### Visualize & reason
-- `gmb visualize <diagram_type> [flags]` — generate architecture diagrams:
-  **31 types** (14 UML + 7 C4 + 4 Specialized + 6 Analysis) in `mermaid`,
-  `plantuml`, or `dot`. Subcommands: `list`, `check <type>`.
-- `gmb why <question>` — grounded architecture Q&A via the AI engine.
-- `gmb ai [question]` — the AI Architect agent; subcommands `chat`,
-  `configure`, `models`, `doctor`, `sessions`.
-
-### Utility
-- `gmb housekeeping [--prune] [--older-than <days>]` — report and prune
-  marbles/AI artifacts (never touches `akg.json`).
-- `gmb completion bash|zsh|fish|powershell` — shell completion scripts.
-- `gmb version` / `gmb --version` — version (v0.1.0).
-- `gmb dev rebase-goldens` — developer utility to regenerate golden diagram
-  fixtures.
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--dir` | string | `.` | Target repository directory to inspect or analyze (alias: `--root-dir`) |
+| `--color` | string | `auto` | Color output control: `auto`, `always`, or `never` (respects `NO_COLOR`) |
+| `--quiet` | bool | `false` | Suppress non-error console output |
+| `--debug` | bool | `false` | Enable detailed debug logging |
+| `-c, --config` | string | `""` | Path to custom configuration YAML file |
 
 ---
 
-## `gmb analyze`
+## Exit Codes Reference
 
-```bash
-gmb analyze [--dir <path>] [--commit <hash>] [--full] [--workers <N>]
-            [--link-level <level>] [--macro-inference <mode>] [--max-nodes <N>]
-            [--abort-on-limit] [--store-code] [--include-docs] [--intelligence]
-            [--bench] [--json] [--verbose]
-```
+GlassMarble uses deterministic semantic exit codes for reliable CI/CD automation:
 
-**Flags:**
-- `--dir`: Target repository directory (default `.`).
-- `--commit`: Git commit hash for delta diffing. Empty (default) diffs the
-  working tree against `HEAD`; a hash diffs that commit against its parent.
-- `--full`: Force a full clean scan at full linker detail.
-- `--workers`: Parallel worker count (default: CPUs).
-- `--link-level`: `architecture` (default), `standard`, `full`.
-- `--macro-inference`: `disabled`, `structural`, `all` (default).
-- `--max-nodes` / `--abort-on-limit`: node budget (warn or hard-stop).
-- `--store-code`: store source snippets in AKG nodes (opt-in).
-- `--include-docs`: run knowledge fusion (ADR/README/git-history claims into
-  developer memory).
-- `--intelligence`: run architecture intelligence + developer memory after
-  committing (default `true`, human output only; non-fatal).
-- `--bench`: enforce the performance budget gates (analyze ≤ 20 s, commit ≤
-  8 s, state ≤ 12 MB) — exit 4 on failure.
-- `--json`: machine-readable JSON summary.
-
-Delta vs full: no state → full scan; empty graph from `init` → full scan;
-clean tree → full scan; dirty tree → delta; `--full` → full; `--commit <h>`
-→ delta of that commit.
+| Exit Code | Classification | Meaning | Typical Trigger |
+|---|---|---|---|
+| `0` | **Success** | Command finished successfully | Normal execution; uninitialized status check |
+| `1` | **General Error** | Runtime exception or unclassified filesystem failure | Missing file; permission error |
+| `2` | **Usage Error** | Invalid flags or syntax error | Unrecognized flag; missing required argument |
+| `3` | **Scope / Target Error** | Scoped query or entrypoint symbol not found | `gmb visualize sequence --entry nonExistent` |
+| `4` | **Integrity Failure** | Doctor check failed or benchmark budget exceeded | Dangling reference detected; benchmark overrun |
 
 ---
 
-## `gmb memory`
+## Command Groups Overview (28 Commands)
 
-Query the developer memory — what the system was, what changed, and
-(where evidence exists) why. Deterministic retrieval, no LLM.
+### 1. Analyze & Index Commands
+- `gmb init [--dir <path>] [--json]` — Initialize the `.glassmarble` workspace.
+- `gmb analyze [--dir <path>] [--full] [--commit <hash>] [--intelligence] [--include-docs] [--json]` — Run the 4-phase parsing pipeline and commit the AKG.
+- `gmb watch [--dir <path>]` — Live file watcher with automatic incremental re-analysis.
+- `gmb hooks install|uninstall [--dir <path>]` — Manage git post-commit hook for automated re-analysis.
 
-```bash
-gmb memory [--dir <path>] [--ask "<question>"] [--component <name>] [--json]
-          [--correct <target> --kind <kind> --value <value>] [--corrections]
-```
+### 2. Inspect & Query Commands
+- `gmb status [--dir <path>] [--json]` — AKG database metrics, graph version, and health status.
+- `gmb doctor [--dir <path>] [--json]` — Deep integrity diagnostics: parse-back, duplicate IDs, dangling edges.
+- `gmb diff [--dir <path>] [--json]` — Inspect committed transaction log and pending graph mutations.
+- `gmb tree [--dir <path>] [--depth <n>] [--json]` — Render architectural directory & symbol hierarchy.
+- `gmb dependency [symbol] [--dir <path>] [--json]` — Analyze inbound callers and outbound dependencies.
+- `gmb hotspot [--dir <path>] [--top <n>] [--json]` — In-degree centrality ranking of architectural hubs.
+- `gmb inspect [node_id] [--dir <path>] [--search <q>] [--list] [--languages] [--json]` — Search symbols, list entry points, or view node details.
+- `gmb stats [--dir <path>] [--arch] [--bench] [--json]` — Pipeline telemetry, component coupling (Ca/Ce), and benchmark metrics.
 
-- Default: project overview — event count and current components with
-  temporal states (CURRENT / REMOVED / DEPRECATED / EXPERIMENTAL /
-  HISTORICAL / UNKNOWN).
-- `--ask "what do we know about Redis?"`: ranked components, claims
-  (labelled FACT / EXPLICIT_REASON / INFERENCE / SPECULATION), events and
-  related timeline.
-- `--component <name>`: full history of the matching component
-  (case-insensitive substring) plus its timeline.
-- `--correct <target> --kind <k> --value <v>`: record a learning correction
-  (target = component name, event ID, or claim ID). Kinds: `INTENT`
-  (default), `LABEL`, `STATE`, `CONFIDENCE`, `REJECT`, `ACCEPT`.
-- `--corrections`: show the correction audit trail.
+### 3. Architecture Governance Commands
+- `gmb drift [--dir <path>] [--json]` — Verify architecture drift against defined layering and cycle budgets.
+- `gmb compare [base.json head.json] | --dir <path> [--json]` — Structural delta diff between two graph snapshots.
+- `gmb snapshot --create|--list|--at <ref>|--diff <base> <head>|--replay` — Point-in-time architecture snapshots.
+- `gmb timeline [--component <name>] [--from <ref>] [--to <ref>] [--format text|json|mermaid]` — Longitudinal architecture timeline.
 
-Reasons are never invented: without evidence of a reason, no reason claim
-exists. Corrections are appended to `.glassmarble/memory/corrections.jsonl`
-and replayed in order on every view — deterministic, idempotent, and
-independent of aggregate rebuilds.
+### 4. Visualization Commands
+- `gmb visualize <diagram_type> [flags]` — Generate 31 architecture diagram types in Mermaid, PlantUML, or DOT.
+- `gmb visualize list` — List all 31 supported diagram types across UML, C4, and Specialized families.
+- `gmb visualize check <type>` — Validate if graph contains sufficient data for a specific diagram type.
 
----
+### 5. AI & Memory Commands
+- `gmb ai "<question>" [--dir <path>] [--save <file>] [--streaming] [--verbose]` — One-shot grounded architecture Q&A.
+- `gmb ai chat [--dir <path>] [--session <id>]` — Interactive full-screen terminal chat REPL with persistent session memory.
+- `gmb ai configure` — Interactive configuration wizard for LLM provider and API keys.
+- `gmb ai models` — List available AI providers (Claude, OpenAI, Ollama, Gemini, DeepSeek, OpenRouter).
+- `gmb ai doctor` — Validate AI engine configuration, network connectivity, and AKG presence.
+- `gmb ai sessions [--list|--prune]` — Manage persistent chat conversation sessions.
+- `gmb memory [--ask "<q>"] [--component <name>] [--correct <target>] [--corrections] [--json]` — Query developer memory and record convention corrections.
+- `gmb why "<question>"` — Quick architectural reasoning query.
 
-## `gmb visualize <diagram_type>`
-
-Generates any of the **31 supported diagram types** (see
-`docs/diagrams.md` for the full catalog).
-
-```bash
-gmb visualize <type> [--dir <path>] [--format mermaid|plantuml|dot]
-  [--scope global|folder:<path>|file:<path>] [--entry <symbol>]
-  [--depth <N>] [--unused] [--max-nodes <N>] [--link-level <level>]
-  [--summary] [--pagerank] [--community] [--scc] [--save <name>]
-  [--output <file>] [--render <x.svg|png>]
-```
-
-- `sequence` requires `--entry`.
-- `--save <name>` writes a fenced markdown file to
-  `.glassmarble/marbles/<name>.md`.
-- `--render` uses Kroki, falling back to local mermaid-cli; markup saved as
-  `.txt` if both fail.
-
----
-
-## `gmb inspect`
-
-```bash
-gmb inspect --list | --search <q> | <node_id> | --file <f> --line <n> | --languages
-```
-
-- `--list`: candidate entry points (FUNCTION/METHOD) for sequence diagrams.
-- `--languages`: the 14-language support matrix report.
-- `--type`: filter by `FUNCTION`, `METHOD`, `STRUCT`, `CLASS`, `INTERFACE`.
-
----
-
-## `gmb stats`
-
-```bash
-gmb stats [--arch] [--bench] [--last]
-```
-
-- `--arch`: architecture health — component coupling (Ca/Ce/Instability)
-  with STABLE/UNSTABLE status from architecture intelligence.
-- `--bench`: benchmark gates and budget status.
-- `--last` (default true): telemetry spans for the last pipeline execution.
-
----
-
-## Global Flags
-
-| Flag | Type | Description |
-|---|---|---|
-| `--root-dir` | string | Root directory for analysis |
-| `--debug` | bool | Debug logging |
-| `-c, --config` | string | Config file (default `$HOME/.glassmarble.yaml`) |
-| `-v, --verbose` | bool | Verbose output |
-| `--max-json-mb` | int | Refuse to load/commit `akg.json` larger than N MiB (0 = unlimited) |
-
----
-
-## Exit Codes
-
-| Exit | Meaning |
-|---|---|
-| `0` | Success (incl. `status`/`doctor` with a missing database — a state, not an error) |
-| `1` | Validation error or any other unclassified failure |
-| `2` | Entry point missing or not found (e.g. `visualize sequence` without `--entry`) |
-| `3` | Empty subgraph (diagram would contain no nodes) |
-| `4` | Render/node limit exceeded, or benchmark budget exceeded |
+### 6. Utility & Configuration Commands
+- `gmb import <graph.json> [--dir <path>]` — Import and activate an external AKG GraphJSON snapshot.
+- `gmb export [--format graphjson|neo4j] -o <file>` — Export graph to GraphJSON or Neo4j Cypher script.
+- `gmb housekeeping [--prune] [--older-than <days>] [--json]` — Inspect and clean diagram artifacts and chat sessions.
+- `gmb completion bash|zsh|fish|powershell` — Generate shell autocompletion scripts.
+- `gmb version` — Display branded version, commit hash, build date, and toolchain info.
