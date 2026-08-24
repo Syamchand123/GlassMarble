@@ -60,20 +60,17 @@ var dependencyCmd = &cobra.Command{
 				InboundEdgeMappings:  snapshot.InboundEdges.Len(),
 			}
 			var topNodes []topDependencyNode
-			var done bool
-			count := 0
-			snapshot.OutboundEdges.Iterate(func(id string, outbound []link.ResolvedEdge) {
-				if done {
-					return
+			// C6-D11: use Keys() for deterministic early exit (Iterate has no
+			// early-exit; previous done-flag still visited every entry).
+			keys := snapshot.OutboundEdges.Keys()
+			for _, id := range keys {
+				if len(topNodes) >= 20 {
+					break
 				}
-				if len(outbound) > 0 {
+				if outbound, ok := snapshot.OutboundEdges.Get(id); ok && len(outbound) > 0 {
 					topNodes = append(topNodes, topDependencyNode{ID: id, Outbound: len(outbound)})
-					count++
-					if count >= 20 {
-						done = true
-					}
 				}
-			})
+			}
 			summary.TopDependencyNodes = topNodes
 
 			if asJSON {

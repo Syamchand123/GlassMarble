@@ -39,6 +39,8 @@ var rebaseGoldensCmd = &cobra.Command{
 		formats := []string{"mermaid", "plantuml", "dot"}
 
 		count := 0
+		skipped := 0
+		var skippedTypes []string
 		for _, dtype := range diagramTypes {
 			for _, fmtStr := range formats {
 				req := product.BuildDiagramRequest{
@@ -52,7 +54,9 @@ var rebaseGoldensCmd = &cobra.Command{
 				}
 				markup, _, err := product.BuildDiagram(req)
 				if err != nil || markup == "" {
-					// Skip entrypoint-required types if not available in target workspace
+					// C6-D15: track skipped entrypoint-required types instead of silencing.
+					skipped++
+					skippedTypes = append(skippedTypes, fmt.Sprintf("%s/%s", dtype, fmtStr))
 					continue
 				}
 
@@ -65,6 +69,9 @@ var rebaseGoldensCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Successfully rebased %d golden fixtures in %s\n", count, goldenDir)
+		if skipped > 0 {
+			fmt.Printf("Warning: skipped %d types (no entrypoint in target): %v\n", skipped, skippedTypes)
+		}
 		return nil
 	},
 }

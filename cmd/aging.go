@@ -100,6 +100,15 @@ func agingPinsFromCorrections(repoDir string, store *developer_memory.MemoryStor
 		}
 		return pins
 	}
+	// C6-D9: cap huge correction logs to bound memory per `gmb analyze`
+	// (long-lived repos can accumulate thousands of corrections; streaming
+	// the whole file per analysis is wasteful).
+	if len(corrections) > 5000 {
+		if verbose {
+			tuiPrintf("warning: correction log has %d entries, capping to most recent 5000 for aging pins (C6-D9)\n", len(corrections))
+		}
+		corrections = corrections[len(corrections)-5000:]
+	}
 	mem, err := store.LoadMemory()
 	if err != nil || mem == nil {
 		return pins

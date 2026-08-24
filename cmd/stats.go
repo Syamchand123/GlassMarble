@@ -34,17 +34,21 @@ var statsCmd = &cobra.Command{
 		}
 
 		if statsBench {
-			fmt.Println("=== GlassMarble Pipeline Benchmark Gate (Phase 8 / §12.0) ===")
+			// C6-D6: this branch previously printed a hardcoded PASS table
+			// without measuring. Mark it clearly as static reference
+			// thresholds; the live gate is `gmb analyze --bench`.
+			fmt.Println("=== GlassMarble Pipeline Benchmark Reference Thresholds (static; not live measurement) ===")
+			fmt.Println("For a live measurement run: gmb analyze --bench")
 			fmt.Println("")
-			fmt.Println("Phase                  Budget     Status")
+			fmt.Println("Phase                  Budget     Reference")
 			fmt.Println("----------------------------------------")
-			fmt.Println("analyze total          <= 20.0s   PASS")
-			fmt.Println("akg-commit             <= 8.0s    PASS")
-			fmt.Println("full scan              <= 12.0s   PASS")
-			fmt.Println("visualize class        <= 3.0s    PASS")
-			fmt.Println("visualize sequence     <= 2.0s    PASS")
-			fmt.Println("state size             <= 12.0MB  PASS")
-			fmt.Println("json state file        <= 8.0MB   PASS")
+			fmt.Println("analyze total          <= 20.0s   REF")
+			fmt.Println("akg-commit             <= 8.0s    REF")
+			fmt.Println("full scan              <= 12.0s   REF")
+			fmt.Println("visualize class        <= 3.0s    REF")
+			fmt.Println("visualize sequence     <= 2.0s    REF")
+			fmt.Println("state size             <= 12.0MB  REF")
+			fmt.Println("json state file        <= 8.0MB   REF")
 			fmt.Println("")
 			fmt.Println("See internal/product/performance.md for complete Big-O complexity bounds.")
 			return nil

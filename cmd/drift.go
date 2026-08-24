@@ -51,20 +51,26 @@ when the declared cycle budget is exceeded.`,
 			return producterrs.Tagged(fmt.Sprintf("AKG database is empty -- run 'glassmarble analyze' first"), producterrs.ErrEmptySubgraph)
 		}
 
-		// Load drift declarations from the project-local config only; use
-		// defaults for everything else so a bare config.yaml with just a
-		// "drift:" key still parses. config.Load reads the config from the
-		// process CWD, so read the file at dir/.glassmarble/config.yaml
-		// directly and merge it onto defaults.
-		cfg, err := config.Load(config.Config{})
-		if err != nil {
-			return fmt.Errorf("failed to load config: %w", err)
-		}
+		// C6-D17: single read from dir/.glassmarble/config.yaml like
+		// patterns.go:loadIntelligenceConfig — avoids double I/O and
+		// inconsistency when --dir points away from CWD.
+		cfg := config.Config{}
 		if data, rerr := os.ReadFile(filepath.Join(storageDir, "config.yaml")); rerr == nil {
 			var local config.Config
 			if yerr := yaml.Unmarshal(data, &local); yerr == nil {
-				if local.Drift.Layers != nil || local.Drift.ForbiddenDeps != nil {
-					cfg.Drift = local.Drift
+				cfg = local
+			}
+		}
+		if cfg.Drift.Layers == nil && cfg.Drift.ForbiddenDeps == nil {
+			if global, gerr := config.Load(config.Config{}); gerr == nil {
+				if cfg.Drift.Layers == nil {
+					cfg.Drift.Layers = global.Drift.Layers
+				}
+				if cfg.Drift.ForbiddenDeps == nil {
+					cfg.Drift.ForbiddenDeps = global.Drift.ForbiddenDeps
+				}
+				if cfg.Drift.CycleBudget == 0 {
+					cfg.Drift.CycleBudget = global.Drift.CycleBudget
 				}
 			}
 		}

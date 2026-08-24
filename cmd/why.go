@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -43,9 +44,16 @@ var whyCmd = &cobra.Command{
 		// 2. Build Grounded Prompt
 		groundedPrompt := ctxData.BuildPrompt()
 
-		// 3. Query LLM
+		// 3. Query LLM — C6-D5: honor timeout/cancellation via
+		// cmd.Context() plus cfg.TimeoutSec, instead of Background().
 		fmt.Println("Querying AI Architect...")
-		resp, err := engine.Provider.Complete(context.Background(), provider.Request{
+		ctx := cmd.Context()
+		if cfg.TimeoutSec > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, time.Duration(cfg.TimeoutSec)*time.Second)
+			defer cancel()
+		}
+		resp, err := engine.Provider.Complete(ctx, provider.Request{
 			Model:           cfg.Model,
 			System:          ai_engine.SystemPrompt,
 			Messages:        []provider.Message{{Role: provider.RoleUser, Content: groundedPrompt}},

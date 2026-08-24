@@ -15,7 +15,6 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/provider"
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/session"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
-	"github.com/Syamchand123/GlassMarble/internal/terminal"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/programs/ai_query"
 	"github.com/Syamchand123/GlassMarble/internal/tui/programs/chat"
@@ -256,10 +255,9 @@ Examples:
 				return fmt.Errorf("AI request failed: %w", err)
 			}
 			if aiSaveFlag != "" {
+				// C6-D4: sink.buf duplicates res.Text after streaming via
+				// answer event flush; prefer the canonical res.Text.
 				text := res.Text
-				if s := sink.buf.String(); s != "" {
-					text = s
-				}
 				if err := saveArtifact(cmd, aiRootDir(cmd), aiSaveFlag, text); err != nil {
 					return err
 				}
@@ -302,9 +300,18 @@ Examples:
 // .glassmarble/marbles/, everything else to .glassmarble/ai/. The answer is
 // not echoed to the terminal — a path receipt is printed instead.
 func saveArtifact(cmd *cobra.Command, rootDir, filename, text string) error {
+	// C6-D1: use path-segment check, not substring ".." (which rejects
+	// legitimate names like "my..notes.md"); also catch "a/b/../c" via
+	// segment walk. Delegates to filepath.Clean semantics.
+	clean := filepath.ToSlash(filepath.Clean(filename))
 	if filename == "" || filename == "." || filename == ".." ||
-		strings.ContainsAny(filename, `/\`) || strings.Contains(filename, "..") {
+		strings.ContainsAny(filename, `/\`) || clean != filename {
 		return producterrs.Tagged(fmt.Sprintf("invalid artifact filename %q — use a plain file name without paths", filename), producterrs.ErrValidation)
+	}
+	for _, seg := range strings.Split(clean, "/") {
+		if seg == ".." {
+			return producterrs.Tagged(fmt.Sprintf("invalid artifact filename %q — use a plain file name without paths", filename), producterrs.ErrValidation)
+		}
 	}
 	if text == "" {
 		return producterrs.Tagged(fmt.Sprintf("the model produced no answer — nothing to save"), producterrs.ErrEmptySubgraph)
@@ -344,7 +351,9 @@ func saveChatAnswer(cmd *cobra.Command, rootDir, sessID, text string) (string, e
 
 // looksLikeDiagram heuristically detects diagram markup in a model answer:
 // mermaid/plantuml/dot fenced blocks, PlantUML @startuml directives, or
-// Mermaid/DOT graph declarations.
+// Mermaid/DOT graph declarations. C6-D3: also detects unfenced raw mermaid
+// returned by some models (e.g. "graph TD; A-->B" without fences) so it
+// routes to .glassmarble/marbles/ instead of .glassmarble/ai/.
 func looksLikeDiagram(text string) bool {
 	lines := strings.Split(text, "\n")
 	for _, line := range lines {
@@ -366,6 +375,20 @@ func looksLikeDiagram(text string) bool {
 			strings.HasPrefix(trimmed, "mindmap"),
 			strings.HasPrefix(trimmed, "timeline"),
 			strings.HasPrefix(trimmed, "digraph "):
+			return true
+		}
+	}
+	// C6-D3: unfenced raw detection — check whole text for graph keywords
+	// or Mermaid edge syntax without requiring fence or line-start context.
+	lower := strings.ToLower(text)
+	if strings.Contains(lower, "graph ") || strings.Contains(lower, "flowchart ") ||
+		strings.Contains(lower, "sequencediagram") || strings.Contains(lower, "classdiagram") ||
+		strings.Contains(lower, "statediagram") || strings.Contains(lower, "erdiagram") ||
+		strings.Contains(lower, "@startuml") || strings.Contains(lower, "digraph ") {
+		return true
+	}
+	if strings.Contains(text, "-->") || strings.Contains(text, "---") {
+		if strings.Contains(lower, "graph") || strings.Contains(lower, "flowchart") {
 			return true
 		}
 	}
@@ -428,7 +451,8 @@ and "exit", "quit", or Ctrl+D to leave.
 		}
 
 		reader := bufio.NewReader(cmd.InOrStdin())
-		isTTY := terminal.IsTTY()
+		// C6-D2: use tui.IsInteractive (stdin+stdout+TERM) consistently
+		isTTY := tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout())
 
 		if isTTY {
 			fmt.Fprintf(cmd.OutOrStdout(), "GlassMarble AI Architect — %s/%s\n", engine.Config.Provider, engine.Config.Model)

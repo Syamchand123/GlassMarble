@@ -290,3 +290,37 @@ func TestArchSnapshotSchema(t *testing.T) {
 		t.Errorf("snapshot timestamp parsed wrong: %v", s.Timestamp)
 	}
 }
+
+// TestJSONKeysPreservedAfterRename verifies the §10 contract: persisted JSON keys
+// are the historical snake_case names (schema_version, file_spec, primitive_scores,
+// etc.) and must not change when Go type names are renamed (e.g. Stage5Result
+// -> IntelligenceResult). The rename touched Go identifiers only; the wire keys
+// stay pinned. This test fails if a json tag is accidentally renamed along with
+// a Go struct rename.
+func TestJSONKeysPreservedAfterRename(t *testing.T) {
+	var g akg.GraphJSON
+	if err := json.Unmarshal([]byte(akgSample), &g); err != nil {
+		t.Fatalf("akg sample: %v", err)
+	}
+	out, _ := json.Marshal(g)
+	s := string(out)
+	for _, key := range []string{`"schema_version":`, `"commit_hash":`, `"file_spec":`, `"primitive_scores":`, `"line_number":`} {
+		if !strings.Contains(s, key) {
+			t.Errorf("persisted AKG JSON missing preserved key %s: %s", key, s)
+		}
+	}
+	if strings.Contains(s, "stage") {
+		t.Errorf("persisted JSON leaked stage-named key: %s", s)
+	}
+	var r arch_intelligence.IntelligenceResult
+	if err := json.Unmarshal([]byte(intelligenceSample), &r); err != nil {
+		t.Fatalf("intelligence sample: %v", err)
+	}
+	out2, _ := json.Marshal(r)
+	s2 := string(out2)
+	for _, key := range []string{`"graph_hash":`, `"total_nodes":`, `"total_edges":`} {
+		if !strings.Contains(s2, key) {
+			t.Errorf("IntelligenceResult JSON missing key %s: %s", key, s2)
+		}
+	}
+}

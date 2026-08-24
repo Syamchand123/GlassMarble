@@ -263,7 +263,7 @@ Full predicate vocabulary: `docs/relationship_types.md`.
 2.  `projector.go` collapses package namespaces into virtual nodes (virtual-node synthesis), tagging them `virtual: true`.
 3.  Entry-driven reachability (`--module`, `--scope`, `--link-level module|file|class`) computes the entry closure from entrypoint nodes.
 4.  `adapters/*` render the collapsed spec into Mermaid/PlantUML/DOT with collision-strategy disambiguation.
-5.  Render-limit budget (`--max-nodes`) aborts with exit code 4 when exceeded.
+5.  Render-limit budget (`--max-nodes`) truncates to N highest-degree nodes (sets GraphSummary.Truncated = true); hard abort only via analyze --abort-on-limit (exit 4 remains for renderer-unavailable).
 
 ### 4.5 Layered Architecture Compliance
 `arch_intelligence/analyzer.go` computes:

@@ -1,10 +1,13 @@
 package nonfunctional_test
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/layout"
+	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 	"github.com/Syamchand123/GlassMarble/tests/harness"
 )
 
@@ -177,5 +180,71 @@ func TestMemoryPipelineIdempotency(t *testing.T) {
 	}
 	if mem.TotalEvents != l3 {
 		t.Errorf("memory.json total_events = %d, WAL has %d", mem.TotalEvents, l3)
+	}
+}
+
+// TestCollapseEdgesAndSampleSourcesDeterministic seeds the C3-3 determinism cluster:
+// collapseEdges previously collected from a map so edge order was random, and
+// sampleSources drew from map iteration on >1500/1200-node graphs with no
+// tie-break (hotspot/bottleneck flags could flip). This probe builds a large
+// synthetic subgraph (1600 nodes, 1599 edges) with colliding sanitizeName pairs
+// (worker-service.go::Worker vs worker_service.go::Worker) and asserts that
+// BuildLayoutTree + ComputeAllMetrics produce identical, sorted output across
+// repeated runs. The fix sorts collapseEdges by src,pred,tgt, sorts
+// getEntryPoints/filterNodes IDs, sorts stateDiagram aliases, and sorts
+// sampleSources inputs.
+func TestCollapseEdgesAndSampleSourcesDeterministic(t *testing.T) {
+	sub := &types.VirtualSubgraph{
+		Nodes: make(map[string]*types.TTLNode, 1602),
+		Edges: make([]types.TTLEdge, 0, 1600),
+	}
+	sub.Nodes["worker-service.go::Worker"] = &types.TTLNode{ID: "worker-service.go::Worker", Kind: "STRUCT", Name: "Worker", FileURI: "worker-service.go"}
+	sub.Nodes["worker_service.go::Worker"] = &types.TTLNode{ID: "worker_service.go::Worker", Kind: "STRUCT", Name: "Worker", FileURI: "worker_service.go"}
+	for i := 0; i < 1600; i++ {
+		id := fmt.Sprintf("pkg/file_%d.go::Func%d", i, i)
+		if _, ok := sub.Nodes[id]; !ok {
+			sub.Nodes[id] = &types.TTLNode{ID: id, Kind: "FUNCTION", Name: fmt.Sprintf("Func%d", i), FileURI: fmt.Sprintf("pkg/file_%d.go", i)}
+		}
+		if i > 0 {
+			prev := fmt.Sprintf("pkg/file_%d.go::Func%d", i-1, i-1)
+			pred := "gm:calls"
+			if i%3 == 0 {
+				pred = "gm:controlFlowTo"
+			} else if i%3 == 1 {
+				pred = "gm:dataFlowTo"
+			}
+			sub.Edges = append(sub.Edges, types.TTLEdge{SourceID: prev, Predicate: pred, TargetID: id, LineNumber: i})
+		}
+	}
+	opts := types.QueryOptions{MaxNodes: 0, MaxDepth: 99}
+	run := func() (string, *types.GraphSummary) {
+		tree := layout.BuildLayoutTree(sub, opts)
+		var sb strings.Builder
+		for _, e := range tree.Edges {
+			sb.WriteString(e.SourceID + "|" + e.Predicate + "|" + e.TargetID + ";")
+		}
+		return sb.String(), tree.Summary
+	}
+	firstEdges, firstSummary := run()
+	for iter := 0; iter < 5; iter++ {
+		edges, summary := run()
+		if edges != firstEdges {
+			t.Fatalf("collapseEdges non-deterministic on iteration %d: edge order differed (C3-3 not fixed)", iter)
+		}
+		if summary != nil && firstSummary != nil {
+			if summary.Density != firstSummary.Density || summary.Diameter != firstSummary.Diameter || summary.GodObjectCount != firstSummary.GodObjectCount {
+				t.Fatalf("GraphSummary non-deterministic on iteration %d: %+v vs %+v", iter, summary, firstSummary)
+			}
+		}
+	}
+	m1 := layout.ComputeAllMetrics(sub)
+	m2 := layout.ComputeAllMetrics(sub)
+	if len(m1.Betweenness) != len(m2.Betweenness) {
+		t.Fatalf("betweenness size differs")
+	}
+	for k, v := range m1.Betweenness {
+		if v2, ok := m2.Betweenness[k]; !ok || v != v2 {
+			t.Errorf("betweenness non-deterministic for %s: %v vs %v", k, v, v2)
+		}
 	}
 }

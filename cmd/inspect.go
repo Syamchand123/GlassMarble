@@ -253,24 +253,26 @@ func normalizeInspectPath(path string) string {
 
 func printLanguagesReport(cmd *cobra.Command) error {
 	out := cmd.OutOrStdout()
-	fmt.Fprintln(out, "GlassMarble 14-Language Support Matrix (Phase 6):")
+	// C6-D13: coverage % previously hardcoded marketing numbers — mark as
+	// static estimates so they don't silently drift from measured coverage.
+	fmt.Fprintln(out, "GlassMarble 14-Language Support Matrix (Phase 6) — coverage values are static estimates:")
 	fmt.Fprintln(out, "")
-	fmt.Fprintln(out, "Language    Grammar     Tier    Extensions              Coverage %")
-	fmt.Fprintln(out, "------------------------------------------------------------------")
-	fmt.Fprintln(out, "Go          go          T1      .go                     98%")
-	fmt.Fprintln(out, "Python      python      T1      .py, .pyi               96%")
-	fmt.Fprintln(out, "JavaScript  javascript  T1      .js, .mjs, .cjs, .jsx   95%")
-	fmt.Fprintln(out, "TypeScript  typescript  T1      .ts, .tsx, .cts, .mts   97%")
-	fmt.Fprintln(out, "Java        java        T1      .java                   96%")
-	fmt.Fprintln(out, "C#          c-sharp     T1      .cs                     95%")
-	fmt.Fprintln(out, "Rust        rust        T1      .rs                     96%")
-	fmt.Fprintln(out, "C           c           T2      .c, .h                  90%")
-	fmt.Fprintln(out, "C++         cpp         T2      .cpp, .cc, .cxx, .hpp   92%")
-	fmt.Fprintln(out, "Kotlin      kotlin      T2      .kt                     90%")
-	fmt.Fprintln(out, "PHP         php         T2      .php                    91%")
-	fmt.Fprintln(out, "Ruby        ruby        T2      .rb                     90%")
-	fmt.Fprintln(out, "Swift       swift       T2      .swift                  90%")
-	fmt.Fprintln(out, "Scala       scala       T3      .scala                  85%")
+	fmt.Fprintln(out, "Language    Grammar     Tier    Extensions")
+	fmt.Fprintln(out, "--------------------------------------------------------")
+	fmt.Fprintln(out, "Go          go          T1      .go")
+	fmt.Fprintln(out, "Python      python      T1      .py, .pyi")
+	fmt.Fprintln(out, "JavaScript  javascript  T1      .js, .mjs, .cjs, .jsx")
+	fmt.Fprintln(out, "TypeScript  typescript  T1      .ts, .tsx, .cts, .mts")
+	fmt.Fprintln(out, "Java        java        T1      .java")
+	fmt.Fprintln(out, "C#          c-sharp     T1      .cs")
+	fmt.Fprintln(out, "Rust        rust        T1      .rs")
+	fmt.Fprintln(out, "C           c           T2      .c, .h")
+	fmt.Fprintln(out, "C++         cpp         T2      .cpp, .cc, .cxx, .hpp")
+	fmt.Fprintln(out, "Kotlin      kotlin      T2      .kt")
+	fmt.Fprintln(out, "PHP         php         T2      .php")
+	fmt.Fprintln(out, "Ruby        ruby        T2      .rb")
+	fmt.Fprintln(out, "Swift       swift       T2      .swift")
+	fmt.Fprintln(out, "Scala       scala       T3      .scala")
 	return nil
 }
 

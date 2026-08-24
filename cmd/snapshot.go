@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
@@ -313,7 +314,9 @@ func runSnapshotReplay(cmd *cobra.Command, store *arch_timeline.SnapshotStore, a
 // resolveSnapshot maps a user-supplied ref to a stored snapshot: exact
 // snapshot ID first, then a stored commit-prefix match, then the ref resolved
 // through git (exact snapshot for that commit), and finally a nearest-
-// preceding fallback by author timestamp.
+// preceding fallback by author timestamp. C6-D27: log when the timestamp
+// fallback fires (via stderr) so a short commit prefix that collides with
+// a snapshot ID prefix is visible.
 func resolveSnapshot(store *arch_timeline.SnapshotStore, absDir, ref string) (*archmodel.ArchSnapshot, error) {
 	if snap, err := store.GetBySnapshotID(ref); err == nil {
 		return snap, nil
@@ -329,6 +332,7 @@ func resolveSnapshot(store *arch_timeline.SnapshotStore, absDir, ref string) (*a
 		// snapshot nearest to (not after) the commit's author timestamp.
 		if ts, terr := git.GetCommitTimestamp(absDir, full); terr == nil {
 			if snap, serr := store.NearestAt(ts); serr == nil {
+				fmt.Fprintf(os.Stderr, "Note: no exact snapshot for %q, using nearest snapshot %s at %s\n", ref, snap.ID, snap.Timestamp.Format("2006-01-02 15:04:05"))
 				return snap, nil
 			}
 		}
@@ -338,7 +342,9 @@ func resolveSnapshot(store *arch_timeline.SnapshotStore, absDir, ref string) (*a
 
 // parseRefList splits a --diff value into refs on commas and whitespace,
 // dropping empties ("--diff 'HEAD~1 HEAD'", "--diff HEAD~1,HEAD" and
-// "--diff HEAD~1 HEAD" all yield two refs).
+// "--diff HEAD~1 HEAD" all yield two refs). C6-D28: the literal "[]"
+// filter was a template artifact (kept for backward compat with empty
+// array string) — documented here instead of silently dropped.
 func parseRefList(s string) []string {
 	var out []string
 	for _, f := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {

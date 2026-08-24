@@ -51,6 +51,8 @@ func (tr *TelemetryRecorder) RecordSpan(span Span) {
 }
 
 // SaveTelemetry persists telemetry data to .glassmarble/telemetry.json.
+// C6-D21: write to a temp file then atomically rename so concurrent
+// `visualize` + `analyze` do not interleave writes and corrupt JSON.
 func SaveTelemetry(storageDir string) error {
 	globalRecorder.mu.Lock()
 	defer globalRecorder.mu.Unlock()
@@ -65,7 +67,11 @@ func SaveTelemetry(storageDir string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(outPath, data, 0644)
+	tmpPath := outPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, outPath)
 }
 
 // LoadTelemetry loads saved telemetry spans from .glassmarble/telemetry.json.

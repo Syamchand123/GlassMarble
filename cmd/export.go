@@ -54,6 +54,20 @@ executable CREATE scripts for direct import into Neo4j graph database instances.
 			}
 		}
 
+		// C6-D25: validate format/extension before truncating the output file.
+		switch format {
+		case "json", "graphjson":
+			if ext != "" && ext != ".json" {
+				return producterrs.Tagged(fmt.Sprintf("unsupported extension %q for GraphJSON export (use .json)", ext), producterrs.ErrValidation)
+			}
+		case "neo4j", "cypher":
+			if ext != "" && ext != ".cypher" && ext != ".sql" && ext != ".txt" {
+				return producterrs.Tagged(fmt.Sprintf("unsupported extension %q for Neo4j Cypher export (use .cypher)", ext), producterrs.ErrValidation)
+			}
+		default:
+			return producterrs.Tagged(fmt.Sprintf("unsupported export format %q (supported: graphjson, neo4j)", formatFlag), producterrs.ErrValidation)
+		}
+
 		f, err := os.Create(output)
 		if err != nil {
 			return fmt.Errorf("failed to create output file: %w", err)
@@ -62,21 +76,13 @@ executable CREATE scripts for direct import into Neo4j graph database instances.
 
 		switch format {
 		case "json", "graphjson":
-			if ext != "" && ext != ".json" {
-				return producterrs.Tagged(fmt.Sprintf("unsupported extension %q for GraphJSON export (use .json)", ext), producterrs.ErrValidation)
-			}
 			if err := akg.ExportGraphJSON(graph, f); err != nil {
 				return fmt.Errorf("failed to export graph JSON: %w", err)
 			}
 		case "neo4j", "cypher":
-			if ext != "" && ext != ".cypher" && ext != ".sql" && ext != ".txt" {
-				return producterrs.Tagged(fmt.Sprintf("unsupported extension %q for Neo4j Cypher export (use .cypher)", ext), producterrs.ErrValidation)
-			}
 			if err := akg.ExportNeo4jCypher(graph, f); err != nil {
 				return fmt.Errorf("failed to export Neo4j Cypher script: %w", err)
 			}
-		default:
-			return producterrs.Tagged(fmt.Sprintf("unsupported export format %q (supported: graphjson, neo4j)", formatFlag), producterrs.ErrValidation)
 		}
 
 		st, _ := f.Stat()

@@ -45,21 +45,18 @@ func runFusion(storageDir string, tm *akg.AKGTransactionManager, verbose bool) {
 		}),
 	}
 	if cfg.GitSourcesEnabled() {
+		// C6-D10: share a single LocalGitAdapter so the same `git log` walk
+		// is not executed twice (PR + Issue previously did double walks).
+		sharedAdapter := &knowledge_fusion.LocalGitAdapter{
+			RepoDir:    repoDir,
+			MaxCommits: cfg.MaxCommits,
+			Warnf: func(format string, args ...any) {
+				tuiPrintf("warning: "+format+"\n", args...)
+			},
+		}
 		opts = append(opts,
-			knowledge_fusion.WithPRAdapter(&knowledge_fusion.LocalGitAdapter{
-				RepoDir:    repoDir,
-				MaxCommits: cfg.MaxCommits,
-				Warnf: func(format string, args ...any) {
-					tuiPrintf("warning: "+format+"\n", args...)
-				},
-			}),
-			knowledge_fusion.WithIssueAdapter(&knowledge_fusion.LocalGitAdapter{
-				RepoDir:    repoDir,
-				MaxCommits: cfg.MaxCommits,
-				Warnf: func(format string, args ...any) {
-					tuiPrintf("warning: "+format+"\n", args...)
-				},
-			}),
+			knowledge_fusion.WithPRAdapter(sharedAdapter),
+			knowledge_fusion.WithIssueAdapter(sharedAdapter),
 		)
 	}
 

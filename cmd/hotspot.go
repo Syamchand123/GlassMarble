@@ -67,10 +67,14 @@ var hotspotCmd = &cobra.Command{
 			return degrees[i].InDegree > degrees[j].InDegree
 		})
 
-		limit := hotspotTop
-		if len(degrees) < limit {
-			limit = len(degrees)
+		// C6-D12: validate --top to avoid panic on negative/zero.
+		if hotspotTop <= 0 {
+			return producterrs.Tagged(fmt.Sprintf("invalid --top %d: must be between 1 and %d", hotspotTop, len(degrees)), producterrs.ErrValidation)
 		}
+		if hotspotTop > len(degrees) {
+			hotspotTop = len(degrees)
+		}
+		limit := hotspotTop
 		top := degrees[:limit]
 
 		if asJSON {

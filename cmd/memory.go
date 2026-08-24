@@ -81,11 +81,11 @@ labelled by how they were established (FACT / EXPLICIT_REASON / INFERENCE
 		case correct != "":
 			return recordCorrection(cmd, learner, store, correct, kind, value, reason, author, asJSON)
 		case ask != "":
-			return renderQuery(cmd, learner, store, snap, ask, asJSON)
+			return renderQuery(cmd, learner, store, snap, ask, asJSON, absDir)
 		case component != "":
-			return renderComponent(cmd, learner, store, snap, component, asJSON)
+			return renderComponent(cmd, learner, store, snap, component, asJSON, absDir)
 		default:
-			return renderOverview(cmd, learner, store, snap, asJSON)
+			return renderOverview(cmd, learner, store, snap, asJSON, absDir)
 		}
 	},
 }
@@ -124,7 +124,8 @@ func latestSnapshotOrNil(absRepoDir string) *archmodel.ArchSnapshot {
 // renderOverview prints the memory stats and current components. JSON mode
 // emits the whole aggregate so machine consumers get everything. convention learning
 // corrections (e.g. a STATE override) are reflected in the projection.
-func renderOverview(cmd *cobra.Command, learner *learning.Learner, store *developer_memory.MemoryStore, snap *archmodel.ArchSnapshot, asJSON bool) error {
+func renderOverview(cmd *cobra.Command, learner *learning.Learner, store *developer_memory.MemoryStore, snap *archmodel.ArchSnapshot, asJSON bool, repoDir string) error {
+	_ = repoDir // C6-D8: repoDir threaded for future pin consistency; Freshen currently takes cfg not pins
 	mem, err := store.LoadMemory()
 	if err != nil {
 		return fmt.Errorf("failed to load memory: %w", err)
@@ -217,7 +218,8 @@ func appliedCount(applied []learning.AppliedCorrection) int {
 // freshness is recomputed live BEFORE ranking (with missing-entity marking
 // against the latest snapshot), so decayed knowledge sinks in the results
 // without ever being hidden.
-func renderQuery(cmd *cobra.Command, learner *learning.Learner, store *developer_memory.MemoryStore, snap *archmodel.ArchSnapshot, ask string, asJSON bool) error {
+func renderQuery(cmd *cobra.Command, learner *learning.Learner, store *developer_memory.MemoryStore, snap *archmodel.ArchSnapshot, ask string, asJSON bool, repoDir string) error {
+	_ = repoDir
 	mem, err := store.LoadMemory()
 	if err != nil {
 		return fmt.Errorf("failed to load memory: %w", err)
@@ -282,7 +284,8 @@ func renderQuery(cmd *cobra.Command, learner *learning.Learner, store *developer
 
 // renderComponent prints the longitudinal history of one component and the
 // timeline entries that mention it, with corrections applied.
-func renderComponent(cmd *cobra.Command, learner *learning.Learner, store *developer_memory.MemoryStore, snap *archmodel.ArchSnapshot, component string, asJSON bool) error {
+func renderComponent(cmd *cobra.Command, learner *learning.Learner, store *developer_memory.MemoryStore, snap *archmodel.ArchSnapshot, component string, asJSON bool, repoDir string) error {
+	_ = repoDir
 	mem, err := store.LoadMemory()
 	if err != nil {
 		return fmt.Errorf("failed to load memory: %w", err)
@@ -484,18 +487,27 @@ func sortedComponentNames(mem *developer_memory.DeveloperMemory) []string {
 }
 
 // findComponent looks up a component by exact name, falling back to
-// case-insensitive substring match.
+// case-insensitive substring match. C6-D7: deterministic — collects all
+// substring candidates and picks the lexicographically first, instead of
+// returning whichever map iteration hits first.
 func findComponent(mem *developer_memory.DeveloperMemory, name string) *developer_memory.ComponentHistory {
 	if h, ok := mem.ComponentMemory[name]; ok {
-		return &h
+		cp := h
+		return &cp
 	}
 	needle := strings.ToLower(name)
-	for n, h := range mem.ComponentMemory {
+	var candidates []string
+	for n := range mem.ComponentMemory {
 		if strings.Contains(strings.ToLower(n), needle) {
-			return &h
+			candidates = append(candidates, n)
 		}
 	}
-	return nil
+	if len(candidates) == 0 {
+		return nil
+	}
+	sort.Strings(candidates)
+	h := mem.ComponentMemory[candidates[0]]
+	return &h
 }
 
 // findEvent returns the event with the given ID from the aggregate.
@@ -527,4 +539,37 @@ func quoteObject(obj string) string {
 		return ""
 	}
 	return "\"" + obj + "\""
+}
+
+// memoryAgingPins derives the aging pin set for the memory view so that
+// `gmb memory` shows the same STATE-pinned states as the aging pipeline
+// (C6-D8). It mirrors agingPinsFromCorrections but is local to the memory
+// command so the view stays consistent even when run outside `gmb analyze`.
+func memoryAgingPins(repoDir string, mem *developer_memory.DeveloperMemory) map[string]developer_memory.KnowledgeState {
+	pins := map[string]developer_memory.KnowledgeState{}
+	if repoDir == "" || mem == nil {
+		return pins
+	}
+	corrections, err := learning.NewStore(repoDir).LoadAll()
+	if err != nil {
+		return pins
+	}
+	if len(corrections) > 5000 {
+		corrections = corrections[len(corrections)-5000:]
+	}
+	for _, c := range corrections {
+		if c.Kind != learning.CorrectionKindState {
+			continue
+		}
+		state := developer_memory.KnowledgeState(c.CorrectedValue)
+		switch state {
+		case developer_memory.StateActive, developer_memory.StateDeprecated, developer_memory.StateRemoved, developer_memory.StateHistorical, developer_memory.StateExperimental, developer_memory.StateUnknown:
+		default:
+			continue
+		}
+		if _, ok := mem.ComponentMemory[c.TargetID]; ok {
+			pins[c.TargetID] = state
+		}
+	}
+	return pins
 }

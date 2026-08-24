@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/ingest"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
@@ -97,6 +98,13 @@ func loadWorkingTreeSnapshots(dir string, cmd *cobra.Command) (*akg.CodeProperty
 
 	// Clone the base so the head analysis does not mutate the snapshot.
 	baseClone := base.Clone()
+
+	// C6-D26: avoid paying full re-analysis when the working tree is clean
+	// (read-only diff). CollectGitDiff against HEAD is cheap; if it yields
+	// no tasks the head snapshot is identical to the base clone.
+	if diff, err := ingest.CollectGitDiff(absDir, ""); err == nil && len(diff) == 0 {
+		return baseClone, baseClone, nil
+	}
 
 	if err := runAnalysis(cmd, runAnalysisOptions{targetDir: absDir, full: true}); err != nil {
 		return nil, nil, fmt.Errorf("working-tree analysis failed: %w", err)

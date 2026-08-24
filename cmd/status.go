@@ -83,32 +83,7 @@ var statusCmd = &cobra.Command{
 
 		stateSize := akgStateSize(storageDir)
 
-		jsonSize := stateSize
-
-		if asJSON {
-			sj := statusJSON{
-				Initialized:   true,
-				StorageDir:    storageDir,
-				SchemaVersion: schemaVersion,
-				GraphVersion:  version,
-				CommitHash:    commitHash,
-				LastAnalysis:  stateInfo.ModTime().Format(time.RFC3339),
-				NodeCount:     stats.NodeCount,
-				EdgeCount:     stats.Edges,
-				IndexedFiles:  stats.IndexedFiles,
-				Entrypoints:   stats.Entrypoints,
-				VirtualCount:  stats.VirtualCount,
-				VirtualShare:  virtualShare,
-				Dangling:      stats.Dangling,
-				JSONBytes:     jsonSize,
-				Verified:      stats.Dangling == 0,
-				GeneratedAt:   time.Now(),
-			}
-			out, _ := json.MarshalIndent(sj, "", "  ")
-			fmt.Println(string(out))
-			return nil
-		}
-
+		// C6-D14: build StatusData once and derive JSON from it to avoid duplication.
 		sd := views.StatusData{
 			Initialized:   true,
 			StorageDir:    storageDir,
@@ -123,9 +98,34 @@ var statusCmd = &cobra.Command{
 			VirtualCount:  stats.VirtualCount,
 			VirtualShare:  virtualShare,
 			Dangling:      stats.Dangling,
-			JSONBytes:     jsonSize,
+			JSONBytes:     stateSize,
 			Verified:      stats.Dangling == 0,
 		}
+
+		if asJSON {
+			sj := statusJSON{
+				Initialized:   sd.Initialized,
+				StorageDir:    sd.StorageDir,
+				SchemaVersion: sd.SchemaVersion,
+				GraphVersion:  sd.GraphVersion,
+				CommitHash:    sd.CommitHash,
+				LastAnalysis:  sd.LastAnalysis,
+				NodeCount:     sd.NodeCount,
+				EdgeCount:     sd.EdgeCount,
+				IndexedFiles:  sd.IndexedFiles,
+				Entrypoints:   sd.Entrypoints,
+				VirtualCount:  sd.VirtualCount,
+				VirtualShare:  sd.VirtualShare,
+				Dangling:      sd.Dangling,
+				JSONBytes:     sd.JSONBytes,
+				Verified:      sd.Verified,
+				GeneratedAt:   time.Now(),
+			}
+			out, _ := json.MarshalIndent(sj, "", "  ")
+			fmt.Println(string(out))
+			return nil
+		}
+
 		fmt.Println(views.RenderStatus(sd))
 		return nil
 	},

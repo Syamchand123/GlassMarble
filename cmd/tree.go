@@ -67,9 +67,13 @@ var treeCmd = &cobra.Command{
 
 		for _, path := range paths {
 			symbols := fileTree[path]
-			if treeDepth > 0 && strings.Count(path, "/") >= treeDepth {
+			// C6-D23: use segment count, not slash count, so depth 4 means
+			// 4 path segments (e.g. a/b/c/d) instead of 3 slashes.
+			if treeDepth > 0 && len(strings.Split(path, "/")) > treeDepth {
 				continue
 			}
+			// C6-D24: sort symbols per file deterministically (map order is random).
+			sort.Strings(symbols)
 			lines = append(lines, fmt.Sprintf("├── %s", path))
 			for _, sym := range symbols {
 				lines = append(lines, fmt.Sprintf("│   └── %s", sym))
