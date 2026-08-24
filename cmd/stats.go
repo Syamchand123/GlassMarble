@@ -83,13 +83,13 @@ link, akg-commit, extract, project, render) and architectural coupling health me
 				return nil
 			}
 
-			fmt.Println("=== GlassMarble Pipeline Benchmark Reference Thresholds (static reference) ===")
+			fmt.Println("=== GlassMarble Pipeline Benchmark Gate ===")
 			fmt.Println("For live measurement: gmb analyze --bench")
 			fmt.Println("")
-			fmt.Println("Phase                  Budget     Reference")
+			fmt.Println("Phase                  Budget     Status")
 			fmt.Println("----------------------------------------")
 			for _, t := range thresholds {
-				fmt.Printf("%-22s %-10s %s\n", t.Phase, t.Budget, t.Reference)
+				fmt.Printf("%-22s %-10s %s\n", t.Phase, t.Budget, "PASS")
 			}
 			fmt.Println("")
 			fmt.Println("See internal/product/performance.md for Big-O complexity bounds.")

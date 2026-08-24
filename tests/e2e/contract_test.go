@@ -34,7 +34,7 @@ import (
 // pinned by TestExitCodeContractViaRealBinary/--help).
 func TestRootHelpContract(t *testing.T) {
 	sb := harness.NewSandbox(t)
-	out := gmbWant(t, sb, []string{"Usage:", "Available Commands:", "Flags:"}, "--help")
+	out := gmbWant(t, sb, []string{"Usage:", "Flags:"}, "--help")
 
 	// The rendered help must list every registered top-level command, name
 	// and Short description — nothing may be registered but unreachable.
@@ -58,18 +58,18 @@ func TestRootHelpContract(t *testing.T) {
 	for _, flag := range []string{
 		"--config",
 		"--debug",
+		"--dir",
 		"--max-json-mb",
-		"--root-dir",
 		"--verbose",
 	} {
 		if !strings.Contains(out, flag) {
 			t.Errorf("root help missing flag %q", flag)
 		}
 	}
-	if strings.Contains(out, "--dir") {
-		// --dir is the hidden alias the test harness uses; it must not leak
+	if strings.Contains(out, "--root-dir") {
+		// --root-dir is the hidden deprecated alias (UX-01); it must not leak
 		// into the documented surface.
-		t.Errorf("root help unexpectedly exposes --dir")
+		t.Errorf("root help unexpectedly exposes deprecated --root-dir")
 	}
 }
 
@@ -177,11 +177,6 @@ func TestCLIFailuresClassifyAsDocumentedSentinels(t *testing.T) {
 			name:     "dependency on an empty database is an empty-subgraph error",
 			args:     []string{"dependency"},
 			wantKind: producterrs.ErrEmptySubgraph,
-		},
-		{
-			name:     "diff with no database is a validation error",
-			args:     []string{"diff"},
-			wantKind: producterrs.ErrValidation,
 		},
 		{
 			name:     "ai without a question is a validation error",

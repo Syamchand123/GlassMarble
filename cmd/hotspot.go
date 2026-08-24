@@ -84,10 +84,11 @@ var hotspotCmd = &cobra.Command{
 		if hotspotTop <= 0 {
 			return producterrs.Tagged(fmt.Sprintf("invalid --top %d: must be >= 1 — try 'gmb hotspot --top 10'", hotspotTop), producterrs.ErrValidation)
 		}
-		if hotspotTop > len(degrees) {
-			hotspotTop = len(degrees)
-		}
+		requestedTop := hotspotTop
 		limit := hotspotTop
+		if limit > len(degrees) {
+			limit = len(degrees)
+		}
 		top := degrees[:limit]
 
 		if asJSON {
@@ -100,7 +101,7 @@ var hotspotCmd = &cobra.Command{
 		}
 
 		var viewRows []views.HotspotRow
-		for i := 0; i < len(degrees) && i < hotspotTop; i++ {
+		for i := 0; i < limit; i++ {
 			d := degrees[i]
 			viewRows = append(viewRows, views.HotspotRow{
 				Rank:      i + 1,
@@ -111,7 +112,7 @@ var hotspotCmd = &cobra.Command{
 				Primitive: d.Primitive,
 			})
 		}
-		fmt.Println(views.RenderHotspot(hotspotTop, viewRows))
+		fmt.Println(views.RenderHotspot(requestedTop, viewRows))
 
 		return nil
 	},

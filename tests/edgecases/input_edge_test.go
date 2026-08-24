@@ -87,7 +87,7 @@ func TestExportRequiresOutput(t *testing.T) {
 func TestExportEmptyGraph(t *testing.T) {
 	sb := harness.NewSandbox(t)
 	mustRun(t, sb, "init")
-	mustFailContains(t, sb, []string{"AKG database is empty", "glassmarble analyze"}, "export", "-o", "out.json")
+	mustFailContains(t, sb, []string{"AKG database is empty", "gmb analyze"}, "export", "-o", "out.json")
 	if sb.Exists("out.json") {
 		t.Errorf("export created a file for an empty graph")
 	}

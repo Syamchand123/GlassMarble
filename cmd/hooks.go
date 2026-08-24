@@ -95,7 +95,7 @@ var hooksCmd = &cobra.Command{
 			fmt.Println(views.RenderHooksUninstalled())
 
 		default:
-			return producterrs.Tagged(fmt.Sprintf("unknown hooks action %q — try 'gmb hooks install' or 'gmb hooks uninstall'", args[0]), producterrs.ErrValidation)
+			return producterrs.Tagged(fmt.Sprintf("unknown hooks subcommand %q: expected install or uninstall — try 'gmb hooks install' or 'gmb hooks uninstall'", args[0]), producterrs.ErrValidation)
 		}
 
 		return nil

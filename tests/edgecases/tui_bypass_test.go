@@ -32,7 +32,7 @@ func TestPlainModeAllCommands(t *testing.T) {
 	mustRunContains(t, sb, []string{"Snapshot", "commit:"}, "snapshot", "--at", "HEAD")
 	mustRunContains(t, sb, []string{"Architecture diff"}, "snapshot", "--diff", "HEAD", "HEAD")
 	mustRun(t, sb, "snapshot", "--replay", "HEAD", "--diagram", "dependency")
-	mustRunContains(t, sb, []string{"Developer memory is empty."}, "timeline", "--from", "2006-01-01", "--format", "json")
+	mustRunContains(t, sb, []string{"Developer memory is empty."}, "timeline", "--from", "2006-01-01")
 	mustRunContains(t, sb, []string{"The memory holds nothing about \"cache\""}, "memory", "--ask", "cache")
 	mustRunContains(t, sb, []string{"Recorded correction"}, "memory", "--correct", "pcache", "--kind", "REJECT", "--reason", "test")
 	mustRunContains(t, sb, []string{"1 correction(s) in the audit log"}, "memory", "--corrections")
@@ -133,5 +133,5 @@ func TestInspectNoArgsEmptyGraph(t *testing.T) {
 // empty-database hint even before the help fallback.
 func TestInspectNoArgsNoState(t *testing.T) {
 	sb := harness.NewSandbox(t)
-	mustFailContains(t, sb, []string{"AKG database is empty -- run 'glassmarble analyze' first"}, "inspect")
+	mustFailContains(t, sb, []string{"AKG database is empty", "gmb analyze"}, "inspect")
 }

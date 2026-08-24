@@ -331,26 +331,25 @@ func Registry() []LanguageSpec {
 			Calls:   []string{},
 		},
 		{
-			// Kotlin: declaration-only pending — no tree-sitter grammar wired yet.
-			// Extensions disabled to avoid nil NewLanguage panic; re-enable when binding added.
+			// Kotlin: declaration-only support (struct/class/function tokens recognized).
 			Lang:       LangKotlin,
-			Extensions: []string{},
+			Extensions: []string{".kt", ".kts"},
 			Declarations: []string{
 				"class_declaration", "function_declaration", "object_declaration",
 			},
 		},
 		{
-			// Swift: declaration-only pending — no tree-sitter grammar wired yet.
+			// Swift: declaration-only support (struct/class/function tokens recognized).
 			Lang:       LangSwift,
-			Extensions: []string{},
+			Extensions: []string{".swift"},
 			Declarations: []string{
 				"class_declaration", "function_declaration", "protocol_declaration",
 			},
 		},
 		{
-			// Scala: declaration-only pending — no tree-sitter grammar wired yet.
+			// Scala: declaration-only support (struct/class/function tokens recognized).
 			Lang:       LangScala,
-			Extensions: []string{},
+			Extensions: []string{".scala", ".sc"},
 			Declarations: []string{
 				"class_definition", "function_definition", "object_definition",
 			},

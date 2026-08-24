@@ -89,7 +89,7 @@ var inspectCmd = &cobra.Command{
 				fmt.Println(string(out))
 				return nil
 			}
-			return producterrs.Tagged("AKG database is uninitialized — try 'gmb analyze' first", producterrs.ErrEmptySubgraph)
+			return producterrs.Tagged("AKG database is empty — try 'gmb analyze' first", producterrs.ErrEmptySubgraph)
 		}
 
 		if inspectFile != "" && inspectLine <= 0 {

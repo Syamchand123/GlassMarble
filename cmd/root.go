@@ -122,6 +122,16 @@ func resolveDir(cmd *cobra.Command) string {
 	if cmd == nil {
 		return "."
 	}
+	if cmd.Flags().Changed("dir") {
+		if dir, err := cmd.Flags().GetString("dir"); err == nil && dir != "" {
+			return dir
+		}
+	}
+	if cmd.Flags().Changed("root-dir") {
+		if rootDir, err := cmd.Flags().GetString("root-dir"); err == nil && rootDir != "" {
+			return rootDir
+		}
+	}
 	if dir, err := cmd.Flags().GetString("dir"); err == nil && dir != "" {
 		return dir
 	}
@@ -144,5 +154,13 @@ func newAKGManager(storageDir string, cmd *cobra.Command) (*akg.AKGTransactionMa
 }
 
 func RootCmdForTesting() *cobra.Command {
+	if f := rootCmd.PersistentFlags().Lookup("dir"); f != nil {
+		_ = f.Value.Set("")
+		f.Changed = false
+	}
+	if f := rootCmd.PersistentFlags().Lookup("root-dir"); f != nil {
+		_ = f.Value.Set("")
+		f.Changed = false
+	}
 	return rootCmd
 }

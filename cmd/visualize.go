@@ -113,7 +113,7 @@ Run 'gmb visualize list' to view all 31 supported diagram types.`,
 				fmt.Fprintln(cmd.OutOrStdout(), string(out))
 				return nil
 			}
-			return producterrs.Tagged("active AKG database not found — try 'gmb analyze' first", producterrs.ErrEmptySubgraph)
+			return producterrs.Tagged(fmt.Sprintf("active AKG database not found at %s — try 'gmb analyze' first", statePath), producterrs.ErrEmptySubgraph)
 		}
 
 		start := time.Now()
