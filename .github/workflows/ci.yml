@@ -8,9 +8,8 @@
 #  4. AKG determinism gate (the persisted graph must be byte-stable)
 #  5. End-to-end smoke against the real gmb binary: analyze → status → doctor
 #
-# Go toolchain: go.mod requires go 1.26.4 — '1.26' resolves to the latest
-# 1.26.x patch. The tree-sitter grammars are the pure-Go bindings
-# (github.com/tree-sitter/go-tree-sitter), so CGO is NOT required.
+# Go toolchain: go.mod requires go 1.22. The tree-sitter grammars are the
+# pure-Go bindings (github.com/tree-sitter/go-tree-sitter), so CGO is NOT required.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: GlassMarble CI & Quality Gates
@@ -30,7 +29,7 @@ permissions:
   contents: read
 
 env:
-  GO_VERSION: "1.26"
+  GO_VERSION: "1.22"
 
 jobs:
   quality-gates:

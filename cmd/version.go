@@ -15,7 +15,7 @@ var versionCmd = &cobra.Command{
 	Long:  "This command prints the version of the Glassmarble ",
 
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println(views.RenderVersion(product.Version))
+		fmt.Println(views.RenderVersion(product.Version, product.Commit, product.Date, product.BuiltBy))
 	},
 }
 

@@ -7,7 +7,6 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // PhaseProgress is a single phase progress bar using the design-token colors:
@@ -28,14 +27,20 @@ func NewPhaseProgress(label string, width int) PhaseProgress {
 	if width <= 0 {
 		width = 40
 	}
+	fillColor := tui.ColorPrimary.Dark
+	emptyColor := tui.ColorSurfaceCard.Dark
+	if !tui.HasDarkBackground() {
+		fillColor = tui.ColorPrimary.Light
+		emptyColor = tui.ColorSurfaceCard.Light
+	}
 	p := progress.New(
-		progress.WithSolidFill(string(tui.ColorPrimary)),
+		progress.WithSolidFill(fillColor),
 		progress.WithFillCharacters('█', '░'),
 		progress.WithWidth(width),
 		progress.WithoutPercentage(),
 	)
-	// Empty fill uses the gray-800 surface token (not the bubbles default).
-	p.EmptyColor = string(tui.ColorSurfaceCard)
+	// Empty fill uses the surface card token (not the bubbles default).
+	p.EmptyColor = emptyColor
 	return PhaseProgress{model: p, label: label, total: 1}
 }
 
@@ -68,16 +73,16 @@ func (s *PhaseProgress) IsDone() bool { return s.done }
 // View renders the progress bar with its label and status. The bar shows the
 // spring-animated fraction.
 func (s *PhaseProgress) View() string {
-	label := lipgloss.NewStyle().Bold(true).Foreground(tui.ColorTextPrimary).Render(s.label)
+	label := tui.R.NewStyle().Bold(true).Foreground(tui.ColorTextPrimary).Render(s.label)
 
 	bar := s.model.View()
 
 	status := ""
 	if s.done {
 		ms := s.elapsed.Milliseconds()
-		status = lipgloss.NewStyle().Foreground(tui.ColorSuccess).Render(fmt.Sprintf("✓ %dms", ms))
+		status = tui.R.NewStyle().Foreground(tui.ColorSuccess).Render(fmt.Sprintf("✓ %dms", ms))
 	} else if s.current > 0 {
-		status = lipgloss.NewStyle().Foreground(tui.ColorAccent).Render(
+		status = tui.R.NewStyle().Foreground(tui.ColorAccent).Render(
 			fmt.Sprintf("%d/%d", s.current, s.total))
 	}
 	return fmt.Sprintf("%s\n%s %s", label, bar, status)

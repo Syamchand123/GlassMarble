@@ -1,0 +1,127 @@
+version: 2
+
+project_name: gmb
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: gmb
+    binary: gmb
+    main: .
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/Syamchand123/GlassMarble/internal/product.Version={{.Version}}
+      - -X github.com/Syamchand123/GlassMarble/internal/product.Commit={{.Commit}}
+      - -X github.com/Syamchand123/GlassMarble/internal/product.Date={{.Date}}
+      - -X github.com/Syamchand123/GlassMarble/internal/product.BuiltBy=goreleaser
+
+  - id: glassmarble
+    binary: glassmarble
+    main: .
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/Syamchand123/GlassMarble/internal/product.Version={{.Version}}
+      - -X github.com/Syamchand123/GlassMarble/internal/product.Commit={{.Commit}}
+      - -X github.com/Syamchand123/GlassMarble/internal/product.Date={{.Date}}
+      - -X github.com/Syamchand123/GlassMarble/internal/product.BuiltBy=goreleaser
+
+archives:
+  - id: default
+    name_template: "gmb_{{.Version}}_{{.Os}}_{{.Arch}}"
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+      - "man/**/*"
+      - "completions/**/*"
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+signs:
+  - artifacts: checksum
+    cmd: cosign
+    args:
+      - "sign-blob"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+
+sboms:
+  - artifacts: archive
+
+brews:
+  - repository:
+      owner: Syamchand123
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://github.com/Syamchand123/GlassMarble"
+    description: "GlassMarble: Intelligent Architecture Knowledge Graph Platform"
+    license: "MIT"
+    test: |
+      system "#{bin}/gmb", "version"
+
+scoops:
+  - repository:
+      owner: Syamchand123
+      name: scoop-bucket
+      token: "{{ .Env.GITHUB_TOKEN }}"
+    homepage: "https://github.com/Syamchand123/GlassMarble"
+    description: "GlassMarble: Intelligent Architecture Knowledge Graph Platform"
+    license: "MIT"
+
+nfpms:
+  - id: default
+    package_name: gmb
+    vendor: Syamchand123
+    homepage: "https://github.com/Syamchand123/GlassMarble"
+    maintainer: "Syamchand123"
+    description: "GlassMarble: Intelligent Architecture Knowledge Graph Platform"
+    license: "MIT"
+    formats:
+      - deb
+      - rpm
+      - archlinux
+      - apk
+    contents:
+      - src: LICENSE
+        dst: /usr/share/doc/gmb/copyright
+      - src: README.md
+        dst: /usr/share/doc/gmb/README.md
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "Merge pull request"

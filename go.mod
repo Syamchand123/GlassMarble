@@ -1,6 +1,6 @@
 module github.com/Syamchand123/GlassMarble
 
-go 1.26.4
+go 1.25.0
 
 require (
 	github.com/charmbracelet/bubbles v1.0.0
@@ -76,5 +76,3 @@ require (
 	github.com/spf13/pflag v1.0.9
 	github.com/stretchr/testify v1.10.0
 )
-
-replace github.com/Syamchand123/GlassMarble => G:/GlassMarble

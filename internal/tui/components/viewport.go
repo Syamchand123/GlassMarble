@@ -5,7 +5,6 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/charmbracelet/bubbles/viewport"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // NewGMViewport builds a themed scrollable viewport with padding 1,2 and a
@@ -26,7 +25,7 @@ func NewGMViewport(width, height int) viewport.Model {
 
 // StyleViewportContent wraps content that will be placed inside the viewport.
 func StyleViewportContent(content string) string {
-	return lipgloss.NewStyle().Padding(0, 2).Render(content)
+	return tui.R.NewStyle().Padding(0, 2).Render(content)
 }
 
 // ScrollPosition renders "↑↓ 3/12 pages" style indicator (page / total pages).

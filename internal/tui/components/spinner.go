@@ -6,7 +6,6 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // GMSpinner wraps bubbles/spinner with the GlassMarble brand: quarter-circle
@@ -20,7 +19,7 @@ type GMSpinner struct {
 func NewGMSpinner(label string) GMSpinner {
 	s := spinner.New()
 	s.Spinner = spinner.Spinner{Frames: tui.SpinnerFrames, FPS: time.Second / 4}
-	s.Style = lipgloss.NewStyle().Foreground(tui.ColorAccent)
+	s.Style = tui.R.NewStyle().Foreground(tui.ColorAccent)
 	return GMSpinner{model: s, label: label}
 }
 
