@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"os"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/app"
@@ -11,22 +12,52 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Command Groups for structured help presentation (UX-06)
+var (
+	GroupAnalyze   = &cobra.Group{ID: "analyze", Title: "Analyze & Index Commands:"}
+	GroupInspect   = &cobra.Group{ID: "inspect", Title: "Inspect & Query Commands:"}
+	GroupGovern    = &cobra.Group{ID: "govern", Title: "Architecture Governance Commands:"}
+	GroupVisualize = &cobra.Group{ID: "visualize", Title: "Visualization Commands:"}
+	GroupAI        = &cobra.Group{ID: "ai", Title: "AI & Memory Commands:"}
+	GroupUtility   = &cobra.Group{ID: "utility", Title: "Utility & Configuration Commands:"}
+)
+
 var rootCmd = &cobra.Command{
-	Use:     "gmb",
-	Short:   "GlassMarble – Intelligent Architecture Knowledge Graph",
-	Long:    `Build, query, and visualise a self‑evolving Architecture Knowledge Graph.`,
+	Use:   "gmb",
+	Short: "GlassMarble – Intelligent Architecture Knowledge Graph Platform",
+	Long: `GlassMarble (gmb) builds, queries, governs, and visualizes a self-evolving
+Architecture Knowledge Graph (AKG) from your source code repositories.
+
+Analyze codebases with sub-second incremental parsing, track architectural drift,
+render 31+ diagram types (Mermaid, PlantUML, Graphviz), and reason over system design
+with local or cloud AI models.
+
+GitHub: https://github.com/Syamchand123/GlassMarble
+Documentation: https://github.com/Syamchand123/GlassMarble#readme`,
 	Version: product.Version,
 	// Fang owns error and usage presentation (see Execute/ExecuteContext), so
 	// Cobra must not print them a second time.
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		// Build flag config — debug is tri-state via *bool (C7-2): only set
-		// when the flag was explicitly supplied, so YAML debug:false can be
-		// overridden to false from CLI.
-		rootDir, _ := cmd.Flags().GetString("root-dir")
+		// Output mode handling (UX-02)
+		if colorFlag, err := cmd.Flags().GetString("color"); err == nil {
+			switch colorFlag {
+			case "never":
+				os.Setenv("NO_COLOR", "1")
+			case "always":
+				os.Unsetenv("NO_COLOR")
+			}
+		}
+
+		// Unified dir handling (UX-01)
+		dir, _ := cmd.Flags().GetString("dir")
+		if dir == "" {
+			dir, _ = cmd.Flags().GetString("root-dir")
+		}
+
 		flagConfig := config.Config{
-			RootDir: rootDir,
+			RootDir: dir,
 		}
 		if cmd.Flags().Changed("debug") {
 			b, _ := cmd.Flags().GetBool("debug")
@@ -57,16 +88,46 @@ func ExecuteContext(ctx context.Context) error {
 }
 
 func init() {
-	rootCmd.PersistentFlags().String("root-dir", "", "Root directory for analysis")
+	// Add command groups (UX-06)
+	rootCmd.AddGroup(
+		GroupAnalyze,
+		GroupInspect,
+		GroupGovern,
+		GroupVisualize,
+		GroupAI,
+		GroupUtility,
+	)
+
+	// Global / Persistent Flags (UX-01, UX-02)
+	rootCmd.PersistentFlags().String("dir", "", "Target repository directory for analysis and queries")
+	rootCmd.PersistentFlags().String("root-dir", "", "Target repository directory (deprecated alias for --dir)")
+	_ = rootCmd.PersistentFlags().MarkHidden("root-dir")
+
+	rootCmd.PersistentFlags().String("color", "auto", "Color output mode: auto|always|never")
+	rootCmd.PersistentFlags().BoolP("quiet", "q", false, "Suppress non-error output")
+
 	rootCmd.PersistentFlags().Bool("debug", false, "Enable debug logging")
-	rootCmd.PersistentFlags().StringP("config", "c", "", "config file (default is $HOME/.glassmarble.yaml)")
-	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "verbose output")
-	rootCmd.PersistentFlags().Int("max-json-mb", 0, "Refuse to load or commit an AKG state file (akg.json) larger than this many MiB (0 = unlimited) (AUDIT Phase 4A-4)")
+	rootCmd.PersistentFlags().StringP("config", "c", "", "Config file path (default is $HOME/.glassmarble.yaml)")
+	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "Verbose output logging")
+	rootCmd.PersistentFlags().Int("max-json-mb", 0, "Refuse to load or commit an AKG state file (akg.json) larger than this many MiB (0 = unlimited)")
+}
+
+// resolveDir reads the unified --dir / --root-dir flag or returns "."
+func resolveDir(cmd *cobra.Command) string {
+	if cmd == nil {
+		return "."
+	}
+	if dir, err := cmd.Flags().GetString("dir"); err == nil && dir != "" {
+		return dir
+	}
+	if rootDir, err := cmd.Flags().GetString("root-dir"); err == nil && rootDir != "" {
+		return rootDir
+	}
+	return "."
 }
 
 // newAKGManager builds the AKG transaction manager for a storage directory,
-// honoring the persistent --max-json-mb budget flag (AUDIT Issue 4 Phase 4A-4).
-// A nil cmd (e.g. from the watch loop) means "no budget flag" — unlimited.
+// honoring the persistent --max-json-mb budget flag.
 func newAKGManager(storageDir string, cmd *cobra.Command) (*akg.AKGTransactionManager, error) {
 	var maxBytes int64
 	if cmd != nil {

@@ -8,14 +8,28 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// completionCmd generates raw shell completion scripts. §A.2: this command
-// must bypass Fang's styled help/usage wrapper so the generated scripts stay
-// byte-clean when piped (`source <(gmb completion bash)`).
 var completionCmd = &cobra.Command{
-	Use:   "completion [bash|zsh|fish|powershell]",
-	Short: "Generate shell completion scripts",
-	Long:  `To load completions: Bash: source <(glassmarble completion bash), Zsh: glassmarble completion zsh > "${fpath[1]}/_glassmarble"`,
-	Args:  cobra.ExactArgs(1),
+	Use:       "completion [bash|zsh|fish|powershell]",
+	GroupID:   GroupUtility.ID,
+	Short:     "Generate shell completion scripts",
+	Long: `Generate shell completion script for gmb:
+  Bash:       source <(gmb completion bash)
+  Zsh:        gmb completion zsh > "${fpath[1]}/_gmb"
+  Fish:       gmb completion fish | source
+  PowerShell: gmb completion powershell | Out-String | Invoke-Expression`,
+	Example: `  # Load bash completion in current session
+  source <(gmb completion bash)
+
+  # Load zsh completion in current session
+  gmb completion zsh > "${fpath[1]}/_gmb"
+
+  # Load fish completion
+  gmb completion fish | source
+
+  # Load PowerShell completion
+  gmb completion powershell | Out-String | Invoke-Expression`,
+	Args:      cobra.ExactArgs(1),
+	ValidArgs: []string{"bash", "zsh", "fish", "powershell"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		switch args[0] {
 		case "bash":
@@ -27,14 +41,11 @@ var completionCmd = &cobra.Command{
 		case "powershell":
 			return rootCmd.GenPowerShellCompletionWithDesc(os.Stdout)
 		default:
-			return producterrs.Tagged(fmt.Sprintf("unknown completion shell %q (supported: bash, zsh, fish, powershell)", args[0]), producterrs.ErrValidation)
+			return producterrs.Tagged(fmt.Sprintf("unknown completion shell %q (supported: bash, zsh, fish, powershell) — try 'gmb completion bash'", args[0]), producterrs.ErrValidation)
 		}
 	},
 }
 
-// plainHelpFunc replaces Fang's styled help with a plain, ANSI-free help blurb
-// so `gmb completion --help` (or a bad shell argument) never leaks styled
-// output into a piped shell session (§A.2).
 func plainHelpFunc(c *cobra.Command, _ []string) {
 	fmt.Fprintf(c.OutOrStdout(), "%s\n\nUsage:\n  gmb completion [bash|zsh|fish|powershell]\n\nShells:\n  bash       Bash completion script\n  zsh        Zsh completion script\n  fish       Fish completion script\n  powershell PowerShell completion script\n", c.Long)
 }

@@ -22,29 +22,35 @@ import (
 // involved (master plan §4.4). Corrections recorded with --correct are
 // overlaid onto every query result immediately (master plan §8.3).
 var memoryCmd = &cobra.Command{
-	Use:   "memory [query]",
-	Short: "Query the developer memory: what do we know, when did it change, and why",
+	Use:     "memory [query]",
+	GroupID: GroupAI.ID,
+	Short:   "Query the developer memory: what do we know, when did it change, and why",
 	Long: `Reads the developer memory (.glassmarble/memory/) and answers
 questions like "what do we know about Redis?" and "why was PaymentService added?".
-
-Modes:
-  (default)        project overview: memory stats and current components
-  memory QUERY     ranked retrieval — a positional query is shorthand for --ask
-  --ask "query"    ranked knowledge retrieval (components, claims, events, timeline)
-  --component NAME longitudinal history of one component plus its timeline
-  --correct ID     record a developer correction (convention-learning layer):
-                   --kind INTENT|LABEL|STATE|CONFIDENCE|REJECT|ACCEPT --value ...
-  --corrections    list the correction audit log (append-only, reversible)
 
 Corrections never modify the underlying memory: they are an auditable
 overlay applied to query results. Reasons are never invented: claims are
 labelled by how they were established (FACT / EXPLICIT_REASON / INFERENCE
 / SPECULATION).`,
+	Example: `  # Display developer memory overview and component summary
+  gmb memory
+
+  # Query developer memory for a specific topic or architectural concept
+  gmb memory "why was the auth token cache introduced?"
+
+  # Inspect longitudinal history of a specific component
+  gmb memory --component payment
+
+  # Record a developer convention correction
+  gmb memory --correct auth --kind STATE --value active --reason "Migrated to production"
+
+  # List the append-only developer correction audit trail
+  gmb memory --corrections
+
+  # Output memory query results as JSON
+  gmb memory "database" --json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dir, _ := cmd.Flags().GetString("dir")
-		if dir == "" {
-			dir = "."
-		}
+		dir := resolveDir(cmd)
 		ask, _ := cmd.Flags().GetString("ask")
 		if ask == "" && len(args) > 0 {
 			ask = strings.Join(args, " ")
@@ -91,10 +97,9 @@ labelled by how they were established (FACT / EXPLICIT_REASON / INFERENCE
 }
 
 func init() {
-	memoryCmd.Flags().String("dir", ".", "Directory containing the .glassmarble/ database")
 	memoryCmd.Flags().String("ask", "", "Ask the memory a question (deterministic retrieval, no LLM)")
 	memoryCmd.Flags().String("component", "", "Show the full history of one component (substring match)")
-	memoryCmd.Flags().Bool("json", false, "Emit machine-readable JSON instead of the human report")
+	memoryCmd.Flags().Bool("json", false, "Emit machine-readable JSON output")
 	memoryCmd.Flags().String("correct", "", "Record a developer correction for a memory item (target ID or component name)")
 	memoryCmd.Flags().String("kind", string(learning.CorrectionKindIntent),
 		"Correction kind: INTENT, LABEL, STATE, CONFIDENCE, REJECT, ACCEPT (used with --correct)")
@@ -102,6 +107,11 @@ func init() {
 	memoryCmd.Flags().String("reason", "", "Why the correction was made (audit trail)")
 	memoryCmd.Flags().String("author", "", "Who made the correction (audit trail, optional)")
 	memoryCmd.Flags().Bool("corrections", false, "List the correction audit log instead of querying")
+
+	_ = memoryCmd.RegisterFlagCompletionFunc("kind", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"INTENT", "LABEL", "STATE", "CONFIDENCE", "REJECT", "ACCEPT"}, cobra.ShellCompDirectiveNoFileComp
+	})
+
 	rootCmd.AddCommand(memoryCmd)
 }
 

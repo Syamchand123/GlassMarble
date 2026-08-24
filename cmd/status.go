@@ -34,15 +34,23 @@ type statusJSON struct {
 }
 
 var statusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Display AKG database status, node statistics, and graph health",
-	Long:  `Inspects the active .glassmarble state file and prints graph counts, schema version, commit, freshness, and health summary (AUDIT Issue 5 Phase 5B-5).`,
+	Use:     "status",
+	Aliases: []string{"st"},
+	GroupID: GroupInspect.ID,
+	Short:   "Display AKG database status, node statistics, and graph health",
+	Long: `Inspects the active .glassmarble database and prints graph metrics,
+schema version, commit hash, analysis freshness, and overall graph health.`,
+	Example: `  # View current graph status
+  gmb status
+
+  # Output status as JSON for scripting
+  gmb status --json
+
+  # Inspect a specific repository directory
+  gmb status --dir ./backend`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dir, _ := cmd.Flags().GetString("dir")
+		dir := resolveDir(cmd)
 		asJSON, _ := cmd.Flags().GetBool("json")
-		if dir == "" {
-			dir = "."
-		}
 
 		storageDir := filepath.Join(dir, ".glassmarble")
 		jsonPath := filepath.Join(storageDir, "akg.json")
@@ -59,21 +67,18 @@ var statusCmd = &cobra.Command{
 
 		commitHash, schemaVersion, version, err := akg.StateMetadata(storageDir)
 		if err != nil {
-			return fmt.Errorf("failed to read AKG metadata: %w", err)
+			return fmt.Errorf("failed to read AKG metadata: %w — try 'gmb analyze'", err)
 		}
 
 		stateInfo, err := os.Stat(jsonPath)
 		if err != nil {
-			return fmt.Errorf("failed to stat AKG state: %w", err)
+			return fmt.Errorf("failed to stat AKG state: %w — try 'gmb doctor'", err)
 		}
 
-		// Lazy read: status streams akg.json once (bounded memory) instead of
-		// restoring the graph and rebuilding every index (AUDIT Issue 4
-		// Phase 4A-2). Restore-only figures (macro rules, which are derived
-		// data recomputed on load) are intentionally not shown here.
+		// Lazy read: status streams akg.json once (bounded memory)
 		stats, err := akg.StreamGraphStats(storageDir)
 		if err != nil {
-			return fmt.Errorf("failed to scan AKG: %w", err)
+			return fmt.Errorf("failed to scan AKG: %w — try 'gmb doctor'", err)
 		}
 
 		virtualShare := 0.0
@@ -83,7 +88,6 @@ var statusCmd = &cobra.Command{
 
 		stateSize := akgStateSize(storageDir)
 
-		// C6-D14: build StatusData once and derive JSON from it to avoid duplication.
 		sd := views.StatusData{
 			Initialized:   true,
 			StorageDir:    storageDir,
@@ -132,7 +136,6 @@ var statusCmd = &cobra.Command{
 }
 
 func init() {
-	statusCmd.Flags().String("dir", ".", "Directory path containing the .glassmarble/ folder")
-	statusCmd.Flags().Bool("json", false, "Emit machine-readable JSON instead of the human report")
+	statusCmd.Flags().Bool("json", false, "Emit machine-readable JSON output")
 	rootCmd.AddCommand(statusCmd)
 }

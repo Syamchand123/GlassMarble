@@ -12,9 +12,10 @@ import (
 )
 
 var devCmd = &cobra.Command{
-	Use:   "dev",
-	Short: "Developer utility commands for GlassMarble maintenance and testing",
-	Long:  `Developer commands for updating test goldens, benchmark baselines, and schema validation.`,
+	Use:    "dev",
+	Short:  "Developer utility commands for GlassMarble maintenance and testing",
+	Long:   `Developer commands for updating test goldens, benchmark baselines, and schema validation.`,
+	Hidden: true,
 }
 
 var rebaseGoldensCmd = &cobra.Command{

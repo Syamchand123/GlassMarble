@@ -15,31 +15,40 @@ import (
 )
 
 var patternsCmd = &cobra.Command{
-	Use:   "patterns",
-	Short: "Detect architectural patterns and smells from the committed AKG",
-	Long: `Runs Architecture Intelligence (architectural intelligence) against the committed AKG:
-component inference, pattern detection (PR-01..PR-07) and — with --smells —
-smell detection (SD-01..SD-07). Thresholds come from .glassmarble/config.yaml
-under the "intelligence" key; layer definitions are reused from the "drift"
-key when present.`,
+	Use:     "patterns",
+	GroupID: GroupGovern.ID,
+	Short:   "Detect architectural patterns and smells from the committed AKG",
+	Long: `Runs Architecture Intelligence against the committed AKG:
+component inference, pattern detection (e.g. Clean Architecture, Event-Driven, DDD Bounded Context)
+and — with --smells — code & structural smell detection.`,
+	Example: `  # Run pattern detection on the active AKG
+  gmb patterns
+
+  # Include architectural smells in the output report
+  gmb patterns --smells
+
+  # Output detected patterns and smells as JSON
+  gmb patterns --smells --json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dir, _ := cmd.Flags().GetString("dir")
+		dir := resolveDir(cmd)
 		asJSON, _ := cmd.Flags().GetBool("json")
 		showSmells, _ := cmd.Flags().GetBool("smells")
-		if dir == "" {
-			dir = "."
-		}
 
 		storageDir := filepath.Join(dir, ".glassmarble")
 		tm, err := newAKGManager(storageDir, cmd)
 		if err != nil {
-			return fmt.Errorf("failed to open AKG database: %w", err)
+			return fmt.Errorf("failed to open AKG database: %w — try 'gmb analyze'", err)
 		}
 		defer tm.Close()
 
 		graph := tm.GetActiveSnapshot()
 		if graph == nil || graph.Nodes == nil || graph.Nodes.Len() == 0 {
-			return producterrs.Tagged(fmt.Sprintf("AKG database is empty -- run 'glassmarble analyze' first"), producterrs.ErrEmptySubgraph)
+			if asJSON {
+				out, _ := json.MarshalIndent(map[string]any{"error": "no active AKG database"}, "", "  ")
+				fmt.Println(string(out))
+				return nil
+			}
+			return producterrs.Tagged("AKG database is empty — try 'gmb analyze' first", producterrs.ErrEmptySubgraph)
 		}
 
 		cfg := config.DefaultIntelligenceConfig()
@@ -109,8 +118,7 @@ key when present.`,
 }
 
 func init() {
-	patternsCmd.Flags().String("dir", ".", "Directory path containing the .glassmarble/ database folder")
-	patternsCmd.Flags().Bool("json", false, "Emit machine-readable JSON instead of the human report")
+	patternsCmd.Flags().Bool("json", false, "Emit machine-readable JSON output")
 	patternsCmd.Flags().Bool("smells", false, "Also run smell detection and include smells in the report")
 	rootCmd.AddCommand(patternsCmd)
 }

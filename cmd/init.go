@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,15 +12,28 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type initReceiptJSON struct {
+	Status           string `json:"status"`
+	WorkspaceDir     string `json:"workspace_dir"`
+	GitignoreUpdated bool   `json:"gitignore_updated"`
+}
+
 var initCmd = &cobra.Command{
-	Use:   "init",
-	Short: "Initialize a repository for GlassMarble analysis",
-	Long:  `Creates the .glassmarble workspace directory and configuration files.`,
+	Use:     "init",
+	GroupID: GroupUtility.ID,
+	Short:   "Initialize a repository for GlassMarble analysis",
+	Long:    `Creates the .glassmarble workspace directory, state databases, and configuration files.`,
+	Example: `  # Initialize GlassMarble in current directory
+  gmb init
+
+  # Initialize a specific directory
+  gmb init --dir ./backend
+
+  # Initialize and emit JSON receipt
+  gmb init --json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		targetDir, _ := cmd.Flags().GetString("dir")
-		if targetDir == "" {
-			targetDir = "."
-		}
+		targetDir := resolveDir(cmd)
+		asJSON, _ := cmd.Flags().GetBool("json")
 
 		abs, err := filepath.Abs(targetDir)
 		if err != nil {
@@ -36,9 +50,6 @@ var initCmd = &cobra.Command{
 			return fmt.Errorf("failed to create marbles directory: %w", err)
 		}
 
-		// V2 pipeline directories (master plan §4.2): intelligence (Architecture Intelligence
-		// latest.json), snapshots (intelligence arch snapshots) and memory
-		// (developer memory). Also created lazily by `gmb analyze`.
 		for _, sub := range []string{"intelligence", "snapshots", "memory"} {
 			if err := os.MkdirAll(filepath.Join(gmDir, sub), 0755); err != nil {
 				return fmt.Errorf("failed to create %s directory: %w", sub, err)
@@ -53,9 +64,6 @@ var initCmd = &cobra.Command{
 			}
 		}
 
-		// Create empty GraphJSON AKG state (v3 store). The JSON file is the
-		// canonical state from Phase C onward; an empty-but-valid document
-		// parses cleanly on first load.
 		jsonPath := filepath.Join(gmDir, "akg.json")
 		if _, err := os.Stat(jsonPath); os.IsNotExist(err) {
 			if err := akg.WriteEmptyJSONState(jsonPath); err != nil {
@@ -63,7 +71,6 @@ var initCmd = &cobra.Command{
 			}
 		}
 
-		// Update .gitignore to ignore .glassmarble folder
 		gitignorePath := filepath.Join(abs, ".gitignore")
 		entry := ".glassmarble\n"
 		gitignoreUpdated := false
@@ -85,12 +92,23 @@ var initCmd = &cobra.Command{
 			gitignoreUpdated = true
 		}
 
+		if asJSON {
+			receipt := initReceiptJSON{
+				Status:           "initialized",
+				WorkspaceDir:     gmDir,
+				GitignoreUpdated: gitignoreUpdated,
+			}
+			out, _ := json.MarshalIndent(receipt, "", "  ")
+			fmt.Println(string(out))
+			return nil
+		}
+
 		fmt.Println(views.RenderInitSuccess(gmDir, gitignoreUpdated))
 		return nil
 	},
 }
 
 func init() {
-	initCmd.Flags().String("dir", ".", "Target repository directory")
+	initCmd.Flags().Bool("json", false, "Emit machine-readable JSON receipt")
 	rootCmd.AddCommand(initCmd)
 }

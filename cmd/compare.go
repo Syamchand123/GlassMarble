@@ -14,17 +14,21 @@ import (
 )
 
 var compareCmd = &cobra.Command{
-	Use:   "compare [base_graph.json] [head_graph.json]",
-	Short: "Diff two AKG snapshots and report the architectural changes",
-	Long: `Compares two GraphJSON snapshots (e.g. the main-branch export vs the
-current PR branch) and prints the structural delta: added/removed nodes,
-added/removed edges, and the files touched. This is the command the CI
-workflow runs to produce its PR architecture comment.
+	Use:     "compare [base_graph.json] [head_graph.json]",
+	GroupID: GroupGovern.ID,
+	Short:   "Diff two AKG snapshots and report the architectural changes",
+	Long: `Compares two GraphJSON snapshots (e.g. main-branch export vs PR branch)
+and prints the structural delta: added/removed nodes, added/removed edges, and
+modified files. When run with no file arguments, diffs the committed AKG (git HEAD)
+against the current working tree.`,
+	Example: `  # Compare committed graph against uncommitted working tree
+  gmb compare
 
+  # Compare two exported graph JSON files
   gmb compare base.json head.json
 
-With --dir instead of two files, the base is the previously committed snapshot
-(git HEAD) and the head is the current working tree.`,
+  # Output architectural comparison as JSON
+  gmb compare --json`,
 	Args: cobra.RangeArgs(0, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		asJSON, _ := cmd.Flags().GetBool("json")
@@ -34,23 +38,20 @@ With --dir instead of two files, the base is the previously committed snapshot
 		if len(args) == 2 {
 			base, err = loadGraphJSONFile(args[0])
 			if err != nil {
-				return fmt.Errorf("failed to load base graph: %w", err)
+				return fmt.Errorf("failed to load base graph: %w — try verifying '%s'", err, args[0])
 			}
 			head, err = loadGraphJSONFile(args[1])
 			if err != nil {
-				return fmt.Errorf("failed to load head graph: %w", err)
+				return fmt.Errorf("failed to load head graph: %w — try verifying '%s'", err, args[1])
 			}
 		} else if len(args) == 0 {
-			dir, _ := cmd.Flags().GetString("dir")
-			if dir == "" {
-				dir = "."
-			}
+			dir := resolveDir(cmd)
 			base, head, err = loadWorkingTreeSnapshots(dir, cmd)
 			if err != nil {
 				return err
 			}
 		} else {
-			return producterrs.Tagged(fmt.Sprintf("expected two graph files, or --dir with no args"), producterrs.ErrValidation)
+			return producterrs.Tagged("expected two graph files or --dir with no file arguments — try 'gmb compare [base.json head.json]'", producterrs.ErrValidation)
 		}
 
 		diff := akg.DiffGraphs(base, head)
@@ -66,7 +67,6 @@ With --dir instead of two files, the base is the previously committed snapshot
 	},
 }
 
-// loadGraphJSONFile reads a GraphJSON document from disk.
 func loadGraphJSONFile(path string) (*akg.CodePropertyGraph, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -76,10 +76,6 @@ func loadGraphJSONFile(path string) (*akg.CodePropertyGraph, error) {
 	return akg.ImportGraphJSON(f)
 }
 
-// loadWorkingTreeSnapshots compares the committed AKG (git HEAD) with the
-// current working tree. The base is read from .glassmarble/akg.json; the
-// head is produced by a fresh analysis of the working tree, then both are
-// normalized to GraphJSON.
 func loadWorkingTreeSnapshots(dir string, cmd *cobra.Command) (*akg.CodePropertyGraph, *akg.CodePropertyGraph, error) {
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
@@ -89,30 +85,26 @@ func loadWorkingTreeSnapshots(dir string, cmd *cobra.Command) (*akg.CodeProperty
 	storageDir := filepath.Join(absDir, ".glassmarble")
 	baseTM, err := newAKGManager(storageDir, cmd)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to open base AKG: %w", err)
+		return nil, nil, fmt.Errorf("failed to open base AKG: %w — try 'gmb analyze'", err)
 	}
 	base := baseTM.GetActiveSnapshot()
 	if base == nil || base.Nodes.Len() == 0 {
-		return nil, nil, fmt.Errorf("AKG database is empty -- run 'glassmarble analyze' first")
+		return nil, nil, fmt.Errorf("AKG database is empty — try 'gmb analyze' first")
 	}
 
-	// Clone the base so the head analysis does not mutate the snapshot.
 	baseClone := base.Clone()
 
-	// C6-D26: avoid paying full re-analysis when the working tree is clean
-	// (read-only diff). CollectGitDiff against HEAD is cheap; if it yields
-	// no tasks the head snapshot is identical to the base clone.
 	if diff, err := ingest.CollectGitDiff(absDir, ""); err == nil && len(diff) == 0 {
 		return baseClone, baseClone, nil
 	}
 
 	if err := runAnalysis(cmd, runAnalysisOptions{targetDir: absDir, full: true}); err != nil {
-		return nil, nil, fmt.Errorf("working-tree analysis failed: %w", err)
+		return nil, nil, fmt.Errorf("working-tree analysis failed: %w — try 'gmb analyze --full'", err)
 	}
 
 	headTM, err := newAKGManager(storageDir, cmd)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to open head AKG: %w", err)
+		return nil, nil, fmt.Errorf("failed to open head AKG: %w — try 'gmb analyze'", err)
 	}
 	head := headTM.GetActiveSnapshot()
 	if head == nil {
@@ -122,7 +114,6 @@ func loadWorkingTreeSnapshots(dir string, cmd *cobra.Command) (*akg.CodeProperty
 }
 
 func init() {
-	compareCmd.Flags().String("dir", ".", "Directory path containing the .glassmarble/ database folder (used with no file args)")
-	compareCmd.Flags().Bool("json", false, "Emit machine-readable JSON instead of the human report")
+	compareCmd.Flags().Bool("json", false, "Emit machine-readable JSON output")
 	rootCmd.AddCommand(compareCmd)
 }

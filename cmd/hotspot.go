@@ -15,34 +15,45 @@ import (
 var hotspotTop int
 
 type nodeDegree struct {
-	ID        string
-	Name      string
-	Kind      string
-	InDegree  int
-	OutDegree int
-	Primitive string
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Kind      string `json:"kind"`
+	InDegree  int    `json:"in_degree"`
+	OutDegree int    `json:"out_degree"`
+	Primitive string `json:"primitive,omitempty"`
 }
 
 var hotspotCmd = &cobra.Command{
-	Use:   "hotspot",
-	Short: "Identify high-coupling architectural hotspots and most-depended-upon symbols",
-	Long:  `Ranks nodes by in-degree call density and centrality to highlight architectural hotspots.`,
+	Use:     "hotspot",
+	GroupID: GroupInspect.ID,
+	Short:   "Identify high-coupling architectural hotspots and most-depended-upon symbols",
+	Long:    `Ranks nodes by in-degree call density and centrality to highlight architectural hotspots and high-risk refactoring targets.`,
+	Example: `  # Display top 10 architectural hotspots
+  gmb hotspot
+
+  # Display top 25 hotspots
+  gmb hotspot --top 25
+
+  # Output hotspot rankings as JSON
+  gmb hotspot --json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dir, _ := cmd.Flags().GetString("dir")
+		dir := resolveDir(cmd)
 		asJSON, _ := cmd.Flags().GetBool("json")
-		if dir == "" {
-			dir = "."
-		}
 
 		storageDir := filepath.Join(dir, ".glassmarble")
 		tm, err := newAKGManager(storageDir, cmd)
 		if err != nil {
-			return fmt.Errorf("failed to open AKG database: %w", err)
+			return fmt.Errorf("failed to open AKG database: %w — try 'gmb analyze'", err)
 		}
 
 		snapshot := tm.GetActiveSnapshot()
 		if snapshot == nil || snapshot.Nodes.Len() == 0 {
-			return producterrs.Tagged(fmt.Sprintf("AKG database is empty -- run 'glassmarble analyze' first"), producterrs.ErrEmptySubgraph)
+			if asJSON {
+				out, _ := json.MarshalIndent(map[string]any{"top": 0, "hotspots": []nodeDegree{}}, "", "  ")
+				fmt.Println(string(out))
+				return nil
+			}
+			return producterrs.Tagged("AKG database is empty — try 'gmb analyze' first", producterrs.ErrEmptySubgraph)
 		}
 
 		var degrees []nodeDegree
@@ -55,21 +66,23 @@ var hotspotCmd = &cobra.Command{
 				degrees = append(degrees, nodeDegree{
 					ID:        id,
 					Name:      node.Name,
-					Kind:      node.Kind,
+					Kind:      string(node.Kind),
 					InDegree:  inCount,
 					OutDegree: outCount,
-					Primitive: node.Primitive,
+					Primitive: string(node.Primitive),
 				})
 			}
 		})
 
 		sort.Slice(degrees, func(i, j int) bool {
+			if degrees[i].InDegree == degrees[j].InDegree {
+				return degrees[i].ID < degrees[j].ID
+			}
 			return degrees[i].InDegree > degrees[j].InDegree
 		})
 
-		// C6-D12: validate --top to avoid panic on negative/zero.
 		if hotspotTop <= 0 {
-			return producterrs.Tagged(fmt.Sprintf("invalid --top %d: must be between 1 and %d", hotspotTop, len(degrees)), producterrs.ErrValidation)
+			return producterrs.Tagged(fmt.Sprintf("invalid --top %d: must be >= 1 — try 'gmb hotspot --top 10'", hotspotTop), producterrs.ErrValidation)
 		}
 		if hotspotTop > len(degrees) {
 			hotspotTop = len(degrees)
@@ -105,8 +118,7 @@ var hotspotCmd = &cobra.Command{
 }
 
 func init() {
-	hotspotCmd.Flags().IntVar(&hotspotTop, "top", 10, "Number of top hotspot symbols to display")
-	hotspotCmd.Flags().String("dir", ".", "Directory path containing the .glassmarble/ database folder")
-	hotspotCmd.Flags().Bool("json", false, "Emit machine-readable JSON instead of the human report")
+	hotspotCmd.Flags().IntVar(&hotspotTop, "top", 10, "Number of top hotspot symbols to display (1-100)")
+	hotspotCmd.Flags().Bool("json", false, "Emit machine-readable JSON output")
 	rootCmd.AddCommand(hotspotCmd)
 }

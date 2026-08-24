@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -90,13 +91,9 @@ func isTempFlagChanged(cmd *cobra.Command) bool {
 	return false
 }
 
-// aiRootDir resolves the repository root from the persistent --root-dir flag.
+// aiRootDir resolves the repository root from the persistent --dir or --root-dir flag.
 func aiRootDir(cmd *cobra.Command) string {
-	rootDir, _ := cmd.Root().Flags().GetString("root-dir")
-	if rootDir == "" {
-		return "."
-	}
-	return rootDir
+	return resolveDir(cmd)
 }
 
 // newAIEngine loads the effective configuration and constructs the engine.
@@ -193,8 +190,9 @@ func formatCost(usd float64, estimated bool) string {
 }
 
 var aiCmd = &cobra.Command{
-	Use:   "ai [question]",
-	Short: "Ask GlassMarble AI Architect anything about your codebase",
+	Use:     "ai [question]",
+	GroupID: GroupAI.ID,
+	Short:   "Ask GlassMarble AI Architect anything about your codebase",
 	Long: `Ask the GlassMarble AI Architect a question about your repository.
 
 The AI engine is Bring-Your-Own-Key (BYOK): configure your provider and model
@@ -202,22 +200,24 @@ with "gmb ai configure", or via GLASSMARBLE_AI_* environment variables.
 
 The agent answers by calling repository tools: AKG knowledge-graph queries
 (akg_*), source readers (code_*), diagram generation (diagram_*), and system
-status (system_*).
-
-Examples:
+status (system_*).`,
+	Example: `  # Ask a question about the repository architecture
   gmb ai "explain the architecture of this repository"
+
+  # Ask a dependency question
   gmb ai "which services depend on the payment module"
-  gmb ai "generate a C4 container diagram"
-  gmb ai "generate a C4 container diagram" --save c4.md   # write markup to .glassmarble/marbles/
-  gmb ai "write architecture notes" --save notes.md       # write the answer to .glassmarble/ai/
-  gmb ai --no-tools "opinion question"   # plain chat, no tool calling
-  gmb ai --tools akg,code "question"     # restrict the tool set
-  gmb ai --max-cost 0.5 "question"       # stop when spend is estimated above $0.50
-  gmb ai --no-stream "question"          # buffered output instead of streaming
-  gmb ai chat                 # interactive conversation (session memory)
-  gmb ai chat --new           # fresh session instead of resuming the latest
-  gmb ai sessions             # list saved chat sessions
-  gmb ai doctor               # diagnose the AI setup`,
+
+  # Ask AI to generate a C4 container diagram and save it
+  gmb ai "generate a C4 container diagram" --save c4.md
+
+  # Restrict tool usage to code and AKG tools only
+  gmb ai --tools akg,code "where is user authentication implemented?"
+
+  # Start an interactive chat session
+  gmb ai chat
+
+  # Diagnose AI engine setup and connectivity
+  gmb ai doctor`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
@@ -410,11 +410,15 @@ var aiChatCmd = &cobra.Command{
 	Long: `Start a multi-turn conversation with session memory: the transcript is
 saved to .glassmarble/ai/sessions/ and the next "gmb ai chat" resumes it.
 Use --new to start fresh, --session <id> to resume a specific conversation,
-and "exit", "quit", or Ctrl+D to leave.
+and "exit", "quit", or Ctrl+D to leave.`,
+	Example: `  # Resume latest conversation or start a new one
+  gmb ai chat
 
-  gmb ai chat                  # resume the latest session (or start one)
-  gmb ai chat --new            # force a fresh session
-  gmb ai chat --session 2026... # resume a specific session (see gmb ai sessions)`,
+  # Force a fresh chat session
+  gmb ai chat --new
+
+  # Resume a specific session by ID
+  gmb ai chat --session 2026-08-24-10-00-00`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		engine, err := newAIEngine(cmd)
 		if err != nil {
@@ -427,7 +431,7 @@ and "exit", "quit", or Ctrl+D to leave.
 		switch {
 		case aiChatSessionFlag != "":
 			if aiChatNewFlag {
-				return producterrs.Tagged(fmt.Sprintf("--session and --new are mutually exclusive"), producterrs.ErrValidation)
+				return producterrs.Tagged("--session and --new are mutually exclusive — choose one", producterrs.ErrValidation)
 			}
 			sess, err = session.Open(sessDir, aiChatSessionFlag)
 			if err != nil {
@@ -451,7 +455,6 @@ and "exit", "quit", or Ctrl+D to leave.
 		}
 
 		reader := bufio.NewReader(cmd.InOrStdin())
-		// C6-D2: use tui.IsInteractive (stdin+stdout+TERM) consistently
 		isTTY := tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout())
 
 		if isTTY {
@@ -559,21 +562,32 @@ var aiSessionsCmd = &cobra.Command{
 	Short: "List saved AI chat sessions",
 	Long: `List the conversation sessions saved under .glassmarble/ai/sessions/.
 Sessions are written by "gmb ai chat" and can be resumed with
-"gmb ai chat --session <id>".
+"gmb ai chat --session <id>".`,
+	Example: `  # List all saved AI chat sessions
+  gmb ai sessions
 
-  gmb ai sessions              # list sessions, newest first
-  gmb ai sessions --delete <id> # remove one session`,
+  # Delete a specific saved session
+  gmb ai sessions --delete 2026-08-24-10-00-00
+
+  # Output session history list as JSON
+  gmb ai sessions --json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		asJSON, _ := cmd.Flags().GetBool("json")
 		dir := session.Dir(aiRootDir(cmd))
 		if aiSessionsDeleteFlag != "" {
 			if err := session.Delete(dir, aiSessionsDeleteFlag); err != nil {
 				return err
 			}
+			if asJSON {
+				out, _ := json.MarshalIndent(map[string]string{"status": "deleted", "session_id": aiSessionsDeleteFlag}, "", "  ")
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
+				return nil
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Deleted session %s\n", aiSessionsDeleteFlag)
 			return nil
 		}
 
-		if tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout()) {
+		if !asJSON && tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout()) {
 			del := func(id string) error { return session.Delete(dir, id) }
 			return sessions.Run(dir, cmd.InOrStdin(), cmd.OutOrStdout(), del)
 		}
@@ -581,6 +595,11 @@ Sessions are written by "gmb ai chat" and can be resumed with
 		list, err := session.List(dir)
 		if err != nil {
 			return err
+		}
+		if asJSON {
+			out, _ := json.MarshalIndent(list, "", "  ")
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
+			return nil
 		}
 		if len(list) == 0 {
 			fmt.Fprintln(cmd.OutOrStdout(), views.RenderSessions(list))
@@ -598,10 +617,15 @@ var aiConfigureCmd = &cobra.Command{
 
 Without flags, runs an interactive setup. With flags, updates the target
 configuration file. Keys are stored in the config file with 0600 permissions
-and are never logged.
-
+and are never logged.`,
+	Example: `  # Configure OpenAI with GPT-4o
   gmb ai configure --provider openai --model gpt-4o --key sk-...
-  gmb ai configure --scope project --provider gemini --model gemini-2.5-flash`,
+
+  # Configure Gemini in project scope
+  gmb ai configure --scope project --provider gemini --model gemini-2.5-flash
+
+  # Run interactive terminal setup wizard
+  gmb ai configure`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		changed := cmd.Flags().Changed("provider") || cmd.Flags().Changed("model") ||
 			cmd.Flags().Changed("key") || cmd.Flags().Changed("base-url") ||
@@ -619,7 +643,7 @@ and are never logged.
 			target = filepath.Join(aiDirFlag, aiconfig.ProjectConfigPath)
 		}
 		if target == "" {
-			return producterrs.Tagged(fmt.Sprintf("cannot locate the global config file (home directory unavailable)"), producterrs.ErrValidation)
+			return producterrs.Tagged("cannot locate the global config file (home directory unavailable)", producterrs.ErrValidation)
 		}
 
 		// Load any existing settings from the target file.
@@ -639,10 +663,7 @@ and are never logged.
 				cfg.Model = res.Model
 				cfg.BaseURL = res.BaseURL
 			} else {
-				// §12 Phase 3: the raw bufio wizard was replaced by the Huh
-				// form. Without a TTY there is no interactive path, so guide
-				// the caller to the flag-driven setup instead.
-				return producterrs.Tagged(fmt.Sprintf("interactive configuration requires a terminal — run `gmb ai configure --provider NAME --model MODEL --key KEY`, or set GLASSMARBLE_AI_* environment variables"), producterrs.ErrValidation)
+				return producterrs.Tagged("interactive configuration requires a terminal — run `gmb ai configure --provider NAME --model MODEL --key KEY`, or set GLASSMARBLE_AI_* environment variables", producterrs.ErrValidation)
 			}
 		} else {
 			if cmd.Flags().Changed("provider") {
@@ -701,10 +722,44 @@ and are never logged.
 var aiModelsCmd = &cobra.Command{
 	Use:   "models",
 	Short: "List supported AI providers and their models",
+	Example: `  # List all available AI providers and models
+  gmb ai models
+
+  # Output supported models and provider configuration status as JSON
+  gmb ai models --json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		asJSON, _ := cmd.Flags().GetBool("json")
 		cfg, err := aiconfig.LoadForDir(aiRootDir(cmd), aiconfig.Config{})
 		if err != nil {
 			return err
+		}
+
+		if asJSON {
+			type modelInfoJSON struct {
+				Provider     string   `json:"provider"`
+				DisplayName  string   `json:"display_name"`
+				DefaultModel string   `json:"default_model"`
+				HasAPIKey    bool     `json:"has_api_key"`
+				Models       []string `json:"models"`
+			}
+			var list []modelInfoJSON
+			for _, p := range provider.Registry {
+				hasKey := aiconfig.EffectiveAPIKey(cfg, p.KeyEnvVar) != ""
+				defModel := ""
+				if len(p.Models) > 0 {
+					defModel = p.Models[0]
+				}
+				list = append(list, modelInfoJSON{
+					Provider:     p.Name,
+					DisplayName:  p.DisplayName,
+					DefaultModel: defModel,
+					HasAPIKey:    hasKey,
+					Models:       p.Models,
+				})
+			}
+			out, _ := json.MarshalIndent(list, "", "  ")
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
+			return nil
 		}
 
 		fmt.Fprintln(cmd.OutOrStdout(), views.RenderModels(provider.Registry, cfg.Provider, func(envVar string) bool {
@@ -719,13 +774,50 @@ var aiDoctorCmd = &cobra.Command{
 	Short: "Diagnose the AI engine setup",
 	Long: `Validate the AI configuration, test provider connectivity, and check
 the state of the Architecture Knowledge Graph.`,
+	Example: `  # Run full AI health and connectivity check
+  gmb ai doctor
+
+  # Output AI doctor diagnostic report as JSON
+  gmb ai doctor --json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		asJSON, _ := cmd.Flags().GetBool("json")
 		cfg, err := aiconfig.LoadForDir(aiRootDir(cmd), aiFlagConfig(cmd))
 		if err != nil {
 			return err
 		}
 
 		rep := ai_engine.Doctor(cmd.Context(), cfg, aiRootDir(cmd))
+
+		if asJSON {
+			type doctorRepJSON struct {
+				Provider     string   `json:"provider"`
+				Model        string   `json:"model"`
+				HasAPIKey    bool     `json:"has_api_key"`
+				PingStatus   string   `json:"ping_status"`
+				PingDuration float64  `json:"ping_duration_sec"`
+				AKGExists    bool     `json:"akg_exists"`
+				AKGPath      string   `json:"akg_path"`
+				AKGSize      int64    `json:"akg_size_bytes"`
+				Problems     []string `json:"problems"`
+			}
+			dj := doctorRepJSON{
+				Provider:     rep.Provider,
+				Model:        rep.Model,
+				HasAPIKey:    rep.KeySet,
+				PingStatus:   rep.PingStatus,
+				PingDuration: rep.PingDuration.Seconds(),
+				AKGExists:    rep.AKGExists,
+				AKGPath:      rep.AKGPath,
+				AKGSize:      rep.AKGSize,
+				Problems:     rep.Problems,
+			}
+			out, _ := json.MarshalIndent(dj, "", "  ")
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
+			if len(rep.Problems) > 0 {
+				return fmt.Errorf("doctor found %d problem(s)", len(rep.Problems))
+			}
+			return nil
+		}
 
 		w := cmd.OutOrStdout()
 		fmt.Fprintln(w, views.RenderAIDoctor(rep, ai_engine.MaskAPIKey(cfg.APIKey)))
@@ -811,6 +903,17 @@ func init() {
 	aiChatCmd.Flags().BoolVar(&aiChatNewFlag, "new", false, "Start a fresh session instead of resuming")
 
 	aiSessionsCmd.Flags().StringVar(&aiSessionsDeleteFlag, "delete", "", "Delete a saved session by id")
+	aiSessionsCmd.Flags().Bool("json", false, "Emit machine-readable JSON session list")
+
+	aiModelsCmd.Flags().Bool("json", false, "Emit machine-readable JSON provider and model list")
+	aiDoctorCmd.Flags().Bool("json", false, "Emit machine-readable JSON diagnostic report")
+
+	_ = aiCmd.RegisterFlagCompletionFunc("tools", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"system", "akg", "code", "diagram"}, cobra.ShellCompDirectiveNoFileComp
+	})
+	_ = aiConfigureCmd.RegisterFlagCompletionFunc("scope", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"global", "project"}, cobra.ShellCompDirectiveNoFileComp
+	})
 
 	aiCmd.AddCommand(aiChatCmd)
 	aiCmd.AddCommand(aiConfigureCmd)

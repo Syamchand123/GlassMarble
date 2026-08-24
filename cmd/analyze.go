@@ -48,11 +48,29 @@ func tuiPrintln(a ...any) {
 }
 
 var analyzeCmd = &cobra.Command{
-	Use:   "analyze",
-	Short: "Run full source code ingestion and build Architecture Knowledge Graph (AKG)",
-	Long:  `Executes ingestion, normalization, topology aggregation, CPG linking, and commits the graph state to AKG.`,
+	Use:     "analyze",
+	GroupID: GroupAnalyze.ID,
+	Short:   "Run full source code ingestion and build Architecture Knowledge Graph (AKG)",
+	Long: `Executes incremental or full ingestion, AST parsing, normalization, topology
+aggregation, CPG linking, and commits the graph state to .glassmarble/akg.json.
+
+See also: 'gmb status', 'gmb watch', 'gmb doctor'`,
+	Example: `  # Run standard incremental analysis on current directory
+  gmb analyze
+
+  # Force a clean full analysis scan
+  gmb analyze --full
+
+  # Disable AI intelligence smells/pattern detection
+  gmb analyze --no-intelligence
+
+  # Run analysis and emit JSON payload
+  gmb analyze --json
+
+  # Run performance benchmark gates
+  gmb analyze --bench`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		targetDir, _ := cmd.Flags().GetString("dir")
+		targetDir := resolveDir(cmd)
 		commitHash, _ := cmd.Flags().GetString("commit")
 		full, _ := cmd.Flags().GetBool("full")
 		workers, _ := cmd.Flags().GetInt("workers")
@@ -65,10 +83,10 @@ var analyzeCmd = &cobra.Command{
 		storeCode, _ := cmd.Flags().GetBool("store-code")
 		isBench, _ := cmd.Flags().GetBool("bench")
 		intelligence, _ := cmd.Flags().GetBool("intelligence")
-		includeDocs, _ := cmd.Flags().GetBool("include-docs")
-		if targetDir == "" {
-			targetDir = "."
+		if noIntel, _ := cmd.Flags().GetBool("no-intelligence"); noIntel {
+			intelligence = false
 		}
+		includeDocs, _ := cmd.Flags().GetBool("include-docs")
 		opts := runAnalysisOptions{
 			targetDir:      targetDir,
 			commitHash:     commitHash,
@@ -639,19 +657,26 @@ func runAnalysisBenchmark(cmd *cobra.Command, opts runAnalysisOptions) error {
 }
 
 func init() {
-	analyzeCmd.Flags().String("dir", ".", "Target repository directory to analyze")
-	analyzeCmd.Flags().String("commit", "", "Git commit hash to tag the analysis. Empty (default) diffs the working tree against HEAD (incremental delta); a hash diffs that commit against its parent")
+	analyzeCmd.Flags().String("commit", "", "Git commit hash to tag the analysis (empty diffs working tree against HEAD)")
 	analyzeCmd.Flags().Bool("full", false, "Force a full clean scan of every file at full linker detail (default: incremental delta)")
-	analyzeCmd.Flags().Int("workers", 0, "Number of parallel workers (default: CPUs)")
+	analyzeCmd.Flags().Int("workers", 0, "Number of parallel workers (default: available CPUs)")
 	analyzeCmd.Flags().String("link-level", "architecture", "Linker detail level: architecture (module/type/call/dep edges), standard (aggregate CFG), full (per-branch CFG+DFG)")
 	analyzeCmd.Flags().String("macro-inference", "all", "Macro inference mode: disabled, structural (only rules with evidence), all (full heuristic+structural)")
 	analyzeCmd.Flags().Int("max-nodes", 0, "Max total CPG nodes before warning/abort (0 = unlimited)")
 	analyzeCmd.Flags().Bool("abort-on-limit", false, "Abort analysis if --max-nodes is exceeded (otherwise warn)")
-	analyzeCmd.Flags().Bool("verbose", false, "Enable verbose output")
 	analyzeCmd.Flags().Bool("store-code", false, "Store source code content snippets in AKG nodes (default: false)")
-	analyzeCmd.Flags().Bool("json", false, "Emit machine-readable JSON instead of the human summary")
+	analyzeCmd.Flags().Bool("json", false, "Emit machine-readable JSON output")
 	analyzeCmd.Flags().Bool("bench", false, "Run analysis benchmark battery and verify performance against budget gates")
-	analyzeCmd.Flags().Bool("intelligence", true, "Run architecture intelligence after committing the graph (human output only)")
-	analyzeCmd.Flags().Bool("include-docs", false, "Run knowledge fusion: fuse ADR/README/PR claims from documentation and git history into developer memory")
+	analyzeCmd.Flags().Bool("intelligence", true, "Run architectural intelligence checks (smells and pattern discovery)")
+	analyzeCmd.Flags().Bool("no-intelligence", false, "Disable architectural intelligence checks (equivalent to --intelligence=false)")
+	analyzeCmd.Flags().Bool("include-docs", false, "Run knowledge fusion: fuse ADR/README/PR claims into developer memory")
+
+	_ = analyzeCmd.RegisterFlagCompletionFunc("link-level", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"architecture", "standard", "full"}, cobra.ShellCompDirectiveNoFileComp
+	})
+	_ = analyzeCmd.RegisterFlagCompletionFunc("macro-inference", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"disabled", "structural", "all"}, cobra.ShellCompDirectiveNoFileComp
+	})
+
 	rootCmd.AddCommand(analyzeCmd)
 }
