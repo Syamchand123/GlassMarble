@@ -87,6 +87,11 @@ func ExecuteContext(ctx context.Context) error {
 	return fang.Execute(ctx, rootCmd, fang.WithVersion(product.Version))
 }
 
+// RootCmd returns the root cobra command for man page and completions generators.
+func RootCmd() *cobra.Command {
+	return rootCmd
+}
+
 func init() {
 	// Add command groups (UX-06)
 	rootCmd.AddGroup(

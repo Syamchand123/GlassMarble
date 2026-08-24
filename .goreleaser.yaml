@@ -5,6 +5,8 @@ project_name: gmb
 before:
   hooks:
     - go mod tidy
+    - go run ./cmd/man -o man/man1
+    - go run ./cmd/completions -o completions
 
 builds:
   - id: gmb
@@ -78,45 +80,6 @@ signs:
 
 sboms:
   - artifacts: archive
-
-brews:
-  - repository:
-      owner: Syamchand123
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    homepage: "https://github.com/Syamchand123/GlassMarble"
-    description: "GlassMarble: Intelligent Architecture Knowledge Graph Platform"
-    license: "MIT"
-    test: |
-      system "#{bin}/gmb", "version"
-
-scoops:
-  - repository:
-      owner: Syamchand123
-      name: scoop-bucket
-      token: "{{ .Env.GITHUB_TOKEN }}"
-    homepage: "https://github.com/Syamchand123/GlassMarble"
-    description: "GlassMarble: Intelligent Architecture Knowledge Graph Platform"
-    license: "MIT"
-
-nfpms:
-  - id: default
-    package_name: gmb
-    vendor: Syamchand123
-    homepage: "https://github.com/Syamchand123/GlassMarble"
-    maintainer: "Syamchand123"
-    description: "GlassMarble: Intelligent Architecture Knowledge Graph Platform"
-    license: "MIT"
-    formats:
-      - deb
-      - rpm
-      - archlinux
-      - apk
-    contents:
-      - src: LICENSE
-        dst: /usr/share/doc/gmb/copyright
-      - src: README.md
-        dst: /usr/share/doc/gmb/README.md
 
 changelog:
   sort: asc

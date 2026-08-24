@@ -1,26 +1,23 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # GlassMarble CI & Quality Gates
 #
-# Runs on every push to the main/feature branches and every pull request:
-#  1. Compile every package (go build ./...)
-#  2. Static analysis (go vet)
-#  3. Full unit/integration/e2e test suite (go test ./...)
-#  4. AKG determinism gate (the persisted graph must be byte-stable)
-#  5. End-to-end smoke against the real gmb binary: analyze → status → doctor
-#
-# Go toolchain: go.mod requires go 1.22. The tree-sitter grammars are the
-# pure-Go bindings (github.com/tree-sitter/go-tree-sitter), so CGO is NOT required.
+# Runs on every push to main/feature branches and every pull request across
+# Linux, macOS, and Windows runners:
+#  1. Module integrity check
+#  2. Compile all packages across OS matrix
+#  3. Static analysis & vet
+#  4. Full test suite with AKG determinism gate
+#  5. End-to-end smoke verification
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: GlassMarble CI & Quality Gates
 
 on:
   push:
-    branches: [main, feature/overhaul]
+    branches: [main, refactor/packaging, feature/*]
   pull_request:
-    branches: [main, feature/overhaul]
+    branches: [main, refactor/packaging]
 
-# Cancel superseded runs on the same branch/PR to save runner minutes.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -32,9 +29,13 @@ env:
   GO_VERSION: "1.22"
 
 jobs:
-  quality-gates:
-    name: Quality Gates & Test Suite
-    runs-on: ubuntu-latest
+  matrix-build:
+    name: Build & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       - name: Checkout
@@ -55,18 +56,19 @@ jobs:
       - name: Vet codebase
         run: go vet ./...
 
-      - name: Unit, integration & e2e test suite
+      - name: Unit & integration test suite
         run: go test ./... -count=1 -timeout 30m
 
       - name: AKG determinism gate
         run: go test ./internal/akg/... -run Deterministic -count=1 -v
 
       - name: Build gmb binary
-        run: go build -o gmb .
+        run: go build -o gmb${{ matrix.os == 'windows-latest' && '.exe' || '' }} .
 
       - name: End-to-end smoke (analyze → status → doctor)
+        shell: bash
         run: |
-          ./gmb version
-          ./gmb analyze --dir . --intelligence=false --json
-          ./gmb status --dir .
-          ./gmb doctor --dir .
+          ./gmb${{ matrix.os == 'windows-latest' && '.exe' || '' }} version
+          ./gmb${{ matrix.os == 'windows-latest' && '.exe' || '' }} analyze --dir . --intelligence=false --json
+          ./gmb${{ matrix.os == 'windows-latest' && '.exe' || '' }} status --dir .
+          ./gmb${{ matrix.os == 'windows-latest' && '.exe' || '' }} doctor --dir .

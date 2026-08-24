@@ -71,6 +71,10 @@ man:
 	@mkdir -p man/man1
 	$(GO) run ./cmd/man -o man/man1/ || true
 
+## docker: Build local Docker image
+docker:
+	docker build -t ghcr.io/syamchand123/glassmarble:local .
+
 ## clean: Remove build artifacts and dist/ directory
 clean:
 	rm -rf $(BINARY_NAME) $(BINARY_NAME).exe $(ALIAS_NAME) $(ALIAS_NAME).exe dist/ completions/ man/
