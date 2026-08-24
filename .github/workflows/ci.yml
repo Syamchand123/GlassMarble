@@ -72,3 +72,13 @@ jobs:
           ./gmb${{ matrix.os == 'windows-latest' && '.exe' || '' }} analyze --dir . --intelligence=false --json
           ./gmb${{ matrix.os == 'windows-latest' && '.exe' || '' }} status --dir .
           ./gmb${{ matrix.os == 'windows-latest' && '.exe' || '' }} doctor --dir .
+
+      - name: Quality gate (NO_COLOR plain text verification)
+        shell: bash
+        run: |
+          NO_COLOR=1 ./gmb${{ matrix.os == 'windows-latest' && '.exe' || '' }} status --dir . > status_nocolor.txt
+          if grep -q $'\x1b' status_nocolor.txt; then
+            echo "Error: Found ANSI escape characters under NO_COLOR=1"
+            exit 1
+          fi
+
