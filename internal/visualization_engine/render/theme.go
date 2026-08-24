@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -179,12 +180,20 @@ func GetTheme(name string) *Theme {
 }
 
 // EmitMermaidClassDefs outputs Mermaid classDef declarations for all archetypes.
+// C3-3: ArchetypeStyles is a map; iteration order is randomized per run.
+// Sorting keys makes diagram markup deterministic (required for TestGoldenParity).
 func (t *Theme) EmitMermaidClassDefs() string {
 	if t == nil {
 		t = ThemeModern
 	}
+	keys := make([]string, 0, len(t.ArchetypeStyles))
+	for k := range t.ArchetypeStyles {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
 	var sb strings.Builder
-	for name, style := range t.ArchetypeStyles {
+	for _, name := range keys {
+		style := t.ArchetypeStyles[name]
 		var parts []string
 		if style.Fill != "" {
 			parts = append(parts, fmt.Sprintf("fill:%s", style.Fill))

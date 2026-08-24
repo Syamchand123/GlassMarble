@@ -28,18 +28,23 @@ import (
 // (C6-2).
 var isTUI bool
 
+// tuiOut is the writer for non-TUI human output. runAnalysis sets it to
+// the per-invocation outWriter (cmd.OutOrStdout() or opts.out) so
+// tuiPrintf routes through the same writer as gatedPrintf (C6-2 — Batch E).
+var tuiOut io.Writer = os.Stdout
+
 func tuiPrintf(format string, a ...any) {
 	if isTUI {
 		return
 	}
-	fmt.Printf(format, a...)
+	fmt.Fprintf(tuiOut, format, a...)
 }
 
 func tuiPrintln(a ...any) {
 	if isTUI {
 		return
 	}
-	fmt.Println(a...)
+	fmt.Fprintln(tuiOut, a...)
 }
 
 var analyzeCmd = &cobra.Command{
@@ -163,7 +168,11 @@ type analysisJSON struct {
 // `gmb analyze` and `gmb watch` so both commands drive the same engine.
 func runAnalysis(cmd *cobra.Command, opts runAnalysisOptions) error {
 	isTUI = opts.progress != nil
-	defer func() { isTUI = false }()
+	prevOut := tuiOut
+	defer func() {
+		isTUI = false
+		tuiOut = prevOut
+	}()
 	start := time.Now()
 	targetDir := opts.targetDir
 	commitHash := opts.commitHash
@@ -194,6 +203,7 @@ func runAnalysis(cmd *cobra.Command, opts runAnalysisOptions) error {
 			outWriter = os.Stdout
 		}
 	}
+	tuiOut = outWriter
 	gatedPrintf := func(format string, a ...any) {
 		if opts.progress != nil {
 			return

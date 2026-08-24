@@ -3,6 +3,7 @@ package aggregate
 import (
 	"net/url"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/normalize"
@@ -49,8 +50,16 @@ func moduleNameOf(imp, modulePrefix string) string {
 // bloats the graph (AUDIT Issue 1.4).
 func IndexExternalDependencies(output *AggregateOutput) {
 	// Rebuild from scratch to purge orphans from deleted files (C2-10).
+	// Sorted relPaths for deterministic alias selection when the same import
+	// appears with different aliases in multiple files.
 	newDeps := make(map[string]*normalize.GASTNode)
-	for relPath, symTable := range output.LocalTables {
+	relPaths := make([]string, 0, len(output.LocalTables))
+	for k := range output.LocalTables {
+		relPaths = append(relPaths, k)
+	}
+	sort.Strings(relPaths)
+	for _, relPath := range relPaths {
+		symTable := output.LocalTables[relPath]
 		if symTable == nil || len(symTable.Imports) == 0 {
 			continue
 		}

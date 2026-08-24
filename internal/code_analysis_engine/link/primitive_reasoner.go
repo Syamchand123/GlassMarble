@@ -24,6 +24,15 @@ func ReasonWholeProgramPrimitives(cpg *LinkOutput) {
 		sort.Strings(keys)
 		for _, sourceID := range keys {
 			edges := cpg.OutboundEdges[sourceID]
+			// Deterministic edge order: sort by TargetID (and Type as tie-break)
+			if len(edges) > 1 {
+				sort.Slice(edges, func(i, j int) bool {
+					if edges[i].TargetID == edges[j].TargetID {
+						return edges[i].Type < edges[j].Type
+					}
+					return edges[i].TargetID < edges[j].TargetID
+				})
+			}
 			sourceNode, ok := cpg.GetNode(sourceID)
 			if !ok || sourceNode == nil {
 				continue
@@ -59,7 +68,14 @@ func ReasonWholeProgramPrimitives(cpg *LinkOutput) {
 							// Decay factor (e.g. 20% loss per jump)
 							decayFactor := 0.80
 
-							for prim, targetScore := range targetNode.PrimitiveScores {
+							// Sorted primitive keys for deterministic 0.8^k propagation
+							sortedPrims := make([]string, 0, len(targetNode.PrimitiveScores))
+							for p := range targetNode.PrimitiveScores {
+								sortedPrims = append(sortedPrims, p)
+							}
+							sort.Strings(sortedPrims)
+							for _, prim := range sortedPrims {
+								targetScore := targetNode.PrimitiveScores[prim]
 								attenuatedScore := targetScore * decayFactor
 								if attenuatedScore > 0.1 { // Cutoff threshold to prevent infinite spread
 									currentScore := sourceNode.PrimitiveScores[prim]

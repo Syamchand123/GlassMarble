@@ -1136,9 +1136,11 @@ func getNodeTags(node *types.LayoutNode) string {
 }
 
 func renderEdgesWithStyles(tree *types.LayoutTree, sb *strings.Builder) {
+	reg := newAliasRegistry()
+	registerTreeAliases(tree, reg)
 	for _, edge := range tree.Edges {
-		src := sanitizeName(edge.SourceID)
-		tgt := sanitizeName(edge.TargetID)
+		src := reg.alias(edge.SourceID)
+		tgt := reg.alias(edge.TargetID)
 		renderEdgeStyles(edge, src, tgt, sb)
 	}
 }

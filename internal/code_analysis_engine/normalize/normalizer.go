@@ -16,6 +16,9 @@ var (
 	evalRegex = regexp.MustCompile(`\beval\s*\(`)
 	execRegex = regexp.MustCompile(`\bexec\s*\(`)
 	spawnWordRegex = regexp.MustCompile(`\bspawn\b`)
+	threadRegex    = regexp.MustCompile(`\bthread\s*\(`)
+	asyncRegex     = regexp.MustCompile(`\basync\b`)
+	startRegex     = regexp.MustCompile(`\.start\s*\(`)
 )
 
 func Normalize(ingestOut *ingest.IngestOutput, commitHash string) (*NormalizeOutput, error) {
@@ -732,15 +735,15 @@ func isConcurrencySpawn(content string) bool {
 		return true
 	case spawnWordRegex.MatchString(lower):
 		return true
-	case strings.Contains(lower, "thread("):
+	case threadRegex.MatchString(lower):
 		return true
 	case strings.Contains(lower, "tokio::spawn"):
 		return true
 	case strings.Contains(lower, "rayon::spawn"):
 		return true
-	case strings.Contains(lower, "async "):
+	case asyncRegex.MatchString(lower):
 		return true
-	case strings.Contains(lower, ".start("):
+	case startRegex.MatchString(lower):
 		return true
 	default:
 		return false

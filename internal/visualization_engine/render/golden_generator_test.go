@@ -105,3 +105,56 @@ func collectGoldenNodeCount(t *types.LayoutTree) int {
 	}
 	return n
 }
+
+// TestGoldenParity verifies that the checked-in golden fixtures in
+// testdata/golden are byte-identical to a fresh generation from
+// full_graph.ttl. TestGenerateGoldenFixtures is generate-only by design;
+// this test is the compare step that catches regressions in extraction,
+// layout or render (C8-1). Goldens are expected to be committed; to
+// intentionally re-baseline, run `go test -run TestGenerateGoldenFixtures`
+// then commit the updated 93 files together with the code change.
+func TestGoldenParity(t *testing.T) {
+	goldenDir := filepath.Join("..", "testdata", "golden")
+	allTypes := []types.DiagramType{
+		types.UMLClass, types.UMLObject, types.UMLComponent, types.UMLDeployment,
+		types.UMLPackage, types.UMLComposite, types.UMLProfile, types.UMLUsecase,
+		types.UMLActivity, types.UMLState, types.UMLSequence, types.UMLCommunication,
+		types.UMLInteractionOverview, types.UMLTiming,
+		types.C4Context, types.C4Container, types.C4Component, types.C4Code,
+		types.C4Landscape, types.C4Dynamic, types.C4Deployment,
+		types.ERDiagram, types.DataFlow, types.Mindmap, types.Flowchart,
+		types.DependencyGraph, types.HotspotComplexity, types.CallGraph,
+		types.LayeredArchitecture, types.ChangeImpact, types.Infrastructure,
+	}
+	formats := []struct {
+		name string
+		ext  string
+	}{
+		{"mermaid", ".mmd"},
+		{"plantuml", ".puml"},
+		{"dot", ".dot"},
+	}
+
+	for _, dt := range allTypes {
+		opts := types.QueryOptions{}
+		tree := buildTreeFromTTLFixture(t, filepath.Join("..", "testdata", "full_graph.ttl"), dt, opts)
+		for _, f := range formats {
+			markup := RenderDiagramFormat(tree, dt, f.name)
+			require.NotEmpty(t, markup, "generated markup for %s (%s) must not be empty", dt, f.name)
+			filename := strings.ToLower(string(dt)) + f.ext
+			path := filepath.Join(goldenDir, filename)
+			golden, err := os.ReadFile(path)
+			if err != nil {
+				if os.IsNotExist(err) {
+					t.Skipf("golden file %s missing — run TestGenerateGoldenFixtures to create it; goldens are generate-only under .gitignore:testdata/ (C8-1 documented)", path)
+				}
+				require.NoError(t, err, "reading golden %s", path)
+			}
+			// Normalize CRLF to LF so the test passes regardless of
+			// core.autocrlf checkout on Windows (C3-12 audit note).
+			normGolden := strings.ReplaceAll(string(golden), "\r\n", "\n")
+			normMarkup := strings.ReplaceAll(markup, "\r\n", "\n")
+			require.Equal(t, normGolden, normMarkup, "golden parity mismatch for %s (%s): regenerate with TestGenerateGoldenFixtures and commit if intentional", dt, f.name)
+		}
+	}
+}

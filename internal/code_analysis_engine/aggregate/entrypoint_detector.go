@@ -2,6 +2,7 @@ package aggregate
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/normalize"
@@ -37,7 +38,15 @@ func FindEntryPoints(output *AggregateOutput) []EntryPoint {
 	}
 
 	seen := make(map[string]bool)
-	for fqn, nodes := range output.GlobalDefinitionIndex {
+	// Sorted FQN keys for determinism (C2-10/C2-18): same GASTNode indexed under
+	// ~4 keys must yield the lexicographically smallest FQN deterministically.
+	fqnKeys := make([]string, 0, len(output.GlobalDefinitionIndex))
+	for k := range output.GlobalDefinitionIndex {
+		fqnKeys = append(fqnKeys, k)
+	}
+	sort.Strings(fqnKeys)
+	for _, fqn := range fqnKeys {
+		nodes := output.GlobalDefinitionIndex[fqn]
 		for _, node := range nodes {
 			if node == nil {
 				continue
