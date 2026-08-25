@@ -31,13 +31,13 @@ jobs:
             bin: gmb
             alias: glassmarble
             archive_format: tar.gz
-          - runner: macos-13
+          - runner: macos-latest
             os: darwin
             arch: amd64
             bin: gmb
             alias: glassmarble
             archive_format: tar.gz
-          - runner: macos-14
+          - runner: macos-latest
             os: darwin
             arch: arm64
             bin: gmb
@@ -88,8 +88,16 @@ jobs:
         shell: bash
         env:
           CGO_ENABLED: 1
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
         run: |
           LDFLAGS="-s -w -X github.com/Syamchand123/GlassMarble/internal/product.Version=${{ steps.meta.outputs.tag }} -X github.com/Syamchand123/GlassMarble/internal/product.Commit=${{ steps.meta.outputs.commit }} -X github.com/Syamchand123/GlassMarble/internal/product.Date=${{ steps.meta.outputs.date }} -X github.com/Syamchand123/GlassMarble/internal/product.BuiltBy=github-actions"
+          
+          if [ "${{ matrix.os }}" = "darwin" ] && [ "${{ matrix.arch }}" = "amd64" ]; then
+            export CGO_CFLAGS="-target x86_64-apple-darwin"
+            export CGO_LDFLAGS="-target x86_64-apple-darwin"
+          fi
+
           go build -trimpath -ldflags "$LDFLAGS" -o "${{ matrix.bin }}" .
           go build -trimpath -ldflags "$LDFLAGS" -o "${{ matrix.alias }}" .
 
