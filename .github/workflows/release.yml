@@ -17,8 +17,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: Build (${{ matrix.os }} / ${{ matrix.goarch }})
+  matrix-build:
+    name: Build (${{ matrix.os }} / ${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -27,16 +27,29 @@ jobs:
         include:
           - runner: ubuntu-latest
             os: linux
-            goarch: amd64
+            arch: amd64
+            bin: gmb
+            alias: glassmarble
+            archive_format: tar.gz
           - runner: macos-13
             os: darwin
-            goarch: amd64
+            arch: amd64
+            bin: gmb
+            alias: glassmarble
+            archive_format: tar.gz
           - runner: macos-14
             os: darwin
-            goarch: arm64
+            arch: arm64
+            bin: gmb
+            alias: glassmarble
+            archive_format: tar.gz
           - runner: windows-latest
             os: windows
-            goarch: amd64
+            arch: amd64
+            bin: gmb.exe
+            alias: glassmarble.exe
+            archive_format: zip
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -49,26 +62,66 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Run GoReleaser (Build & Split)
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: build --clean --split
-        env:
-          GOOS: ${{ matrix.os }}
-          GOARCH: ${{ matrix.goarch }}
+      - name: Extract Release Tag & Metadata
+        id: meta
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [ -z "$TAG" ] || [ "$TAG" = "$GITHUB_REF" ]; then
+            TAG="v1.0.0"
+          fi
+          CLEAN_VER="${TAG#v}"
+          COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo 'dev')"
+          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "clean_ver=${CLEAN_VER}" >> $GITHUB_OUTPUT
+          echo "commit=${COMMIT}" >> $GITHUB_OUTPUT
+          echo "date=${DATE}" >> $GITHUB_OUTPUT
 
-      - name: Upload Build Artifacts
+      - name: Generate Man Pages & Shell Completions
+        shell: bash
+        run: |
+          go run ./cmd/man -o man/man1
+          go run ./cmd/completions -o completions
+
+      - name: Compile Native Binary (${{ matrix.os }}/${{ matrix.arch }})
+        shell: bash
+        env:
+          CGO_ENABLED: 1
+        run: |
+          LDFLAGS="-s -w -X github.com/Syamchand123/GlassMarble/internal/product.Version=${{ steps.meta.outputs.tag }} -X github.com/Syamchand123/GlassMarble/internal/product.Commit=${{ steps.meta.outputs.commit }} -X github.com/Syamchand123/GlassMarble/internal/product.Date=${{ steps.meta.outputs.date }} -X github.com/Syamchand123/GlassMarble/internal/product.BuiltBy=github-actions"
+          go build -trimpath -ldflags "$LDFLAGS" -o "${{ matrix.bin }}" .
+          go build -trimpath -ldflags "$LDFLAGS" -o "${{ matrix.alias }}" .
+
+      - name: Package Archive (${{ matrix.archive_format }})
+        shell: bash
+        run: |
+          ARCHIVE_DIR="gmb_${{ steps.meta.outputs.clean_ver }}_${{ matrix.os }}_${{ matrix.arch }}"
+          mkdir -p "$ARCHIVE_DIR"
+          cp "${{ matrix.bin }}" "$ARCHIVE_DIR/"
+          cp "${{ matrix.alias }}" "$ARCHIVE_DIR/"
+          cp LICENSE README.md CHANGELOG.md "$ARCHIVE_DIR/"
+          cp -r man "$ARCHIVE_DIR/"
+          cp -r completions "$ARCHIVE_DIR/"
+          mkdir -p dist
+          if [ "${{ matrix.archive_format }}" = "zip" ]; then
+            cd "$ARCHIVE_DIR"
+            7z a "../dist/${ARCHIVE_DIR}.zip" *
+            cd ..
+          else
+            tar -czf "dist/${ARCHIVE_DIR}.tar.gz" -C "$ARCHIVE_DIR" .
+          fi
+
+      - name: Upload Packaged Archive
         uses: actions/upload-artifact@v4
         with:
-          name: dist_${{ matrix.os }}_${{ matrix.goarch }}
+          name: archive_${{ matrix.os }}_${{ matrix.arch }}
           path: dist/*
           if-no-files-found: error
 
-  release:
-    name: Release Binaries & Packages
-    needs: build
+  publish:
+    name: Publish GitHub Release & Signatures
+    needs: matrix-build
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -77,36 +130,56 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Download all build artifacts
+      - name: Download all packaged archives
         uses: actions/download-artifact@v4
         with:
           path: dist
-          pattern: dist_*
+          pattern: archive_*
           merge-multiple: true
+
+      - name: Generate SHA256 Checksums
+        shell: bash
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+          cat checksums.txt
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3.8.1
 
+      - name: Sign Checksums with Cosign
+        shell: bash
+        run: |
+          cosign sign-blob --yes --output-signature dist/checksums.txt.sig dist/checksums.txt
+
       - name: Install Syft
         uses: anchore/sbom-action/download-syft@v0.18.0
 
-      - name: Run GoReleaser (Merge & Release)
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: release --clean --merge
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate Syft SBOMs
+        shell: bash
+        run: |
+          for f in dist/*.tar.gz dist/*.zip; do
+            if [ -f "$f" ]; then
+              syft "$f" -o spdx-json="dist/$(basename "$f").sbom.spdx.json"
+            fi
+          done
 
       - name: Attest Build Provenance
         uses: actions/attest-build-provenance@v2
         if: success()
         with:
           subject-path: "dist/*"
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [ -z "$TAG" ] || [ "$TAG" = "$GITHUB_REF" ]; then
+            TAG="v1.0.0"
+          fi
+          gh release create "$TAG" dist/* \
+            --title "GlassMarble $TAG" \
+            --notes-file CHANGELOG.md \
+            --verify-tag
