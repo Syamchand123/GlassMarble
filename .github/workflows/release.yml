@@ -106,7 +106,7 @@ jobs:
           mkdir -p dist
           if [ "${{ matrix.archive_format }}" = "zip" ]; then
             cd "$ARCHIVE_DIR"
-            7z a "../dist/${ARCHIVE_DIR}.zip" *
+            7z a -r "../dist/${ARCHIVE_DIR}.zip" .
             cd ..
           else
             tar -czf "dist/${ARCHIVE_DIR}.tar.gz" -C "$ARCHIVE_DIR" .
@@ -141,7 +141,7 @@ jobs:
         shell: bash
         run: |
           cd dist
-          sha256sum * > checksums.txt
+          sha256sum *.tar.gz *.zip > checksums.txt
           cat checksums.txt
 
       - name: Install Cosign
