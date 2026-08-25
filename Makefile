@@ -22,13 +22,13 @@ GO ?= go
 
 all: build
 
-## build: Build the gmb binary with stamped ldflags
+## build: Build the gmb binary with stamped ldflags (CGO required for tree-sitter)
 build:
-	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) .
+	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) .
 
-## install: Install gmb to $$GOPATH/bin
+## install: Install gmb to $$GOPATH/bin (CGO required for tree-sitter)
 install:
-	CGO_ENABLED=0 $(GO) install -trimpath -ldflags "$(LDFLAGS)" .
+	$(GO) install -trimpath -ldflags "$(LDFLAGS)" .
 
 ## cross: Build snapshot binaries across all platforms via GoReleaser
 cross:

@@ -1,11 +1,12 @@
 # Build stage — pinned to go.mod toolchain (1.25.x)
-# --platform=$BUILDPLATFORM keeps the COMPILER on the runner's native arch;
-# cross-compile to TARGETARCH via plain env vars (CGO_ENABLED=0 = pure static).
-# This avoids QEMU-emulated arm64 builds, which die with bare "exit code: 1"
-# on large packages (tree-sitter grammar tables).
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
+# Each platform builds natively (amd64 native, arm64 via QEMU).
+# CGO is required (tree-sitter grammars use cgo bindings).
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /build
+
+# Install CGO toolchain for musl static linking
+RUN apk add --no-cache gcc musl-dev
 
 # Copy module files first for layer caching
 COPY go.mod go.sum ./
@@ -22,15 +23,17 @@ ARG DATE=unknown
 ARG TARGETOS
 ARG TARGETARCH
 
-# -buildvcs=false : .dockerignore excludes .git, and Go >=1.18 can fail with
+# -buildvcs=false: .dockerignore excludes .git, and Go >=1.18 can fail with
 #   "error obtaining VCS status" when a repo is partially visible.
-# GOTOOLCHAIN=local : fail fast with a clear message instead of silently
+# GOTOOLCHAIN=local: fail fast with a clear message instead of silently
 #   downloading a different toolchain mid-build.
-# set -eux : surface the real compiler error instead of a bare exit-code-1.
+# -extldflags "-static": fully static musl binary for distroless/static runtime.
+# set -eux: surface the real compiler error instead of a bare exit-code-1.
 RUN set -eux; \
-    export CGO_ENABLED=0 GOOS="${TARGETOS:-linux}" GOARCH="${TARGETARCH:-amd64}"; \
+    export CGO_ENABLED=1 GOOS="${TARGETOS:-linux}" GOARCH="${TARGETARCH:-amd64}"; \
     export GOTOOLCHAIN=local GOFLAGS=-buildvcs=false; \
     LDFLAGS="-s -w \
+      -extldflags \"-static\" \
       -X github.com/Syamchand123/GlassMarble/internal/product.Version=${VERSION} \
       -X github.com/Syamchand123/GlassMarble/internal/product.Commit=${COMMIT} \
       -X github.com/Syamchand123/GlassMarble/internal/product.Date=${DATE} \
@@ -38,7 +41,7 @@ RUN set -eux; \
     go build -trimpath -ldflags "${LDFLAGS}" -o /build/gmb . ; \
     cp /build/gmb /build/glassmarble
 
-# Runtime stage: minimal non-root distroless
+# Runtime stage: minimal non-root distroless (static works with musl static binary)
 FROM gcr.io/distroless/static-debian12:nonroot
 
 LABEL org.opencontainers.image.title="GlassMarble"

@@ -186,7 +186,7 @@ flowchart TD
 | **Diagrams** | UML 2.5 + C4 (Context/Container/Component/Code/Landscape/Dynamic/Deployment) + ER/dataflow/mindmap/flowchart + analysis — outputs are **Mermaid**, **PlantUML**, **DOT** for GitHub/VS Code/JetBrains |
 | **Graph** | Nodes/edges carry `id`, `kind`, `file_spec`, `line_number`, `confidence`, `is_cycle`, `properties` — lossless. `gmb export --format neo4j` → `GMNode:<Kind>` Cypher → [Neo4j](docs/neo4j.md) · [Relationship Types](docs/relationship_types.md) |
 | **Provenance** | Every claim is `FACT` / `EXPLICIT_REASON` / `INFERENCE` / `SPECULATION` — no reasons invented |
-| **Supply chain** | `CGO_ENABLED=0` static, **Sigstore Cosign** + **SBOM (Syft/SPDX)** + **SLSA** — see [Verifying Releases](docs/getting-started.md#3-verify-a-release-optional-sigstore) |
+| **Supply chain** | CGO static (musl), **Sigstore Cosign** + **SBOM (Syft/SPDX)** + **SLSA** — see [Verifying Releases](docs/getting-started.md#3-verify-a-release-optional-sigstore) |
 | **Languages** | 14 full tree-sitter + 3 decl-only (Kotlin/Swift/Scala) — see [Supported Languages](docs/supported_languages.txt) |
 
 ---

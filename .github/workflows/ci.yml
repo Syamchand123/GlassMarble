@@ -26,9 +26,6 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  CGO_ENABLED: 0
-
 jobs:
   matrix-build:
     name: Build & Test (${{ matrix.os }})

@@ -50,7 +50,7 @@ go install github.com/Syamchand123/GlassMarble@latest
 ```bash
 git clone https://github.com/Syamchand123/GlassMarble.git
 cd GlassMarble
-make build   # → ./gmb  (CGO_ENABLED=0, static)
+make build   # → ./gmb  (CGO static)
 ./gmb version
 ```
 
