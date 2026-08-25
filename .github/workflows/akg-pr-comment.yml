@@ -37,6 +37,11 @@ permissions:
 jobs:
 
   akg-diff:
+    name: "Architecture Knowledge Graph Diff"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
       # ── Checkout ────────────────────────────────────────────────────────────
       # fetch-depth: 0 is required so git worktree can check out the merge-base.
       - name: Checkout PR head
