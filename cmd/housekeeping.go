@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Syamchand123/GlassMarble/internal/arch_timeline"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/programs/housekeeping"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
@@ -25,35 +26,49 @@ type housekeepingJSON struct {
 	TotalFiles  int                    `json:"total_files"`
 	PrunedBytes int64                  `json:"pruned_bytes,omitempty"`
 	PrunedFiles int                    `json:"pruned_files,omitempty"`
+	Warning     string                 `json:"warning,omitempty"`
 }
 
 var housekeepingCmd = &cobra.Command{
 	Use:     "housekeeping",
 	GroupID: GroupUtility.ID,
-	Short:   "Report and prune .glassmarble working-set storage (marbles, sessions)",
+	Short:   "Report and prune .glassmarble working-set storage (marbles, sessions, snapshots, memory)",
 	Long: `Scans .glassmarble/ and reports the bytes held by each working-set area
-(marbles/, ai/), then optionally prunes saved diagrams and chat
-sessions older than --older-than days. The AKG state file (akg.json)
-is never pruned by this command.`,
+(marbles/, ai/, snapshots/, memory/, intelligence/), then optionally prunes saved diagrams,
+chat sessions, and old snapshots.
+
+The AKG state file (akg.json) is never pruned by this command.
+
+Snapshots: use --prune-snapshots --keep N to retain only the N most recent snapshots
+(default N=30, matching intelligence.snapshot_max_count). This reclaims the
+bulk of snapshot storage (previously 1 GB+ for 29 full-graph snapshots).`,
 	Example: `  # Report storage sizes of .glassmarble directory
   gmb housekeeping
 
   # Prune marbles and AI sessions older than 30 days
   gmb housekeeping --prune
 
-  # Prune with custom retention threshold
-  gmb housekeeping --prune --older-than 7
+  # Prune snapshots to keep last 10 only
+  gmb housekeeping --prune-snapshots --keep 10
+
+  # Prune both marbles/sessions and snapshots
+  gmb housekeeping --prune --prune-snapshots --keep 10
 
   # Output storage usage as JSON
   gmb housekeeping --json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir := resolveDir(cmd)
 		prune, _ := cmd.Flags().GetBool("prune")
+		pruneSnapshots, _ := cmd.Flags().GetBool("prune-snapshots")
+		keep, _ := cmd.Flags().GetInt("keep")
 		olderThan, _ := cmd.Flags().GetInt("older-than")
 		asJSON, _ := cmd.Flags().GetBool("json")
 
 		if olderThan <= 0 {
 			olderThan = 30
+		}
+		if keep <= 0 {
+			keep = 30
 		}
 
 		storageDir := filepath.Join(dir, ".glassmarble")
@@ -69,6 +84,9 @@ is never pruned by this command.`,
 			{name: "state (akg.json)", path: filepath.Join(storageDir, "akg.json")},
 			{name: "marbles/", path: filepath.Join(storageDir, "marbles")},
 			{name: "ai/", path: filepath.Join(storageDir, "ai")},
+			{name: "snapshots/", path: filepath.Join(storageDir, "snapshots")},
+			{name: "memory/", path: filepath.Join(storageDir, "memory")},
+			{name: "intelligence/", path: filepath.Join(storageDir, "intelligence")},
 		}
 
 		var totalBytes int64
@@ -102,33 +120,72 @@ is never pruned by this command.`,
 			areaJSONRows = append(areaJSONRows, housekeepingAreaJSON{Name: a.name, Bytes: size, Files: count})
 		}
 
-		if !prune {
+		warning := ""
+		if totalBytes > 500<<20 {
+			warning = fmt.Sprintf("Total .glassmarble is %s (>500MB). Run `gmb housekeeping --prune-snapshots --keep 10` to reclaim snapshot storage.", humanBytes(totalBytes))
+		}
+
+		// Report only
+		if !prune && !pruneSnapshots {
 			if asJSON {
 				out, _ := json.MarshalIndent(housekeepingJSON{
 					Areas:      areaJSONRows,
 					TotalBytes: totalBytes,
 					TotalFiles: totalFiles,
+					Warning:    warning,
 				}, "", "  ")
 				fmt.Println(string(out))
+				if warning != "" {
+					fmt.Fprintln(os.Stderr, "WARNING: "+warning)
+				}
 				return nil
 			}
 			fmt.Println(views.RenderHousekeepingReport(areaRows, totalBytes, totalFiles))
+			if warning != "" {
+				fmt.Printf("\nWARNING: %s\n", warning)
+			}
 			fmt.Println("\nRun `gmb housekeeping --prune` to delete marbles/sessions older than the retention window.")
+			fmt.Println("Run `gmb housekeeping --prune-snapshots --keep 10` to prune old snapshots.")
 			return nil
 		}
 
+		// Interactive confirmation
 		if !asJSON && tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout()) {
 			var toPruneBytes int64
 			var toPruneFiles int
-			for _, a := range areas {
-				if a.name != "marbles/" && a.name != "ai/" {
-					continue
+			if prune {
+				for _, a := range areas {
+					if a.name != "marbles/" && a.name != "ai/" {
+						continue
+					}
+					toPruneBytes += prunePreview(a.path, cutoff, &toPruneFiles)
 				}
-				toPruneBytes += prunePreview(a.path, cutoff, &toPruneFiles)
+			}
+			if pruneSnapshots {
+				store, err := arch_timeline.NewSnapshotStore(filepath.Join(storageDir, "snapshots"))
+				if err == nil {
+					list := store.List()
+					if len(list) > keep {
+						toPruneFiles += len(list) - keep
+						// estimate bytes: sum of oldest files
+						for i := 0; i < len(list)-keep; i++ {
+							if st, err := os.Stat(filepath.Join(storageDir, "snapshots", list[i].SnapshotFile)); err == nil {
+								toPruneBytes += st.Size()
+							}
+							sidecar := filepath.Join(storageDir, "snapshots", list[i].SnapshotFile+".graph.json.gz")
+							if st, err := os.Stat(sidecar); err == nil {
+								toPruneBytes += st.Size()
+							}
+						}
+					}
+				}
 			}
 			if toPruneFiles > 0 {
-				ok, err := housekeeping.ConfirmPrune(cmd.InOrStdin(), cmd.OutOrStdout(),
-					fmt.Sprintf("Delete marbles/sessions older than %d days? This removes %d file(s) and reclaims %s.", olderThan, toPruneFiles, humanBytes(toPruneBytes)))
+				msg := fmt.Sprintf("Delete %d file(s) and reclaim %s?", toPruneFiles, humanBytes(toPruneBytes))
+				if pruneSnapshots {
+					msg = fmt.Sprintf("Prune snapshots to keep last %d? This removes %d file(s) and reclaims %s.", keep, toPruneFiles, humanBytes(toPruneBytes))
+				}
+				ok, err := housekeeping.ConfirmPrune(cmd.InOrStdin(), cmd.OutOrStdout(), msg)
 				if err != nil {
 					return err
 				}
@@ -141,11 +198,21 @@ is never pruned by this command.`,
 
 		prunedBytes := int64(0)
 		prunedFiles := 0
-		for _, a := range areas {
-			if a.name != "marbles/" && a.name != "ai/" {
-				continue
+		if prune {
+			for _, a := range areas {
+				if a.name != "marbles/" && a.name != "ai/" {
+					continue
+				}
+				prunedBytes += pruneArea(a.path, cutoff, &prunedFiles)
 			}
-			prunedBytes += pruneArea(a.path, cutoff, &prunedFiles)
+		}
+		if pruneSnapshots {
+			store, err := arch_timeline.NewSnapshotStore(filepath.Join(storageDir, "snapshots"))
+			if err == nil {
+				pf, pb := store.PruneKeepLast(keep)
+				prunedFiles += pf
+				prunedBytes += pb
+			}
 		}
 
 		if asJSON {
@@ -155,13 +222,21 @@ is never pruned by this command.`,
 				TotalFiles:  totalFiles,
 				PrunedBytes: prunedBytes,
 				PrunedFiles: prunedFiles,
+				Warning:     warning,
 			}, "", "  ")
 			fmt.Println(string(out))
 			return nil
 		}
 
 		fmt.Println(views.RenderHousekeepingReport(areaRows, totalBytes, totalFiles))
-		fmt.Printf("\nPruned %d file(s), %s reclaimed (retention: %d days).\n", prunedFiles, humanBytes(prunedBytes), olderThan)
+		if pruneSnapshots {
+			fmt.Printf("\nPruned %d snapshot file(s), %s reclaimed (keep: %d).\n", prunedFiles, humanBytes(prunedBytes), keep)
+		} else {
+			fmt.Printf("\nPruned %d file(s), %s reclaimed (retention: %d days).\n", prunedFiles, humanBytes(prunedBytes), olderThan)
+		}
+		if warning != "" {
+			fmt.Printf("Remaining total: %s (post-prune estimate)\n", humanBytes(totalBytes-prunedBytes))
+		}
 		return nil
 	},
 }
@@ -201,6 +276,8 @@ func prunePreview(dir string, cutoff time.Time, staleFiles *int) int64 {
 func init() {
 	housekeepingCmd.Flags().Bool("prune", false, "Delete marbles/sessions older than the retention window")
 	housekeepingCmd.Flags().Int("older-than", 30, "Retention window in days for pruned working-set files")
+	housekeepingCmd.Flags().Bool("prune-snapshots", false, "Prune snapshots to keep only last N (see --keep)")
+	housekeepingCmd.Flags().Int("keep", 30, "Number of most recent snapshots to keep when pruning (default 30)")
 	housekeepingCmd.Flags().Bool("json", false, "Emit machine-readable JSON storage report")
 	rootCmd.AddCommand(housekeepingCmd)
 }

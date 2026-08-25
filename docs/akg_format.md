@@ -105,9 +105,46 @@ Schema v3 migration consolidates legacy kinds (`TYPE_DECL` → `STRUCT`, `EXECUT
 
 The full `RelationshipType` taxonomy (STRUCTURAL / BEHAVIORAL / DYNAMIC / SECURITY groups) is documented in `docs/relationship_types.md`. Predicate names are stable: the `EventKind` and node-kind string values must never be renamed after first release.
 
-## 5. Size Guard
+## 5. Size Guard & Storage Contract
 
 `--max-json-mb <n>` (global flag, 0 = unlimited) refuses to load or commit a state file larger than N MiB. `gmb status` reports the current file size; `gmb stats --bench` verifies the budget gates (state ≤ 12 MB, json state ≤ 8 MB).
+
+### 5.1 Workspace Storage Layout (post-v1.0.1)
+
+```
+.glassmarble/
+├── akg.json                 # canonical graph — pretty-printed, diff-friendly, atomic commit (NEVER pruned)
+├── snapshots/
+│   ├── snap_<id>.json       # metadata only (~KB, compact JSON) when large-repo threshold hit
+│   ├── snap_<id>.graph.json.gz  # gzipped compact GraphJSON sidecar (only when graph embedded)
+│   └── index.json
+├── memory/
+│   ├── events.jsonl         # WAL source of truth (fsynced per line)
+│   ├── memory.json          # derived aggregate, compact JSON (rebuildable from WAL)
+│   └── timeline.json        # derived timeline, compact JSON
+├── intelligence/latest.json # compact JSON
+├── marbles/                 # diagrams
+└── ai/sessions/             # chat sessions
+```
+
+* `akg.json` is the only non-optional artifact (≈1.2 KB/node pretty, ≈0.9 KB/node compact). No compromise on fidelity.
+* Snapshots no longer duplicate the graph as an escaped JSON string. When `intelligence.snapshot_no_graph=false` and the graph is embedded, it is stored as a gzipped sidecar (`~5×` smaller) and omitted from `snap_<id>.json`. When the repo exceeds `snapshot_auto_threshold_nodes` (15k) or `snapshot_auto_threshold_mb` (8 MB), snapshots automatically switch to `no-graph` (≈KB) and `gmb snapshot --replay` / structural diffs are disabled for those snapshots (use `git` history via `akg.json` instead).
+* `gmb housekeeping` now reports `snapshots/` + `memory/` + `intelligence/` and enforces `snapshot_max_count` (default 30) on every `gmb analyze` / `gmb snapshot --create`.
+* Use `gmb analyze --snapshot-no-graph` to force metadata-only snapshots, or `gmb housekeeping --prune-snapshots --keep 10` to reclaim disk immediately.
+
+### 5.2 Scaling to 500k LOC (>60k nodes)
+
+| Nodes | akg.json (pretty) | akg.json (compact) | 30 snapshots (no-graph) | memory.json (compact) | Total est. |
+|---|---|---|---|---|---|
+| 13k (this repo) | 17 MB | ~12 MB | ~0.3 MB | ~13 MB (was 19) | ~30 MB |
+| 40k | ~52 MB | ~36 MB | ~0.9 MB | ~35 MB | ~75 MB |
+| 67k (500k LOC) | ~88 MB | ~60 MB | ~1.5 MB | ~55 MB | ~120 MB → set `snapshot_no_graph=true` already, prune memory via `gmb memory` GC keeps under 100 MB for the other artifacts; `akg.json` gzipped backup ~15 MB if needed |
+
+> Keep `.glassmarble` under 100 MB for large repos: `akg.json` compact (~60 MB) dominates; the remaining budget is achieved by `snapshot_no_graph` (auto) + `snapshot_max_count=30` + compact `memory.json`/`intelligence.json`. Use `--max-json-mb 100` to gate CI.
+
+### 5.3 Old Snapshot Migration
+
+Pre-v1.0.1 `snap_<id>.json` files with inline `akg_json` (escaped string, 50 MB) are still readable by `Replay` and `store.loadSnapshotLocked`. New snapshots use the sidecar; run `gmb housekeeping --prune-snapshots --keep 30` to drop legacy weight.
 
 ## 6. Migration & Self-Healing
 

@@ -87,22 +87,26 @@ See also: 'gmb status', 'gmb watch', 'gmb doctor'`,
 			intelligence = false
 		}
 		includeDocs, _ := cmd.Flags().GetBool("include-docs")
+		snapNoGraph, _ := cmd.Flags().GetBool("snapshot-no-graph")
+		snapKeep, _ := cmd.Flags().GetInt("snapshot-keep")
 		opts := runAnalysisOptions{
-			targetDir:      targetDir,
-			commitHash:     commitHash,
-			full:           full,
-			storeCode:      storeCode,
-			workers:        workers,
-			verbose:        verbose,
-			linkLevel:      linkLevel,
-			macroInference: macroInference,
-			maxNodes:       maxNodes,
-			abortOnLimit:   abortOnLimit,
-			json:           asJSON,
-			bench:          isBench,
-			intelligence:   intelligence,
-			includeDocs:    includeDocs,
-			out:            cmd.OutOrStdout(),
+			targetDir:       targetDir,
+			commitHash:      commitHash,
+			full:            full,
+			storeCode:       storeCode,
+			workers:         workers,
+			verbose:         verbose,
+			linkLevel:       linkLevel,
+			macroInference:  macroInference,
+			maxNodes:        maxNodes,
+			abortOnLimit:    abortOnLimit,
+			json:            asJSON,
+			bench:           isBench,
+			intelligence:    intelligence,
+			includeDocs:     includeDocs,
+			snapshotNoGraph: snapNoGraph,
+			snapshotKeep:    snapKeep,
+			out:             cmd.OutOrStdout(),
 		}
 		if isBench {
 			return runAnalysisBenchmark(cmd, opts)
@@ -146,6 +150,8 @@ type runAnalysisOptions struct {
 	// claims) runs after the graph is committed. Opt-in by design — doc
 	// scanning and git-history walks are not free on large repositories.
 	includeDocs bool
+	snapshotNoGraph bool
+	snapshotKeep    int
 	// out is the writer for human-readable output. When nil, os.Stdout or
 	// cmd.OutOrStdout() is used. TUI mode sets progress != nil and suppresses
 	// direct writes (C6-2).
@@ -496,7 +502,7 @@ func runAnalysis(cmd *cobra.Command, opts runAnalysisOptions) error {
 	// (human mode only; the JSON contract above must stay stable for
 	// machine consumers). Both phases are non-fatal by design.
 	if opts.intelligence {
-		runMemoryPipeline(storageDir, tm, commitHash, verbose)
+		runMemoryPipelineWithSnapshotOpts(storageDir, tm, commitHash, verbose, opts.snapshotNoGraph, opts.snapshotKeep)
 	}
 	// knowledge fusion: ADR/README/PR claims fused into developer
 	// memory. Also human-output-only and non-fatal by design.
@@ -670,6 +676,8 @@ func init() {
 	analyzeCmd.Flags().Bool("intelligence", true, "Run architectural intelligence checks (smells and pattern discovery)")
 	analyzeCmd.Flags().Bool("no-intelligence", false, "Disable architectural intelligence checks (equivalent to --intelligence=false)")
 	analyzeCmd.Flags().Bool("include-docs", false, "Run knowledge fusion: fuse ADR/README/PR claims into developer memory")
+	analyzeCmd.Flags().Bool("snapshot-no-graph", false, "Omit embedded graph from snapshots (smaller files; disables snapshot --replay)")
+	analyzeCmd.Flags().Int("snapshot-keep", 0, "Max snapshots to retain (0 = config default 30)")
 
 	_ = analyzeCmd.RegisterFlagCompletionFunc("link-level", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return []string{"architecture", "standard", "full"}, cobra.ShellCompDirectiveNoFileComp

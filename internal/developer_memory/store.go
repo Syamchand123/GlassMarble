@@ -275,8 +275,10 @@ func (s *MemoryStore) Rebuild() (*DeveloperMemory, error) {
 // crash mid-write can never leave a truncated aggregate behind. When the
 // aggregate carries a ProjectID, the sidecar file is also updated so future
 // Rebuilds can derive the ID without requiring WithProjectID.
+// RCA-3: use compact JSON (no indent) to save ~30% on the 19 MB aggregate;
+// the WAL remains the source of truth, so pretty-printing is not needed.
 func (s *MemoryStore) SaveMemory(mem *DeveloperMemory) error {
-	data, err := json.MarshalIndent(mem, "", "  ")
+	data, err := json.Marshal(mem)
 	if err != nil {
 		return fmt.Errorf("developer_memory: marshal memory: %w", err)
 	}
@@ -292,7 +294,7 @@ func (s *MemoryStore) SaveMemory(mem *DeveloperMemory) error {
 // SaveTimeline atomically persists the derived timeline entries to
 // timeline.json (fast path for `gmb timeline`; master plan §5.5).
 func (s *MemoryStore) SaveTimeline(entries []archmodel.TimelineEntry) error {
-	data, err := json.MarshalIndent(entries, "", "  ")
+	data, err := json.Marshal(entries)
 	if err != nil {
 		return fmt.Errorf("developer_memory: marshal timeline: %w", err)
 	}

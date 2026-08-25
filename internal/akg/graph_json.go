@@ -58,14 +58,8 @@ type GraphEdgeJSON struct {
 	Properties map[string]string `json:"properties,omitempty"`
 }
 
-// ExportGraphJSON serializes an AKG snapshot into the portable GraphJSON
-// interchange format. Nodes and edges are sorted so output is deterministic
-// (stable across runs and diff-friendly for CI).
-func ExportGraphJSON(graph *CodePropertyGraph, w io.Writer) error {
-	if graph == nil {
-		return fmt.Errorf("cannot export nil graph")
-	}
-
+// buildGraphJSONDoc converts the in-memory graph into a deterministic GraphJSON doc.
+func buildGraphJSONDoc(graph *CodePropertyGraph) GraphJSON {
 	doc := GraphJSON{
 		SchemaVersion:   graph.SchemaVersion,
 		CommitHash:      graph.CommitHash,
@@ -75,26 +69,20 @@ func ExportGraphJSON(graph *CodePropertyGraph, w io.Writer) error {
 		Verified:        graph.Verified,
 		VerificationMsg: graph.VerificationMsg,
 	}
-
 	if graph.Entrypoints != nil {
 		doc.Entrypoints = append([]string(nil), graph.Entrypoints...)
 	}
-
 	if graph.FolderZones != nil {
 		doc.FolderZones = make(map[string]string)
 		graph.FolderZones.Iterate(func(k, v string) {
 			doc.FolderZones[k] = v
 		})
 	}
-
 	if graph.Nodes != nil {
 		graph.Nodes.Iterate(func(id string, node *link.ResolvedNode) {
 			if node == nil {
 				return
 			}
-			// node.ID is the canonical identifier; fall back to the map key
-			// when it is unset so export stays lossless even for graphs
-			// built without explicit node IDs.
 			outID := node.ID
 			if outID == "" {
 				outID = id
@@ -114,13 +102,10 @@ func ExportGraphJSON(graph *CodePropertyGraph, w io.Writer) error {
 			})
 		})
 	}
-
 	if graph.OutboundEdges != nil {
 		seen := make(map[string]bool)
 		graph.OutboundEdges.Iterate(func(srcID string, edges []link.ResolvedEdge) {
 			for _, e := range edges {
-				// Mirror the node fallback: the OutboundEdges map key is the
-				// canonical source ID when the edge does not carry one.
 				outSrc := e.SourceID
 				if outSrc == "" {
 					outSrc = srcID
@@ -145,18 +130,12 @@ func ExportGraphJSON(graph *CodePropertyGraph, w io.Writer) error {
 			}
 		})
 	}
-
-	// Empty graphs must serialize as arrays, not JSON null: consumers like
-	// the streaming stats reader (lazy.go) and downstream tooling reject
-	// `"nodes": null`. A string/number state with zero nodes or edges (e.g.
-	// `gmb init`, empty-repo commits) would otherwise be unreadable.
 	if doc.Nodes == nil {
 		doc.Nodes = make([]GraphNodeJSON, 0)
 	}
 	if doc.Edges == nil {
 		doc.Edges = make([]GraphEdgeJSON, 0)
 	}
-
 	sort.Slice(doc.Nodes, func(i, j int) bool { return doc.Nodes[i].ID < doc.Nodes[j].ID })
 	sort.Slice(doc.Edges, func(i, j int) bool {
 		if doc.Edges[i].SourceID != doc.Edges[j].SourceID {
@@ -170,9 +149,31 @@ func ExportGraphJSON(graph *CodePropertyGraph, w io.Writer) error {
 		}
 		return doc.Edges[i].LineNumber < doc.Edges[j].LineNumber
 	})
+	return doc
+}
 
+// ExportGraphJSON serializes an AKG snapshot into the portable GraphJSON
+// interchange format. Nodes and edges are sorted so output is deterministic
+// (stable across runs and diff-friendly for CI).
+func ExportGraphJSON(graph *CodePropertyGraph, w io.Writer) error {
+	if graph == nil {
+		return fmt.Errorf("cannot export nil graph")
+	}
+	doc := buildGraphJSONDoc(graph)
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
+	return enc.Encode(doc)
+}
+
+// ExportGraphJSONCompact serializes the graph with the same deterministic
+// ordering but without pretty-print indentation. Used for snapshot side-cars
+// and wherever storage size matters (RCA-2). Output is still valid GraphJSON.
+func ExportGraphJSONCompact(graph *CodePropertyGraph, w io.Writer) error {
+	if graph == nil {
+		return fmt.Errorf("cannot export nil graph")
+	}
+	doc := buildGraphJSONDoc(graph)
+	enc := json.NewEncoder(w)
 	return enc.Encode(doc)
 }
 

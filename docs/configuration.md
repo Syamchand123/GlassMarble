@@ -110,7 +110,10 @@ All keys optional; zeros fall back to `DefaultIntelligenceConfig()`.
 | `event_edge_pct` | `15.0` | Edge-share threshold for event-driven detection. |
 | `coupling_change_pct` | `0.20` | Coupling delta (20%) that triggers a `COUPLING_*` event. |
 | `llm_intent_enabled` | `false` | Enable LLM-based intent labeling of events. |
-| `snapshot_no_graph` | `false` | Write snapshots without embedding the full graph. |
+| `snapshot_no_graph` | `false` | Write snapshots without embedding the full graph (see storage contract — auto-enables when `snapshot_auto_threshold_*` is exceeded). |
+| `snapshot_max_count` | `30` | Max snapshots retained; oldest pruned on `gmb analyze` / `gmb snapshot --create` (RCA-1 retention). |
+| `snapshot_auto_threshold_nodes` | `15000` | Auto-enable `snapshot_no_graph` when node count ≥ this (RCA-1). |
+| `snapshot_auto_threshold_mb` | `8` | Auto-enable `snapshot_no_graph` when estimated state ≥ this MB (RCA-1). |
 | `page_rank_iterations` | `100` | PageRank iterations. |
 | `page_rank_damping` | `0.85` | PageRank damping factor. |
 | `arch_layers` | (empty) | Optional layering for PR-07 / `gmb stats --arch`; empty degrades to root grouping. |
@@ -224,6 +227,10 @@ intelligence:
   layered_consistency_threshold: 0.80
   snapshot_ttl_seconds: 3600
   snapshot_num_pages: 10
+  snapshot_no_graph: false
+  snapshot_max_count: 30
+  snapshot_auto_threshold_nodes: 15000
+  snapshot_auto_threshold_mb: 8
   run_rules: ["patterns", "smells", "events"]
 
 fusion:

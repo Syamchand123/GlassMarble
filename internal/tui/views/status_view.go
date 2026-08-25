@@ -9,21 +9,26 @@ import (
 
 // StatusData carries the values needed to render the `gmb status` dashboard.
 type StatusData struct {
-	Initialized   bool
-	StorageDir    string
-	SchemaVersion int
-	GraphVersion  uint64
-	CommitHash    string
-	LastAnalysis  string
-	NodeCount     int
-	EdgeCount     int
-	IndexedFiles  int
-	Entrypoints   int
-	VirtualCount  int
-	VirtualShare  float64
-	Dangling      int
-	JSONBytes     int64
-	Verified      bool
+	Initialized    bool
+	StorageDir     string
+	SchemaVersion  int
+	GraphVersion   uint64
+	CommitHash     string
+	LastAnalysis   string
+	NodeCount      int
+	EdgeCount      int
+	IndexedFiles   int
+	Entrypoints    int
+	VirtualCount   int
+	VirtualShare   float64
+	Dangling       int
+	JSONBytes      int64
+	Verified       bool
+	SnapshotCount  int
+	SnapshotBytes  int64
+	MemoryBytes    int64
+	TotalBytes     int64
+	StorageWarning string
 }
 
 // RenderStatusUninitialized renders the `gmb status` dashboard for an
@@ -66,7 +71,13 @@ func RenderStatus(s StatusData) string {
 		"",
 		"  " + tui.Divider("Storage", 56),
 		"  Storage:       State " + humanBytes(s.JSONBytes),
+		"  Snapshots:     " + fmt.Sprintf("%d snapshot(s), %s", s.SnapshotCount, humanBytes(s.SnapshotBytes)),
+		"  Memory:        " + humanBytes(s.MemoryBytes),
+		"  Total:         " + humanBytes(s.TotalBytes),
 		"  Verification:  " + strings.TrimSpace(verified),
+	}
+	if s.StorageWarning != "" {
+		rows = append(rows, "  Warning:       "+s.StorageWarning)
 	}
 	return tui.StyleCard.Render("  " + joinLines(rows))
 }

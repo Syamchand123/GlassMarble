@@ -22,6 +22,9 @@ type IntelligenceConfig struct {
 	CouplingChangePct           float64 `json:"coupling_change_pct" yaml:"coupling_change_pct"`
 	LLMIntentEnabled            bool    `json:"llm_intent_enabled" yaml:"llm_intent_enabled"`
 	SnapshotNoGraph             bool    `json:"snapshot_no_graph" yaml:"snapshot_no_graph"`
+	SnapshotMaxCount            int     `json:"snapshot_max_count" yaml:"snapshot_max_count"`
+	SnapshotAutoThresholdNodes  int     `json:"snapshot_auto_threshold_nodes" yaml:"snapshot_auto_threshold_nodes"`
+	SnapshotAutoThresholdMB     int     `json:"snapshot_auto_threshold_mb" yaml:"snapshot_auto_threshold_mb"`
 	PageRankIterations          int     `json:"page_rank_iterations" yaml:"page_rank_iterations"`
 	PageRankDamping             float64 `json:"page_rank_damping" yaml:"page_rank_damping"`
 
@@ -70,6 +73,9 @@ func DefaultIntelligenceConfig() *IntelligenceConfig {
 		CouplingChangePct:           0.20,
 		LLMIntentEnabled:            false,
 		SnapshotNoGraph:             false,
+		SnapshotMaxCount:            30,
+		SnapshotAutoThresholdNodes:  15000,
+		SnapshotAutoThresholdMB:     8,
 		PageRankIterations:          100,
 		PageRankDamping:             0.85,
 		NodeCountThreshold:          2000,
@@ -79,4 +85,24 @@ func DefaultIntelligenceConfig() *IntelligenceConfig {
 		SnapshotNumPages:            10,
 		RunRules:                    nil,
 	}
+}
+
+// SnapshotShouldOmitGraph reports whether a snapshot should skip embedding
+// the graph based on explicit config or auto-thresholds (nodes / MB).
+// It is the single choke-point for RCA-1: every caller must gate through it
+// so large repos automatically cap snapshot size.
+func (c *IntelligenceConfig) SnapshotShouldOmitGraph(nodeCount int, stateBytes int64) bool {
+	if c == nil {
+		c = DefaultIntelligenceConfig()
+	}
+	if c.SnapshotNoGraph {
+		return true
+	}
+	if c.SnapshotAutoThresholdNodes > 0 && nodeCount >= c.SnapshotAutoThresholdNodes {
+		return true
+	}
+	if c.SnapshotAutoThresholdMB > 0 && stateBytes >= int64(c.SnapshotAutoThresholdMB)<<20 {
+		return true
+	}
+	return false
 }
