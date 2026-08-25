@@ -123,6 +123,27 @@ irm https://raw.githubusercontent.com/Syamchand123/GlassMarble/main/install.ps1 
 docker run --rm -v "$(pwd):/workspace" ghcr.io/syamchand123/glassmarble:latest analyze --dir /workspace
 ```
 
+### 🔐 Verifying Releases (Sigstore / Cosign)
+
+All release artefacts are signed with Sigstore Cosign and SBOM/SLSA attestations are published. The one-line installers verify `SHA256` (`checksums.txt`) automatically. To additionally verify the Sigstore signature after downloading manually:
+
+```bash
+# download the archive + checksums + signature (example v1.0.0 linux amd64)
+VERSION=v1.0.0
+curl -fsSLO "https://github.com/Syamchand123/GlassMarble/releases/download/${VERSION}/gmb_${VERSION#v}_linux_amd64.tar.gz"
+curl -fsSLO "https://github.com/Syamchand123/GlassMarble/releases/download/${VERSION}/checksums.txt"
+curl -fsSLO "https://github.com/Syamchand123/GlassMarble/releases/download/${VERSION}/checksums.txt.pem"
+curl -fsSLO "https://github.com/Syamchand123/GlassMarble/releases/download/${VERSION}/checksums.txt.sig"
+
+# verify checksum
+sha256sum -c --ignore-missing checksums.txt
+
+# verify Cosign signature (requires cosign >=2.0)
+cosign verify-blob --certificate-identity-regexp "https://github.com/Syamchand123/GlassMarble/.github/workflows/release.yml@refs/tags/${VERSION}" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --signature checksums.txt.sig --certificate checksums.txt.pem checksums.txt
+```
+
 ### 🛠️ Go Toolchain (Go 1.22+)
 
 ```bash

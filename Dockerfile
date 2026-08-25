@@ -1,5 +1,5 @@
-# Build stage
-FROM golang:1.22-alpine AS builder
+# Build stage — pinned to go.mod toolchain (1.25.x)
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /build
 

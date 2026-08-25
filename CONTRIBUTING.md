@@ -7,7 +7,7 @@ Thank you for your interest in contributing to **GlassMarble**! GlassMarble is a
 ## 🛠️ Development Setup
 
 ### Prerequisites
-- **Go 1.22+**
+- **Go 1.25+** (see `go.mod` — CI uses `go-version-file: go.mod`)
 - **Git**
 - Optional: **Docker** (for container builds) and **Make**
 

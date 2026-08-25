@@ -61,10 +61,7 @@ lint:
 ## completions: Generate shell completions for bash, zsh, fish, powershell
 completions:
 	@mkdir -p completions
-	$(GO) run . completion bash > completions/$(BINARY_NAME).bash
-	$(GO) run . completion zsh > completions/$(BINARY_NAME).zsh
-	$(GO) run . completion fish > completions/$(BINARY_NAME).fish
-	$(GO) run . completion powershell > completions/$(BINARY_NAME).ps1
+	$(GO) run ./cmd/completions -o completions
 
 ## man: Generate man pages for gmb and subcommands
 man:

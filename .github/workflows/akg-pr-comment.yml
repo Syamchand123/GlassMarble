@@ -14,8 +14,8 @@
 # existing comment rather than creating a new one.
 #
 # Tree-sitter grammars are the pure-Go bindings (github.com/tree-sitter/
-# go-tree-sitter), so CGO is NOT required. go.mod requires go 1.26.4 —
-# '1.26' resolves to the latest 1.26.x patch.
+# go-tree-sitter), so CGO is NOT required. go.mod is the single source of
+# truth for the toolchain — workflows use go-version-file: go.mod.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: GlassMarble AKG PR Architecture Comment
@@ -34,10 +34,6 @@ permissions:
   contents: read
   pull-requests: write
 
-env:
-  GO_VERSION: "1.26"
-
-# ─────────────────────────────────────────────────────────────────────────────
 jobs:
 
   akg-diff:
@@ -52,11 +48,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      # ── Go toolchain ────────────────────────────────────────────────────────
+      # ── Go toolchain (pinned to go.mod) ─────────────────────────────────────
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Download modules

@@ -113,6 +113,7 @@ func init() {
 
 	rootCmd.PersistentFlags().Bool("debug", false, "Enable debug logging")
 	rootCmd.PersistentFlags().StringP("config", "c", "", "Config file path (default is $HOME/.glassmarble.yaml)")
+	_ = rootCmd.PersistentFlags().MarkHidden("config")
 	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "Verbose output logging")
 	rootCmd.PersistentFlags().Int("max-json-mb", 0, "Refuse to load or commit an AKG state file (akg.json) larger than this many MiB (0 = unlimited)")
 }

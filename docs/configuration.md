@@ -21,7 +21,7 @@ Notes:
 * Project files live in the repository's `.glassmarble/` directory; global files live in `~/.glassmarble/`.
 * The global config acts as a base layer: any key absent from the project file falls back to it.
 * For the AI engine there are two generic keys — `GLASSMARBLE_AI_API_KEY` and `GLASSMARBLE_OLLAMA_BASE_URL` — plus one provider-specific key per provider (`GLASSMARBLE_OPENAI_API_KEY`, `GLASSMARBLE_ANTHROPIC_API_KEY`, ...).
-* Quirk: the root command accepts a `--config` flag, but it is **not wired** to `config.Load`; per-command flags (`--dir`, `--workers`, `--output-format`, ...) are the intended override path.
+* `--config`/`-c` is a hidden legacy flag (not wired to `config.Load`) — use per-command flags (`--dir`, `--workers`, `--output-format`, ...) or `GLASSMARBLE_*` env vars. The sole config sources are `.glassmarble/config.yaml` (project) and `~/.glassmarble/config.yaml` (global).
 
 ---
 
