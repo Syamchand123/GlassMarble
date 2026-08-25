@@ -12,13 +12,16 @@ builds:
   - id: gmb
     binary: gmb
     main: .
-    # CGO required for tree-sitter grammars; build natively on runner (linux/amd64).
+    # CGO required for tree-sitter grammars; built natively across platform matrix.
     env:
       - CGO_ENABLED=1
     goos:
       - linux
+      - darwin
+      - windows
     goarch:
       - amd64
+      - arm64
     flags:
       - -trimpath
     ldflags:
@@ -35,8 +38,11 @@ builds:
       - CGO_ENABLED=1
     goos:
       - linux
+      - darwin
+      - windows
     goarch:
       - amd64
+      - arm64
     flags:
       - -trimpath
     ldflags:

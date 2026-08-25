@@ -7,14 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
-
-### Planned
-- LSP (Language Server Protocol) server interface for VS Code and JetBrains IDE plugins.
-- Real-time architectural drift linter for GitHub Pull Request status checks.
-
----
-
 ## [v1.0.0] - 2026-08-24
 
 ### Added

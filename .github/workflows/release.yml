@@ -17,8 +17,58 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  build:
+    name: Build (${{ matrix.os }} / ${{ matrix.goarch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            os: linux
+            goarch: amd64
+          - runner: macos-13
+            os: darwin
+            goarch: amd64
+          - runner: macos-14
+            os: darwin
+            goarch: arm64
+          - runner: windows-latest
+            os: windows
+            goarch: amd64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run GoReleaser (Build & Split)
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: build --clean --split
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.goarch }}
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist_${{ matrix.os }}_${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+
   release:
     name: Release Binaries & Packages
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -33,18 +83,25 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: dist_*
+          merge-multiple: true
+
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3.8.1
 
       - name: Install Syft
         uses: anchore/sbom-action/download-syft@v0.18.0
 
-      - name: Run GoReleaser
+      - name: Run GoReleaser (Merge & Release)
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean
+          args: release --clean --merge
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

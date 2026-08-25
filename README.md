@@ -19,29 +19,21 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Syamchand123/GlassMarble/releases"><img alt="release" src="https://img.shields.io/badge/release-v1.0.0-7c5cfb"></a>
-  <a href="https://github.com/Syamchand123/GlassMarble/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/badge/CI-passing-10b981?logo=github&labelColor=1e1e2e"></a>
+  <a href="https://github.com/Syamchand123/GlassMarble/releases"><img alt="release" src="https://img.shields.io/github/v/release/Syamchand123/GlassMarble?color=7c5cfb"></a>
+  <a href="https://github.com/Syamchand123/GlassMarble/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Syamchand123/GlassMarble/ci.yml?logo=github&labelColor=1e1e2e&label=CI"></a>
   <a href="https://goreportcard.com/report/github.com/Syamchand123/GlassMarble"><img alt="go report" src="https://img.shields.io/badge/go%20report-A%2B-00ADD8?logo=go"></a>
   <a href="./LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-8a8fa8"></a>
   <a href="https://pkg.go.dev/github.com/Syamchand123/GlassMarble"><img alt="go reference" src="https://img.shields.io/badge/go_pkg-1.25-00ADD8?logo=go"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/Syamchand123/GlassMarble/stargazers"><img alt="stars" src="https://img.shields.io/badge/stars-⭐-8a8fa8"></a>
-  <a href="https://github.com/Syamchand123/GlassMarble/network/members"><img alt="forks" src="https://img.shields.io/badge/forks-0-8a8fa8"></a>
-  <a href="https://github.com/Syamchand123/GlassMarble/issues"><img alt="issues" src="https://img.shields.io/badge/issues-welcome-7c5cfb"></a>
-  <a href="https://github.com/Syamchand123/GlassMarble/pulls"><img alt="prs" src="https://img.shields.io/badge/PRs-welcome-10b981"></a>
+  <a href="https://github.com/Syamchand123/GlassMarble/stargazers"><img alt="stars" src="https://img.shields.io/github/stars/Syamchand123/GlassMarble?style=social"></a>
+  <a href="https://github.com/Syamchand123/GlassMarble/network/members"><img alt="forks" src="https://img.shields.io/github/forks/Syamchand123/GlassMarble?style=social"></a>
+  <a href="https://github.com/Syamchand123/GlassMarble/issues"><img alt="issues" src="https://img.shields.io/github/issues/Syamchand123/GlassMarble"></a>
+  <a href="https://github.com/Syamchand123/GlassMarble/pulls"><img alt="prs" src="https://img.shields.io/github/issues-pr/Syamchand123/GlassMarble"></a>
   <img alt="go version" src="https://img.shields.io/badge/go-1.25-00ADD8?logo=go&logoColor=white">
   <img alt="platform" src="https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-1e1e2e">
 </p>
-<!-- Dynamic GitHub badges (uncomment after repo is public + first release):
-  stars: https://img.shields.io/github/stars/Syamchand123/GlassMarble?style=social
-  forks: https://img.shields.io/github/forks/Syamchand123/GlassMarble?style=social
-  issues: https://img.shields.io/github/issues/Syamchand123/GlassMarble
-  prs: https://img.shields.io/github/issues-pr/Syamchand123/GlassMarble
-  release: https://img.shields.io/github/v/release/Syamchand123/GlassMarble
-  CI: https://img.shields.io/github/actions/workflow/status/Syamchand123/GlassMarble/ci.yml
--->
 
 <p align="center">
   <a href="docs/getting-started.md"><strong>Getting Started</strong></a> ·
@@ -114,6 +106,7 @@ curl -fsSL https://raw.githubusercontent.com/Syamchand123/GlassMarble/main/insta
 # Windows (PowerShell 5.1+)
 irm https://raw.githubusercontent.com/Syamchand123/GlassMarble/main/install.ps1 | iex
 
+# Go toolchain (1.25+)
 go install github.com/Syamchand123/GlassMarble@latest
 ```
 
@@ -137,7 +130,6 @@ gmb ai "which services depend on payments?"  # needs gmb ai configure
 | Linux | arm64 (aarch64) | `gmb_*_linux_arm64.tar.gz` |
 | Windows 10/11 | amd64 (x64) | `gmb_*_windows_amd64.zip` |
 | Windows 11 | arm64 | `gmb_*_windows_arm64.zip` |
-| Any | — | `ghcr.io/syamchand123/glassmarble` (distroless, linux/amd64+arm64) |
 
 `gmb` and `glassmarble` are the same binary. Checksums + Cosign/SLSA are published per release; installers verify `checksums.txt` automatically.
 
