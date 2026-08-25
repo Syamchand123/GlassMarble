@@ -1,5 +1,34 @@
 ﻿# GlassMarble: Master Architecture & Implementation Manual
 
+<p align="center">
+  <img src="../assets/GMB_LOGO.png" width="96" alt="GlassMarble"><br>
+  <em>Self-evolving AKG — from code to diagrams to answers.</em>
+</p>
+
+> **One sentence:** 17 languages → CPG → AKG (`akg.json`) → 31 living diagrams. The repo is the source of truth.
+
+## Contents
+
+- [1. Executive Summary](#1-executive-summary--product-vision)
+- [2. Core Concepts](#2-core-concepts--architectural-blueprint)
+- [3. Codebase Map](#3-detailed-file-by-file-codebase-directory)
+- [4. Algorithms](#4-algorithms--system-design)
+- [5. Flows](#5-end-to-end-runtime-flow)
+- [6. Testing](#6-testing-strategy)
+- [7. Limitations](#7-current-limitations--known-boundaries)
+- [8. AKG Internals](#8-akg-internals)
+- [9. System Diagram](#9-system-diagram-high-level)
+- [10. AI Engine](#10-ai-engine-architecture)
+
+```mermaid
+flowchart TB
+  SRC[Multi-language code] --> CPG[[CPG<br/>AST + CFG + DFG + Call Graph]]
+  CPG --> AKG[(AKG · akg.json<br/>GraphJSON v3 · MVCC)]
+  AKG --> VIZ[Visualization · 31 types]
+  AKG --> AI[AI Architect · 32 tools]
+  style AKG fill:#7c5cfb,color:#fff
+```
+
 Welcome to the master technical documentation for **GlassMarble**, a self-evolving Architecture Knowledge Graph (AKG) compiler and visualization platform. This manual details the design, codebase layout, algorithms, E2E flows, validation models, and architectural boundaries of the system.
 
 ---

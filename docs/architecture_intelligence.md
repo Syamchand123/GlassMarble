@@ -1,6 +1,22 @@
 # GlassMarble Architecture Intelligence
 
-Architecture Intelligence (AI) is the post-commit layer that turns the raw Architecture Knowledge Graph (AKG) into **evidence**: detected patterns, smells, components, architectural change events, timelines, and snapshots — all persisted under `.glassmarble/` and queryable through dedicated commands and the AI agent's AKG tools.
+> Post-commit layer that turns the raw AKG into **evidence**: patterns, smells, components, events, timelines, snapshots.
+
+```mermaid
+flowchart LR
+  AKG[(AKG)] --> MET[Metrics<br/>coupling · cycles]
+  MET --> COMP[Components<br/>Louvain + dirs]
+  COMP --> PAT[Patterns PR-01..PR-07]
+  COMP --> SMELL[Smells]
+  AKG --> EVT[Events<br/>diff vs prev]
+  EVT --> MEM[(Memory<br/>events.jsonl)]
+  PAT & SMELL & EVT --> SNAP[(Snapshots)]
+  style AKG fill:#7c5cfb,color:#fff
+```
+
+Architecture Intelligence (AI) is the post-commit layer that turns the raw Architecture Knowledge Graph (AKG) into evidence — detected patterns, smells, components, architectural change events, timelines, and snapshots — all persisted under `.glassmarble/` and queryable through dedicated commands and the AI agent's AKG tools.
+
+**Contents:** [1. When](#1-when-it-runs) · [2. Events](#2-architecture-events) · [3. States](#3-knowledge-states--claims) · [4. Patterns](#4-patterns-smells--components) · [5. CLI](#5-cli-surface) · [6. Artifacts](#6-output-artifacts)
 
 ## 1. When It Runs
 

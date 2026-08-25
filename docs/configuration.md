@@ -4,16 +4,16 @@ This document is the canonical reference for every configuration surface of Glas
 
 ---
 
-## 1. Precedence
+## 1. Precedence — highest wins
 
-Every setting resolves with the same rule — **highest wins**:
-
-```
-CLI flags
-  > GLASSMARBLE_* environment variables
-  > project config   (.glassmarble/config.yaml  |  .glassmarble/ai.yaml)
-  > global config    (~/.glassmarble/config.yaml | ~/.glassmarble/ai.yaml)
-  > built-in defaults
+```mermaid
+flowchart TB
+  A[CLI flag] --> B[GLASSMARBLE_* env]
+  B --> C[Project .glassmarble/config.yaml]
+  C --> D[Global ~/.glassmarble/config.yaml]
+  D --> E[Defaults]
+  style A fill:#7c5cfb,color:#fff
+  style E fill:#f1f5f9
 ```
 
 Notes:

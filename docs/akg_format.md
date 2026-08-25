@@ -1,6 +1,20 @@
 # The AKG GraphJSON Format (`.glassmarble/akg.json`)
 
+> Deterministic · sorted · verified · diff-friendly. One file, one truth.
+
+```mermaid
+flowchart LR
+  NODES[(nodes<br/>sorted by id)] --- EDGES[[edges<br/>sorted by source → target → type]]
+  NODES & EDGES --> DOC{{akg.json<br/>GraphJSON v3}}
+  DOC --> GIT[git diff]
+  DOC --> VIZ[visualize]
+  DOC --> AI[ai]
+  style DOC fill:#7c5cfb,color:#fff
+```
+
 The canonical GlassMarble state file is `akg.json` — a **GraphJSON** document (schema v3) stored inside the workspace's `.glassmarble/` directory. It is the single source of truth: deterministic, diff-friendly, and human-auditable. There is no WAL and no separate RDF/Turtle store — this one file holds the entire Architecture Knowledge Graph.
+
+**Contents:** [1. Shape](#1-document-shape) · [2. Nodes](#2-nodes) · [3. Edges](#3-edges) · [4. Predicates](#4-edge-predicate-vocabulary) · [5. Storage Contract](#5-size-guard--storage-contract)
 
 ## 1. Document Shape
 
