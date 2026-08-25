@@ -19,17 +19,23 @@ import (
 var watchInterval time.Duration
 
 var watchCmd = &cobra.Command{
-	Use:   "watch",
-	Short: "Continuously watch repository for source changes and update AKG",
+	Use:     "watch",
+	GroupID: GroupAnalyze.ID,
+	Short:   "Continuously watch repository for source changes and update AKG",
 	Long: `Watches the repository for file-system events (fsnotify) and triggers
 incremental delta analysis whenever source files change. The git working-tree
 fingerprint is re-checked before every rebuild so branch switches, rebases and
 changes made outside the watcher's scope are also picked up.`,
+	Example: `  # Start file watcher on current repository
+  gmb watch
+
+  # Watch with a custom debounce interval
+  gmb watch --interval 1s
+
+  # Watch specific repository path
+  gmb watch --dir ./backend`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		targetDir, _ := cmd.Flags().GetString("dir")
-		if targetDir == "" {
-			targetDir = "."
-		}
+		targetDir := resolveDir(cmd)
 		commitHash, _ := cmd.Flags().GetString("commit")
 		workers, _ := cmd.Flags().GetInt("workers")
 		verbose, _ := cmd.Flags().GetBool("verbose")

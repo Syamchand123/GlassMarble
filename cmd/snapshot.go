@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
+	"time"
 	"unicode"
 
 	"github.com/Syamchand123/GlassMarble/internal/arch_timeline"
@@ -31,25 +32,33 @@ import (
 // store content-addresses files by snapshot ID, skip-writes unchanged
 // topologies, and self-heals a missing/corrupt index (D2).
 var snapshotCmd = &cobra.Command{
-	Use:   "snapshot",
-	Short: "Create and query point-in-time architecture snapshots",
+	Use:     "snapshot",
+	GroupID: GroupGovern.ID,
+	Short:   "Create and query point-in-time architecture snapshots",
 	Long: `Snapshots capture the full architecture state (graph + Architecture Intelligence analysis)
-at a commit. This command creates and inspects them.
-
-  gmb snapshot --create                     # snapshot at HEAD
-  gmb snapshot --list
-  gmb snapshot --at HEAD
-  gmb snapshot --at <commit>                # nearest snapshot at/before the commit
-  gmb snapshot --diff <base> <head>
-  gmb snapshot --replay <commit> --diagram dependency
+at a commit or point in time.
 
 Refs are resolved as stored commit prefixes first, then as git refs (tags,
 branches, HEAD) via their author timestamp.`,
+	Example: `  # Create a new snapshot from the committed graph at HEAD
+  gmb snapshot --create
+
+  # List all captured architecture snapshots
+  gmb snapshot --list
+
+  # List snapshots as JSON
+  gmb snapshot --list --json
+
+  # Inspect snapshot at a specific commit or tag
+  gmb snapshot --at HEAD
+
+  # Diff architecture between two snapshots or commits
+  gmb snapshot --diff "main HEAD"
+
+  # Replay and render a class diagram from a past snapshot
+  gmb snapshot --replay v1.0.0 --diagram class`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dir, _ := cmd.Flags().GetString("dir")
-		if dir == "" {
-			dir = "."
-		}
+		dir := resolveDir(cmd)
 		create, _ := cmd.Flags().GetBool("create")
 		list, _ := cmd.Flags().GetBool("list")
 		at, _ := cmd.Flags().GetString("at")
@@ -98,12 +107,12 @@ branches, HEAD) via their author timestamp.`,
 		case create:
 			return runSnapshotCreate(cmd, store, storageDir, absDir, noGraph, asJSON)
 		case list:
-			return runSnapshotList(cmd, store)
+			return runSnapshotList(cmd, store, asJSON)
 		case at != "":
 			return runSnapshotAt(cmd, store, absDir, at, asJSON)
 		case len(diffRefs) > 0:
 			if len(diffRefs) != 2 {
-				return fmt.Errorf("--diff requires exactly two refs: --diff <base> <head>")
+				return fmt.Errorf("--diff requires exactly two refs: --diff '<base> <head>' — try 'gmb snapshot --diff \"HEAD~1 HEAD\"'")
 			}
 			return runSnapshotDiff(cmd, store, absDir, diffRefs[0], diffRefs[1], asJSON)
 		default: // replay
@@ -156,9 +165,35 @@ func runSnapshotCreate(cmd *cobra.Command, store *arch_timeline.SnapshotStore, s
 	return nil
 }
 
-// runSnapshotList prints the snapshot index as an aligned table.
-func runSnapshotList(cmd *cobra.Command, store *arch_timeline.SnapshotStore) error {
+type snapshotListRowJSON struct {
+	ID           string    `json:"id"`
+	Commit       string    `json:"commit"`
+	Captured     time.Time `json:"captured"`
+	TopologyHash string    `json:"topology_hash"`
+	Patterns     int       `json:"patterns"`
+	Smells       int       `json:"smells"`
+}
+
+// runSnapshotList prints the snapshot index as an aligned table or JSON array.
+func runSnapshotList(cmd *cobra.Command, store *arch_timeline.SnapshotStore, asJSON bool) error {
 	entries := store.List()
+	if asJSON {
+		rows := make([]snapshotListRowJSON, 0, len(entries))
+		for _, e := range entries {
+			rows = append(rows, snapshotListRowJSON{
+				ID:           e.SnapshotID,
+				Commit:       e.CommitHash,
+				Captured:     e.Timestamp,
+				TopologyHash: e.TopologyHash,
+				Patterns:     e.PatternCount,
+				Smells:       e.SmellCount,
+			})
+		}
+		out, _ := json.MarshalIndent(rows, "", "  ")
+		fmt.Fprintln(cmd.OutOrStdout(), string(out))
+		return nil
+	}
+
 	if len(entries) == 0 {
 		fmt.Fprintln(cmd.OutOrStdout(), "No snapshots yet. Run 'gmb snapshot --create' or 'gmb analyze'.")
 		return nil
@@ -356,7 +391,6 @@ func parseRefList(s string) []string {
 }
 
 func init() {
-	snapshotCmd.Flags().String("dir", ".", "Directory containing the .glassmarble/ database")
 	snapshotCmd.Flags().Bool("create", false, "Run architecture intelligence at HEAD and store a new snapshot")
 	snapshotCmd.Flags().Bool("list", false, "List indexed snapshots")
 	snapshotCmd.Flags().String("at", "", "Show the state at a commit/ref (nearest snapshot at or before it)")
@@ -365,6 +399,19 @@ func init() {
 	snapshotCmd.Flags().String("diagram", "dependency", "Diagram type for --replay (e.g. dependency, class, layered, c4container)")
 	snapshotCmd.Flags().String("format", "mermaid", "Diagram markup format for --replay: mermaid, plantuml or dot")
 	snapshotCmd.Flags().Bool("no-graph", false, "Skip embedding the full graph (smaller files; disables --replay and structural diffs)")
-	snapshotCmd.Flags().Bool("json", false, "Emit machine-readable JSON")
+	snapshotCmd.Flags().Bool("json", false, "Emit machine-readable JSON output")
+
+	_ = snapshotCmd.RegisterFlagCompletionFunc("format", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"mermaid", "plantuml", "dot"}, cobra.ShellCompDirectiveNoFileComp
+	})
+	_ = snapshotCmd.RegisterFlagCompletionFunc("diagram", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		typesList := types.AllDiagramTypes()
+		strTypes := make([]string, len(typesList))
+		for i, t := range typesList {
+			strTypes[i] = string(t)
+		}
+		return strTypes, cobra.ShellCompDirectiveNoFileComp
+	})
+
 	rootCmd.AddCommand(snapshotCmd)
 }

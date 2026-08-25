@@ -69,6 +69,7 @@ type model struct {
 	elapsed time.Duration
 	started time.Time
 	width   int
+	height  int
 }
 
 // PhaseStartMsg marks the beginning of a pipeline phase.
@@ -103,6 +104,8 @@ func newModel(opts Options, run RunFn) model {
 		run:     run,
 		spinner: components.NewGMSpinner("Analyzing..."),
 		started: time.Now(),
+		width:   80,
+		height:  24,
 	}
 	for i := range m.phases {
 		m.phases[i].progress = components.NewPhaseProgress(phaseNames[i], 40)
@@ -142,11 +145,7 @@ func RunAnalyze(opts Options, run RunFn, in io.Reader, out io.Writer) error {
 		return nil
 	}
 	if m.err != nil {
-		fmt.Fprintln(out, renderErrorCard(m.err, m.width))
 		return m.err
-	}
-	if m.done {
-		fmt.Fprintln(out, renderSummaryCard(m.summary, m.width))
 	}
 	return nil
 }
@@ -158,10 +157,15 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
+		m.width = maxInt(40, msg.Width)
+		m.height = maxInt(10, msg.Height)
+		barWidth := maxInt(20, m.width-24)
+		for i := range m.phases {
+			m.phases[i].progress.SetWidth(barWidth)
+		}
 		return m, nil
 	case tea.KeyMsg:
-		if msg.String() == "ctrl+c" {
+		if msg.String() == "ctrl+c" || msg.String() == "q" {
 			return m, tea.Quit
 		}
 	case tickMsg:
@@ -199,8 +203,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		return m, tea.Quit
 	}
-	// Forward every message to the phase progress bars so the Harmonica spring
-	// animation frames drive the fills.
+
 	cmds := make([]tea.Cmd, 0, len(m.phases)+1)
 	for i := range m.phases {
 		var cmd tea.Cmd
@@ -218,13 +221,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	if m.done || m.err != nil {
-		return ""
-	}
 	width := m.width
 	if width <= 0 {
 		width = 80
 	}
+	if m.err != nil {
+		return renderErrorCard(m.err, width)
+	}
+	if m.done {
+		return renderSummaryCard(m.summary, width)
+	}
+
 	var b strings.Builder
 	b.WriteString(components.RenderHeader("analyze", "building AKG", width))
 	b.WriteString("\n\n")
@@ -295,7 +302,6 @@ func phaseLine(st phaseState) string {
 	return tui.StyleMuted.Render("  "+label) + " " + bar
 }
 
-// phaseLabel returns a pending / running / done status pill for a phase.
 func phaseLabel(st phaseState) string {
 	if st.progress.IsDone() {
 		return tui.BadgeOK.Render("  done  ")

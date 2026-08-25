@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
@@ -27,30 +28,45 @@ type dependencyNodeJSON struct {
 }
 
 var dependencyCmd = &cobra.Command{
-	Use:   "dependency [target_file_or_symbol]",
-	Short: "Analyze inbound and outbound dependencies for a file or symbol",
-	Long:  `Inspects direct and transitive call and composition dependencies for a target file or symbol.`,
-	Args:  cobra.MaximumNArgs(1),
+	Use:     "dependency [target_file_or_symbol]",
+	Aliases: []string{"dep"},
+	GroupID: GroupInspect.ID,
+	Short:   "Analyze inbound and outbound dependencies for a file or symbol",
+	Long:    `Inspects direct call, import, and composition dependencies for a target file or symbol in the Architecture Knowledge Graph.`,
+	Example: `  # View global dependency summary and top outbound nodes
+  gmb dependency
+
+  # Inspect inbound and outbound edges for a specific symbol
+  gmb dependency "cmd/root.go::Execute"
+
+  # Inspect dependencies for an entire file
+  gmb dependency internal/app/app.go
+
+  # Output dependency edges as JSON
+  gmb dependency --json`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		target := ""
 		if len(args) > 0 {
 			target = args[0]
 		}
-		dir, _ := cmd.Flags().GetString("dir")
+		dir := resolveDir(cmd)
 		asJSON, _ := cmd.Flags().GetBool("json")
-		if dir == "" {
-			dir = "."
-		}
 
 		storageDir := filepath.Join(dir, ".glassmarble")
 		tm, err := newAKGManager(storageDir, cmd)
 		if err != nil {
-			return fmt.Errorf("failed to open AKG database: %w", err)
+			return fmt.Errorf("failed to open AKG database: %w — try 'gmb analyze'", err)
 		}
 
 		snapshot := tm.GetActiveSnapshot()
 		if snapshot == nil || snapshot.Nodes.Len() == 0 {
-			return producterrs.Tagged(fmt.Sprintf("AKG database is empty -- run 'glassmarble analyze' first"), producterrs.ErrEmptySubgraph)
+			if asJSON {
+				out, _ := json.MarshalIndent(map[string]string{"error": "no active AKG database"}, "", "  ")
+				fmt.Println(string(out))
+				return nil
+			}
+			return producterrs.Tagged("AKG database is empty — try 'gmb analyze' first", producterrs.ErrEmptySubgraph)
 		}
 
 		if target == "" {
@@ -59,18 +75,27 @@ var dependencyCmd = &cobra.Command{
 				OutboundEdgeMappings: snapshot.OutboundEdges.Len(),
 				InboundEdgeMappings:  snapshot.InboundEdges.Len(),
 			}
-			var topNodes []topDependencyNode
-			// C6-D11: use Keys() for deterministic early exit (Iterate has no
-			// early-exit; previous done-flag still visited every entry).
+			var allNodes []topDependencyNode
 			keys := snapshot.OutboundEdges.Keys()
 			for _, id := range keys {
-				if len(topNodes) >= 20 {
-					break
-				}
 				if outbound, ok := snapshot.OutboundEdges.Get(id); ok && len(outbound) > 0 {
-					topNodes = append(topNodes, topDependencyNode{ID: id, Outbound: len(outbound)})
+					allNodes = append(allNodes, topDependencyNode{ID: id, Outbound: len(outbound)})
 				}
 			}
+
+			// Sort by outbound degree descending
+			sort.Slice(allNodes, func(i, j int) bool {
+				if allNodes[i].Outbound == allNodes[j].Outbound {
+					return allNodes[i].ID < allNodes[j].ID
+				}
+				return allNodes[i].Outbound > allNodes[j].Outbound
+			})
+
+			topLimit := 20
+			if len(allNodes) < topLimit {
+				topLimit = len(allNodes)
+			}
+			topNodes := allNodes[:topLimit]
 			summary.TopDependencyNodes = topNodes
 
 			if asJSON {
@@ -97,8 +122,10 @@ var dependencyCmd = &cobra.Command{
 		})
 
 		if len(matchingNodes) == 0 {
-			return producterrs.Tagged(fmt.Sprintf("no matching node or file found for '%s'", target), producterrs.ErrEntryNotFound)
+			return producterrs.Tagged(fmt.Sprintf("no matching node or file found for '%s' — try 'gmb inspect --search %s'", target, target), producterrs.ErrEntryNotFound)
 		}
+
+		sort.Strings(matchingNodes)
 
 		var jsonNodes []dependencyNodeJSON
 		if asJSON {
@@ -159,7 +186,6 @@ type topDependencyNode struct {
 }
 
 func init() {
-	dependencyCmd.Flags().String("dir", ".", "Directory path containing the .glassmarble/ database folder")
-	dependencyCmd.Flags().Bool("json", false, "Emit machine-readable JSON instead of the human report")
+	dependencyCmd.Flags().Bool("json", false, "Emit machine-readable JSON output")
 	rootCmd.AddCommand(dependencyCmd)
 }

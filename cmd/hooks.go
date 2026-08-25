@@ -12,15 +12,19 @@ import (
 )
 
 var hooksCmd = &cobra.Command{
-	Use:   "hooks [install|uninstall]",
-	Short: "Install or uninstall Git post-commit hooks for automatic AKG updates",
-	Long:  `Installs a post-commit hook into .git/hooks/ to automatically run 'gmb analyze' after each commit.`,
-	Args:  cobra.ExactArgs(1),
+	Use:       "hooks [install|uninstall]",
+	GroupID:   GroupUtility.ID,
+	Short:     "Install or uninstall Git post-commit hooks for automatic AKG updates",
+	Long:      `Installs a post-commit hook into .git/hooks/ to automatically run 'gmb analyze' after each commit.`,
+	Example:   `  # Install post-commit hook in active repository
+  gmb hooks install
+
+  # Uninstall post-commit hook
+  gmb hooks uninstall`,
+	Args:      cobra.ExactArgs(1),
+	ValidArgs: []string{"install", "uninstall"},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		targetDir, _ := cmd.Flags().GetString("dir")
-		if targetDir == "" {
-			targetDir = "."
-		}
+		targetDir := resolveDir(cmd)
 		absDir, err := filepath.Abs(targetDir)
 		if err != nil {
 			return fmt.Errorf("failed to resolve path: %w", err)
@@ -28,22 +32,18 @@ var hooksCmd = &cobra.Command{
 
 		gitDir := filepath.Join(absDir, ".git", "hooks")
 		if _, err := os.Stat(gitDir); os.IsNotExist(err) {
-			return producterrs.Tagged(fmt.Sprintf("not a git repository or .git/hooks missing at %s", gitDir), producterrs.ErrValidation)
+			return producterrs.Tagged(fmt.Sprintf("not a git repository or .git/hooks missing at %s — try 'git init' first", gitDir), producterrs.ErrValidation)
 		}
 
 		hookPath := filepath.Join(gitDir, "post-commit")
 
 		switch args[0] {
 		case "install":
-			// Use the real binary path and the absolute target directory so the
-			// hook works regardless of CWD and even when gmb is not on PATH.
-			// git hooks run via sh, so the command and dir are quoted.
 			binary, err := os.Executable()
 			if err != nil {
 				return fmt.Errorf("failed to resolve binary path for hook: %w", err)
 			}
 			script := fmt.Sprintf("#!/bin/sh\n# GlassMarble auto-analysis post-commit hook\n%q analyze --dir %q\n", binary, absDir)
-			// C6-3: back up existing non-GlassMarble hook or chain with marker
 			if existing, err := os.ReadFile(hookPath); err == nil {
 				if strings.Contains(string(existing), "# GlassMarble") {
 					// Already managed by GlassMarble — overwrite in place.
@@ -55,10 +55,6 @@ var hooksCmd = &cobra.Command{
 						}
 						fmt.Printf("Existing post-commit hook backed up to %s\n", bakPath)
 					} else {
-						// Backup already exists — chain by appending our hook
-						// after the existing content with a marker, preserving
-						// the user's hook. We still write the new script
-						// separately and leave existing bak for uninstall.
 						chained := string(existing) + "\n" + script
 						if wErr := os.WriteFile(hookPath, []byte(chained), 0755); wErr != nil {
 							return fmt.Errorf("failed to install chained git hook: %w", wErr)
@@ -89,7 +85,6 @@ var hooksCmd = &cobra.Command{
 			if err := os.Remove(hookPath); err != nil {
 				return fmt.Errorf("failed to uninstall git hook: %w", err)
 			}
-			// Restore backup if present
 			bakPath := hookPath + ".gmb.bak"
 			if bakData, err := os.ReadFile(bakPath); err == nil {
 				if wErr := os.WriteFile(hookPath, bakData, 0755); wErr == nil {
@@ -100,7 +95,7 @@ var hooksCmd = &cobra.Command{
 			fmt.Println(views.RenderHooksUninstalled())
 
 		default:
-			return producterrs.Tagged(fmt.Sprintf("unknown hooks subcommand %q (expected install or uninstall)", args[0]), producterrs.ErrValidation)
+			return producterrs.Tagged(fmt.Sprintf("unknown hooks subcommand %q: expected install or uninstall — try 'gmb hooks install' or 'gmb hooks uninstall'", args[0]), producterrs.ErrValidation)
 		}
 
 		return nil
@@ -108,6 +103,5 @@ var hooksCmd = &cobra.Command{
 }
 
 func init() {
-	hooksCmd.Flags().String("dir", ".", "Target repository directory")
 	rootCmd.AddCommand(hooksCmd)
 }

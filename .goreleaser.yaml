@@ -1,0 +1,90 @@
+version: 2
+
+project_name: gmb
+
+before:
+  hooks:
+    - go mod tidy
+    - go run ./cmd/man -o man/man1
+    - go run ./cmd/completions -o completions
+
+builds:
+  - id: gmb
+    binary: gmb
+    main: .
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/Syamchand123/GlassMarble/internal/product.Version={{.Version}}
+      - -X github.com/Syamchand123/GlassMarble/internal/product.Commit={{.Commit}}
+      - -X github.com/Syamchand123/GlassMarble/internal/product.Date={{.Date}}
+      - -X github.com/Syamchand123/GlassMarble/internal/product.BuiltBy=goreleaser
+
+  - id: glassmarble
+    binary: glassmarble
+    main: .
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/Syamchand123/GlassMarble/internal/product.Version={{.Version}}
+      - -X github.com/Syamchand123/GlassMarble/internal/product.Commit={{.Commit}}
+      - -X github.com/Syamchand123/GlassMarble/internal/product.Date={{.Date}}
+      - -X github.com/Syamchand123/GlassMarble/internal/product.BuiltBy=goreleaser
+
+archives:
+  - id: default
+    name_template: "gmb_{{.Version}}_{{.Os}}_{{.Arch}}"
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+      - "man/**/*"
+      - "completions/**/*"
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+signs:
+  - artifacts: checksum
+    cmd: cosign
+    args:
+      - "sign-blob"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+
+sboms:
+  - artifacts: archive
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "Merge pull request"

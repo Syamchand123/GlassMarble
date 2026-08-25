@@ -11,8 +11,8 @@ import (
 //
 //	─ GlassMarble — <commandName> ─────── <subtitle> ─
 func RenderHeader(commandName, subtitle string, width int) string {
-	left := lipgloss.NewStyle().Foreground(tui.ColorPrimary).Bold(true).Render("GlassMarble")
-	cmd := lipgloss.NewStyle().Foreground(tui.ColorTextPrimary).Bold(true).Render(commandName)
+	left := tui.R.NewStyle().Foreground(tui.ColorPrimary).Bold(true).Render("GlassMarble")
+	cmd := tui.R.NewStyle().Foreground(tui.ColorTextPrimary).Bold(true).Render(commandName)
 
 	leftText := "─ " + left + " — " + cmd + " ─"
 	right := tui.StyleMuted.Render(subtitle)
@@ -25,5 +25,5 @@ func RenderHeader(commandName, subtitle string, width int) string {
 		fillLen = 1
 	}
 	fill := tui.StyleDivider.Render(strings.Repeat("─", fillLen))
-	return lipgloss.NewStyle().Foreground(tui.ColorBorder).Render(leftText + fill + right)
+	return tui.R.NewStyle().Foreground(tui.ColorBorder).Render(leftText + fill + right)
 }

@@ -21,8 +21,17 @@ import (
 
 // runMemoryPipeline is the intelligence + memory wiring point (master plan §13.1).
 // It runs architectural intelligence on the committed graph exactly once,
-// then:
-//
+// then: (wrapper with no snapshot opts for backward compat)
+func runMemoryPipeline(storageDir string, tm *akg.AKGTransactionManager, commitHash string, verbose bool) {
+	runMemoryPipelineWithSnapshotOpts(storageDir, tm, commitHash, verbose, false, 0)
+}
+
+func runMemoryPipelineWithSnapshotOpts(storageDir string, tm *akg.AKGTransactionManager, commitHash string, verbose bool, forceNoGraph bool, snapshotKeep int) {
+	// Force NoGraph from CLI flag takes precedence
+	if forceNoGraph {
+		// will be handled in buildAndStoreSnapshot via noGraph param
+	}
+	//
 //  1. persists the intelligence result to .glassmarble/intelligence/latest.json,
 //  2. builds an ArchSnapshot and stores it in .glassmarble/snapshots/
 //     (skip-writes when the topology is unchanged),
@@ -34,8 +43,7 @@ import (
 //
 // The entire phase is non-fatal (§15.6): a failure here warns and continues,
 // because `gmb analyze` must never fail after the graph is committed.
-func runMemoryPipeline(storageDir string, tm *akg.AKGTransactionManager, commitHash string, verbose bool) {
-	graph := tm.GetActiveGraph()
+graph := tm.GetActiveGraph()
 	if graph == nil || graph.Nodes == nil || graph.Nodes.Len() == 0 {
 		return
 	}
@@ -69,7 +77,9 @@ func runMemoryPipeline(storageDir string, tm *akg.AKGTransactionManager, commitH
 	}
 	prevSnap, _ := store.Latest()
 
-	snap, _, err := buildAndStoreSnapshot(filepath.Dir(storageDir), graph, commitHash, res, store, false)
+	// Effective no-graph: CLI flag wins over auto-threshold.
+	effectiveNoGraph := forceNoGraph
+	snap, _, err := buildAndStoreSnapshotWithKeep(filepath.Dir(storageDir), graph, commitHash, res, store, effectiveNoGraph, snapshotKeep)
 	if err != nil {
 		if verbose {
 			tuiPrintf("warning: snapshot build failed: %v\n", err)
@@ -173,15 +183,12 @@ func runIntelligence(graph *akg.CodePropertyGraph, storageDir string, verbose bo
 	return arch_intelligence.NewEngineWithOptions(graph, opts...).Run()
 }
 
-// buildAndStoreSnapshot builds an ArchSnapshot for the committed graph and
-// persists it through store (skip-writing when the topology is unchanged —
-// see SnapshotStore.Create). The snapshot timestamp is the commit's author
-// time (master plan §5.5 / D3), so snapshots and the timeline are ordered by
-// when the change happened, not when analysis ran; uncommitted states (watch
-// mode) fall back to now. The git-history order hint (rev-list --count)
-// keeps same-second commits correctly ordered. Returns the snapshot and
-// whether a file was written.
+// buildAndStoreSnapshot builds an ArchSnapshot (backward compat, no keep override).
 func buildAndStoreSnapshot(repoDir string, graph *akg.CodePropertyGraph, commitHash string, res arch_intelligence.IntelligenceResult, store *arch_timeline.SnapshotStore, noGraph bool) (*archmodel.ArchSnapshot, bool, error) {
+	return buildAndStoreSnapshotWithKeep(repoDir, graph, commitHash, res, store, noGraph, 0)
+}
+
+func buildAndStoreSnapshotWithKeep(repoDir string, graph *akg.CodePropertyGraph, commitHash string, res arch_intelligence.IntelligenceResult, store *arch_timeline.SnapshotStore, noGraph bool, keepOverride int) (*archmodel.ArchSnapshot, bool, error) {
 	ts := time.Now().UTC()
 	var order int64
 	if commitHash != "" && repoDir != "" {
@@ -190,6 +197,23 @@ func buildAndStoreSnapshot(repoDir string, graph *akg.CodePropertyGraph, commitH
 		}
 		if o, err := git.GetCommitOrder(repoDir, commitHash); err == nil {
 			order = o
+		}
+	}
+
+	// Auto-threshold: if caller did not explicitly request NoGraph, consult
+	// intelligence config (RCA-1). Large graphs (>15k nodes or >8 MB) auto-
+	// omit the embedded graph to keep snapshots ~KB instead of 50 MB.
+	if !noGraph {
+		storageDir := filepath.Join(repoDir, ".glassmarble")
+		if cfg, err := loadIntelligenceConfig(storageDir); err == nil {
+			nodes := 0
+			if graph != nil && graph.Nodes != nil {
+				nodes = graph.Nodes.Len()
+			}
+			stateBytes := int64(nodes * 1300) // avg compact bytes/node
+			if cfg.SnapshotShouldOmitGraph(nodes, stateBytes) {
+				noGraph = true
+			}
 		}
 	}
 
@@ -207,7 +231,19 @@ func buildAndStoreSnapshot(repoDir string, graph *akg.CodePropertyGraph, commitH
 	if err != nil {
 		return nil, false, err
 	}
-	wrote, err := store.Create(snap)
+	// Retention cap from intelligence config (P1), CLI override wins.
+	maxCount := 0
+	if keepOverride > 0 {
+		maxCount = keepOverride
+	} else if cfg, err := loadIntelligenceConfig(filepath.Join(repoDir, ".glassmarble")); err == nil && cfg.SnapshotMaxCount > 0 {
+		maxCount = cfg.SnapshotMaxCount
+	}
+	var wrote bool
+	if maxCount > 0 {
+		wrote, err = store.CreateWithOptions(snap, arch_timeline.SnapshotCreateOptions{MaxCount: maxCount})
+	} else {
+		wrote, err = store.Create(snap)
+	}
 	if err != nil {
 		return nil, false, err
 	}
@@ -226,7 +262,7 @@ func writeIntelligenceLatest(storageDir string, res arch_intelligence.Intelligen
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(res, "", "  ")
+	data, err := json.Marshal(res)
 	if err != nil {
 		return err
 	}

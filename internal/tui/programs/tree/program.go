@@ -15,11 +15,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-const (
-	width  = 80
-	height = 24
-)
-
 // Config carries the already-built tree lines from cmd/tree.go. The program
 // only styles and scrolls them; building stays in the command.
 type Config struct {
@@ -31,21 +26,30 @@ type Config struct {
 
 type model struct {
 	viewport viewport.Model
+	help     components.HelpOverlay
 	lines    []string
 	depth    int
+	width    int
+	height   int
 }
 
 // Run launches the tree viewport program.
 func Run(cfg Config) error {
 	m := newModel(cfg)
-	p := tea.NewProgram(m, tea.WithOutput(cfg.Out), tea.WithInput(cfg.In))
+	p := tea.NewProgram(m, tea.WithOutput(cfg.Out), tea.WithInput(cfg.In), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err
 }
 
 func newModel(cfg Config) *model {
-	m := &model{lines: cfg.Lines, depth: cfg.Depth}
-	m.viewport = components.NewGMViewport(width, height-3)
+	m := &model{
+		lines:  cfg.Lines,
+		depth:  cfg.Depth,
+		width:  80,
+		height: 24,
+		help:   components.NewHelpOverlay(tui.DefaultKeyMap()),
+	}
+	m.viewport = components.NewGMViewport(80, 20)
 	m.viewport.SetContent(components.StyleViewportContent(strings.Join(colorize(cfg.Lines), "\n")))
 	return m
 }
@@ -53,10 +57,29 @@ func newModel(cfg Config) *model {
 func (m *model) Init() tea.Cmd { return nil }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok {
-		switch key.String() {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = maxInt(40, msg.Width)
+		m.height = maxInt(10, msg.Height)
+		m.viewport.Width = m.width - 4
+		m.viewport.Height = maxInt(5, m.height-6)
+		return m, nil
+	case tea.KeyMsg:
+		if m.help.Visible && msg.String() != "?" && msg.String() != "q" && msg.String() != "esc" {
+			m.help.Visible = false
+		}
+		switch msg.String() {
+		case "?":
+			m.help.Toggle()
+			return m, nil
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "g", "home":
+			m.viewport.GotoTop()
+			return m, nil
+		case "G", "end":
+			m.viewport.GotoBottom()
+			return m, nil
 		}
 	}
 	var cmd tea.Cmd
@@ -65,14 +88,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) View() string {
-	header := components.RenderHeader("Architecture Workspace Tree", fmt.Sprintf("depth: %d", m.depth), width)
+	if m.help.Visible {
+		return m.help.View()
+	}
+	w := maxInt(40, m.width)
+	header := components.RenderHeader("Architecture Workspace Tree", fmt.Sprintf("depth: %d", m.depth), w)
 	status := components.RenderStatusBar(
 		components.JoinKeyHints(
+			components.KeyHint("↑↓/jk", "scroll"),
+			components.KeyHint("g/G", "top/bottom"),
+			components.KeyHint("?", "help"),
 			components.KeyHint("q", "quit"),
-			components.KeyHint("↑↓", "scroll"),
 		),
 		components.ScrollPosition(m.viewport),
-		width,
+		w,
 	)
 	return lipgloss.JoinVertical(lipgloss.Left, header, m.viewport.View(), status)
 }
@@ -92,7 +121,6 @@ func colorizeLine(line string) string {
 	case strings.HasPrefix(line, "├── "):
 		return tui.StylePrimaryText.Bold(true).Render(line)
 	case strings.HasPrefix(line, "│   └── "):
-		// Symbol line: "│   └── name [KIND]" or "│   └── name [KIND] <PRIM>".
 		head := line
 		branch := "│   └── "
 		if idx := strings.Index(line, branch); idx >= 0 {
@@ -105,8 +133,6 @@ func colorizeLine(line string) string {
 	return tui.StyleTextSecondary.Render(line)
 }
 
-// colorizeSymbol styles "name [KIND]" and an optional "<PRIMITIVE>" suffix:
-// the symbol name in primary, the kind tag dim, and the primitive as a badge.
 func colorizeSymbol(sym string) string {
 	var prim string
 	if pIdx := strings.Index(sym, " <"); pIdx >= 0 && strings.HasSuffix(sym, ">") {
@@ -141,4 +167,11 @@ func primitiveBadge(p string) string {
 	default:
 		return tui.BadgeOK.Render("  " + p + "  ")
 	}
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

@@ -14,15 +14,15 @@
 # existing comment rather than creating a new one.
 #
 # Tree-sitter grammars are the pure-Go bindings (github.com/tree-sitter/
-# go-tree-sitter), so CGO is NOT required. go.mod requires go 1.26.4 —
-# '1.26' resolves to the latest 1.26.x patch.
+# go-tree-sitter), so CGO is NOT required. go.mod is the single source of
+# truth for the toolchain — workflows use go-version-file: go.mod.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: GlassMarble AKG PR Architecture Comment
 
 on:
   pull_request:
-    branches: [main, master, develop, feature/overhaul]
+    branches: [main, master, dev]
     types: [opened, synchronize, reopened]
 
 # Cancel any in-progress run for the same PR to avoid stale comments.
@@ -34,15 +34,14 @@ permissions:
   contents: read
   pull-requests: write
 
-env:
-  GO_VERSION: "1.26"
-
-# ─────────────────────────────────────────────────────────────────────────────
 jobs:
 
   akg-diff:
     name: "Architecture Knowledge Graph Diff"
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: 0
 
     steps:
       # ── Checkout ────────────────────────────────────────────────────────────
@@ -52,11 +51,16 @@ jobs:
         with:
           fetch-depth: 0
 
-      # ── Go toolchain ────────────────────────────────────────────────────────
+      - name: Configure Git for worktree
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@glassmarble.local"
+
+      # ── Go toolchain (pinned to go.mod) ─────────────────────────────────────
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           cache: true
 
       - name: Download modules
@@ -67,6 +71,7 @@ jobs:
         run: |
           go build -o "$GITHUB_WORKSPACE/gmb" .
           chmod +x "$GITHUB_WORKSPACE/gmb"
+          "$GITHUB_WORKSPACE/gmb" version
 
       # ── Base snapshot (merge-base commit) ──────────────────────────────────
       # Use git worktree to analyse the merge-base without discarding the
@@ -77,31 +82,60 @@ jobs:
       - name: Compute merge-base SHA
         id: base
         run: |
-          BASE_SHA=$(git merge-base "origin/${{ github.base_ref }}" HEAD)
-          echo "sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
-          echo "Merge-base: $BASE_SHA"
+          set -e
+          # Ensure base branch is fetched (forked PRs may not have it)
+          git fetch origin "${{ github.base_ref }}" --depth=50 || git fetch origin --depth=50
+          BASE_SHA=$(git merge-base "origin/${{ github.base_ref }}" HEAD 2>/dev/null || git merge-base "origin/main" HEAD 2>/dev/null || echo "")
+          if [ -z "$BASE_SHA" ]; then
+            echo "sha=" >> "$GITHUB_OUTPUT"
+            echo "::warning::Could not compute merge-base, will skip base analysis"
+          else
+            echo "sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+            echo "Merge-base: $BASE_SHA"
+          fi
 
       - name: Analyse base snapshot (merge-base)
+        if: steps.base.outputs.sha != ''
         run: |
+          set -e
+          rm -rf /tmp/gm-base
           git worktree add --detach /tmp/gm-base "${{ steps.base.outputs.sha }}"
           cd /tmp/gm-base
           # Analyse; soft-failure so partial graphs still produce a diff
+          set +e
           "$GITHUB_WORKSPACE/gmb" analyze --dir . --full --intelligence=false --json \
-            > /tmp/base-analysis.json 2>&1 || \
-            echo "::warning::Base analysis completed with errors (partial graph may be used)"
+            > /tmp/base-analysis.json 2>&1
+          ANALYZE_RC=$?
+          set -e
+          if [ $ANALYZE_RC -ne 0 ]; then
+            echo "::warning::Base analysis exited $ANALYZE_RC (partial graph may be used)"
+            cat /tmp/base-analysis.json || true
+          fi
           "$GITHUB_WORKSPACE/gmb" export --dir . --output /tmp/base.json 2>&1 || \
             echo "::warning::Base export failed — diff will show all head symbols as new"
           cd "$GITHUB_WORKSPACE"
-          git worktree remove --force /tmp/gm-base
+          git worktree remove --force /tmp/gm-base || true
+          rm -rf /tmp/gm-base
+
+      - name: Analyse base fallback (no merge-base)
+        if: steps.base.outputs.sha == ''
+        run: |
+          echo '{"base_commit":"(unavailable)","head_commit":"(unavailable)","nodes_added":[],"nodes_removed":[],"edges_added":[],"edges_removed":[],"files_changed":[]}' > /tmp/base.json
+          echo "::warning::Skipped base analysis due to missing merge-base"
 
       # ── Head snapshot (PR branch) ──────────────────────────────────────────
       - name: Analyse head snapshot (PR branch)
         run: |
+          set -e
+          rm -rf .glassmarble
           "$GITHUB_WORKSPACE/gmb" analyze --dir . --full --intelligence=false --json \
             > /tmp/head-analysis.json 2>&1 || \
             echo "::warning::Head analysis completed with errors (partial graph may be used)"
+          cat /tmp/head-analysis.json || true
           "$GITHUB_WORKSPACE/gmb" export --dir . --output /tmp/head.json 2>&1 || \
             echo "::warning::Head export failed — diff will be empty"
+          # Clean up large .glassmarble to save runner disk
+          rm -rf .glassmarble || true
 
       # ── Compute architectural diff ─────────────────────────────────────────
       # Write a safe JSON file; if gmb compare itself fails we fall back to an
@@ -111,12 +145,23 @@ jobs:
       - name: Compute architectural diff (gmb compare)
         id: diff
         run: |
+          set -e
           DIFF_FILE=/tmp/diff.json
 
           if [ -f /tmp/base.json ] && [ -f /tmp/head.json ]; then
-            "$GITHUB_WORKSPACE/gmb" compare /tmp/base.json /tmp/head.json --json \
-              > "$DIFF_FILE" 2>&1 \
-              || echo "::warning::gmb compare exited non-zero; using partial diff"
+            if "$GITHUB_WORKSPACE/gmb" compare /tmp/base.json /tmp/head.json --json \
+              > "$DIFF_FILE" 2>&1; then
+              echo "Compare succeeded"
+            else
+              echo "::warning::gmb compare exited non-zero; using partial diff"
+              cat "$DIFF_FILE" || true
+              # Ensure file is still valid JSON, fallback if not
+              if ! python3 -c "import json; json.load(open('$DIFF_FILE'))" 2>/dev/null; then
+                cat > "$DIFF_FILE" <<'EOF'
+          {"base_commit":"(unavailable)","head_commit":"(unavailable)","nodes_added":[],"nodes_removed":[],"edges_added":[],"edges_removed":[],"files_changed":[]}
+          EOF
+              fi
+            fi
           else
             # Emit a well-formed empty diff so the comment step always runs.
             cat > "$DIFF_FILE" <<'EOF'
@@ -125,8 +170,9 @@ jobs:
           fi
 
           # Validate the output is parseable JSON before proceeding.
-          python3 -c "import sys, json; json.load(open('$DIFF_FILE'))" \
-            || ( echo "::error::diff.json is not valid JSON"; cat "$DIFF_FILE"; exit 1 )
+          python3 -c "import json; json.load(open('/tmp/diff.json'))" \
+            || ( echo "::error::diff.json is not valid JSON"; cat "/tmp/diff.json"; exit 1 )
+          echo "Diff validated, size: $(wc -c < /tmp/diff.json) bytes"
 
       # Upload the raw diff JSON as an artifact for debugging / downstream use.
       - name: Upload diff artifact
@@ -136,6 +182,7 @@ jobs:
           name: akg-diff-pr-${{ github.event.pull_request.number }}
           path: /tmp/diff.json
           retention-days: 14
+          if-no-files-found: warn
 
       # ── Post PR comment ────────────────────────────────────────────────────
       # The diff JSON is read from the uploaded file inside the script rather

@@ -10,6 +10,9 @@ import (
 // snapshot" phrase is preserved for tests.
 func RenderExportSuccess(format, path string, nodeCount int, sizeBytes int64) string {
 	formatBadge := tui.BadgeInfo.Render("  GraphJSON (.json)  ")
+	if format == "neo4j" || format == "cypher" {
+		formatBadge = tui.BadgeInfo.Render("  Neo4j Cypher (.cypher)  ")
+	}
 	rows := []string{
 		tui.StyleOK.Render("  ✓  Exported AKG snapshot (" + itoa(nodeCount) + " nodes)"),
 		"",

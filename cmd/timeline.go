@@ -14,36 +14,39 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// timelineCmd shows the architecture evolution timeline (master plan §5.5 /
-// architecture timeline). It reads the developer memory fast path (.glassmarble/memory/)
-// directly — no AKG replay, so the command stays well under the 200ms budget.
 var timelineCmd = &cobra.Command{
-	Use:   "timeline",
-	Short: "Show the architecture evolution timeline",
-	Long: `Renders the chronological story of the architecture, taken from the
-developer memory (.glassmarble/memory/timeline.json). Reasons are never
-invented: entries only appear when an architectural event was actually
-recorded by an analysis run.
+	Use:     "timeline",
+	GroupID: GroupGovern.ID,
+	Short:   "Show the architecture evolution timeline",
+	Long: `Renders the chronological story of the architecture, taken from developer memory
+(.glassmarble/memory/timeline.json).
 
-Flags:
-  --component NAME  only entries touching a component (substring match)
-  --from <date|ref> start of the window (ISO date, or a git ref whose author
-                    timestamp is used; default: 6 months ago)
-  --to   <date|ref> end of the window (default: now)
-  --format text|json|mermaid
-  --full            verbose text output (commit, kind, components, tags)
+Reasons and event entries are recorded automatically during analysis runs when architectural
+changes, refactorings, or ADRs occur.`,
+	Example: `  # Display full architecture timeline
+  gmb timeline
 
-Run 'gmb analyze' (or 'gmb watch') to populate the timeline.`,
+  # Filter timeline by component name
+  gmb timeline --component auth
+
+  # Filter by date range or git tag
+  gmb timeline --from 2026-01-01 --to HEAD
+
+  # Output timeline as Mermaid diagram or JSON
+  gmb timeline --format mermaid
+  gmb timeline --json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dir, _ := cmd.Flags().GetString("dir")
-		if dir == "" {
-			dir = "."
-		}
+		dir := resolveDir(cmd)
 		fromStr, _ := cmd.Flags().GetString("from")
 		toStr, _ := cmd.Flags().GetString("to")
 		component, _ := cmd.Flags().GetString("component")
 		format, _ := cmd.Flags().GetString("format")
+		asJSON, _ := cmd.Flags().GetBool("json")
 		full, _ := cmd.Flags().GetBool("full")
+
+		if asJSON {
+			format = "json"
+		}
 
 		absDir, err := filepath.Abs(dir)
 		if err != nil {
@@ -52,14 +55,19 @@ Run 'gmb analyze' (or 'gmb watch') to populate the timeline.`,
 		store := developer_memory.NewStoreForRepo(absDir)
 		mem, err := store.LoadMemory()
 		if err != nil {
-			return fmt.Errorf("failed to load developer memory: %w", err)
+			return fmt.Errorf("failed to load developer memory: %w — try 'gmb analyze'", err)
 		}
 		if mem == nil || mem.TotalEvents == 0 {
+			if format == "json" {
+				out, _ := json.MarshalIndent([]archmodel.TimelineEntry{}, "", "  ")
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
+				return nil
+			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Developer memory is empty. Run 'gmb analyze' to start recording architectural events.")
 			return nil
 		}
 
-		// Default window: the last six months (master plan §5.5).
+		// Default window: the last six months
 		from := time.Now().UTC().AddDate(0, -6, 0)
 		if fromStr != "" {
 			f, err := parseTimeArg(absDir, fromStr)
@@ -101,15 +109,12 @@ Run 'gmb analyze' (or 'gmb watch') to populate the timeline.`,
 				fmt.Fprint(cmd.OutOrStdout(), arch_timeline.RenderTimeline(entries))
 			}
 		default:
-			return fmt.Errorf("unknown format %q (want text, json or mermaid)", format)
+			return fmt.Errorf("unknown format %q (want text, json or mermaid) — try 'gmb timeline --format mermaid'", format)
 		}
 		return nil
 	},
 }
 
-// parseTimeArg interprets an argument as an ISO date (RFC3339, "2006-01-02
-// 15:04:05", "2006-01-02 15:04" or "2006-01-02") or as a git ref resolved to
-// its author timestamp (D4).
 func parseTimeArg(repoDir, s string) (time.Time, error) {
 	layouts := []string{time.RFC3339, "2006-01-02 15:04:05", "2006-01-02 15:04", "2006-01-02"}
 	for _, l := range layouts {
@@ -120,11 +125,9 @@ func parseTimeArg(repoDir, s string) (time.Time, error) {
 	if t, err := git.GetCommitTimestamp(repoDir, s); err == nil {
 		return t, nil
 	}
-	return time.Time{}, fmt.Errorf("cannot parse %q as an ISO date or a git ref", s)
+	return time.Time{}, fmt.Errorf("cannot parse %q as an ISO date or git ref — try 'YYYY-MM-DD' or 'HEAD~1'", s)
 }
 
-// filterTimelineWindow keeps the entries within [from, to]; a zero from
-// means the beginning, a zero to means now.
 func filterTimelineWindow(entries []archmodel.TimelineEntry, from, to time.Time) []archmodel.TimelineEntry {
 	if to.IsZero() {
 		to = time.Now()
@@ -139,11 +142,16 @@ func filterTimelineWindow(entries []archmodel.TimelineEntry, from, to time.Time)
 }
 
 func init() {
-	timelineCmd.Flags().String("dir", ".", "Directory containing the .glassmarble/ database")
-	timelineCmd.Flags().String("component", "", "Only entries touching a component (substring match)")
+	timelineCmd.Flags().String("component", "", "Filter entries touching a specific component (case-insensitive substring)")
 	timelineCmd.Flags().String("from", "", "Window start: ISO date or git ref (default: 6 months ago)")
 	timelineCmd.Flags().String("to", "", "Window end: ISO date or git ref (default: now)")
-	timelineCmd.Flags().String("format", "text", "Output format: text, json or mermaid")
-	timelineCmd.Flags().Bool("full", false, "Verbose text output with commit, kind, components and tags")
+	timelineCmd.Flags().String("format", "text", "Output format: text|json|mermaid")
+	timelineCmd.Flags().Bool("json", false, "Emit machine-readable JSON output (alias for --format json)")
+	timelineCmd.Flags().Bool("full", false, "Verbose text output with commit, kind, components, and tags")
+
+	_ = timelineCmd.RegisterFlagCompletionFunc("format", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"text", "json", "mermaid"}, cobra.ShellCompDirectiveNoFileComp
+	})
+
 	rootCmd.AddCommand(timelineCmd)
 }

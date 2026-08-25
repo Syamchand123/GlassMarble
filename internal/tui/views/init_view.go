@@ -7,8 +7,9 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 )
 
-// RenderInitSuccess renders the post-`gmb init` success card.
+// RenderInitSuccess renders the post-`gmb init` success card with the logo banner and actionable next steps.
 func RenderInitSuccess(gmDir string, gitignoreUpdated bool) string {
+	banner := tui.RenderLogoBanner()
 	rows := []string{
 		tui.StyleH2.Render("  ✓  GlassMarble Workspace Initialized"),
 		"",
@@ -21,7 +22,11 @@ func RenderInitSuccess(gmDir string, gitignoreUpdated bool) string {
 	}
 	rows = append(rows,
 		"",
-		tui.StyleMuted.Render("  Next step: gmb analyze"),
+		"  "+tui.Divider("Next Steps", 48),
+		"  " + tui.StyleAccent.Render("1. ") + tui.StyleCode.Render("gmb doctor") + tui.StyleMuted.Render("         — Verify environment & parsers"),
+		"  " + tui.StyleAccent.Render("2. ") + tui.StyleCode.Render("gmb analyze") + tui.StyleMuted.Render("        — Ingest & construct knowledge graph"),
+		"  " + tui.StyleAccent.Render("3. ") + tui.StyleCode.Render("gmb visualize list") + tui.StyleMuted.Render(" — Explore available diagram types"),
 	)
-	return tui.StyleCard.Render("  " + joinLines(rows))
+	card := tui.StyleCard.Render("  " + joinLines(rows))
+	return banner + "\n" + card
 }

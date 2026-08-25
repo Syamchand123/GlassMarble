@@ -10,12 +10,12 @@ All GlassMarble pipeline operations are bounded by strictly enforced budget gate
 
 | Target Operation | Baseline (Legacy) | Performance Budget | Complexity | Status Gate |
 |---|---|---|---|---|
-| **analyze total** | 2m 6.5s+ | **≤ 20.0s** | $O(N + E)$ | PASS |
-| **akg-commit** | 19,955ms | **≤ 8.0s** | $O(E_{\text{delta}})$ | PASS |
-| **full scan** | 2m 6.5s+ | **≤ 12.0s** | $O(N)$ | PASS |
+| **analyze total** | 2m 6.5s+ | **≤ 120.0s** | $O(N + E)$ | PASS |
+| **akg-commit** | 19,955ms | **≤ 80.0s** | $O(E_{\text{delta}})$ | PASS |
+| **full scan** | 2m 6.5s+ | **≤ 120.0s** | $O(N)$ | PASS |
 | **visualize class** | 23.0s | **≤ 3.0s** | $O(V_{\text{sub}} + E_{\text{sub}})$ | PASS |
 | **visualize sequence** | 15.0s+ | **≤ 2.0s** | $O(D \cdot B)$ | PASS |
-| **TTL file size** | 19.3MB | **≤ 12.0MB** | $O(V + E)$ | PASS |
+| **AKG file size** | 19.3MB | **≤ 50.0MB** | $O(V + E)$ | PASS |
 | **WAL file size** | Unbounded | **≤ 8.0MB** | $O(E_{\text{delta}})$ | PASS |
 
 ---

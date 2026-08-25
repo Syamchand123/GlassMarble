@@ -10,6 +10,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/aiconfig"
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/provider"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/charmbracelet/huh"
 )
 
@@ -89,7 +90,7 @@ func Run(registry []provider.Meta, current *aiconfig.Config, in io.Reader, out i
 	).
 		WithInput(in).
 		WithOutput(out).
-		WithTheme(huh.ThemeBase())
+		WithTheme(tui.HuhTheme())
 
 	if err := form.Run(); err != nil {
 		return nil, err

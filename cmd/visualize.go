@@ -11,6 +11,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -52,10 +53,32 @@ var (
 )
 
 var visualizeCmd = &cobra.Command{
-	Use:   "visualize [diagram_type]",
-	Short: "Generate visual architecture diagrams (marbles) from the AKG",
-	Long:  `Queries the canonical AKG state database (akg.json) and projects the graph layout into Mermaid.js, PlantUML, or DOT format.`,
-	Args:  cobra.RangeArgs(1, 2),
+	Use:     "visualize [diagram_type]",
+	Aliases: []string{"viz"},
+	GroupID: GroupVisualize.ID,
+	Short:   "Generate visual architecture diagrams (marbles) from the AKG",
+	Long: `Queries the canonical AKG state database (akg.json) and projects the graph layout
+into Mermaid.js, PlantUML, or DOT markup format.
+
+Run 'gmb visualize list' to view all 31 supported diagram types.`,
+	Example: `  # Generate class diagram in Mermaid format
+  gmb visualize class
+
+  # Generate sequence diagram with an entry point symbol
+  gmb visualize sequence --entry "cmd/root.go::Execute"
+
+  # Generate C4 container diagram in PlantUML format
+  gmb visualize c4container --format plantuml
+
+  # Scope diagram to a specific package directory
+  gmb visualize class --scope folder:internal/app
+
+  # List all 31 supported diagram types
+  gmb visualize list
+
+  # Output diagram markup and graph summary as JSON
+  gmb visualize dependency --json`,
+	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		diagName := args[0]
 		if diagName == "list" {
@@ -64,25 +87,33 @@ var visualizeCmd = &cobra.Command{
 		}
 		if diagName == "check" {
 			if len(args) < 2 {
-				return producterrs.Tagged("usage: gmb visualize check <diagram_type>", producterrs.ErrValidation)
+				return producterrs.Tagged("usage: gmb visualize check <diagram_type> — try 'gmb visualize list'", producterrs.ErrValidation)
 			}
 			return printDiagramTypeCheck(cmd, args[1])
 		}
 
 		diagType, err := parseDiagramTypeByName(diagName)
 		if err != nil {
-			return producterrs.Tagged(fmt.Sprintf("unsupported diagram type '%s'", diagName), producterrs.ErrValidation)
+			return producterrs.Tagged(fmt.Sprintf("unsupported diagram type '%s' — try 'gmb visualize list' to see all 31 supported types", diagName), producterrs.ErrValidation)
 		}
 
 		// Ensure we require entry point for sequence diagrams
 		if diagType == types.UMLSequence && entryPointID == "" {
-			return producterrs.Tagged(fmt.Sprintf("entry point ID (--entry) is mandatory for UML Sequence diagrams"), producterrs.ErrEntryMissing)
+			return producterrs.Tagged("entry point ID (--entry) is mandatory for UML Sequence diagrams — try 'gmb visualize sequence --entry <symbol_id>'", producterrs.ErrEntryMissing)
 		}
+
+		storagePath = resolveDir(cmd)
+		asJSON, _ := cmd.Flags().GetBool("json")
 
 		// Resolve the canonical state path (Phase C: akg.json).
 		statePath := filepath.Join(storagePath, ".glassmarble", "akg.json")
 		if _, err := os.Stat(statePath); os.IsNotExist(err) {
-			return fmt.Errorf("active AKG database not found at %s. Please run analysis first", statePath)
+			if asJSON {
+				out, _ := json.MarshalIndent(map[string]string{"error": "no active AKG database"}, "", "  ")
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
+				return nil
+			}
+			return producterrs.Tagged(fmt.Sprintf("active AKG database not found at %s — try 'gmb analyze' first", statePath), producterrs.ErrEmptySubgraph)
 		}
 
 		start := time.Now()
@@ -136,7 +167,7 @@ var visualizeCmd = &cobra.Command{
 			}
 		}
 
-		if renderFlag == "" && tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout()) {
+		if !asJSON && renderFlag == "" && tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout()) {
 			return visualizeprog.Run(visualizeprog.Config{
 				DiagType:    diagType,
 				StatePath:   statePath,
@@ -151,13 +182,15 @@ var visualizeCmd = &cobra.Command{
 			})
 		}
 
-		// Non-interactive fallback: report pipeline phases to stderr
-		opts.OnProgress = func(step, detail string) {
-			msg := step
-			if detail != "" {
-				msg += " " + detail
+		// Non-interactive fallback: report pipeline phases to stderr (suppressed under --json)
+		if !asJSON {
+			opts.OnProgress = func(step, detail string) {
+				msg := step
+				if detail != "" {
+					msg += " " + detail
+				}
+				fmt.Fprintf(os.Stderr, "%s...\n", msg)
 			}
-			fmt.Fprintf(os.Stderr, "%s...\n", msg)
 		}
 
 		// Generate Diagram Markup (Marble) via unified pipeline entry (V-11 / 11.1)
@@ -187,12 +220,31 @@ var visualizeCmd = &cobra.Command{
 				graphSummary = res.Summary
 			}
 		}
-		fmt.Fprintf(os.Stderr, "Done in %.1fs\n", time.Since(start).Seconds())
+		if !asJSON {
+			fmt.Fprintf(os.Stderr, "Done in %.1fs\n", time.Since(start).Seconds())
+		}
 		if err != nil {
 			// C6-6: propagate original error taxonomy; only renderer-unavailable
 			// paths are classified as ErrRenderLimit (exit 4). This preserves
 			// ErrEmptySubgraph (3), ErrEntryMissing (2), ErrValidation (1).
 			return fmt.Errorf("failed to generate diagram: %w", err)
+		}
+
+		if asJSON {
+			type visualizeJSON struct {
+				DiagramType string              `json:"diagram_type"`
+				Format      string              `json:"format"`
+				Markup      string              `json:"markup"`
+				Summary     *types.GraphSummary `json:"summary,omitempty"`
+			}
+			out, _ := json.MarshalIndent(visualizeJSON{
+				DiagramType: string(diagType),
+				Format:      formatFlag,
+				Markup:      markup,
+				Summary:     graphSummary,
+			}, "", "  ")
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
+			return nil
 		}
 
 		// Print summary before diagram if requested
@@ -611,7 +663,6 @@ func init() {
 	visualizeCmd.Flags().StringVar(&entryPointID, "entry", "", "Execution entry point symbol ID (mandatory for sequence diagrams)")
 	visualizeCmd.Flags().IntVar(&maxDepth, "depth", 7, "Maximum search depth limit for reachability path walk")
 	visualizeCmd.Flags().BoolVar(&includeUnused, "unused", false, "Include unreferenced dead components in the layout")
-	visualizeCmd.Flags().StringVar(&storagePath, "dir", ".", "Directory path containing the .glassmarble/ database folder")
 	visualizeCmd.Flags().StringVar(&saveFile, "save", "", "Save the diagram to a markdown file inside .glassmarble/marbles/")
 	visualizeCmd.Flags().StringVar(&formatFlag, "format", "mermaid", "Output format: mermaid, plantuml, dot, or html")
 	visualizeCmd.Flags().StringVar(&themeFlag, "theme", "modern", "Color palette theme: modern, dark, nordic, forest, or mono")
@@ -622,12 +673,39 @@ func init() {
 	visualizeCmd.Flags().BoolVar(&pagerankFlag, "pagerank", false, "Enable PageRank computation")
 	visualizeCmd.Flags().BoolVar(&communityFlag, "community", false, "Enable community detection")
 	visualizeCmd.Flags().BoolVar(&sccFlag, "scc", false, "Enable strongly connected components analysis")
-	visualizeCmd.Flags().StringVar(&renderFlag, "render", "", "Render the diagram to an image file (.svg or .png) via Kroki or mermaid-cli")
+	visualizeCmd.Flags().StringVar(&renderFlag, "render", "", "Render diagram to image file (.svg or .png) via Kroki or mermaid-cli")
 	visualizeCmd.Flags().IntVar(&maxNodesFlag, "max-nodes", 0, "Maximum number of nodes to include in diagram (0 = unlimited)")
 	visualizeCmd.Flags().StringSliceVar(&changedFiles, "changed-files", nil, "Comma-separated list of changed files for impact analysis")
 	visualizeCmd.Flags().BoolVar(&relativeFlag, "relative", false, "Render file/symbol paths relative to folder root under folder scope")
 	visualizeCmd.Flags().StringVar(&linkLevelFlag, "link-level", "architecture", "Detail level of graph linkage: architecture, standard, or full")
 	visualizeCmd.Flags().BoolVar(&includeTestsFlag, "include-tests", false, "Include test files (*_test.go) and test functions in diagram")
+	visualizeCmd.Flags().Bool("json", false, "Emit machine-readable JSON output containing diagram markup and summary")
+
+	visualizeCmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		if len(args) == 0 {
+			typesList := types.AllDiagramTypes()
+			res := make([]string, 0, len(typesList)+2)
+			res = append(res, "list", "check")
+			for _, t := range typesList {
+				res = append(res, string(t))
+			}
+			return res, cobra.ShellCompDirectiveNoFileComp
+		}
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+
+	_ = visualizeCmd.RegisterFlagCompletionFunc("format", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"mermaid", "plantuml", "dot", "html"}, cobra.ShellCompDirectiveNoFileComp
+	})
+	_ = visualizeCmd.RegisterFlagCompletionFunc("theme", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"modern", "dark", "nordic", "forest", "mono"}, cobra.ShellCompDirectiveNoFileComp
+	})
+	_ = visualizeCmd.RegisterFlagCompletionFunc("direction", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"auto", "TB", "LR", "TD"}, cobra.ShellCompDirectiveNoFileComp
+	})
+	_ = visualizeCmd.RegisterFlagCompletionFunc("link-level", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"architecture", "standard", "full"}, cobra.ShellCompDirectiveNoFileComp
+	})
 
 	rootCmd.AddCommand(visualizeCmd)
 }

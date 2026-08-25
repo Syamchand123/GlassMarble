@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
@@ -20,11 +19,6 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-)
-
-const (
-	width  = 80
-	height = 24
 )
 
 // Config carries the command inputs into the program. Business logic stays in
@@ -58,59 +52,63 @@ type generateDoneMsg struct {
 
 type generateErrMsg struct{ err error }
 
+type generateProgressMsg string
+
+type saveDoneMsg struct {
+	path string
+}
+
+type saveErrMsg struct {
+	err error
+}
+
 type model struct {
 	cfg      Config
 	spinner  components.GMSpinner
 	viewport viewport.Model
+	help     components.HelpOverlay
 
 	state     state
-	mu        sync.Mutex
 	progress  string
 	markup    string
 	summary   *types.GraphSummary
 	duration  time.Duration
 	savedPath string
 	err       error
+	width     int
+	height    int
 }
 
-// Run launches the program. Progress is forwarded to the spinner label by the
-// worker goroutine via a shared mutex-protected field, so no tea messages are
-// needed for streaming phases.
+// Run launches the program.
 func Run(cfg Config) error {
 	m := newModel(cfg)
-	p := tea.NewProgram(m, tea.WithOutput(cfg.Out), tea.WithInput(cfg.In))
+	p := tea.NewProgram(m, tea.WithOutput(cfg.Out), tea.WithInput(cfg.In), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err
 }
 
 func newModel(cfg Config) *model {
 	m := &model{
-		cfg:     cfg,
-		spinner: components.NewGMSpinner("Preparing..."),
-		state:   stateLoading,
+		cfg:      cfg,
+		spinner:  components.NewGMSpinner("Preparing..."),
+		state:    stateLoading,
+		width:    80,
+		height:   24,
+		viewport: components.NewGMViewport(80, 18),
+		help:     components.NewHelpOverlay(tui.DefaultKeyMap()),
 	}
-	m.viewport = components.NewGMViewport(width, height-6)
 	return m
 }
 
 func (m *model) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick(), m.generate())
+	return tea.Batch(m.spinner.Tick(), m.generateCmd())
 }
 
-func (m *model) generate() tea.Cmd {
+func (m *model) generateCmd() tea.Cmd {
 	return func() tea.Msg {
 		opts := m.cfg.Opts
 		var summary *types.GraphSummary
 		opts.OnSummary = func(s *types.GraphSummary) { summary = s }
-		opts.OnProgress = func(step, detail string) {
-			msg := step
-			if detail != "" {
-				msg += " " + detail
-			}
-			m.mu.Lock()
-			m.progress = msg
-			m.mu.Unlock()
-		}
 		start := time.Now()
 		req := product.DiagramRequest{
 			StatePath:     m.cfg.StatePath,
@@ -122,10 +120,6 @@ func (m *model) generate() tea.Cmd {
 			Depth:         opts.MaxDepth,
 			IncludeUnused: opts.IncludeUnused,
 			Format:        opts.Format,
-			OnProgress:    opts.OnProgress,
-			// Forward the --link-level flag so TUI-launched diagrams run at
-			// the requested linkage level, not the architecture default
-			// (GAP-H-05).
 			Options: product.DiagramOptions{
 				LinkLevel:     opts.LinkLevel,
 				Scope:         opts.Scope,
@@ -147,16 +141,71 @@ func (m *model) generate() tea.Cmd {
 	}
 }
 
+func (m *model) saveCmd() tea.Cmd {
+	return func() tea.Msg {
+		fileName := m.cfg.SaveFile
+		if !strings.HasSuffix(fileName, ".md") {
+			fileName += ".md"
+		}
+		marblesDir := filepath.Join(m.cfg.StoragePath, ".glassmarble", "marbles")
+		if err := os.MkdirAll(marblesDir, 0755); err != nil {
+			return saveErrMsg{err: fmt.Errorf("failed to create marbles directory: %w", err)}
+		}
+		filePath := filepath.Join(marblesDir, fileName)
+		langTag := "mermaid"
+		if strings.EqualFold(m.cfg.FormatFlag, "plantuml") {
+			langTag = "plantuml"
+		} else if strings.EqualFold(m.cfg.FormatFlag, "dot") || strings.EqualFold(m.cfg.FormatFlag, "graphviz") {
+			langTag = "dot"
+		}
+		mdContent := fmt.Sprintf("```%s\n%s\n```\n", langTag, m.markup)
+		if err := os.WriteFile(filePath, []byte(mdContent), 0644); err != nil {
+			return saveErrMsg{err: fmt.Errorf("failed to save marble file: %w", err)}
+		}
+		return saveDoneMsg{path: filePath}
+	}
+}
+
+func (m *model) writeOutputCmd() tea.Cmd {
+	return func() tea.Msg {
+		if dir := filepath.Dir(m.cfg.OutputFlag); dir != "" && dir != "." {
+			_ = os.MkdirAll(dir, 0755)
+		}
+		if err := os.WriteFile(m.cfg.OutputFlag, []byte(m.markup), 0644); err != nil {
+			return saveErrMsg{err: err}
+		}
+		return nil
+	}
+}
+
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = maxInt(40, msg.Width)
+		m.height = maxInt(10, msg.Height)
+		vpHeight := maxInt(5, m.height-6)
+		if m.summary != nil && m.cfg.SummaryFlag {
+			vpHeight = maxInt(5, m.height-12)
+		}
+		m.viewport.Width = m.width - 4
+		m.viewport.Height = vpHeight
+		return m, nil
 	case tea.KeyMsg:
+		if m.help.Visible && msg.String() != "?" && msg.String() != "q" && msg.String() != "esc" {
+			m.help.Visible = false
+		}
 		switch msg.String() {
+		case "?":
+			m.help.Toggle()
+			return m, nil
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		}
 		switch m.state {
 		case stateSaved:
-			m.state = stateReady
+			if msg.String() == "enter" || msg.String() == "esc" {
+				m.state = stateReady
+			}
 			return m, nil
 		case stateReady:
 			switch msg.String() {
@@ -165,43 +214,53 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.err = fmt.Errorf("no --save file configured")
 					return m, nil
 				}
-				if err := m.save(); err != nil {
-					m.err = err
-				} else {
-					m.state = stateSaved
-				}
-				return m, nil
+				return m, m.saveCmd()
 			case "r":
 				m.state = stateLoading
 				m.markup = ""
 				m.progress = ""
 				m.err = nil
-				return m, tea.Batch(m.spinner.Tick(), m.generate())
+				return m, tea.Batch(m.spinner.Tick(), m.generateCmd())
+			case "g", "home":
+				m.viewport.GotoTop()
+				return m, nil
+			case "G", "end":
+				m.viewport.GotoBottom()
+				return m, nil
 			}
 		}
+	case generateProgressMsg:
+		m.progress = string(msg)
+		return m, nil
 	case generateDoneMsg:
 		m.state = stateReady
 		m.markup = msg.markup
 		m.summary = msg.summary
 		m.duration = msg.duration
-		if m.cfg.SaveFile == "" && m.cfg.OutputFlag != "" {
-			if err := m.writeOutput(); err != nil {
-				m.err = err
-			}
+		vpHeight := maxInt(5, m.height-6)
+		if m.summary != nil && m.cfg.SummaryFlag {
+			vpHeight = maxInt(5, m.height-12)
 		}
-		vpHeight := height - 3
-		if m.summary != nil {
-			vpHeight = height - 8
-		}
-		m.viewport = components.NewGMViewport(width, vpHeight)
+		m.viewport.Width = m.width - 4
+		m.viewport.Height = vpHeight
 		m.viewport.SetContent(components.StyleViewportContent(highlightMarkup(m.markup)))
 		m.viewport.GotoTop()
+		if m.cfg.SaveFile == "" && m.cfg.OutputFlag != "" {
+			return m, m.writeOutputCmd()
+		}
 		return m, nil
 	case generateErrMsg:
 		m.state = stateReady
 		m.err = msg.err
 		m.markup = fmt.Sprintf("Error: %v", msg.err)
 		m.viewport.SetContent(m.markup)
+		return m, nil
+	case saveDoneMsg:
+		m.state = stateSaved
+		m.savedPath = msg.path
+		return m, nil
+	case saveErrMsg:
+		m.err = msg.err
 		return m, nil
 	}
 
@@ -215,38 +274,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m *model) save() error {
-	fileName := m.cfg.SaveFile
-	if !strings.HasSuffix(fileName, ".md") {
-		fileName += ".md"
-	}
-	marblesDir := filepath.Join(m.cfg.StoragePath, ".glassmarble", "marbles")
-	if err := os.MkdirAll(marblesDir, 0755); err != nil {
-		return fmt.Errorf("failed to create marbles directory: %w", err)
-	}
-	filePath := filepath.Join(marblesDir, fileName)
-	langTag := "mermaid"
-	if strings.EqualFold(m.cfg.FormatFlag, "plantuml") {
-		langTag = "plantuml"
-	} else if strings.EqualFold(m.cfg.FormatFlag, "dot") || strings.EqualFold(m.cfg.FormatFlag, "graphviz") {
-		langTag = "dot"
-	}
-	mdContent := fmt.Sprintf("```%s\n%s\n```\n", langTag, m.markup)
-	if err := os.WriteFile(filePath, []byte(mdContent), 0644); err != nil {
-		return fmt.Errorf("failed to save marble file: %w", err)
-	}
-	m.savedPath = filePath
-	return nil
-}
-
-func (m *model) writeOutput() error {
-	if dir := filepath.Dir(m.cfg.OutputFlag); dir != "" && dir != "." {
-		_ = os.MkdirAll(dir, 0755)
-	}
-	return os.WriteFile(m.cfg.OutputFlag, []byte(m.markup), 0644)
-}
-
 func (m *model) View() string {
+	if m.help.Visible {
+		return m.help.View()
+	}
 	switch m.state {
 	case stateLoading:
 		return m.loadingView()
@@ -258,27 +289,29 @@ func (m *model) View() string {
 }
 
 func (m *model) loadingView() string {
-	m.mu.Lock()
-	progress := m.progress
-	m.mu.Unlock()
+	w := maxInt(40, m.width)
 	label := "Generating " + displayName(m.cfg.DiagType) + " Diagram"
-	header := components.RenderHeader(label, "GlassMarble", width)
-	spinnerLine := m.spinner.View() + " " + progress
+	header := components.RenderHeader(label, "GlassMarble", w)
+	spinnerLine := m.spinner.View()
+	if m.progress != "" {
+		spinnerLine += " " + m.progress
+	}
 	source := tui.KV("Source", m.cfg.StatePath)
 	scope := tui.KV("Scope", scopeLabel(m.cfg.Opts))
 	card := tui.StyleCard.Render(tui.Indent(spinnerLine+"\n\n"+source+"\n"+scope, 2))
 	status := components.RenderStatusBar(
 		components.JoinKeyHints(components.KeyHint("q", "quit")),
 		"working...",
-		width,
+		w,
 	)
 	return lipgloss.JoinVertical(lipgloss.Left, header, card, status)
 }
 
 func (m *model) readyView() string {
+	w := maxInt(40, m.width)
 	label := displayName(m.cfg.DiagType) + " Diagram"
 	subtitle := fmt.Sprintf("done in %.1fs", m.duration.Seconds())
-	header := components.RenderHeader(label, subtitle, width)
+	header := components.RenderHeader(label, subtitle, w)
 
 	blocks := []string{}
 	if m.summary != nil && m.cfg.SummaryFlag {
@@ -291,7 +324,7 @@ func (m *model) readyView() string {
 	if m.cfg.SaveFile != "" {
 		hints = append([]string{components.KeyHint("s", "save")}, hints...)
 	}
-	hints = append(hints, components.KeyHint("q", "quit"))
+	hints = append(hints, components.KeyHint("?", "help"), components.KeyHint("q", "quit"))
 	left := components.JoinKeyHints(hints...)
 	right := "↑↓ scroll " + components.ScrollPosition(m.viewport)
 	if m.err != nil {
@@ -299,7 +332,7 @@ func (m *model) readyView() string {
 	} else if m.cfg.SaveFile == "" && m.cfg.OutputFlag != "" {
 		right = "written to " + m.cfg.OutputFlag
 	}
-	status := components.RenderStatusBar(left, right, width)
+	status := components.RenderStatusBar(left, right, w)
 	return lipgloss.JoinVertical(lipgloss.Left, header, content, status)
 }
 
@@ -373,14 +406,15 @@ func highlightRelation(line string) string {
 }
 
 func (m *model) savedView() string {
-	header := components.RenderHeader("Marble Saved", "GlassMarble", width)
+	w := maxInt(40, m.width)
+	header := components.RenderHeader("Marble Saved", "GlassMarble", w)
 	body := tui.StyleOK.Render("✓ Marble saved successfully to") + "\n\n" +
 		tui.Indent(tui.StyleCode.Render(m.savedPath), 2)
 	card := tui.StyleCard.Render(tui.Indent(body, 2))
 	status := components.RenderStatusBar(
 		components.JoinKeyHints(components.KeyHint("enter", "back"), components.KeyHint("q", "quit")),
 		"",
-		width,
+		w,
 	)
 	return lipgloss.JoinVertical(lipgloss.Left, header, card, status)
 }
@@ -410,4 +444,11 @@ func scopeLabel(opts types.QueryOptions) string {
 	default:
 		return "global"
 	}
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

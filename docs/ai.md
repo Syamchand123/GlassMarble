@@ -1,10 +1,30 @@
 # GlassMarble AI Architect (`gmb ai`)
 
+> BYOK · grounded · tool-calling. The model never guesses — it queries the AKG.
+
+```mermaid
+sequenceDiagram
+  actor U as You
+  participant AI as gmb ai
+  participant AKG as AKG (32 tools)
+  participant LLM as Provider
+  U->>AI: "which services depend on payments?"
+  AI->>LLM: system prompt + repo header
+  LLM-->>AI: tool_call akg_traverse
+  AI->>AKG: akg_traverse
+  AKG-->>AI: JSON facts
+  AI->>LLM: tool results
+  LLM-->>AI: grounded answer
+  AI-->>U: answer + citations
+```
+
 `gmb ai` is the interactive face of GlassMarble: a Bring-Your-Own-Key (BYOK)
 LLM agent that answers questions about your repository by **querying the AKG
 knowledge graph**, **reading real source code**, and **generating diagrams
 through the visualization engine** — exactly the same graph data and engine
 that `gmb analyze` and `gmb visualize` use.
+
+**Contents:** [1. Setup](#1-setup-byok) · [2. Loop](#2-agent-loop) · [3. Streaming](#3-streaming) · [4. Sessions](#4-chat-mode-and-session-memory) · [5. Guardrails](#5-token-and-cost-guardrails) · [6. Artifacts](#6-artifacts)
 
 ```bash
 gmb ai "which services depend on the payment module?"

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 
@@ -9,45 +10,111 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type doctorCheckJSON struct {
+	Name   string `json:"name"`
+	Status string `json:"status"` // "ok" | "warn" | "fail"
+	Detail string `json:"detail,omitempty"`
+}
+
+type doctorJSON struct {
+	Initialized   bool              `json:"initialized"`
+	StorageDir    string            `json:"storage_dir,omitempty"`
+	StateBytes    int64             `json:"state_bytes,omitempty"`
+	SchemaVersion int               `json:"schema_version,omitempty"`
+	GraphVersion  uint64            `json:"graph_version,omitempty"`
+	CommitHash    string            `json:"commit_hash,omitempty"`
+	Checks        []doctorCheckJSON `json:"checks"`
+	FailureCount  int               `json:"failure_count"`
+	Error         string            `json:"error,omitempty"`
+}
+
 var doctorCmd = &cobra.Command{
-	Use:   "doctor",
-	Short: "Run integrity diagnostics on the AKG state database",
-	Long: `Parses the active .glassmarble/akg.json back through the canonical
-parser and checks: parse-back integrity, duplicate node IDs, and dangling
-references. Exits non-zero when the database fails any integrity check.`,
+	Use:     "doctor",
+	GroupID: GroupInspect.ID,
+	Short:   "Run integrity diagnostics on the AKG state database",
+	Long: `Parses the active .glassmarble/akg.json database and verifies schema conformance,
+parse-back integrity, duplicate node identifiers, and dangling edge references.`,
+	Example: `  # Run health and integrity checks
+  gmb doctor
+
+  # Output diagnostic results as JSON
+  gmb doctor --json
+
+  # Run diagnostics on a specific repository
+  gmb doctor --dir ./backend`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dir, _ := cmd.Flags().GetString("dir")
-		if dir == "" {
-			dir = "."
-		}
+		dir := resolveDir(cmd)
+		asJSON, _ := cmd.Flags().GetBool("json")
 
 		storageDir := filepath.Join(dir, ".glassmarble")
 		rep, err := akg.RunDoctor(storageDir)
 		if err != nil {
-			return fmt.Errorf("doctor failed: %w", err)
+			return fmt.Errorf("doctor diagnostics failed: %w — try 'gmb analyze'", err)
 		}
 
 		if !rep.Initialized {
+			if asJSON {
+				out, _ := json.MarshalIndent(doctorJSON{
+					Initialized:  false,
+					StorageDir:   storageDir,
+					Checks:       []doctorCheckJSON{},
+					FailureCount: 0,
+					Error:        "database uninitialized",
+				}, "", "  ")
+				fmt.Println(string(out))
+				return nil
+			}
 			fmt.Println(views.RenderDoctorUninitialized(rep.StatePath))
 			return nil
 		}
 
-		fmt.Println(views.RenderDoctor(rep))
-		if rep.Dangling > 0 {
-			fmt.Printf("WARNING: %d dangling edge(s) persisted (Issue 5 finding 1).\n", rep.Dangling)
+		checks := []doctorCheckJSON{
+			{Name: "schema_version", Status: "ok", Detail: fmt.Sprintf("v%d", rep.SchemaVersion)},
 		}
+
 		failures := 0
-		if !rep.LoadOK {
+		if rep.LoadOK {
+			checks = append(checks, doctorCheckJSON{Name: "parse_back", Status: "ok", Detail: "state verified"})
+		} else {
 			failures++
+			checks = append(checks, doctorCheckJSON{Name: "parse_back", Status: "fail", Detail: rep.LoadError})
 		}
+
+		if rep.Dangling == 0 {
+			checks = append(checks, doctorCheckJSON{Name: "dangling_edges", Status: "ok", Detail: "0 dangling references"})
+		} else {
+			failures++
+			checks = append(checks, doctorCheckJSON{Name: "dangling_edges", Status: "fail", Detail: fmt.Sprintf("%d dangling references", rep.Dangling)})
+		}
+
+		if asJSON {
+			dj := doctorJSON{
+				Initialized:   true,
+				StorageDir:    rep.StorageDir,
+				StateBytes:    rep.StateBytes,
+				SchemaVersion: rep.SchemaVersion,
+				GraphVersion:  rep.GraphVersion,
+				CommitHash:    rep.CommitHash,
+				Checks:        checks,
+				FailureCount:  failures,
+			}
+			out, _ := json.MarshalIndent(dj, "", "  ")
+			fmt.Println(string(out))
+			if failures > 0 {
+				return fmt.Errorf("integrity check failed (%d issue(s)) — try 'gmb analyze --full'", failures)
+			}
+			return nil
+		}
+
+		fmt.Println(views.RenderDoctor(rep))
 		if failures == 0 {
 			return nil
 		}
-		return fmt.Errorf("integrity check failed (%d issue(s))", failures)
+		return fmt.Errorf("integrity check failed (%d issue(s)) — try 'gmb analyze --full'", failures)
 	},
 }
 
 func init() {
-	doctorCmd.Flags().String("dir", ".", "Directory path containing the .glassmarble/ folder")
+	doctorCmd.Flags().Bool("json", false, "Emit machine-readable JSON output")
 	rootCmd.AddCommand(doctorCmd)
 }

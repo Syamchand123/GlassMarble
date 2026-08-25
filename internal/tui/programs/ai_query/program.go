@@ -128,10 +128,11 @@ func (m *model) refreshVP() {
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.vp.Width = msg.Width - 4
-		m.vp.Height = msg.Height - 4
+		m.width = maxInt(40, msg.Width)
+		m.height = maxInt(10, msg.Height)
+		m.vp.Width = m.width - 4
+		m.vp.Height = maxInt(5, m.height-6)
+		m.refreshVP()
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -300,7 +301,6 @@ func (m *model) View() string {
 	if !m.streaming && !m.done {
 		body = m.spinner.View()
 	} else {
-		m.vp.SetContent(components.StyleViewportContent(m.content()))
 		body = m.vp.View()
 	}
 	header := components.RenderHeader("AI Query", m.engine.Config.Model+"/"+m.engine.Config.Provider, m.width)
@@ -347,3 +347,11 @@ func verboseLine(res *agent.Result) string {
 		res.Usage.PromptTokens, res.Usage.CompletionTokens, res.Usage.TotalTokens,
 		cost, res.Turns, len(res.ToolCalls))
 }
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+

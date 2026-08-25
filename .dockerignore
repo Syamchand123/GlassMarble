@@ -1,0 +1,14 @@
+.git
+.github
+.glassmarble
+dist
+bin
+tmp
+completions
+man
+*.md
+!README.md
+!CHANGELOG.md
+!LICENSE
+*.exe
+*.log

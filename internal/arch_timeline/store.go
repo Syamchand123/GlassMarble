@@ -1,9 +1,11 @@
 package arch_timeline
 
 import (
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,6 +16,14 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 )
+
+// Max snapshots retained by default (P1 retention). Older snapshots are pruned
+// on Create so .glassmarble/snapshots stays bounded even at 500k LOC.
+const defaultMaxSnapshots = 30
+
+// sidecarSuffix is the gzip-compressed graph sidecar for snapshots that
+// embed a graph. Inline AKGJSON is omitted from the JSON file (RCA-1/RCA-2).
+const sidecarSuffix = ".graph.json.gz"
 
 // SnapshotStore persists ArchSnapshots on disk and maintains an append-only
 // index (index.json). Design (LOLPAL §5.2 / D2):
@@ -46,7 +56,26 @@ func NewSnapshotStore(dir string) (*SnapshotStore, error) {
 }
 
 // computeTopologyHash computes the sha256 of sorted node IDs plus sorted (source, edge_type, target) tuples.
+// When the snapshot has no embedded graph (NoGraph), it falls back to the
+// metrics/components fingerprint already used for ID generation (P2 — no replay needed).
 func computeTopologyHash(snap *archmodel.ArchSnapshot) (string, error) {
+	if len(snap.AKGJSON) == 0 {
+		// No graph: use metrics/components hash so skip-write still works
+		// without replaying. This is deterministic and matches fingerprintMetrics.
+		h := sha256.New()
+		h.Write([]byte(snap.TopologyHash))
+		// Fallback to metrics hash if TopologyHash not yet set.
+		if snap.TopologyHash == "" {
+			// Use node/edge counts + metric fields as fallback
+			fmt.Fprintf(h, "%d|%d|%d|%d", snap.NodeCount, snap.EdgeCount, snap.Metrics.CycleCount, snap.Metrics.LayerViolationCount)
+			for _, c := range snap.Components {
+				h.Write([]byte(c.ID))
+				h.Write([]byte{0})
+				h.Write([]byte(c.Name))
+			}
+		}
+		return fmt.Sprintf("%x", h.Sum(nil)[:8]), nil
+	}
 	graph, err := Replay(snap)
 	if err != nil {
 		return "", fmt.Errorf("failed to replay graph to compute hash: %w", err)
@@ -79,11 +108,75 @@ func computeTopologyHash(snap *archmodel.ArchSnapshot) (string, error) {
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
+// writeSidecarGzip writes AKGJSON bytes as a gzipped sidecar file atomically.
+func writeSidecarGzip(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".tmp-graph-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	gz := gzip.NewWriter(tmp)
+	if _, err := gz.Write(data); err != nil {
+		gz.Close()
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := gz.Close(); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
+// readSidecarGzip reads a gzipped sidecar file.
+func readSidecarGzip(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return nil, err
+	}
+	defer gz.Close()
+	return io.ReadAll(gz)
+}
+
+// sidecarPath returns the sidecar file path for a snapshot file.
+func sidecarPath(snapFilePath string) string {
+	return snapFilePath + sidecarSuffix
+}
+
 // Create persists snap and returns whether a file was actually written.
 // It writes nothing (and returns false) when an identical snapshot already
 // exists (same ID — idempotent re-analysis) or when the topology hash is
 // unchanged since the latest snapshot. The write itself is atomic.
+// RCA-1/RCA-2: when the snapshot embeds a graph, the graph is written as a
+// gzipped sidecar (.graph.json.gz) and omitted from the JSON file to avoid
+// double-encoding and 5× size blow-up.
 func (s *SnapshotStore) Create(snap *archmodel.ArchSnapshot) (bool, error) {
+	return s.CreateWithOptions(snap, SnapshotCreateOptions{})
+}
+
+// SnapshotCreateOptions controls Create behavior.
+type SnapshotCreateOptions struct {
+	MaxCount int // retention cap; 0 = defaultMaxSnapshots
+}
+
+func (s *SnapshotStore) CreateWithOptions(snap *archmodel.ArchSnapshot, opts SnapshotCreateOptions) (bool, error) {
 	if snap == nil {
 		return false, fmt.Errorf("arch_timeline: Create requires a snapshot")
 	}
@@ -97,8 +190,9 @@ func (s *SnapshotStore) Create(snap *archmodel.ArchSnapshot) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Compute topology hash if missing and the graph is embedded.
-	if snap.TopologyHash == "" && len(snap.AKGJSON) > 0 {
+	// Compute topology hash if missing. For NoGraph snapshots the hash is
+	// derived from metrics/components without replay (P2).
+	if snap.TopologyHash == "" {
 		hashStr, err := computeTopologyHash(snap)
 		if err != nil {
 			return false, err
@@ -119,8 +213,7 @@ func (s *SnapshotStore) Create(snap *archmodel.ArchSnapshot) (bool, error) {
 		}
 	}
 
-	// Skip-write: topology unchanged since the most recent snapshot. Only
-	// meaningful when the hash could be computed (i.e. the graph is embedded).
+	// Skip-write: topology unchanged since the most recent snapshot.
 	if snap.TopologyHash != "" {
 		if latest := latestEntry(entries); latest != nil && latest.TopologyHash == snap.TopologyHash {
 			return false, nil
@@ -130,12 +223,36 @@ func (s *SnapshotStore) Create(snap *archmodel.ArchSnapshot) (bool, error) {
 	filename := fmt.Sprintf("snap_%s.json", snapshotFileID(snap.ID))
 	snapPath := filepath.Join(s.dir, filename)
 
-	data, err := json.MarshalIndent(snap, "", "  ")
+	// Sidecar handling: if the snapshot embeds a graph, write it as gzipped
+	// sidecar and omit it from the JSON file (RCA-2). The JSON file then
+	// contains only metadata (~few KB) instead of 50 MB escaped string.
+	var sidecarData []byte
+	hasGraph := len(snap.AKGJSON) > 0
+	if hasGraph {
+		sidecarData = snap.AKGJSON
+		// Temporarily clear for JSON marshaling to avoid double-encoding.
+		snap.AKGJSON = nil
+		defer func() { snap.AKGJSON = sidecarData }()
+	}
+
+	data, err := json.Marshal(snap)
 	if err != nil {
 		return false, err
 	}
 	if err := atomicWrite(snapPath, data); err != nil {
 		return false, fmt.Errorf("arch_timeline: write snapshot %s: %w", filename, err)
+	}
+	// Write sidecar after the JSON file so a crash never leaves a sidecar
+	// without its index entry. Sidecar is gzipped compact GraphJSON.
+	if hasGraph {
+		sidecarFile := sidecarPath(snapPath)
+		if err := writeSidecarGzip(sidecarFile, sidecarData); err != nil {
+			// Roll back the JSON file on sidecar failure to keep atomicity.
+			_ = os.Remove(snapPath)
+			return false, fmt.Errorf("arch_timeline: write sidecar %s: %w", filepath.Base(sidecarFile), err)
+		}
+		// Restore for caller's view.
+		snap.AKGJSON = sidecarData
 	}
 
 	entry := SnapshotIndexEntry{
@@ -149,6 +266,22 @@ func (s *SnapshotStore) Create(snap *archmodel.ArchSnapshot) (bool, error) {
 		SnapshotFile: filename,
 	}
 	entries = append(entries, entry)
+	// Enforce retention cap (P1): keep at most N snapshots.
+	maxCount := opts.MaxCount
+	if maxCount <= 0 {
+		maxCount = defaultMaxSnapshots
+	}
+	if len(entries) > maxCount {
+		// Sort by timestamp ascending and drop oldest.
+		entries = sortedEntries(entries)
+		toDrop := len(entries) - maxCount
+		for i := 0; i < toDrop; i++ {
+			drop := entries[i]
+			_ = os.Remove(filepath.Join(s.dir, drop.SnapshotFile))
+			_ = os.Remove(sidecarPath(filepath.Join(s.dir, drop.SnapshotFile)))
+		}
+		entries = entries[toDrop:]
+	}
 	if err := s.saveIndexLocked(entries); err != nil {
 		return false, err
 	}
@@ -312,9 +445,11 @@ func latestEntry(entries []SnapshotIndexEntry) *SnapshotIndexEntry {
 }
 
 // loadSnapshotLocked reads and decodes one snapshot file. Callers must hold
-// the read lock.
+// the read lock. It also loads the gzipped graph sidecar if present (RCA-2
+// backward-compat: old snapshots have inline AKGJSON, new ones have sidecar).
 func (s *SnapshotStore) loadSnapshotLocked(e SnapshotIndexEntry) (*archmodel.ArchSnapshot, error) {
-	data, err := os.ReadFile(filepath.Join(s.dir, e.SnapshotFile))
+	snapPath := filepath.Join(s.dir, e.SnapshotFile)
+	data, err := os.ReadFile(snapPath)
 	if err != nil {
 		return nil, fmt.Errorf("arch_timeline: read snapshot %s: %w", e.SnapshotFile, err)
 	}
@@ -322,7 +457,85 @@ func (s *SnapshotStore) loadSnapshotLocked(e SnapshotIndexEntry) (*archmodel.Arc
 	if err := json.Unmarshal(data, &snap); err != nil {
 		return nil, fmt.Errorf("arch_timeline: parse snapshot %s: %w", e.SnapshotFile, err)
 	}
+	// If inline AKGJSON is empty, try sidecar (new format) or legacy
+	// uncompressed sidecar.
+	if len(snap.AKGJSON) == 0 {
+		sidecar := sidecarPath(snapPath)
+		if gzData, gerr := readSidecarGzip(sidecar); gerr == nil {
+			snap.AKGJSON = gzData
+		} else {
+			// Legacy: check for uncompressed sidecar (migration)
+			legacy := snapPath + ".graph.json"
+			if ldata, lerr := os.ReadFile(legacy); lerr == nil {
+				snap.AKGJSON = ldata
+			}
+		}
+	}
 	return &snap, nil
+}
+
+// DiskUsage returns total bytes and file count for the snapshot store
+// (including sidecars and index). Used by status/housekeeping (RCA-4).
+func (s *SnapshotStore) DiskUsage() (bytes int64, files int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	entries, _ := s.loadIndexLocked()
+	for _, e := range entries {
+		if st, err := os.Stat(filepath.Join(s.dir, e.SnapshotFile)); err == nil {
+			bytes += st.Size()
+			files++
+		}
+		if st, err := os.Stat(sidecarPath(filepath.Join(s.dir, e.SnapshotFile))); err == nil {
+			bytes += st.Size()
+			files++
+		}
+		legacy := filepath.Join(s.dir, e.SnapshotFile) + ".graph.json"
+		if st, err := os.Stat(legacy); err == nil {
+			bytes += st.Size()
+			files++
+		}
+	}
+	if st, err := os.Stat(filepath.Join(s.dir, "index.json")); err == nil {
+		bytes += st.Size()
+		files++
+	}
+	return
+}
+
+// PruneKeepLast retains only the most recent keep snapshots (by timestamp).
+// Returns pruned file count and reclaimed bytes.
+func (s *SnapshotStore) PruneKeepLast(keep int) (prunedFiles int, prunedBytes int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entries, err := s.loadIndexLocked()
+	if err != nil || len(entries) <= keep {
+		return 0, 0
+	}
+	entries = sortedEntries(entries)
+	toDrop := entries[:len(entries)-keep]
+	remain := entries[len(entries)-keep:]
+	for _, d := range toDrop {
+		p := filepath.Join(s.dir, d.SnapshotFile)
+		if st, err := os.Stat(p); err == nil {
+			prunedBytes += st.Size()
+			prunedFiles++
+			_ = os.Remove(p)
+		}
+		sc := sidecarPath(p)
+		if st, err := os.Stat(sc); err == nil {
+			prunedBytes += st.Size()
+			prunedFiles++
+			_ = os.Remove(sc)
+		}
+		legacy := p + ".graph.json"
+		if st, err := os.Stat(legacy); err == nil {
+			prunedBytes += st.Size()
+			prunedFiles++
+			_ = os.Remove(legacy)
+		}
+	}
+	_ = s.saveIndexLocked(remain)
+	return
 }
 
 // List returns the index entries ordered oldest-first. Entries are cheap

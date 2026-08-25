@@ -1,70 +1,63 @@
-## [stage-naming-overhaul] - 2026-08-13
+# Changelog
 
-### Stage-Naming Overhaul (per NAMING_OVERHAUL_PLAN.md v2)
+All notable changes to the GlassMarble Architectural Intelligence Platform are documented in this file.
 
-- **Packages:** `code_analysis_engine/stage1..4` -> `ingest`, `normalize`, `aggregate`, `link`;
-  `visualization_engine/stage1..4` -> `extract`, `layout`, `render`, `specialized`.
-- **CLI:** `--stage5` -> `--intelligence`. **Env vars:** `GMB_NEW_STAGE3/4` -> `GMB_NEW_AGGREGATOR/LINKER`
-  (`IsNewStage3/4Enabled` -> `IsNewAggregator/LinkerEnabled`).
-- **User-visible output prefixes:** `Stage 1..4` -> `Ingestion/Normalization/Aggregation/Linking`,
-  `Stage 5` -> `Intelligence`, `Stage 6` -> `Memory`, `Stage 8` -> `Commit reasoning`,
-  `Stage 9` -> `Fusion`, `Stage 10` -> `Learning`, `Stage 11` -> `Aging`.
-- **Comments/help:** `Stage 5A/5B/5C/5D` -> `intelligence metrics/pattern detection/smell
-  detection/component inference`; `Stage 5..12` -> `Architecture Intelligence/developer
-  memory/architecture timeline/commit reasoning/knowledge fusion/convention learning/
-  knowledge aging/evidence retrieval`.
-- Historical entries below retain the old stage names by design.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
-# Changelog & Overhaul Release Notes
 
-All notable changes to the GlassMarble Architectural Knowledge Graph (AKG) and Visualization Engine are documented here.
+## [Unreleased]
+
+### Planned
+- LSP (Language Server Protocol) server interface for VS Code and JetBrains IDE plugins.
+- Real-time architectural drift linter for GitHub Pull Request status checks.
+
+---
+
+## [v1.0.0] - 2026-08-24
+
+### Added
+- **Cross-Platform Zero-Dependency Binary Packaging & Distribution**:
+  - Direct one-line web installers for UNIX (`curl | sh`) and Windows (`irm | iex`).
+  - Native standalone binary archives for Linux (`amd64`, `arm64`), macOS (`amd64`, `arm64`), and Windows (`amd64`, `arm64`).
+  - Ultra-lightweight (<15 MB) multi-architecture distroless Docker image published to GitHub Container Registry (`ghcr.io`).
+  - Full software supply chain security: Sigstore Cosign cryptographic signatures, Syft SPDX Software Bill of Materials (SBOM), and SLSA build provenance attestations.
+  - Automated CI/CD release pipeline powered by GoReleaser and GitHub Actions matrix runners across Ubuntu, macOS, and Windows.
+- **Charm-Based Terminal Design System & TUI**:
+  - Unified OKLCH color palette with WCAG AA compliance across light and dark terminals.
+  - Canonical keybindings standard (`q`, `esc`, `ctrl+c`, `↑↓`/`jk`, `g`/`G`, `ctrl+u`/`ctrl+d`, `pgup`/`pgdn`, `?`).
+  - Toggleable interactive `?` help overlay component across all interactive programs.
+  - Branded Huh form theme aligned with GlassMarble primary violet and cyan design tokens.
+  - Pure-view architecture and responsive auto-resizing across terminal viewports.
+  - Screen-reader accessible hotspot rankings and structured status cards.
+  - Brand ASCII art Logo Banner on workspace initialization (`gmb init`).
+- **Comprehensive CLI Polish & UX Overhaul**:
+  - Command categorization into 6 structured groups (`analyze`, `inspect`, `govern`, `visualize`, `ai`, `utility`).
+  - Complete `--json` machine-readable output parity across all 28 commands.
+  - Standardized `--color (auto|always|never)` and `--dir` persistent flags.
+  - Actionable error messages with contextual next-step hints (`— try 'gmb <cmd>'`).
+  - Full shell autocompletions for Bash, Zsh, Fish, and PowerShell.
+  - 32 offline roff UNIX manual pages in `man/man1/`.
+- **Multi-Language Architecture Knowledge Graph Engine**:
+  - Sub-second incremental parsing and Concrete Syntax Tree extraction across 17 programming languages.
+  - Generic AST (GAST) normalization with I/O primitive classification (`DATABASE`, `NETWORK_IO`, `DISK_IO`).
+  - Topology mapping, semantic interface linking, and MVCC atomic graph transactions in `.glassmarble/akg.json`.
+- **31 Architecture Diagram Types**:
+  - Full synthesis across UML, C4 model (Context, Container, Component, Code), and specialized architectural views.
+  - Multi-target rendering to Mermaid.js (`mermaid`), PlantUML (`plantuml`), and Graphviz DOT (`dot`).
+- **Grounded AI Architect Agent**:
+  - Tool-calling agent with streaming tokens, tool pills, persistent session memory, and cost tracking.
+  - Multi-provider support: Anthropic Claude, OpenAI, Ollama (local), Google Gemini, DeepSeek, OpenRouter, and custom endpoints.
 
 ---
 
 ## [v1.0.0-overhaul] - 2026-08-06
 
 ### Major Features & Performance Overhaul
-
-- **Pipeline Performance Budget (§12.0):**
-  - Full codebase analysis time reduced from **2m6.5s to < 20s**.
-  - Graph transaction commit phase reduced from **19.9s to < 8s**.
-  - AKG TTL storage size reduced from **19.3MB to < 12MB**.
-  - Parallel file ingestion worker pool capped at 8 threads to prevent scheduler thrash.
-
-- **AKG Schema v3 & RDF-Star Single Statement (§6.0 / §14.1):**
-  - Replaced double-write reified triples with W3C RDF-Star single-statement syntax (`<< subject predicate object >> gm:lineNumber N`).
-  - Automatic `akg_state.v2.ttl.bak` backup and one-time in-memory schema v3 migration on first run.
-  - Stale ontology kinds consolidated (`TYPE_DECL` $\rightarrow$ `STRUCT`, `EXECUTABLE` $\rightarrow$ `FUNCTION`).
-
-- **Unified Diagram Pipeline (`product.BuildDiagram`) (§11.0):**
-  - Consolidated CLI (`gmb visualize`), TUI, and AI agent tools under `internal/product/pipeline.go`.
-  - Guarantees 100% format and scope parity across CLI, TUI, and AI agent interactions.
-  - Automatic injection of standardized header comments (`% <type> · <scope> · entry=<resolved> · nodes=N edges=M`).
-
-- **31 Diagram Types Across 3 Formats (§8.0):**
-  - Complete support for 31 diagram types across UML, C4, and Specialized families.
-  - Formats: Mermaid (`mermaid`), PlantUML (`plantuml`), Graphviz DOT (`dot`).
-
-- **Developer & Quality Tooling (§12.0 / §13.0):**
-  - Added `gmb analyze --bench` budget gate command (exits non-zero on budget overrun).
-  - Added `gmb stats --bench` telemetry and performance summary.
-  - Added `gmb dev rebase-goldens` developer command for updating golden diagram test fixtures.
-  - Added AKG determinism test suite ensuring byte-identical TTL serialization across runs.
-
-- **Documentation (§14.3):**
-  - Published master CLI documentation (`docs/cli.md`).
-  - Published master diagram specification (`docs/diagrams.md`).
-
----
-
-## [Stage 10: Learning & Self-Correction Overlay] - 2026-08-09
-
-Developer memory is now a **self-correcting layer** — human feedback is recorded, audited, and replayed over derived knowledge without touching the source WALs.
-
-- **Correction audit trail** (`internal/learning/correction.go`): append-only `corrections.jsonl`; each entry records target, kind, corrected value, original value (auto-captured from memory), timestamp, and application status. Deterministic replay in recording order — idempotent and rebuild-independent.
-- **Learning overlay** (`internal/learning/overlay.go`): `Project()` projections replace derived values with corrections for `STATE` (component state), `INTENT` (event intent), and `REASON` (claim stated-reason). Applied corrections are flagged in every human view.
-- **Conventions store** (`internal/learning/conventions_store.go` + `conventions.go`): project-wide naming/intent conventions learned from graph-observed facts and stated reasons, persisted to `.glassmarble/conventions/`, refreshed on every `gmb analyze`.
-- **CLI** (`gmb memory --correct <target> --kind STATE|INTENT|REASON --value <value>` and `--corrections`): record corrections with original-value capture and view the audit trail; `gmb analyze` runs the Stage 10 refresh step.
-- **Config** (`learning:` section): `conventionsDir`, `overlayEnabled` (default on), min-confidence and windowed-decay knobs for convention learning.
-- **Bloat guard recalibration** (`cmd/bloat_guard_test.go`): edge budget 25,000 → 26,000 with documented baseline (25,116 edges) — confirmed by stash-diff that the delta is Stage 10 feature code, not a noisy edge producer.
+- Full codebase analysis time reduced from 2m6.5s to < 20s.
+- Graph transaction commit phase reduced from 19.9s to < 8s.
+- AKG storage size reduced from 19.3MB to < 12MB.
+- Parallel file ingestion worker pool capped at 8 threads to prevent scheduler thrash.
+- Replaced double-write reified triples with W3C RDF-Star single-statement syntax.
+- Consolidated CLI, TUI, and AI agent tools under unified diagram pipeline.

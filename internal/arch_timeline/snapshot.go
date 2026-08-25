@@ -87,7 +87,7 @@ func BuildSnapshot(in SnapshotInput) (*archmodel.ArchSnapshot, error) {
 
 	if !in.NoGraph && in.Graph != nil {
 		var buf bytes.Buffer
-		if err := akg.ExportGraphJSON(in.Graph, &buf); err != nil {
+		if err := akg.ExportGraphJSONCompact(in.Graph, &buf); err != nil {
 			return nil, fmt.Errorf("arch_timeline: export graph json: %w", err)
 		}
 		snap.AKGJSON = buf.Bytes()

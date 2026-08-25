@@ -57,7 +57,7 @@ func TestExitCodeContractViaRealBinary(t *testing.T) {
 				"drift [--flags]",
 				"export [--flags]",
 				"help [command]",
-				"hooks [install|uninstall] [--flags]",
+				"hooks [install|uninstall]",
 				"hotspot [--flags]",
 				"housekeeping [--flags]",
 				"import [graph.json] [--flags]",

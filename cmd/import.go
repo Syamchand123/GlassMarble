@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,38 +12,50 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type importReceiptJSON struct {
+	Status     string `json:"status"`
+	InputFile  string `json:"input_file"`
+	StorageDir string `json:"storage_dir"`
+	Nodes      int    `json:"nodes"`
+	Edges      int    `json:"edges"`
+}
+
 var importCmd = &cobra.Command{
-	Use:   "import [graph.json]",
-	Short: "Import a portable graph document, replacing the active AKG snapshot",
+	Use:     "import [graph.json]",
+	GroupID: GroupVisualize.ID,
+	Short:   "Import a portable graph document, replacing the active AKG snapshot",
 	Long: `Replaces the active AKG database with the contents of a GraphJSON file
-produced by ` + "`gmb export`" + ` (or any compatible GraphJSON document). The
+produced by 'gmb export' (or any compatible GraphJSON document). The
 previous snapshot is overwritten by a single atomic akg.json write.
 
 Dangling references in the imported document are rejected so the persisted
 state always stays verified.`,
+	Example: `  # Import a GraphJSON snapshot into active repository
+  gmb import graph.json
+
+  # Import and emit JSON receipt
+  gmb import graph.json --json`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dir, _ := cmd.Flags().GetString("dir")
+		dir := resolveDir(cmd)
 		input := args[0]
-		if dir == "" {
-			dir = "."
-		}
+		asJSON, _ := cmd.Flags().GetBool("json")
 
 		f, err := os.Open(input)
 		if err != nil {
-			return fmt.Errorf("failed to open import file: %w", err)
+			return fmt.Errorf("failed to open import file %q: %w — try verifying the file exists", input, err)
 		}
 		defer f.Close()
 
 		graph, err := akg.ImportGraphJSON(f)
 		if err != nil {
-			return fmt.Errorf("failed to import graph: %w", err)
+			return fmt.Errorf("failed to import graph: %w — try validating the GraphJSON format", err)
 		}
 
 		storageDir := filepath.Join(dir, ".glassmarble")
 		tm, err := newAKGManager(storageDir, cmd)
 		if err != nil {
-			return fmt.Errorf("failed to open AKG database: %w", err)
+			return fmt.Errorf("failed to open AKG database: %w — try 'gmb analyze'", err)
 		}
 		defer tm.Close()
 
@@ -50,13 +63,26 @@ state always stays verified.`,
 			return fmt.Errorf("import rejected: %w", err)
 		}
 
-		fmt.Println(views.RenderImportSuccess(input, storageDir, graph.Nodes.Len(), countGraphEdges(graph)))
+		edges := countGraphEdges(graph)
+		if asJSON {
+			receipt := importReceiptJSON{
+				Status:     "success",
+				InputFile:  input,
+				StorageDir: storageDir,
+				Nodes:      graph.Nodes.Len(),
+				Edges:      edges,
+			}
+			out, _ := json.MarshalIndent(receipt, "", "  ")
+			fmt.Println(string(out))
+			return nil
+		}
+
+		fmt.Println(views.RenderImportSuccess(input, storageDir, graph.Nodes.Len(), edges))
 		return nil
 	},
 }
 
-// countGraphEdges totals outbound edges across the graph (used for the import
-// confirmation line).
+// countGraphEdges totals outbound edges across the graph.
 func countGraphEdges(graph *akg.CodePropertyGraph) int {
 	count := 0
 	graph.OutboundEdges.Iterate(func(_ string, edges []link.ResolvedEdge) {
@@ -66,6 +92,6 @@ func countGraphEdges(graph *akg.CodePropertyGraph) int {
 }
 
 func init() {
-	importCmd.Flags().String("dir", ".", "Directory path containing the .glassmarble/ database folder")
+	importCmd.Flags().Bool("json", false, "Emit machine-readable JSON receipt")
 	rootCmd.AddCommand(importCmd)
 }

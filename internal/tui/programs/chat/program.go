@@ -141,7 +141,7 @@ func (m *model) restoreHistory() {
 		}
 	}
 	m.lastAnswer = lastAssistantText(m.sess.Messages)
-	m.refreshHistory()
+	m.refreshHistory(true)
 }
 
 func (m *model) Init() tea.Cmd {
@@ -159,7 +159,7 @@ func (m *model) submit() (tea.Model, tea.Cmd) {
 	m.entries = append(m.entries, entry{role: "user", text: text})
 	m.entries = append(m.entries, entry{role: "ai", live: true})
 	m.busy = true
-	m.refreshHistory()
+	m.refreshHistory(true)
 
 	return m, m.ask(m.sess.Messages, text)
 }
@@ -193,7 +193,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.input.SetWidth(msg.Width - 2)
-		m.refreshHistory()
+		m.history.Width = msg.Width - 2
+		m.history.Height = msg.Height - 8
+		m.refreshHistory(false)
 		return m, nil
 	case tea.KeyMsg:
 		switch {
@@ -207,7 +209,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.submit()
 		case msg.Type == tea.KeyCtrlL:
 			m.entries = nil
-			m.refreshHistory()
+			m.refreshHistory(true)
 			return m, nil
 		case msg.Type == tea.KeyCtrlN:
 			m.newSession()
@@ -222,14 +224,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case StreamTokenMsg:
 		if m.busy {
 			m.appendToLiveText(msg.Delta)
-			m.refreshHistory()
+			m.refreshHistory(false)
 		}
 		return m, nil
 	case ToolCallMsg:
 		if m.busy {
 			m.resetLiveText()
 			m.appendToLiveEvent(tui.StyleAccent.Render("→ " + msg.Name + "(" + msg.Args + ")"))
-			m.refreshHistory()
+			m.refreshHistory(false)
 		}
 		return m, nil
 	case ToolResultMsg:
@@ -244,7 +246,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.appendToLiveEvent(tui.StyleError.Render(line))
 			}
-			m.refreshHistory()
+			m.refreshHistory(false)
 		}
 		return m, nil
 	case TurnCompleteMsg:
@@ -256,14 +258,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.apply != nil {
 				m.apply(m.sess, res, m.sessDir)
 			}
-			m.refreshHistory()
+			m.refreshHistory(false)
 		}
 		return m, nil
 	case turnErrorMsg:
 		if m.busy {
 			m.setLiveError(msg.err)
 			m.busy = false
-			m.refreshHistory()
+			m.refreshHistory(false)
 		}
 		return m, nil
 	case spinner.TickMsg:
@@ -281,7 +283,7 @@ func (m *model) newSession() {
 	m.lastAnswer = ""
 	m.busy = false
 	m.input.Reset()
-	m.refreshHistory()
+	m.refreshHistory(true)
 }
 
 func (m *model) saveLast() (tea.Model, tea.Cmd) {
@@ -294,7 +296,7 @@ func (m *model) saveLast() (tea.Model, tea.Cmd) {
 	} else {
 		m.entries = append(m.entries, entry{role: "system", text: "Saved last answer to " + path})
 	}
-	m.refreshHistory()
+	m.refreshHistory(true)
 	return m, nil
 }
 
@@ -332,14 +334,17 @@ func (m *model) setLiveError(err error) {
 	e.err = err.Error()
 }
 
-func (m *model) refreshHistory() {
+func (m *model) refreshHistory(forceBottom bool) {
+	wasAtBottom := m.history.AtBottom() || m.history.YOffset == 0
 	var b strings.Builder
 	for _, e := range m.entries {
 		b.WriteString(m.renderEntry(e))
 		b.WriteString("\n\n")
 	}
 	m.history.SetContent(b.String())
-	m.history.GotoBottom()
+	if forceBottom || wasAtBottom {
+		m.history.GotoBottom()
+	}
 }
 
 func (m *model) renderEntry(e entry) string {
