@@ -1,0 +1,31 @@
+@prefix gm: <http://glassmarble.org/schema#> .
+
+<http://glassmarble.org/node/types.go::User> a gm:TypeDecl ;
+    gm:name "User" ;
+    gm:lineStart 1 ;
+    gm:lineEnd 30 ;
+    .
+
+<http://glassmarble.org/node/main.go::Run> a gm:Executable ;
+    gm:name "Run" ;
+    gm:lineStart 10 ;
+    gm:lineEnd 20 ;
+    .
+
+<http://glassmarble.org/namespace/app> a gm:Namespace ;
+    gm:name "app" ;
+    .
+
+<http://glassmarble.org/file/main.go> a gm:File ;
+    gm:name "main.go" ;
+    .
+
+<http://glassmarble.org/node/db.go::PostgresDB> a gm:Database ;
+    gm:name "PostgresDB" ;
+    gm:primitiveType "DATABASE" ;
+    .
+
+<http://glassmarble.org/node/ext.go::PaymentGateway> a gm:ExternalSystem ;
+    gm:name "PaymentGateway" ;
+    gm:primitiveType "NETWORK_IO" ;
+    .

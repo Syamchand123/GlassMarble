@@ -1,0 +1,22 @@
+sequenceDiagram
+    autonumber
+    title Sequence Diagram
+    participant cmd_app_main_go_Main as "<small>«SERVICE»</small><br/>Main"
+    participant cmd_app_main_go_ParseArgs as "<small>«PARSER»</small><br/>ParseArgs"
+    participant internal_api_handler_go_HandleHTTP as "<small>«SERVICE»</small><br/>HandleHTTP"
+    participant internal_api_handler_go_ParseRequest as "<small>«PARSER»</small><br/>ParseRequest"
+    participant internal_db_db_go_Connect as "<small>«SERVICE»</small><br/>Connect"
+    participant internal_db_db_go_Query as "<small>«SERVICE»</small><br/>Query"
+    rect rgba(240, 245, 255, 0.6)
+        cmd_app_main_go_Main->>+cmd_app_main_go_ParseArgs: ParseArgs
+        cmd_app_main_go_ParseArgs-->>-cmd_app_main_go_Main: return
+        cmd_app_main_go_Main->>+internal_api_handler_go_HandleHTTP: HandleHTTP
+        internal_api_handler_go_HandleHTTP-->>-cmd_app_main_go_Main: return
+        internal_api_handler_go_HandleHTTP->>+internal_api_handler_go_ParseRequest: ParseRequest
+        internal_api_handler_go_ParseRequest-->>-internal_api_handler_go_HandleHTTP: return
+        internal_api_handler_go_HandleHTTP->>+internal_db_db_go_Connect: Connect
+        internal_db_db_go_Connect-->>-internal_api_handler_go_HandleHTTP: return
+        internal_api_handler_go_HandleHTTP->>+internal_db_db_go_Query: Query
+        internal_db_db_go_Query-->>-internal_api_handler_go_HandleHTTP: return
+    end
+    %% Graph Summary: 6 nodes, 5 edges, density=0.1667, diameter=2, avg_path=1.38, clusters=2, largest_scc=1, god_objects=0, components=1

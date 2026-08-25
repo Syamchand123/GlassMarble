@@ -1,0 +1,13 @@
+C4Context
+    title Infrastructure Diagram
+    System_Boundary(sb_cmd_sys, "cmd Infrastructure") {
+        Container(module_cmd, "cmd", "Go/Module", "Namespace Component")
+        Container(sb_app, "app", "Go Module", "Application Container (1 nodes)")
+    }
+    System_Boundary(sb_internal_sys, "internal Infrastructure") {
+        Container(module_internal, "internal", "Go/Module", "Namespace Component")
+        Container(sb_api, "api", "Go/Module", "Application Container (2 nodes)")
+        Container(sb_db, "db", "Go/Module", "Application Container (2 nodes)")
+        Container(sb_models, "models", "Go/Module", "Application Container (2 nodes)")
+    }
+    %% Graph Summary: 9 nodes, 0 edges, density=0.0000, diameter=0, avg_path=0.00, clusters=9, largest_scc=1, god_objects=0, components=9

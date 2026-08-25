@@ -1,0 +1,18 @@
+@startuml
+skinparam roundcorner 10
+skinparam shadowing false
+skinparam defaultFontName "Inter, -apple-system, Roboto, sans-serif"
+skinparam defaultFontSize 11
+skinparam backgroundColor #FFFFFF
+skinparam packageBackgroundColor #F8FAFC
+skinparam packageBorderColor #CBD5E1
+skinparam packageFontColor #0F172A
+skinparam arrowColor #475569
+skinparam sequenceMessageAlign center
+skinparam classAttributeIconSize 0
+!include <C4/C4_Context>
+title System Context Diagram
+System(sb_cmd, "cmd", "System Module")
+System(sb_internal, "internal", "System Module")
+' Graph Summary: 9 nodes, 0 edges, density=0.0000, diameter=0, avg_path=0.00, clusters=9, largest_scc=1, god_objects=0, components=9
+@enduml

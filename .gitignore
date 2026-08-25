@@ -28,9 +28,13 @@ go.work.sum
 # === GlassMarble runtime data ===
 .glassmarble/
 .glassmarble
-testdata/
 *.glassmarble.db
 *.glassmarble.json
+# NOTE: do NOT ignore testdata/ wholesale — test fixtures are tracked source.
+# Ignore only generated/runtime data dirs if they appear under testdata:
+**/testdata/.glassmarble/
+**/testdata/*.tmp
+**/testdata/out/
 
 # === Tree-sitter / CGo build artifacts ===
 *.o

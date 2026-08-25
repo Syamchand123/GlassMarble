@@ -1,0 +1,46 @@
+@startuml
+skinparam roundcorner 10
+skinparam shadowing false
+skinparam defaultFontName "Inter, -apple-system, Roboto, sans-serif"
+skinparam defaultFontSize 11
+skinparam backgroundColor #FFFFFF
+skinparam packageBackgroundColor #F8FAFC
+skinparam packageBorderColor #CBD5E1
+skinparam packageFontColor #0F172A
+skinparam arrowColor #475569
+skinparam sequenceMessageAlign center
+skinparam classAttributeIconSize 0
+package "cmd" as sb_cmd {
+    component "cmd" as module_cmd
+    package "app" as sb_app {
+        component "main.go" as file_cmd_app_main_go
+        component "Main" as cmd_app_main_go_Main
+        component "ParseArgs" as cmd_app_main_go_ParseArgs
+    }
+}
+package "internal" as sb_internal {
+    component "internal" as module_internal
+    package "api" as sb_api {
+        component "handler.go" as file_internal_api_handler_go
+        component "internal/api" as module_internal_api
+        component "HandleHTTP" as internal_api_handler_go_HandleHTTP
+        component "ParseRequest" as internal_api_handler_go_ParseRequest
+    }
+    package "db" as sb_db {
+        component "db.go" as file_internal_db_db_go
+        component "internal/db" as module_internal_db
+        component "Connect" as internal_db_db_go_Connect
+        component "Query" as internal_db_db_go_Query
+    }
+    package "models" as sb_models {
+        component "internal/models" as module_internal_models
+        component "user.go" as file_internal_models_user_go
+    }
+}
+cmd_app_main_go_Main ..> cmd_app_main_go_ParseArgs : calls
+cmd_app_main_go_Main ..> internal_api_handler_go_HandleHTTP : calls
+internal_api_handler_go_HandleHTTP ..> internal_api_handler_go_ParseRequest : calls
+internal_api_handler_go_HandleHTTP ..> internal_db_db_go_Connect : calls
+internal_api_handler_go_HandleHTTP ..> internal_db_db_go_Query : calls
+' Graph Summary: 15 nodes, 5 edges, density=0.0238, diameter=2, avg_path=1.38, clusters=11, largest_scc=1, god_objects=0, components=10
+@enduml

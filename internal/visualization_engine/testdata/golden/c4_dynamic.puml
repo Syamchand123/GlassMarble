@@ -1,0 +1,27 @@
+@startuml
+skinparam roundcorner 10
+skinparam shadowing false
+skinparam defaultFontName "Inter, -apple-system, Roboto, sans-serif"
+skinparam defaultFontSize 11
+skinparam backgroundColor #FFFFFF
+skinparam packageBackgroundColor #F8FAFC
+skinparam packageBorderColor #CBD5E1
+skinparam packageFontColor #0F172A
+skinparam arrowColor #475569
+skinparam sequenceMessageAlign center
+skinparam classAttributeIconSize 0
+!include <C4/C4_Context>
+title Dynamic Flow Diagram
+System(cmd_app_main_go_Main, "Main", "Execution Node")
+System(cmd_app_main_go_ParseArgs, "ParseArgs", "Execution Node")
+System(internal_api_handler_go_HandleHTTP, "HandleHTTP", "Execution Node")
+System(internal_api_handler_go_ParseRequest, "ParseRequest", "Execution Node")
+System(internal_db_db_go_Connect, "Connect", "Execution Node")
+System(internal_db_db_go_Query, "Query", "Execution Node")
+Rel(cmd_app_main_go_Main, cmd_app_main_go_ParseArgs, "1: calls")
+Rel(cmd_app_main_go_Main, internal_api_handler_go_HandleHTTP, "2: calls")
+Rel(internal_api_handler_go_HandleHTTP, internal_api_handler_go_ParseRequest, "3: calls")
+Rel(internal_api_handler_go_HandleHTTP, internal_db_db_go_Connect, "4: calls")
+Rel(internal_api_handler_go_HandleHTTP, internal_db_db_go_Query, "5: calls")
+' Graph Summary: 6 nodes, 5 edges, density=0.1667, diameter=2, avg_path=1.38, clusters=2, largest_scc=1, god_objects=0, components=1
+@enduml

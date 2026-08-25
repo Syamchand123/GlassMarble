@@ -1,0 +1,15 @@
+C4Context
+    title System Landscape Diagram
+    Enterprise_Boundary(sb_cmd_ent, "cmd Enterprise") {
+        System(sb_cmd, "cmd", "System Module")
+        System(module_cmd, "cmd", "System Module")
+        System(sb_app, "app", "System Module (1 nodes)")
+    }
+    Enterprise_Boundary(sb_internal_ent, "internal Enterprise") {
+        System(sb_internal, "internal", "System Module")
+        System(module_internal, "internal", "System Module")
+        System(sb_api, "api", "System Module (2 nodes)")
+        System(sb_db, "db", "System Module (2 nodes)")
+        System(sb_models, "models", "System Module (2 nodes)")
+    }
+    %% Graph Summary: 9 nodes, 0 edges, density=0.0000, diameter=0, avg_path=0.00, clusters=9, largest_scc=1, god_objects=0, components=9

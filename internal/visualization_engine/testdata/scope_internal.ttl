@@ -1,0 +1,33 @@
+@prefix gm: <http://glassmarble.org/schema#> .
+
+<http://glassmarble.org/node/internal/api/handler.go::HandleRequest> a gm:Executable ;
+    gm:name "HandleRequest" ;
+    gm:lineStart 1 ;
+    gm:lineEnd 20 ;
+    gm:belongsToFile <http://glassmarble.org/file/internal/api/handler.go> ;
+    .
+
+<http://glassmarble.org/node/internal/api/handler.go::ProcessRequest> a gm:Executable ;
+    gm:name "ProcessRequest" ;
+    gm:lineStart 22 ;
+    gm:lineEnd 40 ;
+    gm:belongsToFile <http://glassmarble.org/file/internal/api/handler.go> ;
+    .
+
+<http://glassmarble.org/node/cmd/app/main.go::Main> a gm:Executable ;
+    gm:name "Main" ;
+    gm:lineStart 1 ;
+    gm:lineEnd 10 ;
+    gm:belongsToFile <http://glassmarble.org/file/cmd/app/main.go> ;
+    .
+
+<http://glassmarble.org/node/cmd/app/main.go::ParseArgs> a gm:Executable ;
+    gm:name "ParseArgs" ;
+    gm:lineStart 12 ;
+    gm:lineEnd 25 ;
+    gm:belongsToFile <http://glassmarble.org/file/cmd/app/main.go> ;
+    .
+
+<http://glassmarble.org/node/internal/api/handler.go::HandleRequest> gm:calls <http://glassmarble.org/node/internal/api/handler.go::ProcessRequest> .
+<http://glassmarble.org/node/cmd/app/main.go::Main> gm:calls <http://glassmarble.org/node/cmd/app/main.go::ParseArgs> .
+<http://glassmarble.org/node/internal/api/handler.go::HandleRequest> gm:calls <http://glassmarble.org/node/cmd/app/main.go::Main> .

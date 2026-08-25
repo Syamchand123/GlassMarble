@@ -1,0 +1,30 @@
+@prefix gm: <http://glassmarble.org/schema#> .
+
+<http://glassmarble.org/node/cmd/app/main.go::Main> a gm:Executable ;
+    gm:name "Main" ;
+    gm:lineStart 1 ;
+    gm:lineEnd 15 ;
+    gm:belongsToFile <http://glassmarble.org/file/cmd/app/main.go> ;
+    .
+
+<http://glassmarble.org/node/internal/db/db.go::Connect> a gm:Executable ;
+    gm:name "Connect" ;
+    gm:lineStart 1 ;
+    gm:lineEnd 25 ;
+    gm:belongsToFile <http://glassmarble.org/file/internal/db/db.go> ;
+    .
+
+<http://glassmarble.org/node/internal/db/db.go::Query> a gm:Executable ;
+    gm:name "Query" ;
+    gm:lineStart 27 ;
+    gm:lineEnd 50 ;
+    gm:belongsToFile <http://glassmarble.org/file/internal/db/db.go> ;
+    .
+
+<http://glassmarble.org/node/cmd/app/main.go::Main> gm:calls <http://glassmarble.org/node/internal/db/db.go::Connect> .
+
+<http://glassmarble.org/node/cmd/app/worker.go::OldWorker> a gm:Executable ;
+    gm:name "OldWorker" ;
+    gm:status "DELETED" ;
+    gm:belongsToFile <http://glassmarble.org/file/cmd/app/worker.go> ;
+    .

@@ -1,0 +1,19 @@
+digraph G {
+    rankdir=TB;
+    graph [fontname="Inter, -apple-system, sans-serif", fontsize=11, bgcolor="#FFFFFF", pad=0.5, splines=ortho, nodesep=0.6, ranksep=0.8];
+    node [fontname="Inter, -apple-system, sans-serif", fontsize=10, shape=box, style="filled,rounded", fillcolor="#EEF2FF", color="#4F46E5", fontcolor="#1E1B4B", penwidth=1.2, margin="0.2,0.1"];
+    edge [fontname="Inter, -apple-system, sans-serif", fontsize=9, color="#475569", penwidth=1.2, fontcolor="#475569", arrowhead=vee];
+    label="C4_DYNAMIC Diagram";
+    cmd_app_main_go_Main [label="«SERVICE»\nMain", shape=box, fillcolor="#EEF2FF", color="#4F46E5", fontcolor="#1E1B4B"];
+    cmd_app_main_go_ParseArgs [label="«PARSER»\nParseArgs", shape=trapezium, fillcolor="#FFFBEB", color="#B45309", fontcolor="#78350F"];
+    internal_api_handler_go_HandleHTTP [label="«SERVICE»\nHandleHTTP", shape=box, fillcolor="#EEF2FF", color="#4F46E5", fontcolor="#1E1B4B"];
+    internal_api_handler_go_ParseRequest [label="«PARSER»\nParseRequest", shape=trapezium, fillcolor="#FFFBEB", color="#B45309", fontcolor="#78350F"];
+    internal_db_db_go_Connect [label="«SERVICE»\nConnect", shape=box, fillcolor="#EEF2FF", color="#4F46E5", fontcolor="#1E1B4B"];
+    internal_db_db_go_Query [label="«SERVICE»\nQuery", shape=box, fillcolor="#EEF2FF", color="#4F46E5", fontcolor="#1E1B4B"];
+    cmd_app_main_go_Main -> cmd_app_main_go_ParseArgs [label="calls", style=solid, color="#475569"];
+    cmd_app_main_go_Main -> internal_api_handler_go_HandleHTTP [label="calls", style=solid, color="#475569"];
+    internal_api_handler_go_HandleHTTP -> internal_api_handler_go_ParseRequest [label="calls", style=solid, color="#475569"];
+    internal_api_handler_go_HandleHTTP -> internal_db_db_go_Connect [label="calls", style=solid, color="#475569"];
+    internal_api_handler_go_HandleHTTP -> internal_db_db_go_Query [label="calls", style=solid, color="#475569"];
+    // Graph Summary: 6 nodes, 5 edges, density=0.1667, diameter=2, avg_path=1.38, clusters=2, largest_scc=1, god_objects=0, components=1
+}

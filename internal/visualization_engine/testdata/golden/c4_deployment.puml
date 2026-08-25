@@ -1,0 +1,27 @@
+@startuml
+skinparam roundcorner 10
+skinparam shadowing false
+skinparam defaultFontName "Inter, -apple-system, Roboto, sans-serif"
+skinparam defaultFontSize 11
+skinparam backgroundColor #FFFFFF
+skinparam packageBackgroundColor #F8FAFC
+skinparam packageBorderColor #CBD5E1
+skinparam packageFontColor #0F172A
+skinparam arrowColor #475569
+skinparam sequenceMessageAlign center
+skinparam classAttributeIconSize 0
+!include <C4/C4_Deployment>
+title C4 Deployment Diagram
+Deployment_Node(sb_cmd_node, "cmd Node", "Deployment Environment") {
+    Container(module_cmd, "cmd", "Go/Module", "Namespace Component")
+}
+Deployment_Node(sb_internal_node, "internal Node", "Deployment Environment") {
+    Container(module_internal, "internal", "Go/Module", "Namespace Component")
+}
+Rel(cmd_app_main_go_Main, cmd_app_main_go_ParseArgs, "calls")
+Rel(cmd_app_main_go_Main, internal_api_handler_go_HandleHTTP, "calls")
+Rel(internal_api_handler_go_HandleHTTP, internal_api_handler_go_ParseRequest, "calls")
+Rel(internal_api_handler_go_HandleHTTP, internal_db_db_go_Connect, "calls")
+Rel(internal_api_handler_go_HandleHTTP, internal_db_db_go_Query, "calls")
+' Graph Summary: 15 nodes, 5 edges, density=0.0238, diameter=2, avg_path=1.38, clusters=11, largest_scc=1, god_objects=0, components=10
+@enduml

@@ -1,0 +1,99 @@
+@prefix gm: <http://glassmarble.org/schema#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+<http://glassmarble.org/node/cmd/app/main.go::Main> a gm:Executable ;
+    gm:name "Main" ;
+    gm:lineStart 1 ;
+    gm:lineEnd 15 ;
+    gm:belongsToFile <http://glassmarble.org/file/cmd/app/main.go> ;
+    .
+
+<http://glassmarble.org/node/cmd/app/main.go::ParseArgs> a gm:Executable ;
+    gm:name "ParseArgs" ;
+    gm:lineStart 17 ;
+    gm:lineEnd 30 ;
+    gm:belongsToFile <http://glassmarble.org/file/cmd/app/main.go> ;
+    .
+
+<http://glassmarble.org/node/internal/db/db.go::Connect> a gm:Executable ;
+    gm:name "Connect" ;
+    gm:lineStart 1 ;
+    gm:lineEnd 25 ;
+    gm:belongsToFile <http://glassmarble.org/file/internal/db/db.go> ;
+    .
+
+<http://glassmarble.org/node/internal/db/db.go::Query> a gm:Executable ;
+    gm:name "Query" ;
+    gm:lineStart 27 ;
+    gm:lineEnd 50 ;
+    gm:belongsToFile <http://glassmarble.org/file/internal/db/db.go> ;
+    .
+
+<http://glassmarble.org/node/internal/api/handler.go::HandleHTTP> a gm:Executable ;
+    gm:name "HandleHTTP" ;
+    gm:lineStart 1 ;
+    gm:lineEnd 40 ;
+    gm:belongsToFile <http://glassmarble.org/file/internal/api/handler.go> ;
+    .
+
+<http://glassmarble.org/node/internal/api/handler.go::ParseRequest> a gm:Executable ;
+    gm:name "ParseRequest" ;
+    gm:lineStart 42 ;
+    gm:lineEnd 60 ;
+    gm:belongsToFile <http://glassmarble.org/file/internal/api/handler.go> ;
+    .
+
+<http://glassmarble.org/node/internal/models/user.go::User> a gm:TypeDecl ;
+    gm:name "User" ;
+    gm:lineStart 1 ;
+    gm:lineEnd 30 ;
+    gm:belongsToFile <http://glassmarble.org/file/internal/models/user.go> ;
+    .
+
+<http://glassmarble.org/node/cmd/app/main.go::Main> gm:calls <http://glassmarble.org/node/cmd/app/main.go::ParseArgs> .
+<http://glassmarble.org/node/cmd/app/main.go::Main> gm:calls <http://glassmarble.org/node/internal/api/handler.go::HandleHTTP> .
+<http://glassmarble.org/node/internal/api/handler.go::HandleHTTP> gm:calls <http://glassmarble.org/node/internal/api/handler.go::ParseRequest> .
+<http://glassmarble.org/node/internal/api/handler.go::HandleHTTP> gm:calls <http://glassmarble.org/node/internal/db/db.go::Connect> .
+<http://glassmarble.org/node/internal/api/handler.go::HandleHTTP> gm:calls <http://glassmarble.org/node/internal/db/db.go::Query> .
+<http://glassmarble.org/node/internal/api/handler.go::ParseRequest> gm:dataFlowTo <http://glassmarble.org/node/internal/models/user.go::User> .
+<http://glassmarble.org/node/internal/db/db.go::Connect> gm:dataFlowTo <http://glassmarble.org/node/internal/db/db.go::Query> .
+
+<http://glassmarble.org/namespace/cmd> a gm:Namespace ;
+    gm:name "cmd" ;
+    .
+
+<http://glassmarble.org/namespace/internal> a gm:Namespace ;
+    gm:name "internal" ;
+    .
+
+<http://glassmarble.org/namespace/internal/api> a gm:Namespace ;
+    gm:name "internal/api" ;
+    .
+
+<http://glassmarble.org/namespace/internal/db> a gm:Namespace ;
+    gm:name "internal/db" ;
+    .
+
+<http://glassmarble.org/namespace/internal/models> a gm:Namespace ;
+    gm:name "internal/models" ;
+    .
+
+<http://glassmarble.org/file/cmd/app/main.go> a gm:File ;
+    gm:name "main.go" ;
+    gm:belongsToNamespace <http://glassmarble.org/namespace/cmd> ;
+    .
+
+<http://glassmarble.org/file/internal/api/handler.go> a gm:File ;
+    gm:name "handler.go" ;
+    gm:belongsToNamespace <http://glassmarble.org/namespace/internal/api> ;
+    .
+
+<http://glassmarble.org/file/internal/db/db.go> a gm:File ;
+    gm:name "db.go" ;
+    gm:belongsToNamespace <http://glassmarble.org/namespace/internal/db> ;
+    .
+
+<http://glassmarble.org/file/internal/models/user.go> a gm:File ;
+    gm:name "user.go" ;
+    gm:belongsToNamespace <http://glassmarble.org/namespace/internal/models> ;
+    .

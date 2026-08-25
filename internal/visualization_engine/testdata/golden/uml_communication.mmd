@@ -1,0 +1,25 @@
+flowchart LR
+    cmd_app_main_go_Main["<small>«SERVICE»</small><br/><b>Main</b>"]:::service
+    cmd_app_main_go_ParseArgs[/"<small>«PARSER»</small><br/><b>ParseArgs</b>"/]:::parser
+    internal_api_handler_go_HandleHTTP["<small>«SERVICE»</small><br/><b>HandleHTTP</b>"]:::service
+    internal_api_handler_go_ParseRequest[/"<small>«PARSER»</small><br/><b>ParseRequest</b>"/]:::parser
+    internal_db_db_go_Connect["<small>«SERVICE»</small><br/><b>Connect</b>"]:::service
+    internal_db_db_go_Query["<small>«SERVICE»</small><br/><b>Query</b>"]:::service
+    cmd_app_main_go_Main -->|1: ParseArgs()| cmd_app_main_go_ParseArgs
+    cmd_app_main_go_Main -->|2: HandleHTTP()| internal_api_handler_go_HandleHTTP
+    internal_api_handler_go_HandleHTTP -->|3: ParseRequest()| internal_api_handler_go_ParseRequest
+    internal_api_handler_go_HandleHTTP -->|4: Connect()| internal_db_db_go_Connect
+    internal_api_handler_go_HandleHTTP -->|5: Query()| internal_db_db_go_Query
+    classDef datastore fill:#FEF3C7,stroke:#D97706,stroke-width:1.5px,color:#78350F;
+    classDef entrypoint fill:#ECFDF5,stroke:#059669,stroke-width:2px,color:#064E3B;
+    classDef eventbus fill:#F5F3FF,stroke:#7C3AED,stroke-width:1.5px,color:#4C1D95;
+    classDef external fill:#F8FAFC,stroke:#64748B,stroke-width:1.5px,color:#334155,stroke-dasharray:4 4;
+    classDef gateway fill:#F0F9FF,stroke:#0284C7,stroke-width:1.5px,color:#075985;
+    classDef godobject fill:#FFF7ED,stroke:#EA580C,stroke-width:2.5px,color:#7C2D12;
+    classDef hotspot fill:#FEF2F2,stroke:#DC2626,stroke-width:2.5px,color:#7F1D1D;
+    classDef interface fill:#F0FDFA,stroke:#0D9488,stroke-width:1.5px,color:#134E4A,stroke-dasharray:3 3;
+    classDef model fill:#F0FDF4,stroke:#16A34A,stroke-width:1.5px,color:#14532D;
+    classDef parser fill:#FFFBEB,stroke:#B45309,stroke-width:1.5px,color:#78350F;
+    classDef renderer fill:#EFF6FF,stroke:#2563EB,stroke-width:1.5px,color:#1E3A8A;
+    classDef service fill:#EEF2FF,stroke:#4F46E5,stroke-width:1.5px,color:#1E1B4B;
+    %% Graph Summary: 6 nodes, 5 edges, density=0.1667, diameter=2, avg_path=1.38, clusters=2, largest_scc=1, god_objects=0, components=1

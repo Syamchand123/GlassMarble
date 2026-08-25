@@ -1,0 +1,23 @@
+@startuml
+skinparam roundcorner 10
+skinparam shadowing false
+skinparam defaultFontName "Inter, -apple-system, Roboto, sans-serif"
+skinparam defaultFontSize 11
+skinparam backgroundColor #FFFFFF
+skinparam packageBackgroundColor #F8FAFC
+skinparam packageBorderColor #CBD5E1
+skinparam packageFontColor #0F172A
+skinparam arrowColor #475569
+skinparam sequenceMessageAlign center
+skinparam classAttributeIconSize 0
+rectangle "cmd" as module_cmd
+rectangle "main.go" as file_cmd_app_main_go
+rectangle "internal" as module_internal
+rectangle "handler.go" as file_internal_api_handler_go
+rectangle "internal/api" as module_internal_api
+rectangle "db.go" as file_internal_db_db_go
+rectangle "internal/db" as module_internal_db
+rectangle "internal/models" as module_internal_models
+rectangle "user.go" as file_internal_models_user_go
+' Graph Summary: 9 nodes, 0 edges, density=0.0000, diameter=0, avg_path=0.00, clusters=9, largest_scc=1, god_objects=0, components=9
+@enduml

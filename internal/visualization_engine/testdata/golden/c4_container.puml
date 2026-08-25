@@ -1,0 +1,46 @@
+@startuml
+skinparam roundcorner 10
+skinparam shadowing false
+skinparam defaultFontName "Inter, -apple-system, Roboto, sans-serif"
+skinparam defaultFontSize 11
+skinparam backgroundColor #FFFFFF
+skinparam packageBackgroundColor #F8FAFC
+skinparam packageBorderColor #CBD5E1
+skinparam packageFontColor #0F172A
+skinparam arrowColor #475569
+skinparam sequenceMessageAlign center
+skinparam classAttributeIconSize 0
+!include <C4/C4_Container>
+title Container Diagram
+System_Boundary(sb_CLI_Subsystem_sys, "CLI Subsystem System") {
+    Container(module_cmd, "cmd", "Go/Module", "Namespace Component")
+    Container(file_cmd_app_main_go, "main.go", "Go/Generic", "File Component")
+    Container(cmd_app_main_go_ParseArgs, "ParseArgs", "Go/Executable", "Executable Component")
+}
+System_Boundary(sb_api_Subsystem_sys, "api Subsystem System") {
+    Container(file_internal_api_handler_go, "handler.go", "Go/Generic", "File Component")
+    Container(module_internal_api, "internal/api", "Go/Module", "Namespace Component")
+    Container(internal_api_handler_go_HandleHTTP, "HandleHTTP", "Go/Executable", "Executable Component")
+}
+System_Boundary(sb_cmd_sys, "cmd System") {
+    Container(sb_app, "app", "Go Module", "Container")
+}
+System_Boundary(sb_db_Subsystem_sys, "db Subsystem System") {
+    Container(file_internal_db_db_go, "db.go", "Go/Generic", "File Component")
+    Container(module_internal_db, "internal/db", "Go/Module", "Namespace Component")
+}
+System_Boundary(sb_internal_sys, "internal System") {
+    Container(sb_api, "api", "Go Module", "Container")
+    Container(module_internal, "internal", "Go/Module", "Namespace Component")
+}
+System_Boundary(sb_models_Subsystem_sys, "models Subsystem System") {
+    Container(module_internal_models, "internal/models", "Go/Module", "Namespace Component")
+    Container(file_internal_models_user_go, "user.go", "Go/Generic", "File Component")
+}
+Rel(cmd_app_main_go_Main, cmd_app_main_go_ParseArgs, "calls")
+Rel(cmd_app_main_go_Main, internal_api_handler_go_HandleHTTP, "calls")
+Rel(internal_api_handler_go_HandleHTTP, internal_api_handler_go_ParseRequest, "calls")
+Rel(internal_api_handler_go_HandleHTTP, internal_db_db_go_Connect, "calls")
+Rel(internal_api_handler_go_HandleHTTP, internal_db_db_go_Query, "calls")
+' Graph Summary: 15 nodes, 5 edges, density=0.0238, diameter=2, avg_path=1.38, clusters=11, largest_scc=1, god_objects=0, components=10
+@enduml

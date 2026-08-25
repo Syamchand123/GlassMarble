@@ -1,0 +1,14 @@
+C4Deployment
+    title C4 Deployment Diagram
+    Deployment_Node(sb_cmd_node, "cmd Node", "Deployment Environment") {
+        Container(module_cmd, "cmd", "Go/Module", "Namespace Component")
+        Container(sb_app, "app", "Go/Executable", "Application Container (3 nodes)")
+    }
+    Deployment_Node(sb_internal_node, "internal Node", "Deployment Environment") {
+        Container(module_internal, "internal", "Go/Module", "Namespace Component")
+        Container(sb_api, "api", "Go/Module", "Application Container (4 nodes)")
+        Container(sb_db, "db", "Go/Module", "Application Container (4 nodes)")
+        Container(sb_models, "models", "Go/Module", "Application Container (2 nodes)")
+    }
+    Rel(sb_cmd_node, sb_internal_node, "calls")
+    %% Graph Summary: 15 nodes, 5 edges, density=0.0238, diameter=2, avg_path=1.38, clusters=11, largest_scc=1, god_objects=0, components=10

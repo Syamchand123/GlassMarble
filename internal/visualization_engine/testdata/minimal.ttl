@@ -1,0 +1,13 @@
+@prefix gm: <http://glassmarble.org/schema#> .
+<http://glassmarble.org/node/main.go::Main> a gm:Executable ;
+    gm:name "Main" ;
+    gm:lineStart 1 ;
+    gm:lineEnd 10 ;
+    .
+<http://glassmarble.org/node/main.go::Main> gm:calls <http://glassmarble.org/node/utils.go::Helper> .
+<< <http://glassmarble.org/node/main.go::Main> gm:calls <http://glassmarble.org/node/utils.go::Helper> >> gm:lineNumber 5 .
+<http://glassmarble.org/node/utils.go::Helper> a gm:Executable ;
+    gm:name "Helper" ;
+    gm:lineStart 12 ;
+    gm:lineEnd 20 ;
+    .

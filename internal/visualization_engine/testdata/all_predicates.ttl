@@ -1,0 +1,46 @@
+@prefix gm: <http://glassmarble.org/schema#> .
+
+<http://glassmarble.org/node/main.go::Main> a gm:Executable ;
+    gm:name "Main" ;
+    gm:lineStart 1 ;
+    gm:lineEnd 10 ;
+    .
+
+<http://glassmarble.org/node/utils.go::Helper> a gm:Executable ;
+    gm:name "Helper" ;
+    gm:lineStart 12 ;
+    gm:lineEnd 20 ;
+    .
+
+<http://glassmarble.org/node/types.go::BaseType> a gm:TypeDecl ;
+    gm:name "BaseType" ;
+    gm:lineStart 1 ;
+    gm:lineEnd 50 ;
+    .
+
+<http://glassmarble.org/node/types.go::DerivedType> a gm:TypeDecl ;
+    gm:name "DerivedType" ;
+    gm:lineStart 52 ;
+    gm:lineEnd 80 ;
+    .
+
+<http://glassmarble.org/node/db.go::DataStore> a gm:Database ;
+    gm:name "DataStore" ;
+    gm:primitiveType "DATABASE" ;
+    .
+
+<http://glassmarble.org/file/main.go> a gm:File ;
+    gm:name "main.go" ;
+    .
+
+<http://glassmarble.org/node/main.go::Main> gm:calls <http://glassmarble.org/node/utils.go::Helper> .
+
+<http://glassmarble.org/node/types.go::DerivedType> gm:inheritsFrom <http://glassmarble.org/node/types.go::BaseType> .
+
+<http://glassmarble.org/node/types.go::BaseType> gm:composes <http://glassmarble.org/node/main.go::Main> .
+
+<http://glassmarble.org/node/utils.go::Helper> gm:dataFlowTo <http://glassmarble.org/node/main.go::Main> .
+
+<http://glassmarble.org/node/main.go::Main> gm:controlFlowTo <http://glassmarble.org/node/utils.go::Helper> .
+
+<http://glassmarble.org/node/main.go::Main> gm:belongsToFile <http://glassmarble.org/file/main.go> .

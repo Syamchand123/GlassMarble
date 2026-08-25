@@ -1,0 +1,145 @@
+{
+  "schema_version": 3,
+  "commit_hash": "fixture",
+  "version": 0,
+  "entrypoints": ["cmd/app/main.go::Main"],
+  "nodes": [
+    {
+      "id": "cmd/app/main.go::Main",
+      "kind": "FUNCTION",
+      "name": "Main",
+      "file_spec": { "path": "cmd/app/main.go", "line_start": 1, "line_end": 15 }
+    },
+    {
+      "id": "cmd/app/main.go::ParseArgs",
+      "kind": "FUNCTION",
+      "name": "ParseArgs",
+      "file_spec": { "path": "cmd/app/main.go", "line_start": 17, "line_end": 30 }
+    },
+    {
+      "id": "internal/db/db.go::Connect",
+      "kind": "FUNCTION",
+      "name": "Connect",
+      "file_spec": { "path": "internal/db/db.go", "line_start": 1, "line_end": 25 }
+    },
+    {
+      "id": "internal/db/db.go::Query",
+      "kind": "FUNCTION",
+      "name": "Query",
+      "file_spec": { "path": "internal/db/db.go", "line_start": 27, "line_end": 50 }
+    },
+    {
+      "id": "internal/api/handler.go::HandleHTTP",
+      "kind": "FUNCTION",
+      "name": "HandleHTTP",
+      "file_spec": { "path": "internal/api/handler.go", "line_start": 1, "line_end": 40 }
+    },
+    {
+      "id": "internal/api/handler.go::ParseRequest",
+      "kind": "FUNCTION",
+      "name": "ParseRequest",
+      "file_spec": { "path": "internal/api/handler.go", "line_start": 42, "line_end": 60 }
+    },
+    {
+      "id": "internal/models/user.go::User",
+      "kind": "TYPE_DECL",
+      "name": "User",
+      "file_spec": { "path": "internal/models/user.go", "line_start": 1, "line_end": 30 }
+    },
+    {
+      "id": "module:cmd",
+      "kind": "NAMESPACE",
+      "name": "cmd",
+      "file_spec": { "path": "" }
+    },
+    {
+      "id": "module:internal",
+      "kind": "NAMESPACE",
+      "name": "internal",
+      "file_spec": { "path": "" }
+    },
+    {
+      "id": "module:internal/api",
+      "kind": "NAMESPACE",
+      "name": "internal/api",
+      "file_spec": { "path": "" }
+    },
+    {
+      "id": "module:internal/db",
+      "kind": "NAMESPACE",
+      "name": "internal/db",
+      "file_spec": { "path": "" }
+    },
+    {
+      "id": "module:internal/models",
+      "kind": "NAMESPACE",
+      "name": "internal/models",
+      "file_spec": { "path": "" }
+    },
+    {
+      "id": "file:cmd/app/main.go",
+      "kind": "FILE",
+      "name": "main.go",
+      "file_spec": { "path": "" },
+      "properties": { "belongsToNamespace": "module:cmd" }
+    },
+    {
+      "id": "file:internal/api/handler.go",
+      "kind": "FILE",
+      "name": "handler.go",
+      "file_spec": { "path": "" },
+      "properties": { "belongsToNamespace": "module:internal/api" }
+    },
+    {
+      "id": "file:internal/db/db.go",
+      "kind": "FILE",
+      "name": "db.go",
+      "file_spec": { "path": "" },
+      "properties": { "belongsToNamespace": "module:internal/db" }
+    },
+    {
+      "id": "file:internal/models/user.go",
+      "kind": "FILE",
+      "name": "user.go",
+      "file_spec": { "path": "" },
+      "properties": { "belongsToNamespace": "module:internal/models" }
+    }
+  ],
+  "edges": [
+    {
+      "source_id": "cmd/app/main.go::Main",
+      "target_id": "cmd/app/main.go::ParseArgs",
+      "type": "CALLS"
+    },
+    {
+      "source_id": "cmd/app/main.go::Main",
+      "target_id": "internal/api/handler.go::HandleHTTP",
+      "type": "CALLS"
+    },
+    {
+      "source_id": "internal/api/handler.go::HandleHTTP",
+      "target_id": "internal/api/handler.go::ParseRequest",
+      "type": "CALLS"
+    },
+    {
+      "source_id": "internal/api/handler.go::HandleHTTP",
+      "target_id": "internal/db/db.go::Connect",
+      "type": "CALLS"
+    },
+    {
+      "source_id": "internal/api/handler.go::HandleHTTP",
+      "target_id": "internal/db/db.go::Query",
+      "type": "CALLS"
+    },
+    {
+      "source_id": "internal/api/handler.go::ParseRequest",
+      "target_id": "internal/models/user.go::User",
+      "type": "DATA_FLOW"
+    },
+    {
+      "source_id": "internal/db/db.go::Connect",
+      "target_id": "internal/db/db.go::Query",
+      "type": "DATA_FLOW"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+digraph G {
+    rankdir=TB;
+    graph [fontname="Inter, -apple-system, sans-serif", fontsize=11, bgcolor="#FFFFFF", pad=0.5, splines=ortho, nodesep=0.6, ranksep=0.8];
+    node [fontname="Inter, -apple-system, sans-serif", fontsize=10, shape=box, style="filled,rounded", fillcolor="#EEF2FF", color="#4F46E5", fontcolor="#1E1B4B", penwidth=1.2, margin="0.2,0.1"];
+    edge [fontname="Inter, -apple-system, sans-serif", fontsize=9, color="#475569", penwidth=1.2, fontcolor="#475569", arrowhead=vee];
+    label="ER_DIAGRAM Diagram";
+    internal_models_user_go_User [label="«MODEL»\nUser", shape=box, fillcolor="#F0FDF4", color="#16A34A", fontcolor="#14532D"];
+    // Graph Summary: 1 nodes, 0 edges, density=0.0000, diameter=0, avg_path=0.00, clusters=1, largest_scc=1, god_objects=0, components=1
+}

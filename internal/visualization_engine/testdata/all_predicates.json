@@ -1,0 +1,71 @@
+{
+  "schema_version": 3,
+  "commit_hash": "fixture",
+  "version": 0,
+  "nodes": [
+    {
+      "id": "main.go::Main",
+      "kind": "FUNCTION",
+      "name": "Main",
+      "file_spec": { "path": "main.go", "line_start": 1, "line_end": 10 }
+    },
+    {
+      "id": "utils.go::Helper",
+      "kind": "FUNCTION",
+      "name": "Helper",
+      "file_spec": { "path": "utils.go", "line_start": 12, "line_end": 20 }
+    },
+    {
+      "id": "types.go::BaseType",
+      "kind": "TYPE_DECL",
+      "name": "BaseType",
+      "file_spec": { "path": "types.go", "line_start": 1, "line_end": 50 }
+    },
+    {
+      "id": "types.go::DerivedType",
+      "kind": "TYPE_DECL",
+      "name": "DerivedType",
+      "file_spec": { "path": "types.go", "line_start": 52, "line_end": 80 }
+    },
+    {
+      "id": "db.go::DataStore",
+      "kind": "VIRTUAL_DATABASE",
+      "name": "DataStore",
+      "primitive": "DATABASE",
+      "file_spec": { "path": "db.go" }
+    },
+    {
+      "id": "file:main.go",
+      "kind": "FILE",
+      "name": "main.go",
+      "file_spec": { "path": "" }
+    }
+  ],
+  "edges": [
+    {
+      "source_id": "main.go::Main",
+      "target_id": "utils.go::Helper",
+      "type": "CALLS"
+    },
+    {
+      "source_id": "types.go::DerivedType",
+      "target_id": "types.go::BaseType",
+      "type": "IMPLEMENTS"
+    },
+    {
+      "source_id": "types.go::BaseType",
+      "target_id": "main.go::Main",
+      "type": "COMPOSES"
+    },
+    {
+      "source_id": "utils.go::Helper",
+      "target_id": "main.go::Main",
+      "type": "DATA_FLOW"
+    },
+    {
+      "source_id": "main.go::Main",
+      "target_id": "utils.go::Helper",
+      "type": "CFG_FLOW"
+    }
+  ]
+}

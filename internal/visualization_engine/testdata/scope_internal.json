@@ -1,0 +1,51 @@
+{
+  "schema_version": 3,
+  "commit_hash": "fixture",
+  "version": 0,
+  "nodes": [
+    {
+      "id": "internal/api/handler.go::HandleRequest",
+      "kind": "FUNCTION",
+      "name": "HandleRequest",
+      "file_spec": { "path": "internal/api/handler.go", "line_start": 1, "line_end": 20 }
+    },
+    {
+      "id": "internal/api/handler.go::ProcessRequest",
+      "kind": "FUNCTION",
+      "name": "ProcessRequest",
+      "file_spec": { "path": "internal/api/handler.go", "line_start": 22, "line_end": 40 }
+    },
+    {
+      "id": "cmd/app/main.go::Main",
+      "kind": "FUNCTION",
+      "name": "Main",
+      "file_spec": { "path": "cmd/app/main.go", "line_start": 1, "line_end": 10 }
+    },
+    {
+      "id": "cmd/app/main.go::ParseArgs",
+      "kind": "FUNCTION",
+      "name": "ParseArgs",
+      "file_spec": { "path": "cmd/app/main.go", "line_start": 12, "line_end": 25 }
+    }
+  ],
+  "edges": [
+    {
+      "source_id": "internal/api/handler.go::HandleRequest",
+      "target_id": "internal/api/handler.go::ProcessRequest",
+      "type": "CALLS",
+      "line_number": 0
+    },
+    {
+      "source_id": "cmd/app/main.go::Main",
+      "target_id": "cmd/app/main.go::ParseArgs",
+      "type": "CALLS",
+      "line_number": 0
+    },
+    {
+      "source_id": "internal/api/handler.go::HandleRequest",
+      "target_id": "cmd/app/main.go::Main",
+      "type": "CALLS",
+      "line_number": 0
+    }
+  ]
+}

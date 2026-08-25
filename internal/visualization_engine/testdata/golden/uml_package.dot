@@ -1,0 +1,17 @@
+digraph G {
+    rankdir=TB;
+    graph [fontname="Inter, -apple-system, sans-serif", fontsize=11, bgcolor="#FFFFFF", pad=0.5, splines=ortho, nodesep=0.6, ranksep=0.8];
+    node [fontname="Inter, -apple-system, sans-serif", fontsize=10, shape=box, style="filled,rounded", fillcolor="#EEF2FF", color="#4F46E5", fontcolor="#1E1B4B", penwidth=1.2, margin="0.2,0.1"];
+    edge [fontname="Inter, -apple-system, sans-serif", fontsize=9, color="#475569", penwidth=1.2, fontcolor="#475569", arrowhead=vee];
+    label="UML_PACKAGE Diagram";
+    module_cmd [label="«SERVICE»\ncmd", shape=box, fillcolor="#EEF2FF", color="#4F46E5", fontcolor="#1E1B4B"];
+    file_cmd_app_main_go [label="«SERVICE»\nmain.go", shape=box, fillcolor="#EEF2FF", color="#4F46E5", fontcolor="#1E1B4B"];
+    module_internal [label="«SERVICE»\ninternal", shape=box, fillcolor="#EEF2FF", color="#4F46E5", fontcolor="#1E1B4B"];
+    file_internal_api_handler_go [label="«SERVICE»\nhandler.go", shape=box, fillcolor="#EEF2FF", color="#4F46E5", fontcolor="#1E1B4B"];
+    module_internal_api [label="«SERVICE»\ninternal/api", shape=box, fillcolor="#EEF2FF", color="#4F46E5", fontcolor="#1E1B4B"];
+    file_internal_db_db_go [label="«SERVICE»\ndb.go", shape=box, fillcolor="#EEF2FF", color="#4F46E5", fontcolor="#1E1B4B"];
+    module_internal_db [label="«SERVICE»\ninternal/db", shape=box, fillcolor="#EEF2FF", color="#4F46E5", fontcolor="#1E1B4B"];
+    module_internal_models [label="«SERVICE»\ninternal/models", shape=box, fillcolor="#EEF2FF", color="#4F46E5", fontcolor="#1E1B4B"];
+    file_internal_models_user_go [label="«SERVICE»\nuser.go", shape=box, fillcolor="#EEF2FF", color="#4F46E5", fontcolor="#1E1B4B"];
+    // Graph Summary: 9 nodes, 0 edges, density=0.0000, diameter=0, avg_path=0.00, clusters=9, largest_scc=1, god_objects=0, components=9
+}

@@ -1,0 +1,36 @@
+flowchart TB
+    subgraph sb_cmd ["«MODULE» cmd"]
+        module_cmd["<small>«SERVICE»</small><br/><b>cmd</b><br/><small>PR: 0.10</small>"]:::service
+        subgraph sb_app ["«MODULE» app"]
+            file_cmd_app_main_go["<small>«SERVICE»</small><br/><b>main.go</b><br/><small>PR: 0.10</small>"]:::service
+        end
+    end
+    subgraph sb_internal ["«MODULE» internal"]
+        module_internal["<small>«SERVICE»</small><br/><b>internal</b><br/><small>PR: 0.10</small>"]:::service
+        subgraph sb_api ["«MODULE» api"]
+            file_internal_api_handler_go["<small>«SERVICE»</small><br/><b>handler.go</b><br/><small>PR: 0.10</small>"]:::service
+            module_internal_api["<small>«SERVICE»</small><br/><b>internal/api</b><br/><small>PR: 0.10</small>"]:::service
+        end
+        subgraph sb_db ["«MODULE» db"]
+            file_internal_db_db_go["<small>«SERVICE»</small><br/><b>db.go</b><br/><small>PR: 0.10</small>"]:::service
+            module_internal_db["<small>«SERVICE»</small><br/><b>internal/db</b><br/><small>PR: 0.10</small>"]:::service
+        end
+        subgraph sb_models ["«MODULE» models"]
+            module_internal_models["<small>«SERVICE»</small><br/><b>internal/models</b><br/><small>PR: 0.10</small>"]:::service
+            file_internal_models_user_go["<small>«SERVICE»</small><br/><b>user.go</b><br/><small>PR: 0.10</small>"]:::service
+            internal_models_user_go_User["<small>«MODEL»</small><br/><b>User</b><br/><small>PR: 0.10</small>"]:::model
+        end
+    end
+    classDef datastore fill:#FEF3C7,stroke:#D97706,stroke-width:1.5px,color:#78350F;
+    classDef entrypoint fill:#ECFDF5,stroke:#059669,stroke-width:2px,color:#064E3B;
+    classDef eventbus fill:#F5F3FF,stroke:#7C3AED,stroke-width:1.5px,color:#4C1D95;
+    classDef external fill:#F8FAFC,stroke:#64748B,stroke-width:1.5px,color:#334155,stroke-dasharray:4 4;
+    classDef gateway fill:#F0F9FF,stroke:#0284C7,stroke-width:1.5px,color:#075985;
+    classDef godobject fill:#FFF7ED,stroke:#EA580C,stroke-width:2.5px,color:#7C2D12;
+    classDef hotspot fill:#FEF2F2,stroke:#DC2626,stroke-width:2.5px,color:#7F1D1D;
+    classDef interface fill:#F0FDFA,stroke:#0D9488,stroke-width:1.5px,color:#134E4A,stroke-dasharray:3 3;
+    classDef model fill:#F0FDF4,stroke:#16A34A,stroke-width:1.5px,color:#14532D;
+    classDef parser fill:#FFFBEB,stroke:#B45309,stroke-width:1.5px,color:#78350F;
+    classDef renderer fill:#EFF6FF,stroke:#2563EB,stroke-width:1.5px,color:#1E3A8A;
+    classDef service fill:#EEF2FF,stroke:#4F46E5,stroke-width:1.5px,color:#1E1B4B;
+    %% Graph Summary: 10 nodes, 0 edges, density=0.0000, diameter=0, avg_path=0.00, clusters=10, largest_scc=1, god_objects=0, components=10

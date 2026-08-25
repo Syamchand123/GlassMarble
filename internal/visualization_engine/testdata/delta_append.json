@@ -1,0 +1,32 @@
+{
+  "schema_version": 3,
+  "commit_hash": "fixture",
+  "version": 0,
+  "nodes": [
+    {
+      "id": "cmd/app/main.go::Main",
+      "kind": "FUNCTION",
+      "name": "Main",
+      "file_spec": { "path": "cmd/app/main.go", "line_start": 1, "line_end": 15 }
+    },
+    {
+      "id": "internal/db/db.go::Connect",
+      "kind": "FUNCTION",
+      "name": "Connect",
+      "file_spec": { "path": "internal/db/db.go", "line_start": 1, "line_end": 25 }
+    },
+    {
+      "id": "internal/db/db.go::Query",
+      "kind": "FUNCTION",
+      "name": "Query",
+      "file_spec": { "path": "internal/db/db.go", "line_start": 27, "line_end": 50 }
+    }
+  ],
+  "edges": [
+    {
+      "source_id": "cmd/app/main.go::Main",
+      "target_id": "internal/db/db.go::Connect",
+      "type": "CALLS"
+    }
+  ]
+}

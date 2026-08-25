@@ -1,0 +1,46 @@
+{
+  "schema_version": 3,
+  "commit_hash": "fixture",
+  "version": 0,
+  "nodes": [
+    {
+      "id": "types.go::User",
+      "kind": "TYPE_DECL",
+      "name": "User",
+      "file_spec": { "path": "types.go", "line_start": 1, "line_end": 30 }
+    },
+    {
+      "id": "main.go::Run",
+      "kind": "FUNCTION",
+      "name": "Run",
+      "file_spec": { "path": "main.go", "line_start": 10, "line_end": 20 }
+    },
+    {
+      "id": "module:app",
+      "kind": "NAMESPACE",
+      "name": "app",
+      "file_spec": { "path": "" }
+    },
+    {
+      "id": "file:main.go",
+      "kind": "FILE",
+      "name": "main.go",
+      "file_spec": { "path": "" }
+    },
+    {
+      "id": "db.go::PostgresDB",
+      "kind": "VIRTUAL_DATABASE",
+      "name": "PostgresDB",
+      "primitive": "DATABASE",
+      "file_spec": { "path": "db.go" }
+    },
+    {
+      "id": "ext.go::PaymentGateway",
+      "kind": "EXTERNAL_API",
+      "name": "PaymentGateway",
+      "primitive": "NETWORK_IO",
+      "file_spec": { "path": "ext.go" }
+    }
+  ],
+  "edges": []
+}
