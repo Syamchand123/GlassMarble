@@ -31,13 +31,6 @@ irm https://raw.githubusercontent.com/Syamchand123/GlassMarble/main/install.ps1 
 gmb version
 ```
 
-### Docker (no install)
-
-```bash
-docker run --rm -v "$(pwd):/workspace" ghcr.io/syamchand123/glassmarble:latest analyze --dir /workspace
-docker run --rm -v "$(pwd):/workspace" ghcr.io/syamchand123/glassmarble:latest visualize class --dir /workspace
-```
-
 ### Go toolchain (1.25+)
 
 ```bash

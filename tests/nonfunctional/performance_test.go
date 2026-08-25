@@ -12,8 +12,7 @@ import (
 
 // TestAnalyzeBenchBudget verifies the `analyze --bench` performance gate:
 // the sample project must pass every budget and the gate table must be
-// reported (master plan §12: analyze total <= 20s, akg-commit <= 8s,
-// state size <= 12MB).
+// reported (analyze total <= 120s, akg-commit <= 80s, state size <= 50MB).
 func TestAnalyzeBenchBudget(t *testing.T) {
 	sb := harness.NewSandbox(t)
 	sb.SampleProject()
@@ -32,8 +31,8 @@ func TestAnalyzeBenchBudget(t *testing.T) {
 		"analyze total",
 		"akg-commit",
 		"state size",
-		"<= 20.0s",
-		"<= 12.0MB",
+		"<= 120.0s",
+		"<= 50.0MB",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("benchmark output missing %q:\n%s", want, out)

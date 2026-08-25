@@ -24,7 +24,6 @@
   <a href="https://goreportcard.com/report/github.com/Syamchand123/GlassMarble"><img alt="go report" src="https://img.shields.io/badge/go%20report-A%2B-00ADD8?logo=go"></a>
   <a href="./LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-8a8fa8"></a>
   <a href="https://pkg.go.dev/github.com/Syamchand123/GlassMarble"><img alt="go reference" src="https://img.shields.io/badge/go_pkg-1.25-00ADD8?logo=go"></a>
-  <a href="https://github.com/Syamchand123/GlassMarble/pkgs/container/glassmarble"><img alt="ghcr" src="https://img.shields.io/badge/ghcr.io-glassmarble-0ea5e9?logo=docker"></a>
 </p>
 
 <p align="center">
@@ -115,8 +114,6 @@ curl -fsSL https://raw.githubusercontent.com/Syamchand123/GlassMarble/main/insta
 # Windows (PowerShell 5.1+)
 irm https://raw.githubusercontent.com/Syamchand123/GlassMarble/main/install.ps1 | iex
 
-# Docker (no install) / Go
-docker run --rm -v "$(pwd):/workspace" ghcr.io/syamchand123/glassmarble:latest analyze --dir /workspace
 go install github.com/Syamchand123/GlassMarble@latest
 ```
 

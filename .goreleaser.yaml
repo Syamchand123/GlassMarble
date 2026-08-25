@@ -13,7 +13,6 @@ builds:
     binary: gmb
     main: .
     # CGO required for tree-sitter grammars; build natively on runner (linux/amd64).
-    # Multi-arch binaries via Docker (docker.yml workflow).
     env:
       - CGO_ENABLED=1
     goos:

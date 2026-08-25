@@ -21,7 +21,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cross-Platform Zero-Dependency Binary Packaging & Distribution**:
   - Direct one-line web installers for UNIX (`curl | sh`) and Windows (`irm | iex`).
   - Native standalone binary archives for Linux (`amd64`, `arm64`), macOS (`amd64`, `arm64`), and Windows (`amd64`, `arm64`).
-  - Ultra-lightweight (<15 MB) multi-architecture distroless Docker image published to GitHub Container Registry (`ghcr.io`).
   - Full software supply chain security: Sigstore Cosign cryptographic signatures, Syft SPDX Software Bill of Materials (SBOM), and SLSA build provenance attestations.
   - Automated CI/CD release pipeline powered by GoReleaser and GitHub Actions matrix runners across Ubuntu, macOS, and Windows.
 - **Charm-Based Terminal Design System & TUI**:

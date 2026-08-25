@@ -9,7 +9,7 @@ Thank you for your interest in contributing to **GlassMarble**! GlassMarble is a
 ### Prerequisites
 - **Go 1.25+** (see `go.mod` — CI uses `go-version-file: go.mod`)
 - **Git**
-- Optional: **Docker** (for container builds) and **Make**
+- Optional: **Make**
 
 ### Quick Clone & Build
 ```bash
@@ -37,7 +37,6 @@ make vet
 | `make vet` | `go vet ./...` | Runs Go static analysis across all packages. |
 | `make completions` | `go run ./cmd/completions -o completions` | Pre-generates shell completions for Bash, Zsh, Fish, and PowerShell. |
 | `make man` | `go run ./cmd/man -o man/man1` | Regenerates the 32 UNIX roff manual pages in `man/man1/`. |
-| `make docker` | `docker build -t ... .` | Builds the local multi-stage distroless container image. |
 | `make clean` | `rm -rf gmb dist/ ...` | Removes all local build artifacts. |
 
 ---
