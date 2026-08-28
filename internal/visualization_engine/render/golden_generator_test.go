@@ -36,8 +36,12 @@ func buildTreeFromTTLFixture(t *testing.T, relTTL string, dt types.DiagramType, 
 // TestGenerateGoldenFixtures renders all 31 diagram types to Mermaid,
 // PlantUML and DOT formats from a real TTL fixture and persists the 93
 // golden fixture files in testdata/golden/ (W4-06 / §8.0, GAP-H-03,
-// GAP-M-07).
+// GAP-M-07). It is opt-in to avoid rewriting goldens on every `go test ./...`:
+// run with GMB_REBASE_GOLDENS=1 to intentionally rebaseline.
 func TestGenerateGoldenFixtures(t *testing.T) {
+	if os.Getenv("GMB_REBASE_GOLDENS") != "1" {
+		t.Skip("GMB_REBASE_GOLDENS != 1: skip golden generation (run with GMB_REBASE_GOLDENS=1 to rebaseline)")
+	}
 	goldenDir := filepath.Join("..", "testdata", "golden")
 	require.NoError(t, os.MkdirAll(goldenDir, 0755))
 

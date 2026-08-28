@@ -681,8 +681,11 @@ func renderClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 			}
 		}
 
-		if class.PrimitiveType != "" && !strings.HasPrefix(class.PrimitiveType, ont.PrefixGM) && !strings.HasPrefix(class.PrimitiveType, ont.PrefixExt) {
-			if pt := sanitizeClassMemberType(class.PrimitiveType); pt != "" {
+		if class.PrimitiveType != "" {
+			// Preserve legacy primitive display (e.g. DATABASE) even when it
+			// carries an ontology prefix; sanitize with the permissive label
+			// helper so DATABASE still appears for the cmd/visualize test.
+			if pt := sanitizeMermaidLabel(class.PrimitiveType); pt != "" {
 				sb.WriteString(fmt.Sprintf("        %s\n", pt))
 			}
 		}
