@@ -374,3 +374,113 @@ func (s *Sandbox) SeedConfigYAML(content string) {
 		s.T.Fatalf("harness: write config.yaml: %v", err)
 	}
 }
+
+// PolyglotProject writes a realistic polyglot monorepo covering 8+ languages
+// with imports, generics, and cross-file dependencies. Used by ingestion
+// and pipeline tests to verify 14-language grammar coverage and accurate
+// symbol/edge extraction.
+func (s *Sandbox) PolyglotProject() {
+	s.T.Helper()
+	s.SampleProject()
+	extra := map[string]string{
+		"pkg/java/src/main/java/com/example/Service.java": `package com.example;
+import java.util.*;
+public class Service {
+    private final Map<String,String> cache = new HashMap<>();
+    public String greet(String name) { return "hi "+name; }
+}`,
+		"py/service.py": `from dataclasses import dataclass
+from typing import Dict, Optional
+@dataclass
+class Entity:
+    id: str
+    name: str
+    status: str = "pending"
+class Repo:
+    def __init__(self): self.store: Dict[str, Entity] = {}
+    def find(self, id: str) -> Optional[Entity]: return self.store.get(id)
+    def save(self, e: Entity) -> None: self.store[e.id]=e
+`,
+		"web/app.ts": `export interface Entity { id: string; name: string; }
+export class Service {
+  private cache = new Map<string, Entity>();
+  async find(id: string): Promise<Entity|null> { return this.cache.get(id) ?? null; }
+}`,
+		"src/lib.rs": `use std::collections::HashMap;
+pub struct Entity { pub id: String, pub name: String }
+pub trait Repo { fn find(&self, id: &str) -> Option<Entity>; }
+`,
+		"app/Program.cs": `namespace App;
+public class Entity { public string Id {get;set;} = ""; public string Name {get;set;} = ""; }
+public interface IRepo { Entity? Find(string id); }
+`,
+		"src/main.cpp": `#include <string>
+struct Entity { std::string id; std::string name; };
+class Repo { public: virtual Entity* find(const std::string& id)=0; };
+`,
+	}
+	for rel, content := range extra {
+		s.WriteFile(rel, content)
+	}
+}
+
+// VisualizationStressProject seeds a Python file with constructs that
+// previously broke the Mermaid class diagram (triple quotes, dict unpacking,
+// template markers). Used to regression-test the visualization sanitizer.
+func (s *Sandbox) VisualizationStressProject() {
+	s.T.Helper()
+	s.WriteFile("src/state.py", `from typing import Dict, List, Optional
+import re
+
+class SessionState:
+    def __init__(self):
+        self.environments: Dict[str, str] = {}
+        self.current_environment: str = 'http: base_url'
+        self.variables: Dict[str, str] = {}
+        self.project_variables: Dict[str, str] = {}
+        self.history: List[str] = []
+
+    def get_effective_variables(self) -> Dict[str, str]:
+        return self.environments
+
+    def substitute(self, text: str) -> str:
+        vars = self.get_effective_variables()
+        return text.replace("{{key}}", "value")
+
+    def add_history(self, r: str) -> None:
+        self.history.append(r)
+        if len(self.history) > 100:
+            self.history.pop(0)
+
+class UltimateTestSuite:
+    def __init__(self):
+        self.results: List[str] = []
+    def check(self, name: str) -> bool:
+        self.results.append(name)
+        return True
+    def run(self) -> None:
+        self.check('compare')
+`)
+}
+
+// LargeProject creates a synthetic large graph project with N files each
+// containing multiple symbols. Used for performance and scale tests.
+func (s *Sandbox) LargeProject(n int) {
+	s.T.Helper()
+	if err := os.MkdirAll(s.Root, 0o755); err != nil {
+		s.T.Fatalf("harness: mkdir large: %v", err)
+	}
+	s.WriteFile("go.mod", sampleGoMod)
+	for i := 0; i < n; i++ {
+		pkg := fmt.Sprintf("pkg/mod%d", i%10)
+		content := fmt.Sprintf(`package mod%d
+
+import "fmt"
+
+type Entity%d struct { ID string; Name string }
+func (e *Entity%d) Greet() string { return fmt.Sprintf("hi %%s", e.Name) }
+func Helper%d() string { return "ok" }
+`, i%10, i, i, i)
+		s.WriteFile(fmt.Sprintf("%s/file%d.go", pkg, i), content)
+	}
+}
