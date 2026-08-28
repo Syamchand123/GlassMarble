@@ -102,19 +102,29 @@ func renderPlantUMLClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 			if len(pFields) > 0 || len(pMethods) > 0 {
 				sb.WriteString(fmt.Sprintf("%s \"%s\" as %s {\n", keyword, name, alias))
 				for _, f := range pFields {
-					prefix := memberVisibilityPrefix(f.visibility, f.label)
-					if f.typeName != "" {
-						sb.WriteString(fmt.Sprintf("    %s%s : %s\n", prefix, f.label, f.typeName))
+					fLabel, ok := sanitizeClassMemberLabel(f.label)
+					if !ok {
+						continue
+					}
+					fType := sanitizeClassMemberType(f.typeName)
+					prefix := memberVisibilityPrefix(f.visibility, fLabel)
+					if fType != "" {
+						sb.WriteString(fmt.Sprintf("    %s%s : %s\n", prefix, fLabel, fType))
 					} else {
-						sb.WriteString(fmt.Sprintf("    %s%s\n", prefix, f.label))
+						sb.WriteString(fmt.Sprintf("    %s%s\n", prefix, fLabel))
 					}
 				}
 				for _, m := range pMethods {
-					prefix := memberVisibilityPrefix(m.visibility, m.label)
-					if m.typeName != "" {
-						sb.WriteString(fmt.Sprintf("    %s%s() : %s\n", prefix, m.label, m.typeName))
+					mLabel, ok := sanitizeClassMemberLabel(m.label)
+					if !ok {
+						continue
+					}
+					mType := sanitizeClassMemberType(m.typeName)
+					prefix := memberVisibilityPrefix(m.visibility, mLabel)
+					if mType != "" {
+						sb.WriteString(fmt.Sprintf("    %s%s() : %s\n", prefix, mLabel, mType))
 					} else {
-						sb.WriteString(fmt.Sprintf("    %s%s()\n", prefix, m.label))
+						sb.WriteString(fmt.Sprintf("    %s%s()\n", prefix, mLabel))
 					}
 				}
 				sb.WriteString("}\n")
@@ -125,8 +135,12 @@ func renderPlantUMLClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 			if len(pMethods) > 0 {
 				sb.WriteString(fmt.Sprintf("interface \"%s\" as %s {\n", name, alias))
 				for _, m := range pMethods {
-					prefix := memberVisibilityPrefix(m.visibility, m.label)
-					sb.WriteString(fmt.Sprintf("    %s%s()\n", prefix, m.label))
+					mLabel, ok := sanitizeClassMemberLabel(m.label)
+					if !ok {
+						continue
+					}
+					prefix := memberVisibilityPrefix(m.visibility, mLabel)
+					sb.WriteString(fmt.Sprintf("    %s%s()\n", prefix, mLabel))
 				}
 				sb.WriteString("}\n")
 			} else {

@@ -307,15 +307,26 @@ func sanitizeMermaidLabel(s string) string {
 	s = strings.ReplaceAll(s, "%5C", "\\")
 	s = strings.ReplaceAll(s, "%", "")
 	s = strings.ReplaceAll(s, "\"", "'")
+	s = strings.ReplaceAll(s, "`", "'")
 	s = strings.ReplaceAll(s, "()", "")
 	s = strings.ReplaceAll(s, "<", "~")
 	s = strings.ReplaceAll(s, ">", "~")
 	s = strings.ReplaceAll(s, "[", "(")
 	s = strings.ReplaceAll(s, "]", ")")
+	s = strings.ReplaceAll(s, "{", "(")
+	s = strings.ReplaceAll(s, "}", ")")
+	s = strings.ReplaceAll(s, ";", ",")
+	s = strings.ReplaceAll(s, "|", "/")
 	// Newlines and carriage returns break every renderer (AUDIT Issue 2
 	// Phase 2C-11); collapse them to spaces.
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.ReplaceAll(s, "\r", " ")
+	s = strings.ReplaceAll(s, "\t", " ")
+	// Collapse multiple spaces to single
+	for strings.Contains(s, "  ") {
+		s = strings.ReplaceAll(s, "  ", " ")
+	}
+	s = strings.TrimSpace(s)
 	// Truncate on rune boundaries, never mid-rune.
 	runes := []rune(s)
 	if len(runes) > 60 {

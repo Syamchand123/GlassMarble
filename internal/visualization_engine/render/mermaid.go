@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -9,6 +10,113 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 )
+
+var classLabelRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// sanitizeClassMemberLabel returns a mermaid-safe member name or ok==false to skip.
+// It strips qualification (self., this.) and replaces illegal runes with _.
+func sanitizeClassMemberLabel(raw string) (string, bool) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return "", false
+	}
+	// Strip common receiver qualifiers
+	if idx := strings.LastIndex(s, "."); idx != -1 {
+		s = s[idx+1:]
+	}
+	if idx := strings.LastIndex(s, "::"); idx != -1 {
+		s = s[idx+2:]
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", false
+	}
+	// Reject obviously invalid raw (contains quotes, braces, template markers)
+	if strings.ContainsAny(s, "'\"`{}#") || strings.Contains(s, "'''") || strings.Contains(s, `"""`) || strings.Contains(s, "{{") || strings.Contains(s, "}}") {
+		return "", false
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			b.WriteRune(r)
+		} else {
+			if b.Len() == 0 {
+				continue
+			}
+			b.WriteRune('_')
+		}
+		if b.Len() >= 32 {
+			break
+		}
+	}
+	res := b.String()
+	res = strings.Trim(res, "_")
+	for strings.Contains(res, "__") {
+		res = strings.ReplaceAll(res, "__", "_")
+	}
+	if res == "" {
+		return "", false
+	}
+	if res[0] >= '0' && res[0] <= '9' {
+		res = "m_" + res
+	}
+	if res == "type" || res == "struct" || res == "interface" || res == "func" {
+		return "", false
+	}
+	if !classLabelRe.MatchString(res) {
+		return "", false
+	}
+	if len(res) > 32 {
+		res = res[:32]
+	}
+	return res, true
+}
+
+// sanitizeClassMemberType returns a mermaid-safe type string. Empty means no type.
+func sanitizeClassMemberType(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	// Reject raw that looks like code fragment (quotes, braces, template)
+	if strings.ContainsAny(s, "'\"`{}#") && (strings.Contains(s, "'''") || strings.Contains(s, "'") || strings.Contains(s, "\"")) {
+		// If it contains quote/brace and is not a simple generic like Dict[str], drop it
+		if strings.Contains(s, "'") || strings.Contains(s, "\"") || strings.Contains(s, "{") || strings.Contains(s, "}") {
+			return ""
+		}
+	}
+	s = strings.ReplaceAll(s, "<", "~")
+	s = strings.ReplaceAll(s, ">", "~")
+	s = strings.ReplaceAll(s, "[", "(")
+	s = strings.ReplaceAll(s, "]", ")")
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '.' || r == '(' || r == ')' || r == ',' || r == ' ' || r == '~' || r == '?' || r == '*' || r == '&' || r == '|' || r == ':' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('_')
+		}
+		if b.Len() >= 48 {
+			break
+		}
+	}
+	res := strings.TrimSpace(b.String())
+	for strings.Contains(res, "__") {
+		res = strings.ReplaceAll(res, "__", "_")
+	}
+	res = strings.Trim(res, " _")
+	if res == "" {
+		return ""
+	}
+	if len(res) > 40 {
+		res = res[:40]
+	}
+	// Final guard: if still contains quote/brace after replacement, clear
+	if strings.ContainsAny(res, "'\"`{}") {
+		return ""
+	}
+	return res
+}
 
 // RenderDiagram converts a LayoutTree into Mermaid diagram markup for the given DiagramType with default theme.
 func RenderDiagram(tree *types.LayoutTree, t types.DiagramType) string {
@@ -186,11 +294,20 @@ func parseMembersFromCode(code string) (fields []classMember, methods []classMem
 	lines := strings.Split(code, "\n")
 	for _, rawLine := range lines {
 		line := strings.TrimSpace(rawLine)
-		if line == "" || strings.HasPrefix(line, "//") || strings.HasPrefix(line, "/*") || strings.HasPrefix(line, "*") {
+		if line == "" || strings.HasPrefix(line, "//") || strings.HasPrefix(line, "/*") || strings.HasPrefix(line, "*") || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "'") || strings.HasPrefix(line, "\"") {
+			continue
+		}
+		// Skip Python docstring / template fragments that crash Mermaid class parsing
+		if strings.Contains(line, "'''") || strings.Contains(line, `"""`) || strings.Contains(line, "{{") || strings.Contains(line, "}}") || strings.Contains(line, "{**") || strings.Contains(line, "**}") {
 			continue
 		}
 		if idx := strings.Index(line, "//"); idx != -1 {
 			line = strings.TrimSpace(line[:idx])
+		}
+		// Skip lines that are clearly not declarations (control flow, returns, invocations)
+		trimLower := strings.ToLower(line)
+		if strings.HasPrefix(trimLower, "return ") || strings.HasPrefix(trimLower, "return{") || trimLower == "return" || strings.HasPrefix(trimLower, "if ") || strings.HasPrefix(trimLower, "not ") || strings.HasPrefix(trimLower, "for ") || strings.HasPrefix(trimLower, "while ") || strings.HasPrefix(trimLower, "import ") || strings.HasPrefix(trimLower, "print(") {
+			continue
 		}
 		if strings.Contains(line, "(") && strings.Contains(line, ")") {
 			openP := strings.Index(line, "(")
@@ -211,10 +328,21 @@ func parseMembersFromCode(code string) (fields []classMember, methods []classMem
 						vis = "+"
 					}
 					ret := strings.TrimSpace(line[closeP+1:])
+					ret = strings.TrimPrefix(ret, "->")
+					ret = strings.TrimPrefix(ret, ":")
+					ret = strings.TrimSpace(ret)
 					ret = strings.TrimSuffix(ret, ";")
 					ret = strings.TrimSuffix(ret, "{")
+					ret = strings.TrimSuffix(ret, ":")
 					ret = strings.TrimSpace(ret)
 					if mName != "" && mName != "struct" && mName != "interface" && mName != "type" && mName != "func" {
+						if _, ok := sanitizeClassMemberLabel(mName); !ok {
+							continue
+						}
+						// Filter garbage return types containing quotes/braces
+						if strings.ContainsAny(ret, "'\"`{}#") && (strings.Contains(ret, "'") || strings.Contains(ret, "\"") || strings.Contains(ret, "{") || strings.Contains(ret, "}") || strings.Contains(ret, "'''")) {
+							ret = ""
+						}
 						methods = append(methods, classMember{
 							label:      mName,
 							typeName:   ret,
@@ -226,6 +354,50 @@ func parseMembersFromCode(code string) (fields []classMember, methods []classMem
 			}
 		}
 
+		// Python/Rust-style annotated field: name: type = value
+		if colonIdx := strings.Index(line, ":"); colonIdx != -1 && !strings.Contains(line[:colonIdx], "(") && !strings.Contains(line, "::") {
+			namePart := strings.TrimSpace(line[:colonIdx])
+			typePart := ""
+			eqIdx := strings.Index(line[colonIdx+1:], "=")
+			if eqIdx != -1 {
+				typePart = strings.TrimSpace(line[colonIdx+1 : colonIdx+1+eqIdx])
+			} else {
+				// Take until comment, semicolon, or end (preserve generics)
+				typePart = strings.TrimSpace(line[colonIdx+1:])
+				// Strip trailing { ; ,
+				typePart = strings.TrimSuffix(typePart, "{")
+				typePart = strings.TrimSuffix(typePart, ";")
+				typePart = strings.TrimSuffix(typePart, ",")
+				typePart = strings.TrimSpace(typePart)
+			}
+			// namePart may be "self.environments" or "x"
+			nameTokens := strings.Fields(namePart)
+			fName := ""
+			if len(nameTokens) > 0 {
+				fName = nameTokens[len(nameTokens)-1]
+			} else {
+				fName = namePart
+			}
+			fName = strings.TrimSuffix(fName, ":")
+			fType := typePart
+			// Validate via helpers (defer to render stage, but filter obvious garbage)
+			if fName == "" {
+				continue
+			}
+			// Strip self./this. for validation but keep raw for sanitizer
+			if _, ok := sanitizeClassMemberLabel(fName); !ok {
+				continue
+			}
+			if strings.ContainsAny(fType, "'\"`{}#") && (strings.Contains(fType, "'") || strings.Contains(fType, "\"")) {
+				fType = ""
+			}
+			vis := "+"
+			if len(fName) > 0 && fName[0] >= 'a' && fName[0] <= 'z' {
+				vis = "-"
+			}
+			fields = append(fields, classMember{label: fName, typeName: fType, visibility: vis})
+			continue
+		}
 		parts := strings.Fields(line)
 		if len(parts) >= 2 {
 			fName := parts[0]
@@ -263,6 +435,12 @@ func parseMembersFromCode(code string) (fields []classMember, methods []classMem
 			}
 
 			if fName != "" {
+				if _, ok := sanitizeClassMemberLabel(fName); !ok {
+					continue
+				}
+				if strings.ContainsAny(fType, "'\"`{}#") && (strings.Contains(fType, "'") || strings.Contains(fType, "\"") || strings.Contains(fType, "{") || strings.Contains(fType, "}")) {
+					fType = ""
+				}
 				fields = append(fields, classMember{
 					label:      fName,
 					typeName:   fType,
@@ -273,7 +451,10 @@ func parseMembersFromCode(code string) (fields []classMember, methods []classMem
 			emb := strings.TrimSuffix(parts[0], ";")
 			emb = strings.TrimSuffix(emb, "{")
 			emb = strings.TrimSuffix(emb, "}")
-			if emb != "" && emb != "{" && emb != "}" && emb != "type" && emb != "struct" && emb != "interface" && !strings.HasPrefix(emb, "//") {
+			if emb != "" && emb != "{" && emb != "}" && emb != "type" && emb != "struct" && emb != "interface" && !strings.HasPrefix(emb, "//") && !strings.HasPrefix(emb, "#") && !strings.Contains(emb, "'") && !strings.Contains(emb, "\"") && !strings.Contains(emb, "{") && !strings.Contains(emb, "}") {
+				if _, ok := sanitizeClassMemberLabel(emb); !ok {
+					continue
+				}
 				fields = append(fields, classMember{
 					label:      emb,
 					typeName:   emb,
@@ -466,15 +647,15 @@ func renderClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 		if fList, exists := fields[id]; exists {
 			seenF := make(map[string]bool)
 			for _, f := range fList {
-				fLabel := sanitizeMermaidLabel(f.label)
-				if fLabel == "" || seenF[fLabel] {
+				fLabel, ok := sanitizeClassMemberLabel(f.label)
+				if !ok || seenF[fLabel] {
 					continue
 				}
 				seenF[fLabel] = true
 				prefix := memberVisibilityPrefix(f.visibility, fLabel)
-				fType := f.typeName
+				fType := sanitizeClassMemberType(f.typeName)
 				if fType != "" {
-					sb.WriteString(fmt.Sprintf("        %s%s %s\n", prefix, sanitizeMermaidLabel(fType), fLabel))
+					sb.WriteString(fmt.Sprintf("        %s%s : %s\n", prefix, fLabel, fType))
 				} else {
 					sb.WriteString(fmt.Sprintf("        %s%s\n", prefix, fLabel))
 				}
@@ -485,22 +666,25 @@ func renderClassDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 		if mList, exists := methods[id]; exists {
 			seenM := make(map[string]bool)
 			for _, m := range mList {
-				mLabel := sanitizeMermaidLabel(m.label)
-				if mLabel == "" || seenM[mLabel] {
+				mLabel, ok := sanitizeClassMemberLabel(m.label)
+				if !ok || seenM[mLabel] {
 					continue
 				}
 				seenM[mLabel] = true
 				prefix := memberVisibilityPrefix(m.visibility, mLabel)
-				if m.typeName != "" {
-					sb.WriteString(fmt.Sprintf("        %s%s() %s\n", prefix, mLabel, sanitizeMermaidLabel(m.typeName)))
+				mType := sanitizeClassMemberType(m.typeName)
+				if mType != "" {
+					sb.WriteString(fmt.Sprintf("        %s%s() : %s\n", prefix, mLabel, mType))
 				} else {
 					sb.WriteString(fmt.Sprintf("        %s%s()\n", prefix, mLabel))
 				}
 			}
 		}
 
-		if class.PrimitiveType != "" {
-			sb.WriteString(fmt.Sprintf("        %s\n", sanitizeMermaidLabel(class.PrimitiveType)))
+		if class.PrimitiveType != "" && !strings.HasPrefix(class.PrimitiveType, ont.PrefixGM) && !strings.HasPrefix(class.PrimitiveType, ont.PrefixExt) {
+			if pt := sanitizeClassMemberType(class.PrimitiveType); pt != "" {
+				sb.WriteString(fmt.Sprintf("        %s\n", pt))
+			}
 		}
 		sb.WriteString("    }\n")
 	}
