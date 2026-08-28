@@ -260,7 +260,7 @@ func toNodeEvidence(node *link.ResolvedNode, score float64) NodeEvidence {
 			ev.Lines = fmt.Sprintf("%d-%d", node.FileSpec.LineStart, node.FileSpec.LineEnd)
 		}
 	}
-	for _, key := range []string{"role", "macro_rules", "pagerank", "blast_radius", "instability"} {
+	for _, key := range []string{"role", "macro_rules", "pagerank", "blast_radius", "instability", "doc", "signature", "package", "purpose"} {
 		if v, ok := node.Properties[key]; ok && v != "" {
 			if ev.Properties == nil {
 				ev.Properties = make(map[string]string, 4)

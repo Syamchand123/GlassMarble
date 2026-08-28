@@ -119,3 +119,55 @@ func TestRenderAIDoctorWrapsProblems(t *testing.T) {
 		t.Errorf("ping failure must be shown:\n%s", out)
 	}
 }
+
+func TestRenderAnalysisSummary(t *testing.T) {
+	data := AnalysisCardData{
+		TargetDir:         "/test/repo",
+		IsIncremental:     true,
+		FilesAnalyzed:     12,
+		Nodes:             140,
+		NodesDelta:        5,
+		Edges:             280,
+		EdgesDelta:        10,
+		VirtualNodes:      20,
+		VirtualDelta:      0,
+		DanglingEdges:     0,
+		StateBytes:        1024 * 500,
+		DurationSec:       1.4,
+		ComponentsCount:   4,
+		Patterns:          []PatternSummary{{Name: "DDD Bounded Context", Confidence: 0.85}},
+		Smells:            []SmellSummary{{Title: "Dead Code Detected", Severity: "LOW"}},
+		ReasonedChanges:   3,
+		MemoryEventsCount: 5,
+	}
+	out := RenderAnalysisSummary(data)
+	if !strings.Contains(out, "Analyzed 12 files") {
+		t.Errorf("missing exact summary substring in:\n%s", out)
+	}
+	if !strings.Contains(out, "DDD Bounded Context") {
+		t.Errorf("missing pattern in:\n%s", out)
+	}
+	if !strings.Contains(out, "Dead Code Detected") {
+		t.Errorf("missing smell in:\n%s", out)
+	}
+}
+
+func TestRenderUpdateViews(t *testing.T) {
+	already := RenderUpdateAlreadyLatest("v1.0.0", "/usr/local/bin/gmb")
+	if !strings.Contains(already, "Up to Date") || !strings.Contains(already, "v1.0.0") {
+		t.Errorf("unexpected RenderUpdateAlreadyLatest output:\n%s", already)
+	}
+
+	success := RenderUpdateSuccess(UpdateData{
+		CurrentVersion: "v1.0.0",
+		LatestVersion:  "v1.0.1",
+		BinaryPath:     "/usr/local/bin/gmb",
+		OS:             "linux",
+		Arch:           "amd64",
+		ReleaseURL:     "https://github.com/Syamchand123/GlassMarble/releases/tag/v1.0.1",
+		ReleaseNotes:   "Bug fixes and speedups",
+	})
+	if !strings.Contains(success, "v1.0.1") || !strings.Contains(success, "linux / amd64") {
+		t.Errorf("unexpected RenderUpdateSuccess output:\n%s", success)
+	}
+}

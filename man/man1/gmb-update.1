@@ -2,24 +2,37 @@
 .TH "GMB" "1" "Aug 2026" "GlassMarble 0.1.0" "GlassMarble Manual"
 
 .SH NAME
-gmb-dependency - Analyze inbound and outbound dependencies for a file or symbol
+gmb-update - Check for and install the latest release of GlassMarble
 
 
 .SH SYNOPSIS
-\fBgmb dependency [target_file_or_symbol] [flags]\fP
+\fBgmb update [flags]\fP
 
 
 .SH DESCRIPTION
-Inspects direct call, import, and composition dependencies for a target file or symbol in the Architecture Knowledge Graph.
+Automatically checks GitHub releases, verifies SHA256 checksums,
+and updates the local GlassMarble binary for your operating system and architecture.
 
 
 .SH OPTIONS
+\fB--check\fP[=false]
+	Check for newer releases without downloading or installing
+
+.PP
+\fB-f\fP, \fB--force\fP[=false]
+	Force reinstall even if already running the latest version
+
+.PP
 \fB-h\fP, \fB--help\fP[=false]
-	help for dependency
+	help for update
 
 .PP
 \fB--json\fP[=false]
 	Emit machine-readable JSON output
+
+.PP
+\fB-t\fP, \fB--tag\fP=""
+	Install a specific release tag (e.g. v1.0.0)
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
@@ -53,17 +66,20 @@ Inspects direct call, import, and composition dependencies for a target file or 
 
 .SH EXAMPLE
 .EX
-  # View global dependency summary and top outbound nodes
-  gmb dependency
+  # Update to latest available release
+  gmb update
 
-  # Inspect inbound and outbound edges for a specific symbol
-  gmb dependency "cmd/root.go::Execute"
+  # Check if a new version is available without installing
+  gmb update --check
 
-  # Inspect dependencies for an entire file
-  gmb dependency internal/app/app.go
+  # Force reinstall the latest version
+  gmb update --force
 
-  # Output dependency edges as JSON
-  gmb dependency --json
+  # Install a specific release tag
+  gmb update --tag v1.0.0
+
+  # Output update status as JSON
+  gmb update --check --json
 .EE
 
 
