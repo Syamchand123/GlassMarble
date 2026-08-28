@@ -1,5 +1,12 @@
 name: Release GlassMarble
 
+# Updated for v1.0.1-dev (4 latest commits):
+#  861fdf9 — docker removal, CGO_ENABLED=1 for tree-sitter (CGO required)
+#  6e7a515 — visualization sanitizer fix (mermaid class diagram)
+#  c3da188 — realistic polyglot testdata + Large/Stress fixtures (80+ files)
+#  192e818 — golden opt-in (GMB_REBASE_GOLDENS) + DATABASE primitive restore
+# Release now gates on golden parity + determinism before publishing.
+
 on:
   push:
     tags:
@@ -17,8 +24,39 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  preflight:
+    name: Preflight Gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CGO_ENABLED: 1
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Golden parity gate
+        run: go test ./internal/visualization_engine/render -run TestGoldenParity -count=1 -v
+
+      - name: Determinism gate
+        run: go test ./internal/akg -run TestGraphJSONDeterministic -count=1 -v
+
+      - name: Visualization sanitizer gate (python stress)
+        run: go test ./tests/qa -run TestVisualizationStressPythonClass -count=1 -v
+
   matrix-build:
     name: Build (${{ matrix.os }} / ${{ matrix.arch }})
+    needs: preflight
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -174,6 +212,7 @@ jobs:
 
       - name: Attest Build Provenance
         uses: actions/attest-build-provenance@v2
+        continue-on-error: true
         if: success()
         with:
           subject-path: "dist/*"

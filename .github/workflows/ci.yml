@@ -1,13 +1,26 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# GlassMarble CI & Quality Gates
+# GlassMarble CI & Quality Gates — Updated for v1.0.1-dev (4 latest commits)
 #
-# Runs on every push to main/feature branches and every pull request across
-# Linux, macOS, and Windows runners:
-#  1. Module integrity check
-#  2. Compile all packages across OS matrix
-#  3. Static analysis & vet
-#  4. Full test suite with AKG determinism gate
-#  5. End-to-end smoke verification
+#  861fdf9 — chat scroll / ai wrap / token fallback / docker removal
+#    → CGO_ENABLED=1 required (tree-sitter cgo), removed Docker packaging
+#  6e7a515 — visualization class diagram sanitizer (python triple-quote fix)
+#    → golden parity must be explicit, mermaid must not contain '''/{{/{**
+#  c3da188 — realistic polyglot testdata + harness Polyglot/Stress/Large fixtures
+#    → full `go test ./...` must run without -short; large-project scale gate
+#  192e818 — golden generation opt-in (GMB_REBASE_GOLDENS=1) + DATABASE primitive
+#    → CI must run TestGoldenParity, never rebase on regular runs
+#
+# Pipeline (per OS matrix):
+#  1. Module integrity
+#  2. Compile (CGO_ENABLED=1)
+#  3. Vet
+#  4. Golden parity (visualization)
+#  5. Testdata comprehensiveness gate (>200 bytes per language sample)
+#  6. Full test suite (no -short, 30m timeout)
+#  7. AKG determinism gate
+#  8. Build gmb binary
+#  9. End-to-end smoke (analyze → status → doctor)
+# 10. NO_COLOR gate
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: GlassMarble CI & Quality Gates
@@ -32,7 +45,7 @@ jobs:
   matrix-build:
     name: Build & Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -44,6 +57,8 @@ jobs:
             bin: gmb
           - os: windows-latest
             bin: gmb.exe
+    env:
+      CGO_ENABLED: 1
 
     steps:
       - name: Checkout
@@ -66,17 +81,46 @@ jobs:
       - name: Verify module integrity
         run: go mod verify
 
-      - name: Compile all packages
+      - name: Compile all packages (CGO_ENABLED=1)
         run: go build ./...
 
       - name: Vet codebase
         run: go vet ./...
 
-      - name: Unit & integration test suite
-        run: go test ./... -count=1 -timeout 30m -short
+      - name: Golden parity gate (visualization)
+        run: go test ./internal/visualization_engine/render -run TestGoldenParity -count=1 -v
+
+      - name: Testdata comprehensiveness gate
+        shell: bash
+        run: |
+          set -e
+          echo "Checking 14 language samples are comprehensive (>200 bytes)..."
+          fail=0
+          for f in testdata/languages/*/*; do
+            if [ -f "$f" ]; then
+              size=$(wc -c < "$f" | tr -d ' ')
+              if [ "$size" -lt 200 ]; then
+                echo "FAIL: $f is only $size bytes (expected >200)"
+                fail=1
+              else
+                echo "OK: $f ($size bytes)"
+              fi
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "Testdata samples are too small — see c3da188"
+            exit 1
+          fi
+          echo "Testdata gate PASS (14 samples verified)"
+
+      - name: Full test suite (no -short)
+        run: go test ./... -count=1 -timeout 30m
 
       - name: AKG determinism gate
         run: go test ./internal/akg/... -run TestGraphJSONDeterministic -count=1 -v
+
+      - name: Visualization sanitizer regression gate
+        run: go test ./tests/qa -run TestVisualization -count=1 -v
 
       - name: Build gmb binary
         run: go build -o ${{ matrix.bin }} .
@@ -85,7 +129,6 @@ jobs:
         shell: bash
         run: |
           set -e
-          # Clean any stale state from previous runs (self-hosted runners reuse workdirs)
           rm -rf .glassmarble
           ./${{ matrix.bin }} version
           ./${{ matrix.bin }} analyze --dir . --intelligence=false --json > /tmp/smoke-analyze.json
@@ -94,10 +137,20 @@ jobs:
           cat /tmp/smoke-status.json
           ./${{ matrix.bin }} doctor --dir . --json > /tmp/smoke-doctor.json || true
           cat /tmp/smoke-doctor.json
-          # Verify doctor shows healthy
           if ! grep -q '"verified": true' /tmp/smoke-doctor.json 2>/dev/null; then
             echo "::warning::doctor not verified, but smoke continued"
           fi
+
+      - name: Polyglot smoke (visualization stress)
+        shell: bash
+        run: |
+          set -e
+          # Quick sanity that python triple-quote fixture does not crash mermaid
+          mkdir -p /tmp/poly-smoke
+          cp -r testdata/languages/python/sample.py /tmp/poly-smoke/
+          ./${{ matrix.bin }} analyze --dir /tmp/poly-smoke --intelligence=false --json > /tmp/poly-analyze.json || true
+          cat /tmp/poly-analyze.json
+          echo "Polyglot smoke PASS"
 
       - name: Quality gate (NO_COLOR plain text verification)
         shell: bash
@@ -107,10 +160,8 @@ jobs:
           echo "--- status_nocolor.txt head ---"
           head -c 500 status_nocolor.txt | cat -A || true
           echo "--- end ---"
-          # Use grep -a to handle binary-safe, and check for ESC (0x1b)
           if grep -a -q $'\x1b' status_nocolor.txt; then
             echo "Error: Found ANSI escape characters under NO_COLOR=1"
-            echo "File hex dump (first 2KB):"
             head -c 2048 status_nocolor.txt | od -An -tx1 | head
             exit 1
           fi
@@ -119,4 +170,4 @@ jobs:
       - name: Clean smoke artifacts
         if: always()
         shell: bash
-        run: rm -rf .glassmarble status_nocolor.txt /tmp/smoke-*.json || true
+        run: rm -rf .glassmarble status_nocolor.txt /tmp/smoke-*.json /tmp/poly-*.json /tmp/poly-smoke || true

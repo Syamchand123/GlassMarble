@@ -1,5 +1,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# GlassMarble AKG PR Architecture Comment
+# GlassMarble AKG PR Architecture Comment — Updated for v1.0.1-dev
+#
+#  861fdf9 — chat/ai fixes, token fallback, docker removal → CGO_ENABLED=1
+#  6e7a515 — visualization sanitizer (python ''' / {** / {{ }}) → mermaid class
+#            diagrams must not contain illegal markers; sanitizer now strict
+#  c3da188 — polyglot testdata + PolyglotProject/VisualizationStressProject/
+#            LargeProject fixtures (14 languages, 80-file scale)
+#  192e818 — golden generation opt-in (GMB_REBASE_GOLDENS=1) + DATABASE primitive
+#            → PR comment must not rebase goldens, must handle polyglot
 #
 # On every pull request this workflow:
 #  1. Checks out the merge-base commit and runs `gmb analyze` to build the
@@ -14,8 +22,10 @@
 # existing comment rather than creating a new one.
 #
 # Tree-sitter grammars use cgo bindings (C parsers wrapped via cgo).
-# CGO must be enabled (default). go.mod is the single source of
+# CGO must be enabled (default, CGO_ENABLED=1). go.mod is the single source of
 # truth for the toolchain — workflows use go-version-file: go.mod.
+# Goldens are never rebased in PRs; TestGenerateGoldenFixtures is now
+# opt-in (GMB_REBASE_GOLDENS=1) to prevent churn on `go test ./...`.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: GlassMarble AKG PR Architecture Comment
@@ -40,6 +50,8 @@ jobs:
     name: "Architecture Knowledge Graph Diff"
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      CGO_ENABLED: 1
 
     steps:
       # ── Checkout ────────────────────────────────────────────────────────────
@@ -132,7 +144,7 @@ jobs:
           cat /tmp/head-analysis.json || true
           "$GITHUB_WORKSPACE/gmb" export --dir . --output /tmp/head.json 2>&1 || \
             echo "::warning::Head export failed — diff will be empty"
-          # Clean up large .glassmarble to save runner disk
+          # Clean up large .glassmarble to save runner disk (polyglot LargeProject may be 80 files)
           rm -rf .glassmarble || true
 
       # ── Compute architectural diff ─────────────────────────────────────────
