@@ -60,7 +60,7 @@ make build   # → ./gmb  (CGO static)
 | **Windows 10/11** | amd64 (x64) | `gmb_*_windows_amd64.zip` | `irm \| iex` |
 | **Windows 11** | arm64 | `gmb_*_windows_arm64.zip` | `irm \| iex` |
 
-Both binaries `gmb` and `glassmarble` are shipped (alias). Images: `ghcr.io/syamchand123/glassmarble:{v1.0.0, latest, sha-xxxx}` (distroless, linux/amd64+arm64).
+Both binaries `gmb` and `glassmarble` are shipped (alias).
 
 ---
 

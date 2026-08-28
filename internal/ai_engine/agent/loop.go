@@ -130,6 +130,13 @@ func (a *Agent) Run(ctx context.Context, query string, history []provider.Messag
 		if err != nil {
 			return res, fmt.Errorf("completion failed on turn %d: %w", turn, err)
 		}
+		// Fallback token estimation when provider does not report usage
+		// (e.g. streaming without include_usage, or local models). This keeps
+		// the UI from showing 0 tokens and lets budget guardrails work.
+		if resp.Usage.TotalTokens == 0 {
+			est := estimateFallbackUsage(req, resp)
+			resp.Usage = est
+		}
 		res.Usage = addUsage(res.Usage, resp.Usage)
 		if cost, known := provider.EstimateCost(a.Model, resp.Usage); known {
 			res.CostUSD += cost
@@ -228,6 +235,25 @@ func estimatePromptTokens(req provider.Request) int {
 		}
 	}
 	return n / 4
+}
+
+func estimateFallbackUsage(req provider.Request, resp *provider.Response) provider.Usage {
+	prompt := estimatePromptTokens(req)
+	completion := len(resp.Text) / 4
+	for _, tc := range resp.ToolCalls {
+		completion += (len(tc.Name) + len(tc.Arguments)) / 4
+	}
+	if completion < 1 && resp.Text != "" {
+		completion = 1
+	}
+	if prompt < 1 {
+		prompt = 1
+	}
+	return provider.Usage{
+		PromptTokens:     prompt,
+		CompletionTokens: completion,
+		TotalTokens:      prompt + completion,
+	}
 }
 
 func addUsage(a, b provider.Usage) provider.Usage {

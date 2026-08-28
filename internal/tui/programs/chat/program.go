@@ -122,9 +122,9 @@ func Run(ctx context.Context, engine *ai_engine.Engine, sess *session.Session, s
 	m = final.(*model)
 
 	if sess.Turns > 0 {
-		fmt.Fprintf(out, "Session %s: %d turns, %d messages, %d tokens, cost %s (resume with `gmb ai chat --session %s`)\n",
-			sess.ID, sess.Turns, len(sess.Messages), sess.Usage.TotalTokens,
-			formatCost(sess.CostUSD, sess.Usage.TotalTokens > 0), sess.ID)
+		fmt.Fprintf(out, "Session %s: %d turns, %d messages, cost %s (resume with `gmb ai chat --session %s`)\n",
+			sess.ID, sess.Turns, len(sess.Messages),
+			formatCost(sess.CostUSD, sess.CostUSD > 0), sess.ID)
 	}
 	return nil
 }
@@ -165,9 +165,13 @@ func (m *model) submit() (tea.Model, tea.Cmd) {
 }
 
 func (m *model) ask(history []provider.Message, query string) tea.Cmd {
+	// Snapshot history so concurrent session mutation cannot affect the
+	// in-flight request. History is already trimmed to MaxSessionMessages
+	// by submit() and represents the full conversation so far.
+	histCopy := append([]provider.Message(nil), history...)
 	return func() tea.Msg {
 		opts := m.opts
-		opts.History = history
+		opts.History = histCopy
 		opts.OnEvent = func(ev agent.Event) {
 			switch ev.Type {
 			case "tool_call":
@@ -192,11 +196,18 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.input.SetWidth(msg.Width - 2)
-		m.history.Width = msg.Width - 2
-		m.history.Height = msg.Height - 8
+		m.input.SetWidth(max(20, msg.Width-2))
+		m.history.Width = max(20, msg.Width-2)
+		m.history.Height = max(4, msg.Height-8)
 		m.refreshHistory(false)
 		return m, nil
+	case tea.MouseMsg:
+		// Explicitly forward mouse wheel to the history viewport so scrolling
+		// works even when the textarea has focus. Bubble's viewport handles
+		// MouseWheelUp/Down internally when MouseWheelEnabled is true.
+		var vpCmd tea.Cmd
+		m.history, vpCmd = m.history.Update(msg)
+		return m, vpCmd
 	case tea.KeyMsg:
 		switch {
 		case msg.Type == tea.KeyCtrlC:
@@ -216,6 +227,37 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case msg.Type == tea.KeyCtrlS:
 			return m.saveLast()
+		case key.Matches(msg, key.NewBinding(key.WithKeys("pgup", "b"))):
+			m.history.PageUp()
+			return m, nil
+		case key.Matches(msg, key.NewBinding(key.WithKeys("pgdown", "f", "space"))):
+			m.history.PageDown()
+			return m, nil
+		case key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+u"))):
+			m.history.HalfViewUp()
+			return m, nil
+		case key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+d"))):
+			m.history.HalfViewDown()
+			return m, nil
+		case key.Matches(msg, key.NewBinding(key.WithKeys("home", "g"))):
+			m.history.GotoTop()
+			return m, nil
+		case key.Matches(msg, key.NewBinding(key.WithKeys("end", "G"))):
+			m.history.GotoBottom()
+			return m, nil
+		case key.Matches(msg, key.NewBinding(key.WithKeys("up", "k"))):
+			// Scroll history line-by-line. This intentionally takes precedence
+			// over textarea cursor movement when history can still scroll up;
+			// otherwise let textarea handle it (cursor within input).
+			if !m.history.AtTop() {
+				m.history.LineUp(1)
+				return m, nil
+			}
+		case key.Matches(msg, key.NewBinding(key.WithKeys("down", "j"))):
+			if !m.history.AtBottom() {
+				m.history.LineDown(1)
+				return m, nil
+			}
 		}
 		var inputCmd, vpCmd tea.Cmd
 		m.input, inputCmd = m.input.Update(msg)
@@ -348,16 +390,21 @@ func (m *model) refreshHistory(forceBottom bool) {
 }
 
 func (m *model) renderEntry(e entry) string {
+	innerWidth := m.width - 12
+	if innerWidth < 20 {
+		innerWidth = 20
+	}
 	switch e.role {
 	case "system":
-		return tui.StyleMuted.Render(e.text)
+		return tui.StyleMuted.Render(wrapToWidth(e.text, innerWidth))
 	case "user":
+		wrapped := wrapToWidth(e.text, innerWidth)
 		box := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(tui.ColorPrimary).
 			Padding(0, 1).
 			Width(m.width - 8).
-			Render(e.text)
+			Render(wrapped)
 		return lipgloss.JoinVertical(lipgloss.Left, tui.StyleLabel.Render("You"), box)
 	default:
 		var body strings.Builder
@@ -366,13 +413,13 @@ func (m *model) renderEntry(e entry) string {
 			body.WriteString("\n")
 		}
 		if e.text != "" {
-			body.WriteString(e.text)
+			body.WriteString(wrapToWidth(e.text, innerWidth))
 		}
 		if e.err != "" {
 			if body.Len() > 0 {
 				body.WriteString("\n\n")
 			}
-			body.WriteString(tui.StyleError.Render("Error: " + e.err))
+			body.WriteString(tui.StyleError.Render(wrapToWidth("Error: "+e.err, innerWidth)))
 		}
 		text := body.String()
 		if e.live && text == "" {
@@ -389,6 +436,73 @@ func (m *model) renderEntry(e entry) string {
 			Render(text)
 		return lipgloss.JoinVertical(lipgloss.Left, tui.StyleLabel.Render("GlassMarble AI"), box)
 	}
+}
+
+// wrapToWidth word-wraps s to display width w (counted via lipgloss.Width).
+// It preserves existing line breaks and hard-breaks over-long tokens.
+func wrapToWidth(s string, w int) string {
+	if w <= 0 {
+		return s
+	}
+	var out []string
+	for _, para := range strings.Split(s, "\n") {
+		if para == "" {
+			out = append(out, "")
+			continue
+		}
+		if lipgloss.Width(para) <= w {
+			out = append(out, para)
+			continue
+		}
+		var cur string
+		curW := 0
+		flush := func() {
+			if cur != "" {
+				out = append(out, cur)
+				cur = ""
+				curW = 0
+			}
+		}
+		for _, word := range strings.Fields(para) {
+			ww := lipgloss.Width(word)
+			if ww > w {
+				if cur != "" {
+					flush()
+				}
+				runes := []rune(word)
+				seg := ""
+				segW := 0
+				for _, r := range runes {
+					rw := lipgloss.Width(string(r))
+					if segW+rw > w {
+						out = append(out, seg)
+						seg = ""
+						segW = 0
+					}
+					seg += string(r)
+					segW += rw
+				}
+				if seg != "" {
+					cur = seg
+					curW = segW
+				}
+				continue
+			}
+			if cur == "" {
+				cur = word
+				curW = ww
+			} else if curW+1+ww <= w {
+				cur += " " + word
+				curW += 1 + ww
+			} else {
+				flush()
+				cur = word
+				curW = ww
+			}
+		}
+		flush()
+	}
+	return strings.Join(out, "\n")
 }
 
 func (m *model) View() string {
@@ -421,7 +535,7 @@ func (m *model) statusRight() string {
 			msgCount++
 		}
 	}
-	right := fmt.Sprintf("Session %s │ %d messages │ %d tokens", shortID(m.sess.ID), msgCount, m.sess.Usage.TotalTokens)
+	right := fmt.Sprintf("Session %s │ %d messages", shortID(m.sess.ID), msgCount)
 	if m.sess.CostUSD > 0 {
 		right += fmt.Sprintf(" │ cost $%.4f", m.sess.CostUSD)
 	}

@@ -121,7 +121,13 @@ func (m *model) runAgent() tea.Msg {
 }
 
 func (m *model) refreshVP() {
-	m.vp.SetContent(components.StyleViewportContent(m.content()))
+	// Wrap content to viewport inner width to avoid right-side truncation.
+	inner := m.vp.Width - 4
+	if inner < 20 {
+		inner = 20
+	}
+	wrapped := wrapToWidth(m.content(), inner)
+	m.vp.SetContent(components.StyleViewportContent(wrapped))
 	m.vp.GotoBottom()
 }
 
@@ -130,10 +136,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = maxInt(40, msg.Width)
 		m.height = maxInt(10, msg.Height)
-		m.vp.Width = m.width - 4
-		m.vp.Height = maxInt(5, m.height-6)
+		m.vp.Width = maxInt(20, msg.Width-4)
+		m.vp.Height = maxInt(5, msg.Height-6)
 		m.refreshVP()
 		return m, nil
+	case tea.MouseMsg:
+		var cmd tea.Cmd
+		m.vp, cmd = m.vp.Update(msg)
+		return m, cmd
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "esc", "ctrl+c":
@@ -142,6 +152,24 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cancel()
 			}
 			return m, tea.Quit
+		case "pgup", "b":
+			m.vp.PageUp()
+			return m, nil
+		case "pgdown", "f", " ":
+			m.vp.PageDown()
+			return m, nil
+		case "ctrl+u":
+			m.vp.HalfViewUp()
+			return m, nil
+		case "ctrl+d":
+			m.vp.HalfViewDown()
+			return m, nil
+		case "home", "g":
+			m.vp.GotoTop()
+			return m, nil
+		case "end", "G":
+			m.vp.GotoBottom()
+			return m, nil
 		}
 		var cmd tea.Cmd
 		m.vp, cmd = m.vp.Update(msg)
@@ -222,19 +250,19 @@ func (m *model) content() string {
 	return b.String()
 }
 
-// tokenCostFooter renders a small token/cost summary line when the answer is
-// complete.
+// tokenCostFooter renders a small cost/turn summary line when the answer is
+// complete. Token counts are intentionally omitted from the UI to avoid
+// confusion when providers do not report usage (see Bug 3).
 func (m *model) tokenCostFooter() string {
 	if m.res == nil {
 		return ""
 	}
-	u := m.res.Usage
 	cost := "n/a"
 	if m.res.CostUSD > 0 {
 		cost = fmt.Sprintf("$%.4f", m.res.CostUSD)
 	}
-	line := fmt.Sprintf("%d tokens (prompt %d + completion %d) · %s · %d turns · %d tool-calls",
-		u.TotalTokens, u.PromptTokens, u.CompletionTokens, cost, m.res.Turns, len(m.res.ToolCalls))
+	line := fmt.Sprintf("%s · %d turns · %d tool-calls",
+		cost, m.res.Turns, len(m.res.ToolCalls))
 	return tui.Divider("", m.width) + "\n" + tui.StyleMuted.Render(line)
 }
 
@@ -343,9 +371,12 @@ func verboseLine(res *agent.Result) string {
 	if res.CostUSD > 0 {
 		cost = fmt.Sprintf("$%.4f", res.CostUSD)
 	}
-	return fmt.Sprintf("Tokens: prompt=%d completion=%d total=%d | cost=%s | turns=%d tool-calls=%d",
-		res.Usage.PromptTokens, res.Usage.CompletionTokens, res.Usage.TotalTokens,
-		cost, res.Turns, len(res.ToolCalls))
+	if res.Usage.TotalTokens > 0 {
+		return fmt.Sprintf("Tokens: prompt=%d completion=%d total=%d | cost=%s | turns=%d tool-calls=%d",
+			res.Usage.PromptTokens, res.Usage.CompletionTokens, res.Usage.TotalTokens,
+			cost, res.Turns, len(res.ToolCalls))
+	}
+	return fmt.Sprintf("cost=%s | turns=%d tool-calls=%d", cost, res.Turns, len(res.ToolCalls))
 }
 
 func maxInt(a, b int) int {
@@ -353,5 +384,73 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// wrapToWidth word-wraps s to display width w (via lipgloss.Width).
+// It preserves existing line breaks and hard-breaks over-long tokens.
+// ANSI sequences are ignored via lipgloss.Width.
+func wrapToWidth(s string, w int) string {
+	if w <= 0 {
+		return s
+	}
+	var out []string
+	for _, para := range strings.Split(s, "\n") {
+		if para == "" {
+			out = append(out, "")
+			continue
+		}
+		if lipgloss.Width(para) <= w {
+			out = append(out, para)
+			continue
+		}
+		var cur string
+		curW := 0
+		flush := func() {
+			if cur != "" {
+				out = append(out, cur)
+				cur = ""
+				curW = 0
+			}
+		}
+		for _, word := range strings.Fields(para) {
+			ww := lipgloss.Width(word)
+			if ww > w {
+				if cur != "" {
+					flush()
+				}
+				runes := []rune(word)
+				seg := ""
+				segW := 0
+				for _, r := range runes {
+					rw := lipgloss.Width(string(r))
+					if segW+rw > w {
+						out = append(out, seg)
+						seg = ""
+						segW = 0
+					}
+					seg += string(r)
+					segW += rw
+				}
+				if seg != "" {
+					cur = seg
+					curW = segW
+				}
+				continue
+			}
+			if cur == "" {
+				cur = word
+				curW = ww
+			} else if curW+1+ww <= w {
+				cur += " " + word
+				curW += 1 + ww
+			} else {
+				flush()
+				cur = word
+				curW = ww
+			}
+		}
+		flush()
+	}
+	return strings.Join(out, "\n")
 }
 

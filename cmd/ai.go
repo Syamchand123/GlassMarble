@@ -398,9 +398,14 @@ func looksLikeDiagram(text string) bool {
 // printVerboseTrace prints token/cost accounting with --verbose.
 func printVerboseTrace(cmd *cobra.Command, res *agent.Result) {
 	if verbose, _ := cmd.Flags().GetBool("verbose"); verbose {
-		fmt.Fprintf(cmd.ErrOrStderr(), "Tokens: prompt=%d completion=%d total=%d | cost=%s | turns=%d tool-calls=%d\n",
-			res.Usage.PromptTokens, res.Usage.CompletionTokens, res.Usage.TotalTokens,
-			formatCost(res.CostUSD, res.CostEstimated), res.Turns, len(res.ToolCalls))
+		if res.Usage.TotalTokens > 0 {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Tokens: prompt=%d completion=%d total=%d | cost=%s | turns=%d tool-calls=%d\n",
+				res.Usage.PromptTokens, res.Usage.CompletionTokens, res.Usage.TotalTokens,
+				formatCost(res.CostUSD, res.CostEstimated), res.Turns, len(res.ToolCalls))
+		} else {
+			fmt.Fprintf(cmd.ErrOrStderr(), "cost=%s | turns=%d tool-calls=%d\n",
+				formatCost(res.CostUSD, res.CostEstimated), res.Turns, len(res.ToolCalls))
+		}
 	}
 }
 
@@ -522,9 +527,9 @@ and "exit", "quit", or Ctrl+D to leave.`,
 		}
 
 		if sess.Turns > 0 {
-			fmt.Fprintf(cmd.ErrOrStderr(), "Session %s: %d turns, %d messages, %d tokens, cost %s (resume with `gmb ai chat --session %s`)\n",
-				sess.ID, sess.Turns, len(sess.Messages), sess.Usage.TotalTokens,
-				formatCost(sess.CostUSD, sess.Usage.TotalTokens > 0), sess.ID)
+			fmt.Fprintf(cmd.ErrOrStderr(), "Session %s: %d turns, %d messages, cost %s (resume with `gmb ai chat --session %s`)\n",
+				sess.ID, sess.Turns, len(sess.Messages),
+				formatCost(sess.CostUSD, sess.CostUSD > 0), sess.ID)
 		}
 		return nil
 	},

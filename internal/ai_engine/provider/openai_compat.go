@@ -59,6 +59,7 @@ func (p *OpenAICompatProvider) Complete(ctx context.Context, req Request) (*Resp
 	}
 	if req.OnStream != nil {
 		payload.Stream = true
+		payload.StreamOptions = &openAICompatStreamOptions{IncludeUsage: true}
 	}
 
 	body, err := json.Marshal(payload)
@@ -248,12 +249,17 @@ func (p *OpenAICompatProvider) post(ctx context.Context, path string, body []byt
 // ---- wire types ----
 
 type openAICompatRequest struct {
-	Model       string                `json:"model"`
-	Messages    []openAICompatMessage `json:"messages"`
-	Tools       []openAICompatTool    `json:"tools,omitempty"`
-	Temperature *float64              `json:"temperature,omitempty"`
-	MaxTokens   *int                  `json:"max_tokens,omitempty"`
-	Stream      bool                  `json:"stream,omitempty"`
+	Model         string                      `json:"model"`
+	Messages      []openAICompatMessage       `json:"messages"`
+	Tools         []openAICompatTool          `json:"tools,omitempty"`
+	Temperature   *float64                    `json:"temperature,omitempty"`
+	MaxTokens     *int                        `json:"max_tokens,omitempty"`
+	Stream        bool                        `json:"stream,omitempty"`
+	StreamOptions *openAICompatStreamOptions `json:"stream_options,omitempty"`
+}
+
+type openAICompatStreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 // openAICompatStreamChunk is one SSE payload of a streamed completion.
