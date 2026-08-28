@@ -77,6 +77,12 @@ func TestJSONSchemaConformance(t *testing.T) {
 			t.Errorf("exported JSON missing %q", key)
 		}
 	}
+	// Evolve with second commit so timeline records evolution events
+	sb.GitCommitFiles("add new service", map[string]string{
+		"service.py": "def handle_request():\n    pass\n",
+	})
+	harness.RunGmb(t, sb, "analyze")
+
 	// Timeline
 	tlOut, err := harness.RunGmb(t, sb, "timeline", "--format", "json")
 	if err != nil {

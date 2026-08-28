@@ -70,12 +70,10 @@ Architecture Knowledge Graph and developer memory evidence.`,
 			MaxTokens: 3500,
 		})
 
-		var promptContent string
-		if ctxData != nil && !ctxData.Empty() {
-			promptContent = ctxData.BuildPrompt()
-		} else {
-			promptContent = fmt.Sprintf("=== QUESTION ===\n%s\n\n%s", question, ai_engine.GroundingInstructions)
+		if ctxData == nil || ctxData.Empty() {
+			return producterrs.Tagged(fmt.Sprintf("no architectural evidence found for %q — try 'gmb analyze' first", question), producterrs.ErrEmptySubgraph)
 		}
+		promptContent := ctxData.BuildPrompt()
 
 		// 2. Query AI Architect (with tool capabilities enabled)
 		if !asJSON {
