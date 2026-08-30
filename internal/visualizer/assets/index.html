@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GlassMarble — Live Architecture Visualizer</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body class="dark-theme">
+  <header class="app-header">
+    <div class="brand">
+      <span class="logo-icon">◈</span>
+      <h1>GlassMarble <span class="badge">Visualizer</span></h1>
+    </div>
+    <div class="search-container">
+      <input type="text" id="searchInput" placeholder="Search symbols, files, components... (Ctrl+K)" autocomplete="off">
+      <div id="searchResults" class="search-results hidden"></div>
+    </div>
+    <div class="header-actions">
+      <button id="blastRadiusBtn" class="action-btn" title="Toggle Blast-Radius Spotlight">💥 Blast Radius</button>
+      <button id="resetViewBtn" class="action-btn" title="Reset Zoom & Pan">⟲ Reset</button>
+      <button id="themeToggleBtn" class="action-btn" title="Toggle Theme">🌓</button>
+    </div>
+  </header>
+
+  <div class="main-container">
+    <!-- Sidebar / Filters -->
+    <aside class="sidebar">
+      <section class="sidebar-section">
+        <h3>Architecture Layers</h3>
+        <div id="layerFilters" class="filter-group">
+          <label><input type="checkbox" checked value="all"> All Layers</label>
+        </div>
+      </section>
+
+      <section class="sidebar-section">
+        <h3>Node Kinds</h3>
+        <div id="kindFilters" class="filter-group">
+          <label><input type="checkbox" checked value="STRUCT"><span class="kind-dot struct"></span> Struct / Class</label>
+          <label><input type="checkbox" checked value="INTERFACE"><span class="kind-dot interface"></span> Interface</label>
+          <label><input type="checkbox" checked value="FUNCTION"><span class="kind-dot function"></span> Function / Method</label>
+          <label><input type="checkbox" checked value="DATABASE"><span class="kind-dot database"></span> Database</label>
+          <label><input type="checkbox" checked value="NETWORK_IO"><span class="kind-dot network"></span> Network RPC</label>
+        </div>
+      </section>
+
+      <section class="sidebar-section stats-section">
+        <h3>Graph Health</h3>
+        <div class="stat-row"><span>Nodes:</span> <strong id="statNodes">-</strong></div>
+        <div class="stat-row"><span>Edges:</span> <strong id="statEdges">-</strong></div>
+        <div class="stat-row"><span>Files:</span> <strong id="statFiles">-</strong></div>
+        <div class="stat-row"><span>Smells:</span> <strong id="statSmells">-</strong></div>
+      </section>
+    </aside>
+
+    <!-- Canvas Viewport -->
+    <main class="canvas-viewport">
+      <canvas id="graphCanvas"></canvas>
+      <div class="canvas-overlay-hud">
+        <span id="hudStatus">Ready</span>
+        <span id="hudSelection"></span>
+      </div>
+    </main>
+
+    <!-- Details Inspector Drawer -->
+    <aside id="inspectorDrawer" class="inspector-drawer hidden">
+      <div class="drawer-header">
+        <h2 id="nodeDetailName">Symbol Name</h2>
+        <button id="closeDrawerBtn" class="close-btn">&times;</button>
+      </div>
+      <div class="drawer-content">
+        <div class="detail-row">
+          <span class="detail-label">Kind:</span>
+          <span id="nodeDetailKind" class="detail-value">-</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">File:</span>
+          <span id="nodeDetailFile" class="detail-value code-font">-</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Package:</span>
+          <span id="nodeDetailPackage" class="detail-value">-</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Blast Radius:</span>
+          <span id="nodeDetailImpact" class="detail-value">-</span>
+        </div>
+
+        <div class="drawer-section">
+          <h3>Callers / Dependents (<span id="callerCount">0</span>)</h3>
+          <ul id="callersList" class="relation-list"></ul>
+        </div>
+
+        <div class="drawer-section">
+          <h3>Outgoing Dependencies (<span id="depCount">0</span>)</h3>
+          <ul id="depsList" class="relation-list"></ul>
+        </div>
+
+        <button id="simulateImpactBtn" class="primary-btn">💥 Simulate Blast Radius</button>
+      </div>
+    </aside>
+  </div>
+
+  <script src="/assets/app.js"></script>
+</body>
+</html>

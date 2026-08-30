@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine"
+	"github.com/Syamchand123/GlassMarble/internal/arch_linter"
+	"github.com/Syamchand123/GlassMarble/internal/impact_analyzer"
 )
 
 // RenderDoctorUninitialized and RenderStatusUninitialized must carry the
@@ -169,5 +171,55 @@ func TestRenderUpdateViews(t *testing.T) {
 	})
 	if !strings.Contains(success, "v1.0.1") || !strings.Contains(success, "linux / amd64") {
 		t.Errorf("unexpected RenderUpdateSuccess output:\n%s", success)
+	}
+}
+
+func TestRenderNewFeaturesViews(t *testing.T) {
+	// 1. UI Server View
+	uiView := RenderUIServerStart("127.0.0.1", 8080, 100, 250)
+	if !strings.Contains(uiView, "Live Architecture Visualizer") || !strings.Contains(uiView, "8080") {
+		t.Errorf("RenderUIServerStart missing expected content:\n%s", uiView)
+	}
+
+	// 2. Impact View
+	impView := RenderImpactReport(&impact_analyzer.ImpactReport{
+		TargetName:                "UserStore",
+		TargetKind:                "STRUCT",
+		TargetFile:                "internal/storage/store.go",
+		RiskScore:                 45,
+		RiskLevel:                 "MEDIUM",
+		DirectDependentsCount:     2,
+		TransitiveDependentsCount: 4,
+		TotalImpactedNodes:        6,
+		TotalImpactedFiles:        3,
+		DirectDependents: []impact_analyzer.ImpactNode{
+			{Name: "UserService", Kind: "STRUCT", File: "internal/service/user.go", Distance: 1},
+		},
+		RecommendedTestCommand: "go test ./internal/storage ./internal/service",
+	})
+	if !strings.Contains(impView, "UserStore") || !strings.Contains(impView, "MEDIUM RISK") {
+		t.Errorf("RenderImpactReport missing expected content:\n%s", impView)
+	}
+
+	// 3. Lint View
+	lintView := RenderLintResult(&arch_linter.LintResult{
+		RulesTotal:      2,
+		RulesPassed:     1,
+		ViolationsTotal: 1,
+		ErrorsCount:     1,
+		Passed:          false,
+		Violations: []arch_linter.Violation{
+			{
+				RuleID:     "domain-isolation",
+				RuleName:   "Domain Isolation",
+				Severity:   arch_linter.SeverityError,
+				SourcePath: "internal/domain/user.go",
+				TargetPath: "internal/infrastructure/db.go",
+				Message:    "Forbidden dependency",
+			},
+		},
+	}, ".glassmarble/rules.yaml")
+	if !strings.Contains(lintView, "Architecture Linter Report") || !strings.Contains(lintView, "domain-isolation") {
+		t.Errorf("RenderLintResult missing expected content:\n%s", lintView)
 	}
 }
