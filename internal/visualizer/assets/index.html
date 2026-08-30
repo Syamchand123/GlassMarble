@@ -3,100 +3,247 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GlassMarble — Live Architecture Visualizer</title>
+  <title>GlassMarble — Architecture Knowledge Graph Visualizer</title>
   <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/cytoscape.min.js"></script>
 </head>
 <body class="dark-theme">
+  <!-- Top App Navigation -->
   <header class="app-header">
-    <div class="brand">
-      <span class="logo-icon">◈</span>
-      <h1>GlassMarble <span class="badge">Visualizer</span></h1>
+    <div class="brand-container">
+      <div class="logo-orb">◈</div>
+      <div class="brand-text">
+        <h1>GlassMarble</h1>
+        <span class="version-tag">v1.1.0</span>
+      </div>
     </div>
-    <div class="search-container">
-      <input type="text" id="searchInput" placeholder="Search symbols, files, components... (Ctrl+K)" autocomplete="off">
-      <div id="searchResults" class="search-results hidden"></div>
+
+    <!-- Omni-Search Bar -->
+    <div class="search-box">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="omniSearch" placeholder="Search symbols, structs, files, routes... (Ctrl+K)" autocomplete="off">
+      <kbd class="search-shortcut">⌘K</kbd>
+      <div id="searchDropdown" class="search-dropdown hidden"></div>
     </div>
-    <div class="header-actions">
-      <button id="blastRadiusBtn" class="action-btn" title="Toggle Blast-Radius Spotlight">💥 Blast Radius</button>
-      <button id="resetViewBtn" class="action-btn" title="Reset Zoom & Pan">⟲ Reset</button>
-      <button id="themeToggleBtn" class="action-btn" title="Toggle Theme">🌓</button>
+
+    <!-- Layout & Tools Toolbar -->
+    <div class="toolbar">
+      <!-- Layout Switcher -->
+      <div class="toolbar-group">
+        <label for="layoutSelect">Layout:</label>
+        <select id="layoutSelect" class="select-input">
+          <option value="cose" selected>🌐 Force-Directed (Physics)</option>
+          <option value="breadthfirst">🏛️ Layered Hierarchy (DAG)</option>
+          <option value="concentric">🎯 Concentric (Clean Architecture)</option>
+          <option value="circle">⭕ Circular Ring</option>
+          <option value="grid">📦 Package Grid</option>
+        </select>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="toolbar-actions">
+        <button id="btnBlastRadius" class="btn btn-tool" title="Simulate Refactoring Blast Radius">💥 Blast Radius</button>
+        <button id="btnPathTrace" class="btn btn-tool" title="Trace Shortest Call Path Between 2 Nodes">⚡ Trace Path</button>
+        <button id="btnSmellsRadar" class="btn btn-tool" title="Highlight Architectural Smells & Cycles">⚠️ Smells Radar</button>
+        <button id="btnFit" class="btn btn-icon" title="Fit to Viewport">⛶</button>
+        <button id="btnExportPNG" class="btn btn-icon" title="Export High-Res PNG">📸</button>
+        <button id="btnThemeToggle" class="btn btn-icon" title="Toggle Dark/Light Mode">🌓</button>
+      </div>
     </div>
   </header>
 
-  <div class="main-container">
-    <!-- Sidebar / Filters -->
-    <aside class="sidebar">
-      <section class="sidebar-section">
-        <h3>Architecture Layers</h3>
-        <div id="layerFilters" class="filter-group">
-          <label><input type="checkbox" checked value="all"> All Layers</label>
+  <!-- Workspace Container -->
+  <div class="workspace">
+    <!-- Left Control Panel (Filters & Health) -->
+    <aside class="control-panel">
+      <!-- Architectural Layers -->
+      <section class="panel-section">
+        <div class="section-title">
+          <h3>Architectural Layers</h3>
+          <span class="badge-count" id="layerCount">5</span>
+        </div>
+        <div class="filter-list" id="layerFilters">
+          <label class="filter-checkbox layer-presentation">
+            <input type="checkbox" checked value="presentation">
+            <span class="color-dot presentation"></span> Presentation / API
+          </label>
+          <label class="filter-checkbox layer-application">
+            <input type="checkbox" checked value="application">
+            <span class="color-dot application"></span> Application / Service
+          </label>
+          <label class="filter-checkbox layer-domain">
+            <input type="checkbox" checked value="domain">
+            <span class="color-dot domain"></span> Domain / Core
+          </label>
+          <label class="filter-checkbox layer-infrastructure">
+            <input type="checkbox" checked value="infrastructure">
+            <span class="color-dot infrastructure"></span> Infrastructure / DB
+          </label>
+          <label class="filter-checkbox layer-common">
+            <input type="checkbox" checked value="common">
+            <span class="color-dot common"></span> Common / Utility
+          </label>
         </div>
       </section>
 
-      <section class="sidebar-section">
-        <h3>Node Kinds</h3>
-        <div id="kindFilters" class="filter-group">
-          <label><input type="checkbox" checked value="STRUCT"><span class="kind-dot struct"></span> Struct / Class</label>
-          <label><input type="checkbox" checked value="INTERFACE"><span class="kind-dot interface"></span> Interface</label>
-          <label><input type="checkbox" checked value="FUNCTION"><span class="kind-dot function"></span> Function / Method</label>
-          <label><input type="checkbox" checked value="DATABASE"><span class="kind-dot database"></span> Database</label>
-          <label><input type="checkbox" checked value="NETWORK_IO"><span class="kind-dot network"></span> Network RPC</label>
+      <!-- Symbol Kinds -->
+      <section class="panel-section">
+        <div class="section-title">
+          <h3>Symbol Kinds</h3>
+        </div>
+        <div class="filter-list" id="kindFilters">
+          <label class="filter-checkbox"><input type="checkbox" checked value="STRUCT"><span class="kind-pill struct">STRUCT</span> Struct / Class</label>
+          <label class="filter-checkbox"><input type="checkbox" checked value="INTERFACE"><span class="kind-pill iface">IFACE</span> Interface</label>
+          <label class="filter-checkbox"><input type="checkbox" checked value="FUNCTION"><span class="kind-pill func">FUNC</span> Function / Method</label>
+          <label class="filter-checkbox"><input type="checkbox" checked value="DATABASE"><span class="kind-pill db">DB</span> Database</label>
+          <label class="filter-checkbox"><input type="checkbox" checked value="ENTRYPOINT"><span class="kind-pill entry">MAIN</span> Entrypoint</label>
         </div>
       </section>
 
-      <section class="sidebar-section stats-section">
-        <h3>Graph Health</h3>
-        <div class="stat-row"><span>Nodes:</span> <strong id="statNodes">-</strong></div>
-        <div class="stat-row"><span>Edges:</span> <strong id="statEdges">-</strong></div>
-        <div class="stat-row"><span>Files:</span> <strong id="statFiles">-</strong></div>
-        <div class="stat-row"><span>Smells:</span> <strong id="statSmells">-</strong></div>
+      <!-- Centrality & Coupling Filter -->
+      <section class="panel-section">
+        <div class="section-title">
+          <h3>Coupling Threshold</h3>
+        </div>
+        <div class="range-control">
+          <div class="range-labels">
+            <span>Min Inbound Callers:</span>
+            <strong id="minDegreeVal">0</strong>
+          </div>
+          <input type="range" id="minDegreeRange" min="0" max="20" value="0" class="slider-input">
+        </div>
+      </section>
+
+      <!-- Repository Architecture Health Stats -->
+      <section class="panel-section health-section">
+        <div class="section-title">
+          <h3>Architecture Knowledge</h3>
+        </div>
+        <div class="stat-grid">
+          <div class="stat-card">
+            <span class="stat-label">Symbols</span>
+            <strong class="stat-value" id="statTotalNodes">-</strong>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Relations</span>
+            <strong class="stat-value" id="statTotalEdges">-</strong>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Files</span>
+            <strong class="stat-value" id="statTotalFiles">-</strong>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Smells</span>
+            <strong class="stat-value danger-text" id="statTotalSmells">-</strong>
+          </div>
+        </div>
       </section>
     </aside>
 
-    <!-- Canvas Viewport -->
-    <main class="canvas-viewport">
-      <canvas id="graphCanvas"></canvas>
-      <div class="canvas-overlay-hud">
-        <span id="hudStatus">Ready</span>
-        <span id="hudSelection"></span>
+    <!-- Center Graph Stage -->
+    <main class="graph-stage">
+      <div id="cy" class="cytoscape-container"></div>
+
+      <!-- Floating HUD Badge -->
+      <div class="hud-badge">
+        <div class="hud-pulse"></div>
+        <span id="hudStatus">Initializing Architecture Knowledge Graph...</span>
+        <span class="hud-divider">|</span>
+        <span id="hudSelection" class="hud-accent">Click any node to inspect</span>
+      </div>
+
+      <!-- Pathfinding Modal / Overlay Bar -->
+      <div id="pathTraceBar" class="path-trace-bar hidden">
+        <span>⚡ <strong>Trace Call Chain:</strong></span>
+        <input type="text" id="pathSourceInput" placeholder="Source Symbol (e.g. UserController)" class="trace-input">
+        <span>➔</span>
+        <input type="text" id="pathTargetInput" placeholder="Target Symbol (e.g. PostgresStore)" class="trace-input">
+        <button id="btnRunTrace" class="btn btn-primary btn-sm">Find Shortest Path</button>
+        <button id="btnCloseTrace" class="btn-close-sm">&times;</button>
       </div>
     </main>
 
-    <!-- Details Inspector Drawer -->
-    <aside id="inspectorDrawer" class="inspector-drawer hidden">
+    <!-- Right Side Node Details & Blast-Radius Drawer -->
+    <aside id="inspector" class="inspector-drawer hidden">
       <div class="drawer-header">
-        <h2 id="nodeDetailName">Symbol Name</h2>
-        <button id="closeDrawerBtn" class="close-btn">&times;</button>
+        <div class="drawer-title-box">
+          <span id="nodeKindBadge" class="node-badge">STRUCT</span>
+          <h2 id="nodeName">SymbolName</h2>
+        </div>
+        <button id="btnCloseDrawer" class="btn-close">&times;</button>
       </div>
-      <div class="drawer-content">
-        <div class="detail-row">
-          <span class="detail-label">Kind:</span>
-          <span id="nodeDetailKind" class="detail-value">-</span>
-        </div>
-        <div class="detail-row">
-          <span class="detail-label">File:</span>
-          <span id="nodeDetailFile" class="detail-value code-font">-</span>
-        </div>
-        <div class="detail-row">
-          <span class="detail-label">Package:</span>
-          <span id="nodeDetailPackage" class="detail-value">-</span>
-        </div>
-        <div class="detail-row">
-          <span class="detail-label">Blast Radius:</span>
-          <span id="nodeDetailImpact" class="detail-value">-</span>
+
+      <div class="drawer-body">
+        <!-- Physical Location -->
+        <div class="meta-card">
+          <div class="meta-row">
+            <span class="meta-key">File Location:</span>
+            <span id="nodeFilePath" class="meta-val code-text">-</span>
+          </div>
+          <div class="meta-row">
+            <span class="meta-key">Package:</span>
+            <span id="nodePackage" class="meta-val">-</span>
+          </div>
+          <div class="meta-row">
+            <span class="meta-key">Architectural Layer:</span>
+            <span id="nodeLayer" class="meta-val layer-pill">-</span>
+          </div>
         </div>
 
-        <div class="drawer-section">
-          <h3>Callers / Dependents (<span id="callerCount">0</span>)</h3>
-          <ul id="callersList" class="relation-list"></ul>
+        <!-- Coupling & Centrality Metrics -->
+        <div class="metrics-card">
+          <h3>Coupling & Centrality Metrics</h3>
+          <div class="metrics-grid">
+            <div class="metric-box">
+              <span class="m-label">In-Degree ($C_a$)</span>
+              <strong class="m-val" id="mInDegree">0</strong>
+            </div>
+            <div class="metric-box">
+              <span class="m-label">Out-Degree ($C_e$)</span>
+              <strong class="m-val" id="mOutDegree">0</strong>
+            </div>
+            <div class="metric-box">
+              <span class="m-label">PageRank</span>
+              <strong class="m-val" id="mPageRank">0.00</strong>
+            </div>
+          </div>
         </div>
 
-        <div class="drawer-section">
-          <h3>Outgoing Dependencies (<span id="depCount">0</span>)</h3>
-          <ul id="depsList" class="relation-list"></ul>
+        <!-- Blast Radius Simulation Trigger -->
+        <div class="blast-trigger-card">
+          <div class="blast-card-header">
+            <h3>💥 Blast-Radius Simulation</h3>
+            <span id="riskBadge" class="risk-badge low">LOW RISK</span>
+          </div>
+          <p class="blast-desc">Evaluate ripple effect, upstream callers, and affected test suites before refactoring.</p>
+          <div id="riskMeterBox" class="risk-meter-box">
+            <div class="meter-bar"><div id="riskMeterFill" class="meter-fill" style="width: 15%;"></div></div>
+            <span id="riskMeterScore" class="risk-score">15 / 100</span>
+          </div>
+          <button id="btnSimulateBlast" class="btn btn-blast-action">⚡ Run Blast-Radius Simulator</button>
         </div>
 
-        <button id="simulateImpactBtn" class="primary-btn">💥 Simulate Blast Radius</button>
+        <!-- Impacted Tests Box -->
+        <div id="impactedTestsSection" class="impact-section hidden">
+          <div class="section-sub-header">
+            <h4>🧪 Exposed Regression Tests (<span id="impactedTestsCount">0</span>)</h4>
+            <button id="btnCopyTestCmd" class="btn-copy-sm" title="Copy test command to clipboard">📋 Copy Command</button>
+          </div>
+          <div id="testCmdBanner" class="test-cmd-banner">go test ./...</div>
+          <ul id="impactedTestsList" class="compact-list"></ul>
+        </div>
+
+        <!-- Relations Accordion -->
+        <div class="relations-accordion">
+          <div class="relation-group">
+            <h4>Inbound Callers (<span id="inboundCount">0</span>)</h4>
+            <ul id="inboundList" class="relation-list"></ul>
+          </div>
+          <div class="relation-group">
+            <h4>Outbound Dependencies (<span id="outboundCount">0</span>)</h4>
+            <ul id="outboundList" class="relation-list"></ul>
+          </div>
+        </div>
       </div>
     </aside>
   </div>

@@ -25,6 +25,15 @@ func TestVisualizerServer(t *testing.T) {
 		},
 	})
 
+	graph.Nodes = graph.Nodes.Set("n2", &link.ResolvedNode{
+		ID:   "n2",
+		Name: "DatabaseStore",
+		Kind: "DATABASE",
+		FileSpec: link.LocationMeta{
+			Path: "internal/db/store.go",
+		},
+	})
+
 	graph.OutboundEdges = graph.OutboundEdges.Set("n1", []link.ResolvedEdge{
 		{SourceID: "n1", TargetID: "n2", Type: link.EdgeDependsOn},
 	})
@@ -70,22 +79,44 @@ func TestVisualizerServer(t *testing.T) {
 		t.Error("index body is empty")
 	}
 
-	// 3. Test Graph API
+	// 3. Test Graph API (Cytoscape Elements)
 	resp, err = client.Get(baseURL + "/api/graph")
 	if err != nil {
 		t.Fatalf("GET /api/graph failed: %v", err)
 	}
-	var gData struct {
-		Nodes []any `json:"nodes"`
-		Edges []any `json:"edges"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&gData); err != nil {
+	var elements []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&elements); err != nil {
 		t.Fatalf("failed to decode /api/graph: %v", err)
 	}
 	resp.Body.Close()
 
-	if len(gData.Nodes) != 1 {
-		t.Errorf("expected 1 node, got %d", len(gData.Nodes))
+	if len(elements) == 0 {
+		t.Error("expected non-empty cytoscape elements")
+	}
+
+	// 4. Test Layers API
+	resp, err = client.Get(baseURL + "/api/layers")
+	if err != nil {
+		t.Fatalf("GET /api/layers failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("layers returned status %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// 5. Test Path Trace API
+	resp, err = client.Get(baseURL + "/api/paths?source=AppService&target=DatabaseStore")
+	if err != nil {
+		t.Fatalf("GET /api/paths failed: %v", err)
+	}
+	var pathRes map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&pathRes); err != nil {
+		t.Fatalf("failed to decode /api/paths: %v", err)
+	}
+	resp.Body.Close()
+
+	if found, ok := pathRes["found"].(bool); !ok || !found {
+		t.Errorf("expected path from AppService to DatabaseStore to be found, got: %v", pathRes)
 	}
 
 	// Graceful Stop
