@@ -209,25 +209,27 @@ func AnalyzeImpact(graph *akg.CodePropertyGraph, targetQuery string, opts Impact
 	})
 
 	// Calculate Architectural Risk Score (0 - 100)
-	rawScore := (rep.DirectDependentsCount * 8) +
-		(rep.TransitiveDependentsCount * 2) +
-		(rep.TotalImpactedFiles * 4) +
-		(len(rep.ImpactedEntrypoints) * 12)
+	rawScore := (rep.DirectDependentsCount * 10) +
+		(rep.TransitiveDependentsCount * 3) +
+		(rep.TotalImpactedFiles * 5) +
+		(len(rep.ImpactedEntrypoints) * 15)
 
 	if rawScore > 100 {
 		rep.RiskScore = 100
 	} else if rawScore < 5 && rep.TotalImpactedNodes > 0 {
+		rep.RiskScore = 15
+	} else if rawScore == 0 {
 		rep.RiskScore = 5
 	} else {
 		rep.RiskScore = rawScore
 	}
 
 	switch {
-	case rep.RiskScore >= 75:
+	case rep.RiskScore >= 70:
 		rep.RiskLevel = "CRITICAL"
-	case rep.RiskScore >= 50:
+	case rep.RiskScore >= 45:
 		rep.RiskLevel = "HIGH"
-	case rep.RiskScore >= 25:
+	case rep.RiskScore >= 20:
 		rep.RiskLevel = "MEDIUM"
 	default:
 		rep.RiskLevel = "LOW"
@@ -259,6 +261,24 @@ func findTargetNode(graph *akg.CodePropertyGraph, query string) *link.ResolvedNo
 		return n
 	}
 
+	// 2. Component ID match (e.g. comp_cmd or comp_internal_akg)
+	if strings.HasPrefix(cleanQuery, "comp_") {
+		trimmed := strings.TrimPrefix(cleanQuery, "comp_")
+		var compNode *link.ResolvedNode
+		graph.Nodes.Iterate(func(id string, node *link.ResolvedNode) {
+			if compNode != nil || node == nil {
+				return
+			}
+			filePath := filepath.ToSlash(node.FileSpec.Path)
+			if strings.Contains(filePath, trimmed) {
+				compNode = node
+			}
+		})
+		if compNode != nil {
+			return compNode
+		}
+	}
+
 	var exactNameMatch *link.ResolvedNode
 	var exactFileMatch *link.ResolvedNode
 	var substringNameMatch *link.ResolvedNode
@@ -268,14 +288,21 @@ func findTargetNode(graph *akg.CodePropertyGraph, query string) *link.ResolvedNo
 			return
 		}
 
-		if strings.EqualFold(node.Name, cleanQuery) {
+		if node.Name == cleanQuery {
 			exactNameMatch = node
+			return
+		}
+
+		if strings.EqualFold(node.Name, cleanQuery) {
+			if exactNameMatch == nil {
+				exactNameMatch = node
+			}
 			return
 		}
 
 		if node.FileSpec.Path != "" {
 			nodeFile := filepath.ToSlash(node.FileSpec.Path)
-			if nodeFile == cleanPath || strings.HasSuffix(nodeFile, "/"+cleanPath) {
+			if nodeFile == cleanPath || strings.HasSuffix(nodeFile, "/"+cleanPath) || strings.HasPrefix(nodeFile, cleanPath) {
 				if exactFileMatch == nil {
 					exactFileMatch = node
 				}

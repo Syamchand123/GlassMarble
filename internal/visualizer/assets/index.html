@@ -3,250 +3,441 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GlassMarble — Architecture Knowledge Graph Visualizer</title>
+  <title>GlassMarble — AI Architecture Intelligence & Visualizer</title>
   <link rel="stylesheet" href="/assets/styles.css">
   <script src="/assets/cytoscape.min.js"></script>
+  <script src="/assets/mermaid.min.js"></script>
 </head>
 <body class="dark-theme">
-  <!-- Top App Navigation -->
+  <!-- Top Application Header -->
   <header class="app-header">
-    <div class="brand-container">
-      <div class="logo-orb">◈</div>
-      <div class="brand-text">
-        <h1>GlassMarble</h1>
-        <span class="version-tag">v1.1.0</span>
+    <div class="header-left">
+      <div class="brand-container">
+        <div class="logo-orb">◈</div>
+        <div class="brand-text">
+          <h1>GlassMarble <span class="version-tag">v1.1.0</span></h1>
+        </div>
       </div>
+
+      <!-- Navigation Tabs -->
+      <nav class="nav-tabs">
+        <button class="nav-tab active" data-tab="tab-graph">
+          <span class="tab-icon">🗺️</span> Architecture Graph
+        </button>
+        <button class="nav-tab" data-tab="tab-intelligence">
+          <span class="tab-icon">🧠</span> Intelligence & Smells
+        </button>
+        <button class="nav-tab" data-tab="tab-timeline">
+          <span class="tab-icon">⏳</span> Memory & Evolution
+        </button>
+        <button class="nav-tab" data-tab="tab-marbles">
+          <span class="tab-icon">📐</span> Marbles Diagrams
+        </button>
+        <button class="nav-tab" data-tab="tab-metrics">
+          <span class="tab-icon">📊</span> Metrics & Rules
+        </button>
+      </nav>
     </div>
 
     <!-- Omni-Search Bar -->
     <div class="search-box">
       <span class="search-icon">🔍</span>
-      <input type="text" id="omniSearch" placeholder="Search symbols, structs, files, routes... (Ctrl+K)" autocomplete="off">
+      <input type="text" id="omniSearch" placeholder="Search symbols, components, files... (Ctrl+K)" autocomplete="off">
       <kbd class="search-shortcut">⌘K</kbd>
       <div id="searchDropdown" class="search-dropdown hidden"></div>
     </div>
 
-    <!-- Layout & Tools Toolbar -->
-    <div class="toolbar">
-      <!-- Layout Switcher -->
-      <div class="toolbar-group">
-        <label for="layoutSelect">Layout:</label>
-        <select id="layoutSelect" class="select-input">
-          <option value="cose" selected>🌐 Force-Directed (Physics)</option>
-          <option value="breadthfirst">🏛️ Layered Hierarchy (DAG)</option>
-          <option value="concentric">🎯 Concentric (Clean Architecture)</option>
-          <option value="circle">⭕ Circular Ring</option>
-          <option value="grid">📦 Package Grid</option>
-        </select>
+    <!-- Toolbar Controls -->
+    <div class="header-right">
+      <div class="view-controls" id="graphViewControls">
+        <!-- Granularity Selector -->
+        <div class="control-group">
+          <label for="granularitySelect">Granularity:</label>
+          <select id="granularitySelect" class="select-input">
+            <option value="components" selected>📦 Components (100% Architecture)</option>
+            <option value="packages">📁 Packages (Directories)</option>
+            <option value="symbols">🏛️ Core Symbols (Types & APIs)</option>
+          </select>
+        </div>
+
+        <!-- Layout Selector -->
+        <div class="control-group">
+          <label for="layoutSelect">Layout:</label>
+          <select id="layoutSelect" class="select-input">
+            <option value="cose" selected>🌐 Force-Directed (COSE)</option>
+            <option value="breadthfirst">🏛️ Layered DAG</option>
+            <option value="concentric">🎯 Concentric Onion</option>
+            <option value="circle">⭕ Circular Ring</option>
+            <option value="grid">📦 Package Grid</option>
+          </select>
+        </div>
       </div>
 
-      <!-- Action Buttons -->
-      <div class="toolbar-actions">
+      <div class="action-buttons">
         <button id="btnBlastRadius" class="btn btn-tool" title="Simulate Refactoring Blast Radius">💥 Blast Radius</button>
-        <button id="btnPathTrace" class="btn btn-tool" title="Trace Shortest Call Path Between 2 Nodes">⚡ Trace Path</button>
-        <button id="btnSmellsRadar" class="btn btn-tool" title="Highlight Architectural Smells & Cycles">⚠️ Smells Radar</button>
+        <button id="btnPathTrace" class="btn btn-tool" title="Trace Shortest Call Path">⚡ Path Trace</button>
+        <button id="btnCutVertices" class="btn btn-tool" title="Find Architectural Cut Vertices & Bottlenecks">🔴 Cut Vertices</button>
+        <button id="btnCycles" class="btn btn-tool" title="Detect Circular Dependency Loops">🔄 Cycles</button>
+        <button id="btnPageRank" class="btn btn-tool" title="Colorize by PageRank Centrality">⭐ PageRank</button>
+        <button id="btnSmellsRadar" class="btn btn-tool" title="Highlight Architectural Smells">⚠️ Smells</button>
         <button id="btnFit" class="btn btn-icon" title="Fit to Viewport">⛶</button>
         <button id="btnExportPNG" class="btn btn-icon" title="Export High-Res PNG">📸</button>
-        <button id="btnThemeToggle" class="btn btn-icon" title="Toggle Dark/Light Mode">🌓</button>
+        <button id="btnThemeToggle" class="btn btn-icon" title="Toggle Dark/Light Theme">🌓</button>
       </div>
     </div>
   </header>
 
-  <!-- Workspace Container -->
-  <div class="workspace">
-    <!-- Left Control Panel (Filters & Health) -->
-    <aside class="control-panel">
-      <!-- Architectural Layers -->
-      <section class="panel-section">
-        <div class="section-title">
-          <h3>Architectural Layers</h3>
-          <span class="badge-count" id="layerCount">5</span>
-        </div>
-        <div class="filter-list" id="layerFilters">
-          <label class="filter-checkbox layer-presentation">
-            <input type="checkbox" checked value="presentation">
-            <span class="color-dot presentation"></span> Presentation / API
-          </label>
-          <label class="filter-checkbox layer-application">
-            <input type="checkbox" checked value="application">
-            <span class="color-dot application"></span> Application / Service
-          </label>
-          <label class="filter-checkbox layer-domain">
-            <input type="checkbox" checked value="domain">
-            <span class="color-dot domain"></span> Domain / Core
-          </label>
-          <label class="filter-checkbox layer-infrastructure">
-            <input type="checkbox" checked value="infrastructure">
-            <span class="color-dot infrastructure"></span> Infrastructure / DB
-          </label>
-          <label class="filter-checkbox layer-common">
-            <input type="checkbox" checked value="common">
-            <span class="color-dot common"></span> Common / Utility
-          </label>
-        </div>
-      </section>
-
-      <!-- Symbol Kinds -->
-      <section class="panel-section">
-        <div class="section-title">
-          <h3>Symbol Kinds</h3>
-        </div>
-        <div class="filter-list" id="kindFilters">
-          <label class="filter-checkbox"><input type="checkbox" checked value="STRUCT"><span class="kind-pill struct">STRUCT</span> Struct / Class</label>
-          <label class="filter-checkbox"><input type="checkbox" checked value="INTERFACE"><span class="kind-pill iface">IFACE</span> Interface</label>
-          <label class="filter-checkbox"><input type="checkbox" checked value="FUNCTION"><span class="kind-pill func">FUNC</span> Function / Method</label>
-          <label class="filter-checkbox"><input type="checkbox" checked value="DATABASE"><span class="kind-pill db">DB</span> Database</label>
-          <label class="filter-checkbox"><input type="checkbox" checked value="ENTRYPOINT"><span class="kind-pill entry">MAIN</span> Entrypoint</label>
-        </div>
-      </section>
-
-      <!-- Centrality & Coupling Filter -->
-      <section class="panel-section">
-        <div class="section-title">
-          <h3>Coupling Threshold</h3>
-        </div>
-        <div class="range-control">
-          <div class="range-labels">
-            <span>Min Inbound Callers:</span>
-            <strong id="minDegreeVal">0</strong>
+  <!-- Main View Container -->
+  <main class="main-viewport">
+    
+    <!-- =========================================================================
+         TAB 1: ARCHITECTURE KNOWLEDGE GRAPH (Cytoscape)
+         ========================================================================= -->
+    <section id="tab-graph" class="tab-pane active">
+      <!-- Left Filter & Layer Sidebar -->
+      <aside class="control-panel">
+        <div class="panel-section">
+          <div class="section-title">
+            <h3>Architectural Layers</h3>
+            <span class="badge-count" id="layerCount">5</span>
           </div>
-          <input type="range" id="minDegreeRange" min="0" max="20" value="0" class="slider-input">
-        </div>
-      </section>
-
-      <!-- Repository Architecture Health Stats -->
-      <section class="panel-section health-section">
-        <div class="section-title">
-          <h3>Architecture Knowledge</h3>
-        </div>
-        <div class="stat-grid">
-          <div class="stat-card">
-            <span class="stat-label">Symbols</span>
-            <strong class="stat-value" id="statTotalNodes">-</strong>
-          </div>
-          <div class="stat-card">
-            <span class="stat-label">Relations</span>
-            <strong class="stat-value" id="statTotalEdges">-</strong>
-          </div>
-          <div class="stat-card">
-            <span class="stat-label">Files</span>
-            <strong class="stat-value" id="statTotalFiles">-</strong>
-          </div>
-          <div class="stat-card">
-            <span class="stat-label">Smells</span>
-            <strong class="stat-value danger-text" id="statTotalSmells">-</strong>
-          </div>
-        </div>
-      </section>
-    </aside>
-
-    <!-- Center Graph Stage -->
-    <main class="graph-stage">
-      <div id="cy" class="cytoscape-container"></div>
-
-      <!-- Floating HUD Badge -->
-      <div class="hud-badge">
-        <div class="hud-pulse"></div>
-        <span id="hudStatus">Initializing Architecture Knowledge Graph...</span>
-        <span class="hud-divider">|</span>
-        <span id="hudSelection" class="hud-accent">Click any node to inspect</span>
-      </div>
-
-      <!-- Pathfinding Modal / Overlay Bar -->
-      <div id="pathTraceBar" class="path-trace-bar hidden">
-        <span>⚡ <strong>Trace Call Chain:</strong></span>
-        <input type="text" id="pathSourceInput" placeholder="Source Symbol (e.g. UserController)" class="trace-input">
-        <span>➔</span>
-        <input type="text" id="pathTargetInput" placeholder="Target Symbol (e.g. PostgresStore)" class="trace-input">
-        <button id="btnRunTrace" class="btn btn-primary btn-sm">Find Shortest Path</button>
-        <button id="btnCloseTrace" class="btn-close-sm">&times;</button>
-      </div>
-    </main>
-
-    <!-- Right Side Node Details & Blast-Radius Drawer -->
-    <aside id="inspector" class="inspector-drawer hidden">
-      <div class="drawer-header">
-        <div class="drawer-title-box">
-          <span id="nodeKindBadge" class="node-badge">STRUCT</span>
-          <h2 id="nodeName">SymbolName</h2>
-        </div>
-        <button id="btnCloseDrawer" class="btn-close">&times;</button>
-      </div>
-
-      <div class="drawer-body">
-        <!-- Physical Location -->
-        <div class="meta-card">
-          <div class="meta-row">
-            <span class="meta-key">File Location:</span>
-            <span id="nodeFilePath" class="meta-val code-text">-</span>
-          </div>
-          <div class="meta-row">
-            <span class="meta-key">Package:</span>
-            <span id="nodePackage" class="meta-val">-</span>
-          </div>
-          <div class="meta-row">
-            <span class="meta-key">Architectural Layer:</span>
-            <span id="nodeLayer" class="meta-val layer-pill">-</span>
+          <div class="filter-list" id="layerFilters">
+            <label class="filter-checkbox"><input type="checkbox" value="presentation" checked> <span class="color-dot presentation"></span> Presentation</label>
+            <label class="filter-checkbox"><input type="checkbox" value="application" checked> <span class="color-dot application"></span> Application</label>
+            <label class="filter-checkbox"><input type="checkbox" value="domain" checked> <span class="color-dot domain"></span> Domain Core</label>
+            <label class="filter-checkbox"><input type="checkbox" value="infrastructure" checked> <span class="color-dot infrastructure"></span> Infrastructure</label>
+            <label class="filter-checkbox"><input type="checkbox" value="common" checked> <span class="color-dot common"></span> Common</label>
           </div>
         </div>
 
-        <!-- Coupling & Centrality Metrics -->
-        <div class="metrics-card">
-          <h3>Coupling & Centrality Metrics</h3>
-          <div class="metrics-grid">
-            <div class="metric-box">
-              <span class="m-label">In-Degree ($C_a$)</span>
-              <strong class="m-val" id="mInDegree">0</strong>
+        <div class="panel-section">
+          <div class="section-title">
+            <h3>Symbol Types</h3>
+          </div>
+          <div class="filter-list" id="kindFilters">
+            <label class="filter-checkbox"><input type="checkbox" value="STRUCT" checked> <span class="kind-pill struct">STRUCT</span></label>
+            <label class="filter-checkbox"><input type="checkbox" value="INTERFACE" checked> <span class="kind-pill iface">IFACE</span></label>
+            <label class="filter-checkbox"><input type="checkbox" value="FUNCTION" checked> <span class="kind-pill func">FUNC</span></label>
+            <label class="filter-checkbox"><input type="checkbox" value="COMPONENT" checked> <span class="kind-pill comp">COMP</span></label>
+            <label class="filter-checkbox"><input type="checkbox" value="DATABASE" checked> <span class="kind-pill db">DB</span></label>
+            <label class="filter-checkbox"><input type="checkbox" value="ENTRYPOINT" checked> <span class="kind-pill entry">ENTRY</span></label>
+          </div>
+        </div>
+
+        <div class="panel-section">
+          <div class="section-title">
+            <h3>Coupling Filter</h3>
+          </div>
+          <div class="range-control">
+            <div class="range-labels">
+              <span>Min In-Degree:</span>
+              <strong id="minDegreeVal">0</strong>
             </div>
-            <div class="metric-box">
-              <span class="m-label">Out-Degree ($C_e$)</span>
-              <strong class="m-val" id="mOutDegree">0</strong>
+            <input type="range" id="minDegreeRange" min="0" max="25" value="0" class="slider-input">
+          </div>
+        </div>
+
+        <div class="panel-section stats-section">
+          <div class="section-title">
+            <h3>Repository Metrics</h3>
+          </div>
+          <div class="stat-grid">
+            <div class="stat-card">
+              <span class="stat-label">Symbols</span>
+              <span class="stat-value" id="statTotalNodes">-</span>
             </div>
-            <div class="metric-box">
-              <span class="m-label">PageRank</span>
-              <strong class="m-val" id="mPageRank">0.00</strong>
+            <div class="stat-card">
+              <span class="stat-label">Relations</span>
+              <span class="stat-value" id="statTotalEdges">-</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">Files</span>
+              <span class="stat-value" id="statTotalFiles">-</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">Smells</span>
+              <span class="stat-value danger-text" id="statTotalSmells">0</span>
             </div>
           </div>
         </div>
+      </aside>
 
-        <!-- Blast Radius Simulation Trigger -->
-        <div class="blast-trigger-card">
-          <div class="blast-card-header">
-            <h3>💥 Blast-Radius Simulation</h3>
-            <span id="riskBadge" class="risk-badge low">LOW RISK</span>
-          </div>
-          <p class="blast-desc">Evaluate ripple effect, upstream callers, and affected test suites before refactoring.</p>
-          <div id="riskMeterBox" class="risk-meter-box">
-            <div class="meter-bar"><div id="riskMeterFill" class="meter-fill" style="width: 15%;"></div></div>
-            <span id="riskMeterScore" class="risk-score">15 / 100</span>
-          </div>
-          <button id="btnSimulateBlast" class="btn btn-blast-action">⚡ Run Blast-Radius Simulator</button>
+      <!-- Center Graph Canvas -->
+      <div class="graph-stage">
+        <div id="cy" class="cytoscape-container"></div>
+        
+        <!-- Live HUD Status -->
+        <div class="hud-badge" id="hudOverlay">
+          <span class="hud-pulse"></span>
+          <span id="hudStatus">Loading Architecture Graph...</span>
+          <span class="hud-divider">|</span>
+          <span id="hudSelection" class="hud-accent">Click any node to inspect</span>
         </div>
 
-        <!-- Impacted Tests Box -->
-        <div id="impactedTestsSection" class="impact-section hidden">
-          <div class="section-sub-header">
-            <h4>🧪 Exposed Regression Tests (<span id="impactedTestsCount">0</span>)</h4>
-            <button id="btnCopyTestCmd" class="btn-copy-sm" title="Copy test command to clipboard">📋 Copy Command</button>
+        <!-- Shortest Path Trace Bar -->
+        <div id="pathTraceBar" class="path-trace-bar hidden">
+          <span>⚡ <strong>Shortest Path Finder:</strong></span>
+          <input type="text" id="pathSourceInput" placeholder="Source Symbol / Component..." class="trace-input">
+          <span>➔</span>
+          <input type="text" id="pathTargetInput" placeholder="Target Symbol / DB..." class="trace-input">
+          <button id="btnRunTrace" class="btn btn-primary btn-sm">Find Path</button>
+          <button id="btnCloseTrace" class="btn-close-sm">✕</button>
+        </div>
+      </div>
+
+      <!-- Slide-Out Inspector Drawer -->
+      <aside id="inspector" class="inspector-drawer hidden">
+        <div class="drawer-header">
+          <div class="drawer-title-box">
+            <span class="node-badge" id="nodeKindBadge">STRUCT</span>
+            <h2 id="nodeName">SymbolName</h2>
           </div>
-          <div id="testCmdBanner" class="test-cmd-banner">go test ./...</div>
-          <ul id="impactedTestsList" class="compact-list"></ul>
+          <button id="btnCloseDrawer" class="btn-close" title="Close Drawer">✕</button>
         </div>
 
-        <!-- Relations Accordion -->
-        <div class="relations-accordion">
-          <div class="relation-group">
-            <h4>Inbound Callers (<span id="inboundCount">0</span>)</h4>
-            <ul id="inboundList" class="relation-list"></ul>
+        <div class="drawer-body">
+          <!-- Metadata Card -->
+          <div class="meta-card">
+            <div class="meta-row">
+              <span class="meta-key">File:</span>
+              <span class="meta-val code-text" id="nodeFilePath">internal/service/user.go:42</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-key">Package:</span>
+              <span class="meta-val code-text" id="nodePackage">internal/service</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-key">Layer:</span>
+              <span class="meta-val layer-pill" id="nodeLayer">APPLICATION</span>
+            </div>
           </div>
-          <div class="relation-group">
-            <h4>Outbound Dependencies (<span id="outboundCount">0</span>)</h4>
-            <ul id="outboundList" class="relation-list"></ul>
+
+          <!-- Centrality & Coupling Metrics -->
+          <div class="metrics-card">
+            <h3>Architecture Metrics</h3>
+            <div class="metrics-grid">
+              <div class="metric-box">
+                <span class="m-label">Inbound (Ca)</span>
+                <span class="m-val" id="mInDegree">0</span>
+              </div>
+              <div class="metric-box">
+                <span class="m-label">Outbound (Ce)</span>
+                <span class="m-val" id="mOutDegree">0</span>
+              </div>
+              <div class="metric-box">
+                <span class="m-label">PageRank</span>
+                <span class="m-val" id="mPageRank">0.00</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Blast Radius Simulator Card -->
+          <div class="blast-trigger-card">
+            <div class="blast-card-header">
+              <h3>💥 Blast Radius Simulator</h3>
+              <span class="risk-badge low" id="riskBadge">LOW RISK</span>
+            </div>
+            <p class="blast-desc">Simulates cascading ripple effects and broken tests if this symbol is refactored or deleted.</p>
+            <div class="risk-meter-box">
+              <div class="meter-bar">
+                <div class="meter-fill" id="riskMeterFill" style="width: 0%"></div>
+              </div>
+              <span class="risk-score" id="riskMeterScore">0 / 100</span>
+            </div>
+            <button id="btnSimulateBlast" class="btn-blast-action">⚡ Run Blast Simulation</button>
+          </div>
+
+          <!-- Impacted Tests Box -->
+          <div class="impact-section hidden" id="impactedTestsSection">
+            <div class="section-sub-header">
+              <h4>🧪 Impacted Test Suites (<span id="impactedTestsCount">0</span>)</h4>
+              <button id="btnCopyTestCmd" class="btn-copy-sm" title="Copy exact go test command">📋 Copy Command</button>
+            </div>
+            <div class="test-cmd-banner" id="testCmdBanner">go test ./...</div>
+            <ul class="compact-list" id="impactedTestsList"></ul>
+          </div>
+
+          <!-- Relations Accordion -->
+          <div class="relations-accordion">
+            <div class="relation-group">
+              <h4>Inbound Callers (<span id="inboundCount">0</span>)</h4>
+              <ul class="relation-list" id="inboundList"></ul>
+            </div>
+            <div class="relation-group">
+              <h4>Outbound Dependencies (<span id="outboundCount">0</span>)</h4>
+              <ul class="relation-list" id="outboundList"></ul>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <!-- =========================================================================
+         TAB 2: INTELLIGENCE & ARCHITECTURAL SMELLS
+         ========================================================================= -->
+    <section id="tab-intelligence" class="tab-pane">
+      <div class="intelligence-container">
+        <div class="intel-header">
+          <h2>🧠 Architecture Intelligence & Smells Radar</h2>
+          <p>Real-time architectural pattern detection, structural debt diagnosis, and hotspot analysis from <code>intelligence/latest.json</code>.</p>
+        </div>
+
+        <!-- Pattern Cards -->
+        <div class="intel-section">
+          <h3>Detected Architectural Patterns</h3>
+          <div class="pattern-grid" id="patternGrid">
+            <!-- Populated via JS -->
+          </div>
+        </div>
+
+        <!-- Architectural Smells Radar -->
+        <div class="intel-section">
+          <div class="section-header-flex">
+            <h3>Architectural Smells & Structural Debt (<span id="intelSmellCount">0</span>)</h3>
+          </div>
+          <div class="smells-table-container">
+            <table class="data-table" id="smellsTable">
+              <thead>
+                <tr>
+                  <th>Severity</th>
+                  <th>Smell Title</th>
+                  <th>Category</th>
+                  <th>Description</th>
+                  <th>Affected Nodes</th>
+                </tr>
+              </thead>
+              <tbody id="smellsTableBody">
+                <!-- Populated via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Hotspots Leaderboard -->
+        <div class="intel-section">
+          <h3>Top Architectural Hotspots (PageRank & Degree Centrality)</h3>
+          <div class="hotspots-grid" id="hotspotsGrid">
+            <!-- Populated via JS -->
           </div>
         </div>
       </div>
-    </aside>
-  </div>
+    </section>
+
+    <!-- =========================================================================
+         TAB 3: MEMORY & EVOLUTION TIMELINE
+         ========================================================================= -->
+    <section id="tab-timeline" class="tab-pane">
+      <div class="timeline-container">
+        <div class="timeline-header">
+          <div class="timeline-title-box">
+            <h2>⏳ Architectural Evolution Timeline</h2>
+            <p>Chronological record of architectural decisions, dependency mutations, and refactorings across git commits.</p>
+          </div>
+          <div class="timeline-filter-bar">
+            <button class="filter-chip active" data-filter="ALL">All Events</button>
+            <button class="filter-chip" data-filter="FEATURE">🚀 Features</button>
+            <button class="filter-chip" data-filter="REFACTOR">🔧 Refactors</button>
+            <button class="filter-chip" data-filter="FIX_BUG">🐛 Fixes</button>
+          </div>
+        </div>
+
+        <div class="timeline-stream" id="timelineStream">
+          <!-- Populated via JS -->
+        </div>
+      </div>
+    </section>
+
+    <!-- =========================================================================
+         TAB 4: MARBLES DIAGRAM GALLERY (Mermaid)
+         ========================================================================= -->
+    <section id="tab-marbles" class="tab-pane">
+      <div class="marbles-container">
+        <aside class="marbles-sidebar">
+          <h3>📐 Marbles Catalog</h3>
+          <p class="catalog-hint">Pre-compiled C4, UML, & Callgraph diagrams.</p>
+          <ul class="marbles-nav-list" id="marblesList">
+            <!-- Populated via JS -->
+          </ul>
+        </aside>
+
+        <div class="marbles-viewport">
+          <div class="diagram-viewer-header">
+            <div class="viewer-title-box">
+              <span class="badge-tag" id="currentDiagType">C4 CONTEXT</span>
+              <h2 id="currentDiagTitle">System Context Diagram</h2>
+            </div>
+            <div class="viewer-actions">
+              <button id="btnToggleMermaidSource" class="btn btn-sm">Toggle Raw Mermaid</button>
+            </div>
+          </div>
+
+          <div class="diagram-canvas-box">
+            <div id="mermaidStage" class="mermaid-stage"></div>
+            <pre id="mermaidSource" class="mermaid-source-code hidden"></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =========================================================================
+         TAB 5: SYSTEM METRICS & INVARIANTS
+         ========================================================================= -->
+    <section id="tab-metrics" class="tab-pane">
+      <div class="metrics-dashboard-container">
+        <div class="dashboard-header">
+          <h2>📊 System Coupling, Instability & Architectural Rules</h2>
+          <p>Robert C. Martin metric distributions and discovered repository conventions.</p>
+        </div>
+
+        <div class="metrics-cards-row">
+          <div class="metric-card-lg">
+            <span class="m-card-title">Average Instability (I)</span>
+            <span class="m-card-value" id="metricInstability">0.50</span>
+            <span class="m-card-hint">I = Ce / (Ca + Ce) (0 = Stable Core, 1 = Volatile)</span>
+          </div>
+          <div class="metric-card-lg">
+            <span class="m-card-title">Graph Density</span>
+            <span class="m-card-value" id="metricDensity">0.0001</span>
+            <span class="m-card-hint">Total connections vs maximum potential edges</span>
+          </div>
+          <div class="metric-card-lg">
+            <span class="m-card-title">Dead Code Nodes</span>
+            <span class="m-card-value danger-text" id="metricDeadCode">2,595</span>
+            <span class="m-card-hint">Unreachable or unreferenced AST declarations</span>
+          </div>
+          <div class="metric-card-lg">
+            <span class="m-card-title">Layer Rule Violations</span>
+            <span class="m-card-value" id="metricLayerViolations">0</span>
+            <span class="m-card-hint">Clean Architecture layer breaches</span>
+          </div>
+        </div>
+
+        <!-- Components Breakdown -->
+        <div class="components-breakdown-section">
+          <h3>Inferred System Components & Coupling Ratios</h3>
+          <div class="components-table-container">
+            <table class="data-table" id="componentsTable">
+              <thead>
+                <tr>
+                  <th>Component</th>
+                  <th>Kind</th>
+                  <th>Directories</th>
+                  <th>Afferent (Ca)</th>
+                  <th>Efferent (Ce)</th>
+                  <th>Instability (I)</th>
+                  <th>Stability Status</th>
+                </tr>
+              </thead>
+              <tbody id="componentsTableBody">
+                <!-- Populated via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
 
   <script src="/assets/app.js"></script>
 </body>

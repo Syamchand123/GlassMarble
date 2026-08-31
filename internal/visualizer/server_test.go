@@ -80,18 +80,20 @@ func TestVisualizerServer(t *testing.T) {
 	}
 
 	// 3. Test Graph API (Cytoscape Elements)
-	resp, err = client.Get(baseURL + "/api/graph")
-	if err != nil {
-		t.Fatalf("GET /api/graph failed: %v", err)
-	}
-	var elements []map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&elements); err != nil {
-		t.Fatalf("failed to decode /api/graph: %v", err)
-	}
-	resp.Body.Close()
+	for _, view := range []string{"components", "packages", "symbols"} {
+		resp, err = client.Get(baseURL + "/api/graph?view=" + view)
+		if err != nil {
+			t.Fatalf("GET /api/graph?view=%s failed: %v", view, err)
+		}
+		var elements []map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&elements); err != nil {
+			t.Fatalf("failed to decode /api/graph?view=%s: %v", view, err)
+		}
+		resp.Body.Close()
 
-	if len(elements) == 0 {
-		t.Error("expected non-empty cytoscape elements")
+		if len(elements) == 0 {
+			t.Errorf("expected non-empty cytoscape elements for view %s", view)
+		}
 	}
 
 	// 4. Test Layers API
@@ -117,6 +119,23 @@ func TestVisualizerServer(t *testing.T) {
 
 	if found, ok := pathRes["found"].(bool); !ok || !found {
 		t.Errorf("expected path from AppService to DatabaseStore to be found, got: %v", pathRes)
+	}
+
+	// 6. Test Intelligence, Timeline, Marbles, and Graph Algorithm APIs
+	algoEndpoints := []string{
+		"/api/intelligence", "/api/timeline", "/api/marbles", "/api/snapshots", "/api/conventions",
+		"/api/algorithms/cycles", "/api/algorithms/toposort", "/api/algorithms/cutvertices",
+		"/api/algorithms/pagerank", "/api/algorithms/similarity?nodeA=n1&nodeB=n2", "/api/algorithms/orphans",
+	}
+	for _, ep := range algoEndpoints {
+		resp, err := client.Get(baseURL + ep)
+		if err != nil {
+			t.Fatalf("GET %s failed: %v", ep, err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("%s returned status %d", ep, resp.StatusCode)
+		}
+		resp.Body.Close()
 	}
 
 	// Graceful Stop
