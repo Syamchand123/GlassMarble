@@ -10,28 +10,30 @@ let cyclesMode = false;
 let pageRankMode = false;
 let currentLayout = "cose";
 let currentGranularity = "components";
+let currentSmellsData = [];
+let currentSmellsSort = { column: null, asc: true };
 
 // Theme Configuration
 const THEME = {
   dark: {
-    bg: "#080b11",
+    bg: "#050810",
     nodeStruct: "#06b6d4",
     nodeIface: "#10b981",
     nodeFunc: "#8b5cf6",
-    nodeComp: "#6366f1",
+    nodeComp: "#7c6af5",
     nodeDb: "#d946ef",
-    nodeEntry: "#f59e0b",
-    nodeDefault: "#64748b",
-    nodeText: "#f8fafc",
-    compoundBg: "rgba(21, 28, 46, 0.4)",
-    compoundBorder: "#334155",
-    edgeDefault: "rgba(100, 116, 139, 0.45)",
-    edgeHighlight: "#8b5cf6",
-    edgeBlast: "#ef4444",
-    edgeCycle: "#f43f5e"
+    nodeEntry: "#f5a623",
+    nodeDefault: "#49566b",
+    nodeText: "#eef2ff",
+    compoundBg: "rgba(12, 17, 32, 0.55)",
+    compoundBorder: "#1e273d",
+    edgeDefault: "rgba(73, 86, 107, 0.5)",
+    edgeHighlight: "#7c6af5",
+    edgeBlast: "#f43155",
+    edgeCycle: "#f43155"
   },
   light: {
-    bg: "#f8fafc",
+    bg: "#eef0f7",
     nodeStruct: "#0891b2",
     nodeIface: "#059669",
     nodeFunc: "#7c3aed",
@@ -39,10 +41,10 @@ const THEME = {
     nodeDb: "#c026d3",
     nodeEntry: "#d97706",
     nodeDefault: "#94a3b8",
-    nodeText: "#0f172a",
+    nodeText: "#0d1525",
     compoundBg: "rgba(241, 245, 249, 0.6)",
-    compoundBorder: "#cbd5e1",
-    edgeDefault: "rgba(148, 163, 184, 0.6)",
+    compoundBorder: "#dde1ed",
+    edgeDefault: "rgba(148, 163, 184, 0.55)",
     edgeHighlight: "#7c3aed",
     edgeBlast: "#dc2626",
     edgeCycle: "#e11d48"
@@ -54,13 +56,73 @@ window.addEventListener("DOMContentLoaded", () => {
   initCytoscape();
   initMermaid();
   initEventHandlers();
+  initFilterPills();
   loadGraphData();
   loadIntelligenceData();
   loadTimelineData();
   loadMarblesCatalog();
+  loadMetricsData();
 });
 
-// Initialize Tab Navigation
+// ============================================================
+// UTILITY: Animated Number Counter (§10.1 of plan)
+// ============================================================
+function animateCounter(el, from, to, durationMs) {
+  const startTime = performance.now();
+  const range = to - from;
+  const easeOut = t => 1 - Math.pow(1 - t, 3);
+  function update(currentTime) {
+    const elapsed = currentTime - startTime;
+    const progress = Math.min(elapsed / durationMs, 1);
+    el.textContent = Math.round(from + range * easeOut(progress)).toLocaleString();
+    if (progress < 1) requestAnimationFrame(update);
+  }
+  requestAnimationFrame(update);
+}
+
+// ============================================================
+// UTILITY: Toast Notification System (§10.3 of plan)
+// ============================================================
+function showToast(message, type = 'success') {
+  const container = document.getElementById('toastContainer');
+  if (!container) return;
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `<span class="toast-icon"></span><span>${message}</span>`;
+  container.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('toast-visible'));
+  setTimeout(() => {
+    toast.classList.remove('toast-visible');
+    setTimeout(() => toast.remove(), 320);
+  }, 2500);
+}
+
+// ============================================================
+// Filter Pill Buttons — sync toggle pills to hidden checkboxes
+// ============================================================
+function initFilterPills() {
+  document.querySelectorAll('#layerFilters .filter-pill-btn').forEach(btn => {
+    const value = btn.getAttribute('data-value');
+    btn.addEventListener('click', () => {
+      btn.classList.toggle('active');
+      const cb = document.querySelector(`#layerFilters input[value="${value}"]`);
+      if (cb) cb.checked = btn.classList.contains('active');
+      renderFilteredGraph();
+    });
+  });
+
+  document.querySelectorAll('#kindFilters .kind-filter-btn').forEach(btn => {
+    const value = btn.getAttribute('data-value');
+    btn.addEventListener('click', () => {
+      btn.classList.toggle('active');
+      const cb = document.querySelector(`#kindFilters input[value="${value}"]`);
+      if (cb) cb.checked = btn.classList.contains('active');
+      renderFilteredGraph();
+    });
+  });
+}
+
+
 function initTabs() {
   document.querySelectorAll('.nav-tab').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -71,13 +133,8 @@ function initTabs() {
       const targetTab = btn.getAttribute('data-tab');
       document.getElementById(targetTab).classList.add('active');
 
-      const graphControls = document.getElementById('graphViewControls');
-      if (targetTab === 'tab-graph') {
-        graphControls.style.display = 'flex';
-        if (cy) cy.resize();
-      } else {
-        graphControls.style.display = 'none';
-      }
+      // Resize Cytoscape when graph tab becomes visible
+      if (targetTab === 'tab-graph' && cy) cy.resize();
     });
   });
 }
@@ -305,11 +362,17 @@ async function loadGraphData() {
     rawElements = await graphRes.json();
     const statusData = await statusRes.json();
 
-    // Populate Status Stats
-    document.getElementById('statTotalNodes').textContent = statusData.nodes_count || '-';
-    document.getElementById('statTotalEdges').textContent = statusData.edges_count || '-';
-    document.getElementById('statTotalFiles').textContent = statusData.files_count || '-';
-    document.getElementById('statTotalSmells').textContent = statusData.smells_count || '0';
+    // Populate Status Stats with animated counters
+    const nodesEl  = document.getElementById('statTotalNodes');
+    const edgesEl  = document.getElementById('statTotalEdges');
+    const filesEl  = document.getElementById('statTotalFiles');
+    const smellsEl = document.getElementById('statTotalSmells');
+
+    animateCounter(nodesEl,  0, statusData.nodes_count  || 0, 700);
+    animateCounter(edgesEl,  0, statusData.edges_count  || 0, 700);
+    animateCounter(filesEl,  0, statusData.files_count  || 0, 600);
+    animateCounter(smellsEl, 0, statusData.smells_count || 0, 500);
+
 
     renderFilteredGraph();
     
@@ -520,7 +583,7 @@ async function runBlastRadiusSimulation() {
       testsSection.classList.remove('hidden');
       document.getElementById('impactedTestsCount').textContent = report.impacted_test_files.length;
       document.getElementById('testCmdBanner').textContent = report.recommended_test_command || 'go test ./...';
-      testsList.innerHTML = report.impacted_test_files.map(t => `<li>🧪 ${t}</li>`).join('');
+      testsList.innerHTML = report.impacted_test_files.map(t => `<li><svg class="icon-sm" aria-hidden="true" style="margin-right:6px;"><use href="#icon-beaker"/></svg>${t}</li>`).join('');
     } else {
       testsSection.classList.add('hidden');
     }
@@ -581,7 +644,7 @@ async function tracePath(src, tgt) {
       fit: { eles: pathNodes, padding: 60 }
     }, { duration: 500 });
 
-    document.getElementById('hudStatus').textContent = `⚡ Traced Path: ${data.path.length} hops from ${src} to ${tgt}`;
+    document.getElementById('hudStatus').innerHTML = `<svg class="icon-sm" aria-hidden="true" style="vertical-align:-3px; margin-right:4px;"><use href="#icon-lightning"/></svg> Traced Path: ${data.path.length} hops from ${src} to ${tgt}`;
   } catch (e) {
     console.error('Path trace error:', e);
   }
@@ -596,102 +659,137 @@ async function loadIntelligenceData() {
     // 1. Patterns Grid
     const patternGrid = document.getElementById('patternGrid');
     if (data.patterns && data.patterns.length > 0) {
-      patternGrid.innerHTML = data.patterns.map(p => `
+      patternGrid.innerHTML = data.patterns.map(p => {
+        const conf = Math.round((p.confidence || 0.8) * 100);
+        return `
         <div class="pattern-card">
+          <svg class="icon pattern-icon" aria-hidden="true"><use href="#icon-star"/></svg>
           <div class="pattern-title-row">
             <span class="pattern-title">${p.name || p.title || 'Architectural Pattern'}</span>
-            <span class="pattern-confidence">${Math.round((p.confidence || 0.8) * 100)}% Match</span>
           </div>
           <p class="pattern-desc">${p.description || 'Inferred architectural design pattern.'}</p>
+          <div class="confidence-bar-wrap">
+            <div class="confidence-fill" style="width: ${conf}%"></div>
+          </div>
+          <span class="confidence-text">${conf}% Match</span>
         </div>
-      `).join('');
+      `}).join('');
     } else {
       patternGrid.innerHTML = `
         <div class="pattern-card">
+          <svg class="icon pattern-icon" aria-hidden="true"><use href="#icon-star"/></svg>
           <div class="pattern-title-row">
             <span class="pattern-title">DDD Bounded Context</span>
-            <span class="pattern-confidence">80% Match</span>
           </div>
           <p class="pattern-desc">Domain-Driven Design boundaries enforced across internal packages.</p>
+          <div class="confidence-bar-wrap">
+            <div class="confidence-fill" style="width: 80%"></div>
+          </div>
+          <span class="confidence-text">80% Match</span>
         </div>
         <div class="pattern-card">
+          <svg class="icon pattern-icon" aria-hidden="true"><use href="#icon-star"/></svg>
           <div class="pattern-title-row">
             <span class="pattern-title">Repository Pattern</span>
-            <span class="pattern-confidence">70% Match</span>
           </div>
           <p class="pattern-desc">Data access abstraction layer decoupling domain services from storage.</p>
+          <div class="confidence-bar-wrap">
+            <div class="confidence-fill" style="width: 70%"></div>
+          </div>
+          <span class="confidence-text">70% Match</span>
         </div>
       `;
     }
 
     // 2. Smells Table
-    const smellsTableBody = document.getElementById('smellsTableBody');
-    const smellsList = data.smells || [];
-    document.getElementById('intelSmellCount').textContent = smellsList.length;
-
-    if (smellsList.length > 0) {
-      smellsTableBody.innerHTML = smellsList.map(s => `
-        <tr>
-          <td><span class="severity-pill ${(s.severity || 'low').toLowerCase()}">${s.severity || 'LOW'}</span></td>
-          <td><strong>${s.title || s.name}</strong></td>
-          <td><span class="code-text">${s.category || 'STRUCTURAL'}</span></td>
-          <td>${s.description || '-'}</td>
-          <td><span class="code-text">${(s.nodes || []).slice(0, 3).join(', ') || '-'}</span></td>
-        </tr>
-      `).join('');
-    } else {
-      smellsTableBody.innerHTML = '<tr><td colspan="5">No active architectural smells detected. Excellent code health!</td></tr>';
-    }
+    currentSmellsData = data.smells || [];
+    document.getElementById('intelSmellCount').textContent = currentSmellsData.length;
+    renderSmellsTable();
 
     // 3. Hotspots Leaderboard
     const hotspotsGrid = document.getElementById('hotspotsGrid');
     const hotspots = (data.metrics && data.metrics.top_hotspots) || [];
     if (hotspots.length > 0) {
-      hotspotsGrid.innerHTML = hotspots.slice(0, 6).map(h => `
+      const maxCa = Math.max(...hotspots.map(h => h.fan_in || 0), 1);
+      hotspotsGrid.innerHTML = hotspots.slice(0, 6).map((h, i) => {
+        const rank = (i + 1).toString().padStart(2, '0');
+        const relativeCa = Math.min(((h.fan_in || 0) / maxCa) * 100, 100);
+        return `
         <div class="hotspot-card">
-          <div class="hotspot-name">${h.name}</div>
-          <div class="hotspot-metrics">
-            <span>Fan-In: <strong>${h.fan_in || 0}</strong></span>
-            <span>Fan-Out: <strong>${h.fan_out || 0}</strong></span>
-            <span>PageRank: <strong>${((h.page_rank || 0) * 1000).toFixed(2)}</strong></span>
+          <div class="hotspot-rank">${rank}</div>
+          <div class="hotspot-body">
+            <div class="hotspot-title-row">
+              <span class="hotspot-name">${h.name}</span>
+              <span class="hotspot-metrics">
+                Ca: ${h.fan_in || 0} &nbsp;·&nbsp; Ce: ${h.fan_out || 0} &nbsp;·&nbsp; PR: ${((h.page_rank || 0) * 1000).toFixed(2)}
+              </span>
+            </div>
+            <div class="hotspot-bar-wrap">
+              <div class="hotspot-bar-fill" style="width: ${relativeCa}%"></div>
+            </div>
           </div>
         </div>
-      `).join('');
+      `}).join('');
     }
 
-    // 4. Populate Tab 5 Metrics Dashboard
-    if (data.metrics) {
-      document.getElementById('metricInstability').textContent = (data.metrics.instability || 0.5).toFixed(2);
-      document.getElementById('metricDensity').textContent = (data.metrics.graph_density || 0.0001).toFixed(4);
-      document.getElementById('metricDeadCode').textContent = data.metrics.dead_code_node_count ? data.metrics.dead_code_node_count.toLocaleString() : '0';
-      document.getElementById('metricLayerViolations').textContent = data.metrics.layer_violation_count || '0';
-    }
-
-    // 5. Components Breakdown Table (Tab 5)
-    const compTableBody = document.getElementById('componentsTableBody');
-    if (data.components && data.components.length > 0) {
-      compTableBody.innerHTML = data.components.map(c => {
-        const inst = c.instability || 0;
-        let statusBadge = '<span class="severity-pill low">STABLE CORE</span>';
-        if (inst > 0.7) statusBadge = '<span class="severity-pill high">VOLATILE</span>';
-        else if (inst > 0.3) statusBadge = '<span class="severity-pill medium">BALANCED</span>';
-
-        return `
-          <tr>
-            <td><strong>${c.name}</strong></td>
-            <td><span class="kind-pill comp">${c.kind || 'MODULE'}</span></td>
-            <td><span class="code-text">${(c.directories || []).join(', ') || '-'}</span></td>
-            <td>${c.ca || 0}</td>
-            <td>${c.ce || 0}</td>
-            <td>${inst.toFixed(2)}</td>
-            <td>${statusBadge}</td>
-          </tr>
-        `;
-      }).join('');
-    }
+    // Note: Tab 5 Metrics Dashboard is now populated via loadMetricsData()
   } catch (err) {
     console.error('Error loading intelligence data:', err);
   }
+}
+
+function renderSmellsTable() {
+  const tbody = document.getElementById('smellsTableBody');
+  if (currentSmellsData.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5">No active architectural smells detected. Excellent code health!</td></tr>';
+    return;
+  }
+  
+  tbody.innerHTML = currentSmellsData.map(s => {
+    const sev = (s.severity || 'low').toLowerCase();
+    return `
+    <tr>
+      <td><span class="severity-pill ${sev}">${s.severity || 'LOW'}</span></td>
+      <td><strong>${s.title || s.name}</strong></td>
+      <td><span class="code-text">${s.category || 'STRUCTURAL'}</span></td>
+      <td>${s.description || '-'}</td>
+      <td><span class="code-text">${(s.nodes || []).slice(0, 3).join(', ') || '-'}</span></td>
+    </tr>
+  `}).join('');
+}
+
+function handleSmellsSort(column, thElement) {
+  if (currentSmellsSort.column === column) {
+    currentSmellsSort.asc = !currentSmellsSort.asc;
+  } else {
+    currentSmellsSort.column = column;
+    currentSmellsSort.asc = true;
+  }
+  
+  // Update header arrows
+  document.querySelectorAll('#smellsTable th .sort-arrow').forEach(el => el.textContent = '↕');
+  const arrow = currentSmellsSort.asc ? '↓' : '↑';
+  thElement.querySelector('.sort-arrow').textContent = arrow;
+  
+  // Sort data
+  currentSmellsData.sort((a, b) => {
+    const severityOrder = { 'critical': 4, 'high': 3, 'medium': 2, 'low': 1 };
+    let valA, valB;
+    
+    if (column === 'severity') {
+      valA = severityOrder[(a.severity || 'low').toLowerCase()] || 0;
+      valB = severityOrder[(b.severity || 'low').toLowerCase()] || 0;
+    } else {
+      valA = a[column] || '';
+      valB = b[column] || '';
+    }
+    
+    if (valA < valB) return currentSmellsSort.asc ? -1 : 1;
+    if (valA > valB) return currentSmellsSort.asc ? 1 : -1;
+    return 0;
+  });
+  
+  renderSmellsTable();
 }
 
 // Load Tab 3: Timeline Data
@@ -703,20 +801,35 @@ async function loadTimelineData() {
     const stream = document.getElementById('timelineStream');
 
     if (timeline.length > 0) {
-      stream.innerHTML = timeline.slice(0, 50).map(item => {
-        const intentClass = (item.intent || 'FEATURE').toLowerCase().replace('_', '');
-        return `
+      let currentMonth = '';
+      
+      const streamHTML = [];
+      timeline.slice(0, 50).forEach(item => {
+        const date = new Date(item.timestamp);
+        const monthStr = date.toLocaleDateString('default', { month: 'long', year: 'numeric' }).toUpperCase();
+        
+        if (monthStr !== currentMonth) {
+          streamHTML.push(`<div class="timeline-month-marker">${monthStr}</div>`);
+          currentMonth = monthStr;
+        }
+        
+        const intentClass = (item.intent || 'FEATURE').toLowerCase().replace('_', '-');
+        streamHTML.push(`
           <div class="timeline-event-card ${intentClass}" data-intent="${item.intent || 'FEATURE'}">
-            <div class="event-top-row">
-              <span class="event-title">${item.title}</span>
-              <span class="event-meta">${item.commit_hash ? item.commit_hash.substring(0, 7) : ''} · ${new Date(item.timestamp).toLocaleDateString()}</span>
+            <div class="timeline-dot ${intentClass}"></div>
+            <div class="event-body">
+              <div class="event-top-row">
+                <span class="event-title">${item.title}</span>
+                <span class="event-meta">${item.commit_hash ? item.commit_hash.substring(0, 7) : ''} · ${date.toLocaleDateString()}</span>
+              </div>
+              <p class="event-desc">${item.description || item.title}</p>
             </div>
-            <p class="event-desc">${item.description || item.title}</p>
           </div>
-        `;
-      }).join('');
+        `);
+      });
+      stream.innerHTML = streamHTML.join('');
     } else {
-      stream.innerHTML = '<p style="color: var(--text-muted);">No recorded evolution timeline events yet.</p>';
+      stream.innerHTML = '<p style="color: var(--text-muted); padding-left: 48px;">No recorded evolution timeline events yet.</p>';
     }
 
     // Filter Chips for Timeline
@@ -766,12 +879,22 @@ async function loadMarblesCatalog() {
     const list = document.getElementById('marblesList');
 
     if (items.length > 0) {
-      list.innerHTML = items.map((item, idx) => `
+      list.innerHTML = items.map((item, idx) => {
+        let typeClass = 'type-default';
+        const t = (item.type || '').toUpperCase();
+        if (t.includes('C4')) typeClass = 'type-c4';
+        else if (t.includes('UML')) typeClass = 'type-uml';
+        else if (t.includes('CALL')) typeClass = 'type-callgraph';
+        
+        return `
         <li class="marble-nav-item ${idx === 0 ? 'active' : ''}" onclick="selectMarble('${item.name}', '${item.title}', '${item.type}')">
-          <span class="marble-type-tag">${item.type}</span>
-          <span class="marble-title">${item.title}</span>
+          <div class="marble-thumb ${typeClass}"></div>
+          <div class="marble-nav-info">
+            <span class="marble-type-tag">${item.type}</span>
+            <span class="marble-title">${item.title}</span>
+          </div>
         </li>
-      `).join('');
+      `}).join('');
 
       selectMarble(items[0].name, items[0].title, items[0].type);
     } else {
@@ -830,19 +953,33 @@ function initEventHandlers() {
     cy.animate({ fit: { padding: 40 } }, { duration: 400 });
   });
 
-  // Export PNG
+  // Coupling Slider
+  document.getElementById('minDegreeRange').addEventListener('input', e => {
+    document.getElementById('minDegreeVal').textContent = e.target.value;
+  });
+  document.getElementById('minDegreeRange').addEventListener('change', e => {
+    renderFilteredGraph();
+  });
+
+  // Export PNG — updated bg colors
   document.getElementById('btnExportPNG').addEventListener('click', () => {
     const isLight = document.body.classList.contains('light-theme');
-    const png64 = cy.png({ full: true, scale: 2, bg: isLight ? '#f8fafc' : '#080b11' });
+    const png64 = cy.png({ full: true, scale: 2, bg: isLight ? '#eef0f7' : '#050810' });
     const link = document.createElement('a');
     link.download = `glassmarble-architecture-${currentGranularity}.png`;
     link.href = png64;
     link.click();
+    showToast('Architecture graph exported as PNG', 'success');
   });
 
-  // Dark/Light Theme Toggle
+  // Dark/Light Theme Toggle — swap moon/sun icons
   document.getElementById('btnThemeToggle').addEventListener('click', () => {
     document.body.classList.toggle('light-theme');
+    const isLight = document.body.classList.contains('light-theme');
+    const moonIcon = document.querySelector('#btnThemeToggle .icon-moon');
+    const sunIcon  = document.querySelector('#btnThemeToggle .icon-sun');
+    if (moonIcon) moonIcon.style.display = isLight ? 'none' : '';
+    if (sunIcon)  sunIcon.style.display  = isLight ? '' : 'none';
     initCytoscape();
     renderFilteredGraph();
   });
@@ -864,14 +1001,17 @@ function initEventHandlers() {
   document.getElementById('btnSimulateBlast').addEventListener('click', runBlastRadiusSimulation);
   document.getElementById('btnBlastRadius').addEventListener('click', () => {
     if (selectedNode) runBlastRadiusSimulation();
-    else alert('Please click a symbol or component node on the graph first.');
+    else showToast('Please click a symbol or component node on the graph first.', 'warning');
   });
 
-  // Copy Test Command
+  // Copy Test Command — use toast instead of alert
   document.getElementById('btnCopyTestCmd').addEventListener('click', () => {
     const cmd = document.getElementById('testCmdBanner').textContent;
-    navigator.clipboard.writeText(cmd);
-    alert('Copied test command to clipboard!');
+    navigator.clipboard.writeText(cmd).then(() => {
+      showToast('Test command copied to clipboard!', 'success');
+    }).catch(() => {
+      showToast('Failed to copy to clipboard', 'error');
+    });
   });
 
   // Cut Vertices (Single Points of Failure)
@@ -890,7 +1030,7 @@ function initEventHandlers() {
         const ele = cy.getElementById(ap.id);
         if (ele.length) ele.removeClass('dimmed').addClass('cut-vertex');
       });
-      document.getElementById('hudStatus').textContent = `🔴 Found ${aps.length} Single Points of Failure (Cut Vertices)`;
+      document.getElementById('hudStatus').innerHTML = `<svg class="icon-sm" aria-hidden="true" style="vertical-align:-3px; margin-right:4px; color:var(--accent-rose);"><use href="#icon-warning-circle"/></svg> Found ${aps.length} Single Points of Failure (Cut Vertices)`;
     } else {
       clearHighlights();
       document.getElementById('hudStatus').textContent = 'Ready';
@@ -940,7 +1080,7 @@ function initEventHandlers() {
           ele.removeClass('dimmed').addClass('highlighted');
         }
       });
-      document.getElementById('hudStatus').textContent = `⭐ Highlighting Top ${ranks.length} Central PageRank Hotspots`;
+      document.getElementById('hudStatus').innerHTML = `<svg class="icon-sm" aria-hidden="true" style="vertical-align:-3px; margin-right:4px; color:var(--accent-amber);"><use href="#icon-star"/></svg> Highlighting Top ${ranks.length} Central PageRank Hotspots`;
     } else {
       clearHighlights();
       document.getElementById('hudStatus').textContent = 'Ready';
@@ -1048,4 +1188,133 @@ function initEventHandlers() {
       console.error('Search error:', err);
     }
   });
+}
+
+// ============================================================
+// SKELETON LOADER UI
+// ============================================================
+function setSkeleton(id, show) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (show) {
+    el.classList.add('skeleton');
+  } else {
+    el.classList.remove('skeleton');
+  }
+    return;
+  }
+  
+  tbody.innerHTML = currentMetricsData.map(c => {
+    const iVal = c.instability || 0;
+    let statusClass = 'emerald';
+    let statusText = 'Stable';
+    if (iVal > 0.7) { statusClass = 'rose'; statusText = 'Volatile'; }
+    else if (iVal > 0.3) { statusClass = 'amber'; statusText = 'Flexible'; }
+    
+    return `
+    <tr style="cursor:pointer;" onclick="jumpToGraphNode('${c.id}')">
+      <td><strong>${c.name}</strong></td>
+      <td><span class="badge-tag">${c.kind || 'COMPONENT'}</span></td>
+      <td><span class="code-text">${(c.directories || []).length} dirs</span></td>
+      <td>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="width:20px;">${c.ca || 0}</span>
+          <div class="m-card-bar" style="width:40px; margin:0;"><div class="m-card-bar-fill" style="width:${Math.min((c.ca||0)*5, 100)}%; background:var(--accent-cyan);"></div></div>
+        </div>
+      </td>
+      <td>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="width:20px;">${c.ce || 0}</span>
+          <div class="m-card-bar" style="width:40px; margin:0;"><div class="m-card-bar-fill" style="width:${Math.min((c.ce||0)*5, 100)}%; background:var(--accent-purple);"></div></div>
+        </div>
+      </td>
+      <td>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="width:30px;">${iVal.toFixed(2)}</span>
+          <div class="m-card-bar" style="width:40px; margin:0;"><div class="m-card-bar-fill" style="width:${iVal * 100}%; background:var(--accent-amber);"></div></div>
+        </div>
+      </td>
+      <td><span class="severity-pill ${statusClass}">${statusText}</span></td>
+    </tr>
+  `}).join('');
+}
+
+function handleMetricsSort(column, thElement) {
+  if (currentMetricsSort.column === column) {
+    currentMetricsSort.asc = !currentMetricsSort.asc;
+  } else {
+    currentMetricsSort.column = column;
+    currentMetricsSort.asc = true;
+  }
+  
+  document.querySelectorAll('#componentsTable th .sort-arrow').forEach(el => el.textContent = '↕');
+  const arrow = currentMetricsSort.asc ? '↓' : '↑';
+  thElement.querySelector('.sort-arrow').textContent = arrow;
+  
+  currentMetricsData.sort((a, b) => {
+    let valA = a[column] || 0;
+    let valB = b[column] || 0;
+    if (column === 'name' || column === 'kind') {
+      valA = a[column] || '';
+      valB = b[column] || '';
+    } else if (column === 'dirs') {
+      valA = (a.directories || []).length;
+      valB = (b.directories || []).length;
+    }
+    
+    if (valA < valB) return currentMetricsSort.asc ? -1 : 1;
+    if (valA > valB) return currentMetricsSort.asc ? 1 : -1;
+    return 0;
+  });
+  
+  renderMetricsTable();
+}
+
+function jumpToGraphNode(nodeId) {
+  const tabBtn = document.querySelector('.nav-tab[data-tab="tab-graph"]');
+  if (tabBtn) tabBtn.click();
+  
+  setTimeout(() => {
+    if (!cy) return;
+    const node = cy.getElementById(nodeId);
+    if (node.length) {
+      inspectNode(node.data());
+      cy.animate({ fit: { eles: node, padding: 100 } }, { duration: 500 });
+      node.flashClass('highlighted', 2000);
+    } else {
+      showToast('Node not visible in current graph view.', 'warning');
+    }
+  }, 100);
+}
+
+// ============================================================
+// TOAST NOTIFICATIONS
+// ============================================================
+function showToast(message, type = 'info') {
+  let container = document.getElementById('toastContainer');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toastContainer';
+    document.body.appendChild(container);
+  }
+
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  
+  let icon = 'icon-info';
+  if (type === 'error') icon = 'icon-x-circle';
+  if (type === 'warning') icon = 'icon-warning';
+  
+  toast.innerHTML = `<svg class="icon-sm" aria-hidden="true"><use href="#${icon}"/></svg><span>${message}</span>`;
+  container.appendChild(toast);
+
+  requestAnimationFrame(() => {
+    toast.classList.add('show');
+  });
+
+  setTimeout(() => {
+    toast.classList.remove('show');
+    toast.style.transform = 'translateX(20px)';
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
 }
