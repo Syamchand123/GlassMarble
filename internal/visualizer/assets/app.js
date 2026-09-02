@@ -33,10 +33,34 @@ function toast(msg, type = 'info') {
   const icons = { info: 'i-info', ok: 'i-check', warn: 'i-warn', err: 'i-warn' };
   const el = document.createElement('div');
   el.className = `toast toast--${type}`;
-  el.innerHTML = `<svg aria-hidden="true"><use href="#${icons[type] || 'i-info'}"/></svg><span></span>`;
+  el.innerHTML = `<svg aria-hidden="true"><use href="#${icons[type] || 'i-info'}"/></svg><span></span><i class="toast__bar" aria-hidden="true"></i>`;
   el.querySelector('span').textContent = msg;
   $('toasts').appendChild(el);
-  setTimeout(() => el.remove(), 4200);
+  /* progress bar counts down, then a soft exit before removal */
+  setTimeout(() => el.classList.add('bye'), 4000);
+  setTimeout(() => el.remove(), 4350);
+}
+
+/* Animated number count-up — one-shot rAF, cancels itself, respects
+   reduced motion and non-numeric values. */
+const prefersReduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function countUp(el, target, formatter) {
+  el.classList.remove('skel');
+  const fmt2 = formatter || ((v) => Math.round(v).toLocaleString('en-US'));
+  if (prefersReduced || typeof target !== 'number' || !isFinite(target) || target === 0) {
+    el.textContent = typeof target === 'number' && isFinite(target) ? fmt2(target) : '–';
+    return;
+  }
+  const dur = 700;
+  const start = performance.now();
+  const ease = (t) => 1 - Math.pow(1 - t, 3);
+  const step = (now) => {
+    const p = Math.min(1, (now - start) / dur);
+    el.textContent = fmt2(target * ease(p));
+    if (p < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
 }
 
 function debounce(fn, ms) {
@@ -66,6 +90,7 @@ const state = {
   currentMarble: null,
   timeline: [],
   mermaidReady: null,       // promise once loading starts
+  smoothGraph: false,       // per-element cy transitions, small graphs only
 };
 
 const SEV_ORDER = { CRITICAL: 3, HIGH: 2, MEDIUM: 1, LOW: 0 };
@@ -80,10 +105,13 @@ function initTheme() {
   }
   $('themeToggle').addEventListener('click', () => {
     const next = theme() === 'dark' ? 'light' : 'dark';
+    /* crossfade every surface for one beat around the swap */
+    document.body.classList.add('theming');
     document.documentElement.setAttribute('data-theme', next);
     try { localStorage.setItem('gmb-theme', next); } catch (e) { /* ignore */ }
     if (state.cy) state.cy.style(cyStylesheet());   // restyle in place — never re-init
     if (state.currentMarble) renderMarble(state.currentMarble, true);
+    setTimeout(() => document.body.classList.remove('theming'), 420);
   });
 }
 
@@ -91,7 +119,17 @@ function initTheme() {
 
 const TABS = ['graph', 'intel', 'timeline', 'marbles', 'metrics'];
 
+/* Slide the gradient indicator under the active tab (transform-only). */
+function moveTabIndicator() {
+  const active = document.querySelector('.tab[aria-selected="true"]');
+  const ind = $('tabsInd');
+  if (!active || !ind) return;
+  ind.style.width = `${active.offsetWidth - 16}px`;
+  ind.style.transform = `translateX(${active.offsetLeft + 8}px)`;
+}
+
 function activateTab(name) {
+  const prev = document.querySelector('.tab[aria-selected="true"]')?.dataset.tab;
   TABS.forEach((t) => {
     const btn = $(`tabbtn-${t}`);
     const on = t === name;
@@ -99,7 +137,16 @@ function activateTab(name) {
     btn.tabIndex = on ? 0 : -1;
     $(`tab-${t}`).hidden = !on;
   });
+  moveTabIndicator();
+  /* re-trigger the panel entrance on an actual switch */
+  if (prev !== name) {
+    const panel = $(`tab-${name}`);
+    panel.classList.remove('panel-enter');
+    void panel.offsetWidth;
+    panel.classList.add('panel-enter');
+  }
   if (name === 'graph' && state.cy) state.cy.resize();
+  if (name === 'timeline') revealTimeline();
   if (name === 'marbles') ensureMermaid().catch(() => {});
 }
 
@@ -138,8 +185,14 @@ function cyStylesheet() {
   const edge = dark ? '#3c3c4a' : '#c4c4d0';
   const compoundBg = dark ? 'rgba(255,255,255,0.03)' : 'rgba(20,20,40,0.03)';
   const compoundLine = dark ? '#33333f' : '#d8d8e2';
+  /* Smooth dim/highlight fades — only on graphs small enough that
+     per-element style transitions stay cheap. */
+  const smooth = state.smoothGraph && !prefersReduced
+    ? { 'transition-property': 'opacity, background-color, line-color', 'transition-duration': '200ms', 'transition-timing-function': 'ease-out' }
+    : {};
   return [
     { selector: 'node', style: {
+      ...smooth,
       'background-color': 'data(color)',
       'label': 'data(label)',
       'color': label,
@@ -166,6 +219,7 @@ function cyStylesheet() {
       'shape': 'round-rectangle',
     } },
     { selector: 'edge', style: {
+      ...smooth,
       'width': 1,
       'line-color': edge,
       'target-arrow-color': edge,
@@ -213,7 +267,9 @@ function initCy() {
 const COSE_NODE_LIMIT = 700;
 
 function layoutOptions(nodeCount) {
-  const common = { animate: false, fit: true, padding: 40 };
+  /* Small graphs get an animated settle — nodes glide into place. */
+  const animate = !prefersReduced && nodeCount <= 260;
+  const common = { animate, animationDuration: 450, animationEasing: 'ease-out', fit: true, padding: 40 };
   let name = state.layout;
   if (name === 'cose' && nodeCount > COSE_NODE_LIMIT) {
     name = 'concentric';
@@ -282,6 +338,12 @@ function renderGraph() {
   cy.elements().remove();
   cy.add(finalNodes.concat(keptEdges));
   cy.endBatch();
+
+  /* Enable per-element fade transitions only where they stay cheap. */
+  const wasSmooth = state.smoothGraph;
+  state.smoothGraph = finalNodes.length + keptEdges.length <= 1500;
+  if (state.smoothGraph !== wasSmooth) cy.style(cyStylesheet());
+
   runLayout();
 
   $('graphEmpty').hidden = finalNodes.length > 0;
@@ -709,16 +771,18 @@ function initSearch() {
 /* ─── status ─── */
 
 async function loadStatus() {
+  ['statNodes', 'statEdges', 'statFiles', 'statSmells'].forEach((id) => $(id).classList.add('skel'));
   try {
     const s = await api('/api/status');
     $('statusDot').classList.add('ok');
     const commit = s.commit_hash ? ` @ ${String(s.commit_hash).slice(0, 7)}` : '';
     $('statusText').textContent = `${fmt(s.nodes_count)} nodes${commit}`;
-    $('statNodes').textContent = fmt(s.nodes_count);
-    $('statEdges').textContent = fmt(s.edges_count);
-    $('statFiles').textContent = fmt(s.files_count);
-    $('statSmells').textContent = fmt(s.smells_count);
+    countUp($('statNodes'), s.nodes_count);
+    countUp($('statEdges'), s.edges_count);
+    countUp($('statFiles'), s.files_count);
+    countUp($('statSmells'), s.smells_count);
   } catch (err) {
+    ['statNodes', 'statEdges', 'statFiles', 'statSmells'].forEach((id) => $(id).classList.remove('skel'));
     $('statusDot').classList.add('err');
     $('statusText').textContent = 'offline';
   }
@@ -729,13 +793,24 @@ async function loadStatus() {
 /* /api/intelligence smells: {kind,title,severity,affected_ids,evidence,suggestion}
    /api/smells fallback:      {title,severity,description,nodes}
    `evidence` may be a string OR a structured object — render either. */
+const DETAIL_KEYS = ['excerpt', 'summary', 'message', 'description', 'detail', 'reason', 'items'];
+
 function detailText(v) {
   if (v == null) return '';
   if (typeof v === 'string') return v;
-  if (Array.isArray(v)) return v.map(detailText).filter(Boolean).join('; ');
+  if (Array.isArray(v)) return v.map(detailText).filter(Boolean).join(' · ');
   if (typeof v === 'object') {
+    /* Prefer the human-readable field; fall back to primitive entries
+       (never dump nested JSON into the table). */
+    for (const k of DETAIL_KEYS) {
+      if (v[k] != null) {
+        const t = detailText(v[k]);
+        if (t) return t;
+      }
+    }
     return Object.entries(v)
-      .map(([k, val]) => `${k}: ${typeof val === 'object' ? JSON.stringify(val) : val}`)
+      .filter(([, val]) => val != null && typeof val !== 'object')
+      .map(([k, val]) => `${k}: ${val}`)
       .join(' · ');
   }
   return String(v);
@@ -851,21 +926,24 @@ function renderMetrics(metrics) {
   if (!hasMetrics) return;
 
   const items = [
-    { l: 'Nodes', v: fmt(metrics.total_nodes) },
-    { l: 'Edges', v: fmt(metrics.total_edges) },
-    { l: 'Instability', v: (metrics.instability ?? 0).toFixed(2), bar: (metrics.instability ?? 0) * 100 },
-    { l: 'Graph density', v: (metrics.graph_density ?? 0).toFixed(4), bar: Math.min(100, (metrics.graph_density ?? 0) * 1000) },
-    { l: 'Cycles', v: fmt(metrics.cycle_count) },
-    { l: 'Dead code nodes', v: fmt(metrics.dead_code_node_count) },
-    { l: 'Layer violations', v: fmt(metrics.layer_violation_count) },
-    { l: 'Max fan-in', v: fmt(metrics.max_fan_in) },
+    { l: 'Nodes', n: metrics.total_nodes },
+    { l: 'Edges', n: metrics.total_edges },
+    { l: 'Instability', n: metrics.instability, f: (v) => v.toFixed(2), bar: (metrics.instability ?? 0) * 100 },
+    { l: 'Graph density', n: metrics.graph_density, f: (v) => v.toFixed(4), bar: Math.min(100, (metrics.graph_density ?? 0) * 1000) },
+    { l: 'Cycles', n: metrics.cycle_count },
+    { l: 'Dead code nodes', n: metrics.dead_code_node_count },
+    { l: 'Layer violations', n: metrics.layer_violation_count },
+    { l: 'Max fan-in', n: metrics.max_fan_in },
   ];
   items.forEach((it) => {
     const d = document.createElement('div');
     d.className = 'mkpi';
-    d.innerHTML = `<div class="mkpi__l">${esc(it.l)}</div><div class="mkpi__n">${esc(it.v)}</div>` +
-      (it.bar != null ? `<div class="meter"><div class="meter__fill" style="width:${Math.max(0, Math.min(100, it.bar))}%"></div></div>` : '');
+    d.innerHTML = `<div class="mkpi__l">${esc(it.l)}</div><div class="mkpi__n"></div>` +
+      (it.bar != null ? `<div class="meter"><div class="meter__fill" style="width:0"></div></div>` : '');
     kpis.appendChild(d);
+    countUp(d.querySelector('.mkpi__n'), it.n ?? 0, it.f);
+    const fill = d.querySelector('.meter__fill');
+    if (fill) requestAnimationFrame(() => { fill.style.width = `${Math.max(0, Math.min(100, it.bar))}%`; });
   });
   renderComponentsTable();
 }
@@ -934,6 +1012,23 @@ async function loadTimeline() {
   });
 }
 
+/* Scroll-reveal for timeline entries — IO adds .vis with a slight stagger. */
+let timelineIO = null;
+
+function revealTimeline() {
+  if (timelineIO) timelineIO.disconnect();
+  timelineIO = new IntersectionObserver((entries) => {
+    entries.forEach((e, i) => {
+      if (e.isIntersecting) {
+        const el = e.target;
+        setTimeout(() => el.classList.add('vis'), Math.min(i * 45, 220));
+        timelineIO.unobserve(el);
+      }
+    });
+  }, { threshold: 0.08 });
+  document.querySelectorAll('.tl-item:not(.vis)').forEach((el) => timelineIO.observe(el));
+}
+
 function renderTimeline(filter) {
   const ol = $('timelineStream');
   ol.textContent = '';
@@ -956,6 +1051,7 @@ function renderTimeline(filter) {
       ((tags || commit) ? `<div class="tl-item__meta">${commit}${tags}</div>` : '');
     ol.appendChild(li);
   });
+  revealTimeline();
 }
 
 /* ─── diagrams (marbles) ─── */
@@ -1073,6 +1169,9 @@ function initKeyboard() {
 document.addEventListener('DOMContentLoaded', () => {
   initTheme();
   initTabs();
+  moveTabIndicator();
+  window.addEventListener('load', moveTabIndicator);   // re-measure after fonts settle
+  window.addEventListener('resize', debounce(moveTabIndicator, 120));
   initCy();
   initControls();
   initTrace();
