@@ -6,9 +6,11 @@
   <title>GlassMarble — Architecture Explorer</title>
   <meta name="description" content="Interactive explorer for the GlassMarble Architecture Knowledge Graph.">
   <link rel="icon" type="image/png" href="/assets/logo.png">
-  <link rel="stylesheet" href="/assets/styles.css">
-  <script src="/assets/cytoscape.min.js" defer></script>
-  <script src="/assets/app.js" defer></script>
+  <!-- __ASSET_V__ is replaced by the server per process start: assets get a
+       long-lived cache AND every new build/restart busts it automatically. -->
+  <link rel="stylesheet" href="/assets/styles.css?v=__ASSET_V__">
+  <script src="/assets/cytoscape.min.js?v=__ASSET_V__" defer></script>
+  <script src="/assets/app.js?v=__ASSET_V__" defer></script>
 </head>
 <body>
 

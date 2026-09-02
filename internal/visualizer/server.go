@@ -110,6 +110,10 @@ func (s *VisualizerServer) Start(ctx context.Context) (int, error) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		fileServer.ServeHTTP(w, r)
 	})))
+	// Per-process asset version: index.html is always served fresh, and its
+	// asset URLs carry this token — so cached JS/CSS is busted automatically
+	// on every new binary/server start.
+	assetVersion := strconv.FormatInt(time.Now().Unix(), 36)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -120,9 +124,11 @@ func (s *VisualizerServer) Start(ctx context.Context) (int, error) {
 			http.Error(w, "index.html not found", http.StatusInternalServerError)
 			return
 		}
+		page := strings.ReplaceAll(string(data), "__ASSET_V__", assetVersion)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Write(data)
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Write([]byte(page))
 	})
 
 	// Find available port

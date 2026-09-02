@@ -309,13 +309,40 @@ body.theming, body.theming * {
   pointer-events: none;
 }
 
-/* ═══ STAGE / PANELS ═══ */
-.stage { flex: 1 1 auto; min-height: 0; display: flex; }
+/* ═══ STAGE / PANELS — liquid tab transitions ═══
+   The incoming panel slides in from the direction of travel with a
+   blur-to-sharp settle; the outgoing panel overlays absolutely and
+   flows out the opposite way. Direction classes are set by JS. */
+.stage { flex: 1 1 auto; min-height: 0; display: flex; position: relative; }
 .panel { flex: 1 1 auto; min-width: 0; min-height: 0; }
 .panel--pad { padding: 24px 28px 44px; overflow-y: auto; }
 .panel--narrow { max-width: 880px; }
-/* Panel entrance on tab switch (class re-applied by JS) */
-.panel-enter { animation: riseIn 0.32s var(--ease-out) both; }
+
+@keyframes panelInR {
+  0% { opacity: 0; transform: translateX(42px) scale(0.988); filter: blur(7px); }
+  60% { filter: blur(0); }
+  100% { opacity: 1; transform: none; filter: blur(0); }
+}
+@keyframes panelInL {
+  0% { opacity: 0; transform: translateX(-42px) scale(0.988); filter: blur(7px); }
+  60% { filter: blur(0); }
+  100% { opacity: 1; transform: none; filter: blur(0); }
+}
+@keyframes panelOutR {
+  to { opacity: 0; transform: translateX(34px) scale(0.99); filter: blur(5px); }
+}
+@keyframes panelOutL {
+  to { opacity: 0; transform: translateX(-34px) scale(0.99); filter: blur(5px); }
+}
+.panel-enter-r { animation: panelInR 0.5s var(--ease-out) both; }
+.panel-enter-l { animation: panelInL 0.5s var(--ease-out) both; }
+.panel-exit-r, .panel-exit-l {
+  position: absolute !important; inset: 0; z-index: 6;
+  pointer-events: none;
+  background: var(--bg0);
+}
+.panel-exit-r { animation: panelOutR 0.26s var(--ease-swift) both; }
+.panel-exit-l { animation: panelOutL 0.26s var(--ease-swift) both; }
 .h2 {
   font-size: 15px; font-weight: 680; letter-spacing: -0.012em;
   margin: 28px 0 13px;
@@ -369,7 +396,9 @@ body.theming, body.theming * {
 .kpi__n { display: block; font-size: 16.5px; font-weight: 680; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
 .kpi__l { display: block; font-size: 10px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.07em; margin-top: 1px; }
 
+/* Segmented control with a liquid sliding thumb (positioned by JS). */
 .seg {
+  position: relative;
   display: flex;
   background: var(--bg2);
   border: 1px solid var(--line-soft);
@@ -378,18 +407,24 @@ body.theming, body.theming * {
   margin-bottom: 11px;
   gap: 2px;
 }
+.seg__thumb {
+  position: absolute; top: 3px; bottom: 3px; left: 0;
+  width: 40px;
+  background: var(--bg1);
+  border-radius: 7px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22), 0 0 0 1px var(--line-soft);
+  transition: transform 0.4s var(--ease-spring), width 0.4s var(--ease-spring);
+  pointer-events: none;
+}
 .seg__btn {
+  position: relative; z-index: 1;
   flex: 1; height: 26px; border-radius: 7px;
   color: var(--ink-mid); font-size: 12px; font-weight: 540;
-  transition: background var(--t-fast) var(--ease-swift), color var(--t-fast),
-    box-shadow var(--t-med) var(--ease-out), transform var(--t-fast) var(--ease-swift);
+  transition: color var(--t-med) var(--ease-swift), transform var(--t-fast) var(--ease-swift);
 }
 .seg__btn:hover:not(.is-on) { color: var(--ink); }
 .seg__btn:active { transform: scale(0.95); }
-.seg__btn.is-on {
-  background: var(--bg1); color: var(--ink);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22), 0 0 0 1px var(--line-soft);
-}
+.seg__btn.is-on { color: var(--ink); font-weight: 620; }
 
 .field { display: block; }
 .field__label { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-mid); margin-bottom: 6px; }

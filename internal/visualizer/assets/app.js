@@ -128,23 +128,48 @@ function moveTabIndicator() {
   ind.style.transform = `translateX(${active.offsetLeft + 8}px)`;
 }
 
+const PANEL_ANIM = ['panel-enter-r', 'panel-enter-l', 'panel-exit-r', 'panel-exit-l'];
+let activeTab = 'graph';
+
 function activateTab(name) {
-  const prev = document.querySelector('.tab[aria-selected="true"]')?.dataset.tab;
+  const prev = activeTab;
+  activeTab = name;
   TABS.forEach((t) => {
     const btn = $(`tabbtn-${t}`);
     const on = t === name;
     btn.setAttribute('aria-selected', String(on));
     btn.tabIndex = on ? 0 : -1;
-    $(`tab-${t}`).hidden = !on;
   });
   moveTabIndicator();
-  /* re-trigger the panel entrance on an actual switch */
-  if (prev !== name) {
-    const panel = $(`tab-${name}`);
-    panel.classList.remove('panel-enter');
-    void panel.offsetWidth;
-    panel.classList.add('panel-enter');
+
+  const incoming = $(`tab-${name}`);
+  if (prev !== name && !prefersReduced) {
+    /* Liquid switch: the outgoing panel overlays absolutely and flows out
+       toward where we came from; the incoming one slides in from the
+       direction of travel with a blur-to-sharp settle. */
+    const dir = TABS.indexOf(name) > TABS.indexOf(prev) ? 1 : -1;
+    const outgoing = $(`tab-${prev}`);
+    if (outgoing && !outgoing.hidden) {
+      outgoing.classList.remove(...PANEL_ANIM);
+      outgoing.classList.add(dir > 0 ? 'panel-exit-l' : 'panel-exit-r');
+      setTimeout(() => {
+        /* Rapid tab-hopping guard: only hide if it isn't active again. */
+        if (activeTab !== prev) {
+          outgoing.hidden = true;
+          outgoing.classList.remove(...PANEL_ANIM);
+        }
+      }, 270);
+    }
+    TABS.forEach((t) => { if (t !== name && t !== prev) $(`tab-${t}`).hidden = true; });
+    incoming.hidden = false;
+    incoming.classList.remove(...PANEL_ANIM);
+    void incoming.offsetWidth;
+    incoming.classList.add(dir > 0 ? 'panel-enter-r' : 'panel-enter-l');
+  } else {
+    TABS.forEach((t) => { $(`tab-${t}`).hidden = t !== name; });
+    incoming.classList.remove(...PANEL_ANIM);
   }
+
   if (name === 'graph' && state.cy) state.cy.resize();
   if (name === 'timeline') revealTimeline();
   if (name === 'marbles') ensureMermaid().catch(() => {});
@@ -404,12 +429,32 @@ function buildFilterPills() {
   mk('kindFilters', kinds, state.kindsOff);
 }
 
+/* Liquid thumb that glides under the active segment button. */
+function moveSegThumb(seg) {
+  const on = seg.querySelector('.seg__btn.is-on');
+  let thumb = seg.querySelector('.seg__thumb');
+  if (!thumb) {
+    thumb = document.createElement('span');
+    thumb.className = 'seg__thumb';
+    thumb.setAttribute('aria-hidden', 'true');
+    seg.prepend(thumb);
+  }
+  if (!on) return;
+  thumb.style.width = `${on.offsetWidth}px`;
+  thumb.style.transform = `translateX(${on.offsetLeft - 3}px)`;
+}
+
 function initControls() {
-  $('granularitySeg').addEventListener('click', (e) => {
+  const seg = $('granularitySeg');
+  moveSegThumb(seg);
+  window.addEventListener('load', () => moveSegThumb(seg));
+  window.addEventListener('resize', debounce(() => moveSegThumb(seg), 120));
+  seg.addEventListener('click', (e) => {
     const b = e.target.closest('[data-view]');
     if (!b || b.classList.contains('is-on')) return;
     document.querySelectorAll('#granularitySeg .seg__btn').forEach((x) => x.classList.remove('is-on'));
     b.classList.add('is-on');
+    moveSegThumb(seg);
     state.view = b.dataset.view;
     loadGraph();
   });
