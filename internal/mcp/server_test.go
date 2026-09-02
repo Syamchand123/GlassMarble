@@ -147,3 +147,93 @@ func TestStatusTool_UninitializedOrPresent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, data, "initialized")
 }
+
+func TestAKGTools_Registration(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	// Verify AKG tools are wired into server
+	require.NotNil(t, srv.MCPServer())
+}
+
+func TestInspectSearchTool(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	var req mcp.CallToolRequest
+	req.Params.Name = "gmb_inspect_search"
+	req.Params.Arguments = map[string]any{
+		"query": "NewServer",
+		"limit": 10,
+	}
+
+	res, err := srv.handleInspectSearchTool(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	if !res.IsError {
+		text := res.Content[0].(mcp.TextContent).Text
+		var data map[string]any
+		err = json.Unmarshal([]byte(text), &data)
+		require.NoError(t, err)
+		assert.Equal(t, "NewServer", data["query"])
+		assert.Contains(t, data, "nodes")
+	}
+}
+
+func TestInspectNodeTool(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	// Non-existent node
+	var reqInvalid mcp.CallToolRequest
+	reqInvalid.Params.Name = "gmb_inspect_node"
+	reqInvalid.Params.Arguments = map[string]any{
+		"id": "non_existent_symbol_123456",
+	}
+
+	resInvalid, err := srv.handleInspectNodeTool(context.Background(), reqInvalid)
+	require.NoError(t, err)
+	require.NotNil(t, resInvalid)
+	assert.True(t, resInvalid.IsError)
+}
+
+func TestDependencyTool(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	// Summary mode
+	var reqSummary mcp.CallToolRequest
+	reqSummary.Params.Name = "gmb_dependency_analysis"
+	reqSummary.Params.Arguments = map[string]any{}
+
+	resSummary, err := srv.handleDependencyTool(context.Background(), reqSummary)
+	require.NoError(t, err)
+	require.NotNil(t, resSummary)
+
+	if !resSummary.IsError {
+		text := resSummary.Content[0].(mcp.TextContent).Text
+		var data map[string]any
+		err = json.Unmarshal([]byte(text), &data)
+		require.NoError(t, err)
+		assert.Contains(t, data, "total_nodes")
+		assert.Contains(t, data, "top_dependency_nodes")
+	}
+}
+

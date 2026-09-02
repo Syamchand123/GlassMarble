@@ -47,6 +47,10 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	// Register baseline Phase 1 system tools
 	s.registerSystemTools()
 
+	// Register Phase 2 AKG graph & inspect tools
+	s.registerAKGTools()
+	s.registerInspectTools()
+
 	return s, nil
 }
 
