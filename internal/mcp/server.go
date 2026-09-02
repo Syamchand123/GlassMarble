@@ -55,6 +55,10 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	s.registerImpactTools()
 	s.registerGovernanceTools()
 
+	// Register Phase 4 Memory & Snapshot tools
+	s.registerMemoryTools()
+	s.registerSnapshotTools()
+
 	return s, nil
 }
 

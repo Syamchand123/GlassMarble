@@ -400,4 +400,137 @@ func TestArchStatsTool(t *testing.T) {
 	}
 }
 
+func TestMemoryOverviewTool(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	var req mcp.CallToolRequest
+	req.Params.Name = "gmb_memory_overview"
+	req.Params.Arguments = map[string]any{}
+
+	res, err := srv.handleMemoryOverviewTool(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	if !res.IsError {
+		text := res.Content[0].(mcp.TextContent).Text
+		var data map[string]any
+		err = json.Unmarshal([]byte(text), &data)
+		require.NoError(t, err)
+		assert.Contains(t, data, "total_events")
+		assert.Contains(t, data, "components")
+	}
+}
+
+func TestMemoryQueryTool(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	var req mcp.CallToolRequest
+	req.Params.Name = "gmb_memory_query"
+	req.Params.Arguments = map[string]any{
+		"query": "architecture",
+	}
+
+	res, err := srv.handleMemoryQueryTool(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	if !res.IsError {
+		text := res.Content[0].(mcp.TextContent).Text
+		var data map[string]any
+		err = json.Unmarshal([]byte(text), &data)
+		require.NoError(t, err)
+		assert.Equal(t, "architecture", data["query"])
+		assert.Contains(t, data, "matched_claims")
+	}
+}
+
+func TestMemoryComponentTool(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	var req mcp.CallToolRequest
+	req.Params.Name = "gmb_memory_component"
+	req.Params.Arguments = map[string]any{
+		"component": "cmd",
+	}
+
+	res, err := srv.handleMemoryComponentTool(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	if !res.IsError {
+		text := res.Content[0].(mcp.TextContent).Text
+		var data map[string]any
+		err = json.Unmarshal([]byte(text), &data)
+		require.NoError(t, err)
+		assert.Equal(t, "cmd", data["query"])
+		assert.Contains(t, data, "found")
+	}
+}
+
+func TestArchTimelineTool(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	var req mcp.CallToolRequest
+	req.Params.Name = "gmb_arch_timeline"
+	req.Params.Arguments = map[string]any{}
+
+	res, err := srv.handleArchTimelineTool(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	if !res.IsError {
+		text := res.Content[0].(mcp.TextContent).Text
+		assert.NotEmpty(t, text)
+	}
+}
+
+func TestSnapshotListTool(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	var req mcp.CallToolRequest
+	req.Params.Name = "gmb_snapshot_list"
+	req.Params.Arguments = map[string]any{
+		"limit": 10,
+	}
+
+	res, err := srv.handleSnapshotListTool(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	if !res.IsError {
+		text := res.Content[0].(mcp.TextContent).Text
+		var data map[string]any
+		err = json.Unmarshal([]byte(text), &data)
+		require.NoError(t, err)
+		assert.Contains(t, data, "total")
+		assert.Contains(t, data, "snapshots")
+	}
+}
+
+
 
