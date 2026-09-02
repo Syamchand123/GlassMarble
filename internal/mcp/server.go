@@ -51,6 +51,10 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	s.registerAKGTools()
 	s.registerInspectTools()
 
+	// Register Phase 3 Impact & Governance tools
+	s.registerImpactTools()
+	s.registerGovernanceTools()
+
 	return s, nil
 }
 

@@ -237,3 +237,167 @@ func TestDependencyTool(t *testing.T) {
 	}
 }
 
+func TestImpactTool(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	var req mcp.CallToolRequest
+	req.Params.Name = "gmb_impact_analysis"
+	req.Params.Arguments = map[string]any{
+		"target": "cmd/root.go",
+		"depth":  2,
+	}
+
+	res, err := srv.handleImpactTool(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	if !res.IsError {
+		text := res.Content[0].(mcp.TextContent).Text
+		var data map[string]any
+		err = json.Unmarshal([]byte(text), &data)
+		require.NoError(t, err)
+		assert.Contains(t, data, "risk_score")
+		assert.Contains(t, data, "risk_level")
+	}
+}
+
+func TestHotspotTool(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	var req mcp.CallToolRequest
+	req.Params.Name = "gmb_hotspot_rankings"
+	req.Params.Arguments = map[string]any{
+		"top": 5,
+	}
+
+	res, err := srv.handleHotspotTool(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	if !res.IsError {
+		text := res.Content[0].(mcp.TextContent).Text
+		var data map[string]any
+		err = json.Unmarshal([]byte(text), &data)
+		require.NoError(t, err)
+		assert.Contains(t, data, "hotspots")
+	}
+}
+
+func TestDriftTool(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	var req mcp.CallToolRequest
+	req.Params.Name = "gmb_drift_check"
+	req.Params.Arguments = map[string]any{}
+
+	res, err := srv.handleDriftTool(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	if !res.IsError {
+		text := res.Content[0].(mcp.TextContent).Text
+		var data map[string]any
+		err = json.Unmarshal([]byte(text), &data)
+		require.NoError(t, err)
+		assert.Contains(t, data, "passed")
+		assert.Contains(t, data, "forbidden_edges")
+	}
+}
+
+func TestLintTool(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	var req mcp.CallToolRequest
+	req.Params.Name = "gmb_arch_lint"
+	req.Params.Arguments = map[string]any{}
+
+	res, err := srv.handleLintTool(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	if !res.IsError {
+		text := res.Content[0].(mcp.TextContent).Text
+		var data map[string]any
+		err = json.Unmarshal([]byte(text), &data)
+		require.NoError(t, err)
+		assert.Contains(t, data, "passed")
+	}
+}
+
+func TestPatternsTool(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	var req mcp.CallToolRequest
+	req.Params.Name = "gmb_patterns_smells"
+	req.Params.Arguments = map[string]any{
+		"include_smells":     true,
+		"include_components": true,
+	}
+
+	res, err := srv.handlePatternsTool(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	if !res.IsError {
+		text := res.Content[0].(mcp.TextContent).Text
+		var data map[string]any
+		err = json.Unmarshal([]byte(text), &data)
+		require.NoError(t, err)
+		assert.Contains(t, data, "metrics")
+		assert.Contains(t, data, "patterns")
+		assert.Contains(t, data, "smells")
+	}
+}
+
+func TestArchStatsTool(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	var req mcp.CallToolRequest
+	req.Params.Name = "gmb_arch_stats"
+	req.Params.Arguments = map[string]any{}
+
+	res, err := srv.handleArchStatsTool(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	if !res.IsError {
+		text := res.Content[0].(mcp.TextContent).Text
+		var data map[string]any
+		err = json.Unmarshal([]byte(text), &data)
+		require.NoError(t, err)
+		assert.Contains(t, data, "metrics")
+		assert.Contains(t, data, "component_coupling")
+	}
+}
+
+
