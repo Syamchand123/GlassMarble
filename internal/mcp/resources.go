@@ -12,50 +12,73 @@ import (
 
 // registerResources binds static and dynamic URI resources to the MCP server.
 func (s *Server) registerResources() {
-	// 1. gmb://status Resource
-	statusRes := mcp.NewResource(
-		"gmb://status",
-		"Architecture Knowledge Graph Status",
-		mcp.WithResourceDescription("Real-time metadata and node/edge metrics of the active Architecture Knowledge Graph"),
-		mcp.WithMIMEType("application/json"),
+	// 1. Status Resources (gmb://status & glassmarble://status)
+	s.MCPServer().AddResource(
+		mcp.NewResource("gmb://status", "AKG Status", mcp.WithResourceDescription("Real-time metadata of the active AKG"), mcp.WithMIMEType("application/json")),
+		s.handleStatusResource,
 	)
-	s.MCPServer().AddResource(statusRes, s.handleStatusResource)
+	s.MCPServer().AddResource(
+		mcp.NewResource("glassmarble://status", "GlassMarble Status", mcp.WithResourceDescription("Real-time metadata of the active AKG"), mcp.WithMIMEType("application/json")),
+		s.handleStatusResource,
+	)
 
-	// 2. gmb://config Resource
-	configRes := mcp.NewResource(
-		"gmb://config",
-		"GlassMarble Configuration",
-		mcp.WithResourceDescription("Current project configuration and layer definitions (.glassmarble/config.yaml)"),
-		mcp.WithMIMEType("text/yaml"),
+	// 2. Intelligence Resource (glassmarble://intelligence)
+	s.MCPServer().AddResource(
+		mcp.NewResource("glassmarble://intelligence", "Architecture Intelligence", mcp.WithResourceDescription("Latest architecture intelligence report (.glassmarble/intelligence/latest.json)"), mcp.WithMIMEType("application/json")),
+		s.handleIntelligenceResource,
 	)
-	s.MCPServer().AddResource(configRes, s.handleConfigResource)
 
-	// 3. gmb://rules Resource
-	rulesRes := mcp.NewResource(
-		"gmb://rules",
-		"Declarative Architecture Rules",
-		mcp.WithResourceDescription("Current architectural boundaries, forbidden dependencies, and lint rules (.glassmarble/rules.yaml)"),
-		mcp.WithMIMEType("text/yaml"),
+	// 3. Memory Resources (glassmarble://memory & gmb://memory/summary)
+	s.MCPServer().AddResource(
+		mcp.NewResource("gmb://memory/summary", "Developer Memory Summary", mcp.WithResourceDescription("Developer memory summary"), mcp.WithMIMEType("application/json")),
+		s.handleMemorySummaryResource,
 	)
-	s.MCPServer().AddResource(rulesRes, s.handleRulesResource)
+	s.MCPServer().AddResource(
+		mcp.NewResource("glassmarble://memory", "Developer Memory Overview", mcp.WithResourceDescription("Developer memory summary"), mcp.WithMIMEType("application/json")),
+		s.handleMemorySummaryResource,
+	)
 
-	// 4. gmb://memory/summary Resource
-	memoryRes := mcp.NewResource(
-		"gmb://memory/summary",
-		"Developer Memory Summary",
-		mcp.WithResourceDescription("Developer memory aggregate summary (events, claims, tracked components)"),
-		mcp.WithMIMEType("application/json"),
+	// 4. Timeline Resources (glassmarble://timeline & gmb://timeline/latest)
+	s.MCPServer().AddResource(
+		mcp.NewResource("gmb://timeline/latest", "Architecture Evolution Timeline", mcp.WithResourceDescription("Recent chronological architecture evolution events"), mcp.WithMIMEType("application/json")),
+		s.handleTimelineResource,
 	)
-	s.MCPServer().AddResource(memoryRes, s.handleMemorySummaryResource)
+	s.MCPServer().AddResource(
+		mcp.NewResource("glassmarble://timeline", "Architecture Timeline JSON", mcp.WithResourceDescription("Architecture timeline file (.glassmarble/memory/timeline.json)"), mcp.WithMIMEType("application/json")),
+		s.handleTimelineFileResource,
+	)
 
-	// 5. gmb://timeline/latest Resource
-	timelineRes := mcp.NewResource(
-		"gmb://timeline/latest",
-		"Architecture Evolution Timeline",
-		mcp.WithResourceDescription("Recent chronological architecture evolution events and refactorings"),
-		mcp.WithMIMEType("application/json"),
+	// 5. Conventions Resource (glassmarble://conventions)
+	s.MCPServer().AddResource(
+		mcp.NewResource("glassmarble://conventions", "Learned Project Conventions", mcp.WithResourceDescription("Learned architecture conventions (.glassmarble/memory/conventions.json)"), mcp.WithMIMEType("application/json")),
+		s.handleConventionsResource,
 	)
-	s.MCPServer().AddResource(timelineRes, s.handleTimelineResource)
+
+	// 6. Telemetry Resource (glassmarble://telemetry)
+	s.MCPServer().AddResource(
+		mcp.NewResource("glassmarble://telemetry", "Pipeline Telemetry", mcp.WithResourceDescription("GlassMarble pipeline performance telemetry (.glassmarble/telemetry.json)"), mcp.WithMIMEType("application/json")),
+		s.handleTelemetryResource,
+	)
+
+	// 7. Config Resources (gmb://config & glassmarble://config)
+	s.MCPServer().AddResource(
+		mcp.NewResource("gmb://config", "GlassMarble Configuration", mcp.WithResourceDescription("Current project configuration (.glassmarble/config.yaml)"), mcp.WithMIMEType("text/yaml")),
+		s.handleConfigResource,
+	)
+	s.MCPServer().AddResource(
+		mcp.NewResource("glassmarble://config", "GlassMarble Configuration", mcp.WithResourceDescription("Current project configuration (.glassmarble/config.yaml)"), mcp.WithMIMEType("text/yaml")),
+		s.handleConfigResource,
+	)
+
+	// 8. Rules Resources (gmb://rules & glassmarble://rules)
+	s.MCPServer().AddResource(
+		mcp.NewResource("gmb://rules", "Architecture Rules", mcp.WithResourceDescription("Declarative architecture rules (.glassmarble/rules.yaml)"), mcp.WithMIMEType("text/yaml")),
+		s.handleRulesResource,
+	)
+	s.MCPServer().AddResource(
+		mcp.NewResource("glassmarble://rules", "Architecture Rules", mcp.WithResourceDescription("Declarative architecture rules (.glassmarble/rules.yaml)"), mcp.WithMIMEType("text/yaml")),
+		s.handleRulesResource,
+	)
 }
 
 func (s *Server) handleStatusResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
@@ -87,6 +110,27 @@ func (s *Server) handleStatusResource(ctx context.Context, req mcp.ReadResourceR
 			URI:      req.Params.URI,
 			MIMEType: "application/json",
 			Text:     string(body),
+		},
+	}, nil
+}
+
+func (s *Server) handleIntelligenceResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	path := filepath.Join(s.bridge.StorageDir(), "intelligence", "latest.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return []mcp.ResourceContents{
+			mcp.TextResourceContents{
+				URI:      req.Params.URI,
+				MIMEType: "application/json",
+				Text:     "{}",
+			},
+		}, nil
+	}
+	return []mcp.ResourceContents{
+		mcp.TextResourceContents{
+			URI:      req.Params.URI,
+			MIMEType: "application/json",
+			Text:     string(data),
 		},
 	}, nil
 }
@@ -216,6 +260,69 @@ func (s *Server) handleTimelineResource(ctx context.Context, req mcp.ReadResourc
 			URI:      req.Params.URI,
 			MIMEType: "application/json",
 			Text:     string(body),
+		},
+	}, nil
+}
+
+func (s *Server) handleTimelineFileResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	path := filepath.Join(s.bridge.StorageDir(), "memory", "timeline.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return []mcp.ResourceContents{
+			mcp.TextResourceContents{
+				URI:      req.Params.URI,
+				MIMEType: "application/json",
+				Text:     "[]",
+			},
+		}, nil
+	}
+	return []mcp.ResourceContents{
+		mcp.TextResourceContents{
+			URI:      req.Params.URI,
+			MIMEType: "application/json",
+			Text:     string(data),
+		},
+	}, nil
+}
+
+func (s *Server) handleConventionsResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	path := filepath.Join(s.bridge.StorageDir(), "memory", "conventions.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return []mcp.ResourceContents{
+			mcp.TextResourceContents{
+				URI:      req.Params.URI,
+				MIMEType: "application/json",
+				Text:     "{}",
+			},
+		}, nil
+	}
+	return []mcp.ResourceContents{
+		mcp.TextResourceContents{
+			URI:      req.Params.URI,
+			MIMEType: "application/json",
+			Text:     string(data),
+		},
+	}, nil
+}
+
+func (s *Server) handleTelemetryResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	path := filepath.Join(s.bridge.StorageDir(), "telemetry.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return []mcp.ResourceContents{
+			mcp.TextResourceContents{
+				URI:      req.Params.URI,
+				MIMEType: "application/json",
+				Text:     "{}",
+			},
+		}, nil
+	}
+	return []mcp.ResourceContents{
+		mcp.TextResourceContents{
+			URI:      req.Params.URI,
+			MIMEType: "application/json",
+			Text:     string(data),
 		},
 	}, nil
 }

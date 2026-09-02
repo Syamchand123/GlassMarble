@@ -4,18 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/tools"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// registerAKGTools binds all 18 AKG graph query tools from internal/ai_engine/tools to the MCP server.
+// registerAKGTools binds all graph query, code, and diagram tools from internal/ai_engine/tools to the MCP server.
 func (s *Server) registerAKGTools() {
 	allTools := tools.All()
 
 	for _, t := range allTools {
-		if !strings.HasPrefix(t.Name, "akg_") {
+		// Skip destructive or write tools (MCP server is read-only)
+		if t.Name == "save_artifact" {
 			continue
 		}
 

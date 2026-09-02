@@ -15,6 +15,7 @@ var (
 	mcpTransportFlag    string
 	mcpPortFlag         int
 	mcpConfigClientFlag string
+	mcpPrintConfigFlag  bool
 	mcpMaxJSONMBFlag    int
 	mcpStrictPathsFlag  bool
 )
@@ -48,6 +49,9 @@ evaluate blast-radius risk, render architecture diagrams, search developer memor
 		}
 
 		// Handle client configuration generation flag
+		if mcpPrintConfigFlag && mcpConfigClientFlag == "" {
+			mcpConfigClientFlag = "all"
+		}
 		if mcpConfigClientFlag != "" {
 			return runMCPClientConfig(absDir, mcpConfigClientFlag, mcpPortFlag, cmd)
 		}
@@ -130,6 +134,7 @@ func init() {
 	mcpCmd.Flags().StringVar(&mcpTransportFlag, "transport", "stdio", "MCP transport protocol: stdio (default), http, or sse")
 	mcpCmd.Flags().IntVar(&mcpPortFlag, "port", 8088, "Port for http/sse transport")
 	mcpCmd.Flags().StringVar(&mcpConfigClientFlag, "config-client", "", "Generate ready-to-paste client configuration (claude, cursor, zed, continue, all)")
+	mcpCmd.Flags().BoolVar(&mcpPrintConfigFlag, "print-config", false, "Print ready-to-paste client configuration JSON snippets")
 	mcpCmd.Flags().IntVar(&mcpMaxJSONMBFlag, "max-json-mb", 256, "Maximum AKG JSON payload size budget in megabytes")
 	mcpCmd.Flags().BoolVar(&mcpStrictPathsFlag, "strict-paths", true, "Enforce strict workspace root boundaries for file operations")
 	mcpCmd.Flags().Bool("json", false, "Emit output as JSON")

@@ -72,3 +72,18 @@ func TestMCPCommand_ConfigClient_All(t *testing.T) {
 	assert.Contains(t, out, "Zed")
 	assert.Contains(t, out, "Continue.dev")
 }
+
+func TestMCPCommand_PrintConfig(t *testing.T) {
+	resetMCPFlags()
+	mcpPrintConfigFlag = true
+	b := bytes.NewBufferString("")
+	mcpCmd.SetOut(b)
+	mcpCmd.SetErr(b)
+
+	err := mcpCmd.RunE(mcpCmd, []string{})
+	require.NoError(t, err)
+	out := b.String()
+	assert.Contains(t, out, "Claude Desktop")
+	assert.Contains(t, out, "Cursor")
+}
+

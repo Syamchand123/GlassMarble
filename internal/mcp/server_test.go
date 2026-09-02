@@ -741,6 +741,34 @@ func TestResources(t *testing.T) {
 	timelineContents, err := srv.handleTimelineResource(ctx, timelineReq)
 	require.NoError(t, err)
 	require.NotEmpty(t, timelineContents)
+
+	// 6. glassmarble://intelligence
+	intelReq := mcp.ReadResourceRequest{}
+	intelReq.Params.URI = "glassmarble://intelligence"
+	intelContents, err := srv.handleIntelligenceResource(ctx, intelReq)
+	require.NoError(t, err)
+	require.NotEmpty(t, intelContents)
+
+	// 7. glassmarble://timeline
+	tlFileReq := mcp.ReadResourceRequest{}
+	tlFileReq.Params.URI = "glassmarble://timeline"
+	tlFileContents, err := srv.handleTimelineFileResource(ctx, tlFileReq)
+	require.NoError(t, err)
+	require.NotEmpty(t, tlFileContents)
+
+	// 8. glassmarble://conventions
+	convReq := mcp.ReadResourceRequest{}
+	convReq.Params.URI = "glassmarble://conventions"
+	convContents, err := srv.handleConventionsResource(ctx, convReq)
+	require.NoError(t, err)
+	require.NotEmpty(t, convContents)
+
+	// 9. glassmarble://telemetry
+	telemReq := mcp.ReadResourceRequest{}
+	telemReq.Params.URI = "glassmarble://telemetry"
+	telemContents, err := srv.handleTelemetryResource(ctx, telemReq)
+	require.NoError(t, err)
+	require.NotEmpty(t, telemContents)
 }
 
 func TestPrompts(t *testing.T) {
@@ -787,6 +815,47 @@ func TestPrompts(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, onboardingRes)
 	assert.NotEmpty(t, onboardingRes.Messages)
+
+	// 5. analyze_impact
+	var impactReq mcp.GetPromptRequest
+	impactReq.Params.Name = "analyze_impact"
+	impactReq.Params.Arguments = map[string]string{
+		"symbol": "cmd/root.go::Execute",
+	}
+	impactRes, err := srv.handleAnalyzeImpactPrompt(ctx, impactReq)
+	require.NoError(t, err)
+	require.NotNil(t, impactRes)
+	assert.NotEmpty(t, impactRes.Messages)
+
+	// 6. find_technical_debt
+	var debtReq mcp.GetPromptRequest
+	debtReq.Params.Name = "find_technical_debt"
+	debtRes, err := srv.handleTechnicalDebtPrompt(ctx, debtReq)
+	require.NoError(t, err)
+	require.NotNil(t, debtRes)
+	assert.NotEmpty(t, debtRes.Messages)
+
+	// 7. explain_component
+	var compReq mcp.GetPromptRequest
+	compReq.Params.Name = "explain_component"
+	compReq.Params.Arguments = map[string]string{
+		"component": "internal/akg",
+	}
+	compRes, err := srv.handleExplainComponentPrompt(ctx, compReq)
+	require.NoError(t, err)
+	require.NotNil(t, compRes)
+	assert.NotEmpty(t, compRes.Messages)
+
+	// 8. generate_diagram
+	var diagReq mcp.GetPromptRequest
+	diagReq.Params.Name = "generate_diagram"
+	diagReq.Params.Arguments = map[string]string{
+		"diagram_type": "C4_CONTAINER",
+	}
+	diagRes, err := srv.handleGenerateDiagramPrompt(ctx, diagReq)
+	require.NoError(t, err)
+	require.NotNil(t, diagRes)
+	assert.NotEmpty(t, diagRes.Messages)
 }
 
 
