@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -45,6 +46,8 @@ func DefaultConfig() ServerConfig {
 }
 
 // Validate normalizes paths and checks configuration sanity.
+// It also wires optional Bearer token auth via GLASSMARBLE_MCP_TOKEN env var (Section 9.2):
+// if AuthToken is empty, the env var is consulted and adopted if present.
 func (c *ServerConfig) Validate() error {
 	if c.RootDir == "" {
 		c.RootDir = "."
@@ -72,6 +75,39 @@ func (c *ServerConfig) Validate() error {
 	if c.Port <= 0 || c.Port > 65535 {
 		c.Port = 8765
 	}
+
+	// Wire Bearer token from env if not explicitly set (Section 6.5, 9.2).
+	// This enables: GLASSMARBLE_MCP_TOKEN=xxx gmb mcp --transport sse
+	if strings.TrimSpace(c.AuthToken) == "" {
+		if envTok := strings.TrimSpace(os.Getenv("GLASSMARBLE_MCP_TOKEN")); envTok != "" {
+			c.AuthToken = envTok
+		}
+	}
+	// Basic token hygiene: warn if token is too short (likely misconfiguration).
+	if c.AuthToken != "" && len(c.AuthToken) < 16 {
+		return fmt.Errorf("auth token too short (%d chars); expected >=16 chars for GLASSMARBLE_MCP_TOKEN", len(c.AuthToken))
+	}
+
+	// Normalize ToolsFilter: trim, lowercase, split commas, dedupe, drop empties.
+	// Supports both pre-split slices and raw comma-separated entries.
+	var normalized []string
+	seen := make(map[string]bool)
+	for _, f := range c.ToolsFilter {
+		// Allow entries that still contain commas (e.g. from raw flag before split).
+		parts := strings.Split(f, ",")
+		for _, p := range parts {
+			p = strings.TrimSpace(strings.ToLower(p))
+			if p == "" {
+				continue
+			}
+			if seen[p] {
+				continue
+			}
+			seen[p] = true
+			normalized = append(normalized, p)
+		}
+	}
+	c.ToolsFilter = normalized
 
 	return nil
 }

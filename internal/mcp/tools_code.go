@@ -14,64 +14,107 @@ import (
 
 // registerCodeTools binds source code inspection and navigation tools to the MCP server.
 func (s *Server) registerCodeTools() {
-	// 1. gmb_code_definition Tool
-	codeDefinitionTool := mcp.NewTool("gmb_code_definition",
-		mcp.WithDescription("Locate symbol definition in the Architecture Knowledge Graph and return its source code implementation."),
-		mcp.WithString("symbol",
-			mcp.Required(),
-			mcp.Description("Symbol ID (e.g. 'cmd/root.go::Execute') or function/struct name"),
-		),
-	)
-	s.RegisterTool(codeDefinitionTool, s.handleCodeDefinitionTool)
-
-	// 2. gmb_code_references Tool
-	codeReferencesTool := mcp.NewTool("gmb_code_references",
-		mcp.WithDescription("Find all callers, imports, and referencing locations for a symbol across the repository."),
-		mcp.WithString("symbol",
-			mcp.Required(),
-			mcp.Description("Target symbol ID or name"),
-		),
-	)
-	s.RegisterTool(codeReferencesTool, s.handleCodeReferencesTool)
-
-	// 3. gmb_code_callgraph Tool
-	codeCallgraphTool := mcp.NewTool("gmb_code_callgraph",
-		mcp.WithDescription("Traverse function/method invocation call graph from a starting symbol."),
-		mcp.WithString("symbol",
-			mcp.Required(),
-			mcp.Description("Root function or method symbol ID"),
-		),
-		mcp.WithString("direction",
-			mcp.Description("Call traversal direction: outgoing (callees), incoming (callers), or both (default)"),
-		),
-		mcp.WithNumber("depth",
-			mcp.Description("Maximum call chain traversal depth (default 3, max 10)"),
-		),
-	)
-	s.RegisterTool(codeCallgraphTool, s.handleCodeCallgraphTool)
-
-	// 4. gmb_code_context Tool
-	codeContextTool := mcp.NewTool("gmb_code_context",
-		mcp.WithDescription("Retrieve surrounding source code context, enclosing symbols, and dependencies for a file and line number."),
-		mcp.WithString("file",
-			mcp.Required(),
-			mcp.Description("Relative file path (e.g. 'internal/mcp/server.go')"),
-		),
-		mcp.WithNumber("line",
-			mcp.Required(),
-			mcp.Description("1-based line number"),
-		),
-		mcp.WithNumber("radius",
-			mcp.Description("Context radius lines before and after (default 20, max 100)"),
-		),
-	)
-	s.RegisterTool(codeContextTool, s.handleCodeContextTool)
+	if s.shouldRegister("gmb_code_definition", "code") {
+		codeDefinitionTool := mcp.NewTool("gmb_code_definition",
+			mcp.WithDescription("Locate symbol definition in the Architecture Knowledge Graph and return its source code implementation."),
+			mcp.WithString("symbol",
+				mcp.Required(),
+				mcp.Description("Symbol ID (e.g. 'cmd/root.go::Execute') or function/struct name"),
+			),
+			mcp.WithToolAnnotation(mcp.ToolAnnotation{
+				Title:           "gmb_code_definition",
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+				OpenWorldHint:   mcp.ToBoolPtr(false),
+			}),
+		)
+		s.RegisterTool(codeDefinitionTool, s.handleCodeDefinitionTool)
+	}
+	if s.shouldRegister("gmb_code_references", "code") {
+		codeReferencesTool := mcp.NewTool("gmb_code_references",
+			mcp.WithDescription("Find all callers, imports, and referencing locations for a symbol across the repository."),
+			mcp.WithString("symbol",
+				mcp.Required(),
+				mcp.Description("Target symbol ID or name"),
+			),
+			mcp.WithToolAnnotation(mcp.ToolAnnotation{
+				Title:           "gmb_code_references",
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+				OpenWorldHint:   mcp.ToBoolPtr(false),
+			}),
+		)
+		s.RegisterTool(codeReferencesTool, s.handleCodeReferencesTool)
+	}
+	if s.shouldRegister("gmb_code_callgraph", "code") {
+		codeCallgraphTool := mcp.NewTool("gmb_code_callgraph",
+			mcp.WithDescription("Traverse function/method invocation call graph from a starting symbol."),
+			mcp.WithString("symbol",
+				mcp.Required(),
+				mcp.Description("Root function or method symbol ID"),
+			),
+			mcp.WithString("direction",
+				mcp.Description("Call traversal direction: outgoing (callees), incoming (callers), or both (default)"),
+			),
+			mcp.WithNumber("depth",
+				mcp.Description("Maximum call chain traversal depth (default 3, max 10)"),
+			),
+			mcp.WithToolAnnotation(mcp.ToolAnnotation{
+				Title:           "gmb_code_callgraph",
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+				OpenWorldHint:   mcp.ToBoolPtr(false),
+			}),
+		)
+		s.RegisterTool(codeCallgraphTool, s.handleCodeCallgraphTool)
+	}
+	if s.shouldRegister("gmb_code_context", "code") {
+		codeContextTool := mcp.NewTool("gmb_code_context",
+			mcp.WithDescription("Retrieve surrounding source code context, enclosing symbols, and dependencies for a file and line number."),
+			mcp.WithString("file",
+				mcp.Required(),
+				mcp.Description("Relative file path (e.g. 'internal/mcp/server.go')"),
+			),
+			mcp.WithNumber("line",
+				mcp.Required(),
+				mcp.Description("1-based line number"),
+			),
+			mcp.WithNumber("radius",
+				mcp.Description("Context radius lines before and after (default 20, max 100)"),
+			),
+			mcp.WithToolAnnotation(mcp.ToolAnnotation{
+				Title:           "gmb_code_context",
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+				OpenWorldHint:   mcp.ToBoolPtr(false),
+			}),
+		)
+		s.RegisterTool(codeContextTool, s.handleCodeContextTool)
+	}
 }
-
 func (s *Server) handleCodeDefinitionTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if r, cancelled := checkCancellation(ctx); cancelled {
+		return r, nil
+	}
 	symbol, err := requireStringArg(req, "symbol")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if len(symbol) > maxIDArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "symbol", maxIDArgLen, len(symbol))), nil
+	}
+	if len(symbol) > maxStringArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "symbol", maxStringArgLen, len(symbol))), nil
+	}
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
 	}
 
 	graph, err := s.bridge.Snapshot()
@@ -84,10 +127,20 @@ func (s *Server) handleCodeDefinitionTool(ctx context.Context, req mcp.CallToolR
 		// Search by name fallback
 		var matches []*link.ResolvedNode
 		graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 			if strings.EqualFold(n.Name, symbol) || strings.HasSuffix(id, "::"+symbol) {
 				matches = append(matches, n)
 			}
 		})
+		select {
+		case <-ctx.Done():
+			return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+		default:
+		}
 		if len(matches) > 0 {
 			node = matches[0]
 			ok = true
@@ -103,6 +156,10 @@ func (s *Server) handleCodeDefinitionTool(ctx context.Context, req mcp.CallToolR
 	}
 
 	absPath := filepath.Join(s.bridge.RootDir(), filepath.FromSlash(node.FileSpec.Path))
+	// 1 MiB guard (Section 6.4 Compute Exhaustion & 6.6 Zero-Trust).
+	if fi, err := os.Stat(absPath); err == nil && fi.Size() > maxFileBytes {
+		return mcp.NewToolResultError(fmt.Sprintf("file %q is too large (%d bytes > %d bytes) — definition truncated to line range", node.FileSpec.Path, fi.Size(), maxFileBytes)), nil
+	}
 	data, err := os.ReadFile(absPath)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to read source file %s: %v", node.FileSpec.Path, err)), nil
@@ -146,9 +203,24 @@ func (s *Server) handleCodeDefinitionTool(ctx context.Context, req mcp.CallToolR
 }
 
 func (s *Server) handleCodeReferencesTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if r, cancelled := checkCancellation(ctx); cancelled {
+		return r, nil
+	}
 	symbol, err := requireStringArg(req, "symbol")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if len(symbol) > maxIDArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "symbol", maxIDArgLen, len(symbol))), nil
+	}
+	if len(symbol) > maxStringArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "symbol", maxStringArgLen, len(symbol))), nil
+	}
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
 	}
 
 	graph, err := s.bridge.Snapshot()
@@ -160,10 +232,20 @@ func (s *Server) handleCodeReferencesTool(ctx context.Context, req mcp.CallToolR
 	if len(inEdges) == 0 {
 		// Fallback check if symbol is exact name
 		graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 			if strings.EqualFold(n.Name, symbol) || strings.HasSuffix(id, "::"+symbol) {
 				inEdges = append(inEdges, graph.GetInboundEdges(id)...)
 			}
 		})
+		select {
+		case <-ctx.Done():
+			return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+		default:
+		}
 	}
 
 	type refItem struct {
@@ -206,18 +288,30 @@ func (s *Server) handleCodeReferencesTool(ctx context.Context, req mcp.CallToolR
 }
 
 func (s *Server) handleCodeCallgraphTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if r, cancelled := checkCancellation(ctx); cancelled {
+		return r, nil
+	}
 	symbol, err := requireStringArg(req, "symbol")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	if len(symbol) > maxIDArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "symbol", maxIDArgLen, len(symbol))), nil
+	}
+	if len(symbol) > maxStringArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "symbol", maxStringArgLen, len(symbol))), nil
+	}
 
 	direction := getStringArg(req, "direction", "both")
-	depth := getIntArg(req, "depth", 3)
-	if depth < 1 {
-		depth = 1
+	if len(direction) > maxStringArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "direction", maxStringArgLen, len(direction))), nil
 	}
-	if depth > 10 {
-		depth = 10
+	depth := getIntArgClamped(req, "depth", 3, 1, 10)
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
 	}
 
 	graph, err := s.bridge.Snapshot()
@@ -241,9 +335,24 @@ func (s *Server) handleCodeCallgraphTool(ctx context.Context, req mcp.CallToolRe
 		visited[symbol] = true
 
 		for d := 0; d < depth && len(queue) > 0; d++ {
+			select {
+			case <-ctx.Done():
+				return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+			default:
+			}
 			var nextQueue []string
 			for _, curr := range queue {
+				select {
+				case <-ctx.Done():
+					return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+				default:
+				}
 				for _, e := range graph.GetOutboundEdges(curr) {
+					select {
+					case <-ctx.Done():
+						return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+					default:
+					}
 					if strings.Contains(strings.ToLower(string(e.Type)), "call") || strings.Contains(strings.ToLower(string(e.Type)), "invoke") {
 						callEdges = append(callEdges, callEdge{
 							Caller: curr,
@@ -268,9 +377,24 @@ func (s *Server) handleCodeCallgraphTool(ctx context.Context, req mcp.CallToolRe
 		visited[symbol] = true
 
 		for d := 0; d < depth && len(queue) > 0; d++ {
+			select {
+			case <-ctx.Done():
+				return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+			default:
+			}
 			var nextQueue []string
 			for _, curr := range queue {
+				select {
+				case <-ctx.Done():
+					return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+				default:
+				}
 				for _, e := range graph.GetInboundEdges(curr) {
+					select {
+					case <-ctx.Done():
+						return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+					default:
+					}
 					if strings.Contains(strings.ToLower(string(e.Type)), "call") || strings.Contains(strings.ToLower(string(e.Type)), "invoke") {
 						callEdges = append(callEdges, callEdge{
 							Caller: e.SourceID,
@@ -305,21 +429,34 @@ func (s *Server) handleCodeCallgraphTool(ctx context.Context, req mcp.CallToolRe
 }
 
 func (s *Server) handleCodeContextTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if r, cancelled := checkCancellation(ctx); cancelled {
+		return r, nil
+	}
 	file, err := requireStringArg(req, "file")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	if len(file) > maxStringArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "file", maxStringArgLen, len(file))), nil
+	}
+	if len(file) > maxIDArgLen && strings.Contains(file, "::") {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "file", maxIDArgLen, len(file))), nil
+	}
 
-	line := getIntArg(req, "line", 1)
-	radius := getIntArg(req, "radius", 20)
-	if radius < 5 {
-		radius = 5
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
 	}
-	if radius > 100 {
-		radius = 100
-	}
+
+	line := getIntArgClamped(req, "line", 1, 1, 1000000)
+	radius := getIntArgClamped(req, "radius", 20, 5, 100)
 
 	absPath := filepath.Join(s.bridge.RootDir(), filepath.FromSlash(file))
+	// 1 MiB guard (Section 6.4): reject overly large files before reading.
+	if fi, err := os.Stat(absPath); err == nil && fi.Size() > maxFileBytes {
+		return mcp.NewToolResultError(fmt.Sprintf("file %q is too large (%d bytes > %d bytes) — use a smaller radius or read a bounded line range", file, fi.Size(), maxFileBytes)), nil
+	}
 	data, err := os.ReadFile(absPath)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to read file %s: %v", file, err)), nil
@@ -350,12 +487,22 @@ func (s *Server) handleCodeContextTool(ctx context.Context, req mcp.CallToolRequ
 	if graph != nil {
 		cleanFile := filepath.ToSlash(file)
 		graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 			if filepath.ToSlash(n.FileSpec.Path) == cleanFile {
 				if n.FileSpec.LineStart <= line && (n.FileSpec.LineEnd >= line || n.FileSpec.LineEnd == 0) {
 					enclosingSymbols = append(enclosingSymbols, fmt.Sprintf("%s [%s]", n.ID, n.Kind))
 				}
 			}
 		})
+		select {
+		case <-ctx.Done():
+			return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+		default:
+		}
 	}
 
 	result := map[string]any{

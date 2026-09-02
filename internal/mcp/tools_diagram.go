@@ -13,39 +13,68 @@ import (
 
 // registerDiagramTools binds diagram generation and catalog tools to the MCP server.
 func (s *Server) registerDiagramTools() {
-	// 1. gmb_render_diagram Tool
-	renderDiagramTool := mcp.NewTool("gmb_render_diagram",
-		mcp.WithDescription("Render architecture diagrams (C4, UML, ER, Flowchart, Dependency, Layered) from the active AKG."),
-		mcp.WithString("type",
-			mcp.Required(),
-			mcp.Description("Diagram type: C4_CONTEXT, C4_CONTAINER, UML_CLASS, UML_SEQUENCE, DEPENDENCY_GRAPH, CALL_GRAPH, LAYERED_GRAPH, COMPONENT_GRAPH, FLOWCHART, ER_DIAGRAM, HOTSPOT_GRAPH"),
-		),
-		mcp.WithString("format",
-			mcp.Description("Output markup format: mermaid (default), plantuml, dot, d2"),
-		),
-		mcp.WithString("scope",
-			mcp.Description("Scope of the diagram: global (default), folder:<path>, file:<path>"),
-		),
-		mcp.WithString("entry",
-			mcp.Description("Entry point node ID (e.g. 'cmd/root.go::Execute' - required for UML_SEQUENCE)"),
-		),
-		mcp.WithNumber("depth",
-			mcp.Description("Maximum traversal depth from entry point (0 = unlimited)"),
-		),
-	)
-	s.RegisterTool(renderDiagramTool, s.handleRenderDiagramTool)
-
-	// 2. gmb_list_diagram_types Tool
-	listDiagramsTool := mcp.NewTool("gmb_list_diagram_types",
-		mcp.WithDescription("List all supported architectural diagram types with descriptions and formats."),
-	)
-	s.RegisterTool(listDiagramsTool, s.handleListDiagramTypesTool)
+	if s.shouldRegister("gmb_render_diagram", "diagram") {
+		renderDiagramTool := mcp.NewTool("gmb_render_diagram",
+			mcp.WithDescription("Render architecture diagrams (C4, UML, ER, Flowchart, Dependency, Layered) from the active AKG."),
+			mcp.WithString("type",
+				mcp.Required(),
+				mcp.Description("Diagram type: C4_CONTEXT, C4_CONTAINER, UML_CLASS, UML_SEQUENCE, DEPENDENCY_GRAPH, CALL_GRAPH, LAYERED_GRAPH, COMPONENT_GRAPH, FLOWCHART, ER_DIAGRAM, HOTSPOT_GRAPH"),
+			),
+			mcp.WithString("format",
+				mcp.Description("Output markup format: mermaid (default), plantuml, dot, d2"),
+			),
+			mcp.WithString("scope",
+				mcp.Description("Scope of the diagram: global (default), folder:<path>, file:<path>"),
+			),
+			mcp.WithString("entry",
+				mcp.Description("Entry point node ID (e.g. 'cmd/root.go::Execute' - required for UML_SEQUENCE)"),
+			),
+			mcp.WithNumber("depth",
+				mcp.Description("Maximum traversal depth from entry point (0 = unlimited)"),
+			),
+			mcp.WithToolAnnotation(mcp.ToolAnnotation{
+				Title:           "gmb_render_diagram",
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+				OpenWorldHint:   mcp.ToBoolPtr(false),
+			}),
+		)
+		s.RegisterTool(renderDiagramTool, s.handleRenderDiagramTool)
+	}
+	if s.shouldRegister("gmb_list_diagram_types", "diagram") {
+		listDiagramsTool := mcp.NewTool("gmb_list_diagram_types",
+			mcp.WithDescription("List all supported architectural diagram types with descriptions and formats."),
+			mcp.WithToolAnnotation(mcp.ToolAnnotation{
+				Title:           "gmb_list_diagram_types",
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+				OpenWorldHint:   mcp.ToBoolPtr(false),
+			}),
+		)
+		s.RegisterTool(listDiagramsTool, s.handleListDiagramTypesTool)
+	}
 }
-
 func (s *Server) handleRenderDiagramTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if r, cancelled := checkCancellation(ctx); cancelled {
+		return r, nil
+	}
 	diagramTypeStr, err := requireStringArg(req, "type")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if len(diagramTypeStr) > maxStringArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "type", maxStringArgLen, len(diagramTypeStr))), nil
+	}
+
+	token := getProgressToken(req)
+	_ = s.sendProgress(ctx, token, 0, 100, "starting diagram render for "+diagramTypeStr)
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
 	}
 
 	graph, err := s.bridge.Snapshot()
@@ -53,10 +82,25 @@ func (s *Server) handleRenderDiagramTool(ctx context.Context, req mcp.CallToolRe
 		return mcp.NewToolResultError(fmt.Sprintf("AKG database unavailable: %v — run 'gmb analyze' first", err)), nil
 	}
 
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
+	}
+
 	format := getStringArg(req, "format", "mermaid")
+	if len(format) > maxStringArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "format", maxStringArgLen, len(format))), nil
+	}
 	scopeStr := getStringArg(req, "scope", "global")
+	if len(scopeStr) > maxStringArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "scope", maxStringArgLen, len(scopeStr))), nil
+	}
 	entry := getStringArg(req, "entry", "")
-	depth := getIntArg(req, "depth", 0)
+	if len(entry) > maxIDArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "entry", maxIDArgLen, len(entry))), nil
+	}
+	depth := getIntArgClamped(req, "depth", 0, 0, 50)
 
 	normType := strings.ToUpper(strings.TrimSpace(diagramTypeStr))
 	normType = strings.ReplaceAll(normType, "-", "_")
@@ -65,6 +109,13 @@ func (s *Server) handleRenderDiagramTool(ctx context.Context, req mcp.CallToolRe
 	dt := types.DiagramType(normType)
 
 	scopeLevel, scopePath := parseDiagramScope(scopeStr)
+
+	_ = s.sendProgress(ctx, token, 40, 100, "projecting diagram pipeline")
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
+	}
 
 	opts := types.QueryOptions{
 		Format:        format,
@@ -85,6 +136,13 @@ func (s *Server) handleRenderDiagramTool(ctx context.Context, req mcp.CallToolRe
 		return mcp.NewToolResultError(fmt.Sprintf("Diagram rendering failed: %v", err)), nil
 	}
 
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
+	}
+	_ = s.sendProgress(ctx, token, 80, 100, "serializing markup")
+
 	result := map[string]any{
 		"type":   normType,
 		"format": format,
@@ -96,6 +154,7 @@ func (s *Server) handleRenderDiagramTool(ctx context.Context, req mcp.CallToolRe
 		return mcp.NewToolResultError(fmt.Sprintf("Serialization error: %v", err)), nil
 	}
 
+	_ = s.sendProgress(ctx, token, 100, 100, "complete")
 	return mcp.NewToolResultText(string(out)), nil
 }
 

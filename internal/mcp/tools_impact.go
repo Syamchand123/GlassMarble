@@ -14,39 +14,62 @@ import (
 
 // registerImpactTools binds blast-radius and hotspot analysis tools to the MCP server.
 func (s *Server) registerImpactTools() {
-	// 1. gmb_impact_analysis Tool
-	impactTool := mcp.NewTool("gmb_impact_analysis",
-		mcp.WithDescription("Compute reverse topological blast-radius and architectural risk assessment for modifying a symbol or file."),
-		mcp.WithString("target",
-			mcp.Required(),
-			mcp.Description("Target symbol ID (e.g. 'cmd/root.go::Execute') or relative file path (e.g. 'internal/akg/graph.go')"),
-		),
-		mcp.WithNumber("depth",
-			mcp.Description("Maximum reverse traversal depth (default 0 = unlimited closure)"),
-		),
-		mcp.WithBoolean("tests_only",
-			mcp.Description("Restrict affected dependents report exclusively to impacted test files"),
-		),
-	)
-	s.RegisterTool(impactTool, s.handleImpactTool)
-
-	// 2. gmb_hotspot_rankings Tool
-	hotspotTool := mcp.NewTool("gmb_hotspot_rankings",
-		mcp.WithDescription("Identify top architectural hotspots: symbols with highest in-degree / most dependents."),
-		mcp.WithNumber("top",
-			mcp.Description("Number of top hotspot nodes to return (default 10, max 100)"),
-		),
-	)
-	s.RegisterTool(hotspotTool, s.handleHotspotTool)
+	if s.shouldRegister("gmb_impact_analysis", "impact") {
+		impactTool := mcp.NewTool("gmb_impact_analysis",
+			mcp.WithDescription("Compute reverse topological blast-radius and architectural risk assessment for modifying a symbol or file."),
+			mcp.WithString("target",
+				mcp.Required(),
+				mcp.Description("Target symbol ID (e.g. 'cmd/root.go::Execute') or relative file path (e.g. 'internal/akg/graph.go')"),
+			),
+			mcp.WithNumber("depth",
+				mcp.Description("Maximum reverse traversal depth (default 0 = unlimited closure)"),
+			),
+			mcp.WithBoolean("tests_only",
+				mcp.Description("Restrict affected dependents report exclusively to impacted test files"),
+			),
+			mcp.WithToolAnnotation(mcp.ToolAnnotation{
+				Title:           "gmb_impact_analysis",
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+				OpenWorldHint:   mcp.ToBoolPtr(false),
+			}),
+		)
+		s.RegisterTool(impactTool, s.handleImpactTool)
+	}
+	if s.shouldRegister("gmb_hotspot_rankings", "impact") {
+		hotspotTool := mcp.NewTool("gmb_hotspot_rankings",
+			mcp.WithDescription("Identify top architectural hotspots: symbols with highest in-degree / most dependents."),
+			mcp.WithNumber("top",
+				mcp.Description("Number of top hotspot nodes to return (default 10, max 100)"),
+			),
+			mcp.WithToolAnnotation(mcp.ToolAnnotation{
+				Title:           "gmb_hotspot_rankings",
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+				OpenWorldHint:   mcp.ToBoolPtr(false),
+			}),
+		)
+		s.RegisterTool(hotspotTool, s.handleHotspotTool)
+	}
 }
-
 func (s *Server) handleImpactTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if r, cancelled := checkCancellation(ctx); cancelled {
+		return r, nil
+	}
 	target, err := requireStringArg(req, "target")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	if len(target) > maxIDArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "target", maxIDArgLen, len(target))), nil
+	}
+	if len(target) > maxStringArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "target", maxStringArgLen, len(target))), nil
+	}
 
-	depth := getIntArg(req, "depth", 0)
+	depth := getIntArgClamped(req, "depth", 0, 0, 50)
 	testsOnly := false
 	m := getArgMap(req)
 	if val, ok := m["tests_only"]; ok {
@@ -55,9 +78,18 @@ func (s *Server) handleImpactTool(ctx context.Context, req mcp.CallToolRequest) 
 		}
 	}
 
+	token := getProgressToken(req)
+	_ = s.sendProgress(ctx, token, 0, 100, "starting impact analysis for "+target)
+
 	graph, err := s.bridge.Snapshot()
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("AKG database unavailable: %v — run 'gmb analyze' first", err)), nil
+	}
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
 	}
 
 	opts := impact_analyzer.ImpactOptions{
@@ -65,31 +97,49 @@ func (s *Server) handleImpactTool(ctx context.Context, req mcp.CallToolRequest) 
 		TestsOnly: testsOnly,
 	}
 
+	_ = s.sendProgress(ctx, token, 40, 100, "traversing reverse dependencies")
 	report, err := impact_analyzer.AnalyzeImpact(graph, target, opts)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Impact analysis failed: %v", err)), nil
 	}
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
+	}
+	_ = s.sendProgress(ctx, token, 80, 100, "serializing report")
 
 	out, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to serialize impact report: %v", err)), nil
 	}
 
+	_ = s.sendProgress(ctx, token, 100, 100, "complete")
 	return mcp.NewToolResultText(string(out)), nil
 }
 
 func (s *Server) handleHotspotTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	top := getIntArg(req, "top", 10)
-	if top < 1 {
-		top = 10
+	if r, cancelled := checkCancellation(ctx); cancelled {
+		return r, nil
 	}
-	if top > 100 {
-		top = 100
+	top := getIntArgClamped(req, "top", 10, 1, 100)
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
 	}
 
 	graph, err := s.bridge.Snapshot()
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("AKG database unavailable: %v — run 'gmb analyze' first", err)), nil
+	}
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
 	}
 
 	type hotspotNode struct {
@@ -105,6 +155,11 @@ func (s *Server) handleHotspotTool(ctx context.Context, req mcp.CallToolRequest)
 
 	var allNodes []hotspotNode
 	graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
 		inEdges := len(graph.GetInboundEdges(id))
 		outEdges := len(graph.GetOutboundEdges(id))
 		allNodes = append(allNodes, hotspotNode{
@@ -118,6 +173,12 @@ func (s *Server) handleHotspotTool(ctx context.Context, req mcp.CallToolRequest)
 			OutDegree: outEdges,
 		})
 	})
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
+	}
 
 	sort.Slice(allNodes, func(i, j int) bool {
 		if allNodes[i].InDegree == allNodes[j].InDegree {

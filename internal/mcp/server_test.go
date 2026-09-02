@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -856,6 +857,125 @@ func TestPrompts(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, diagRes)
 	assert.NotEmpty(t, diagRes.Messages)
+}
+
+func TestProtocolVersion_Pin(t *testing.T) {
+	assert.Equal(t, "2024-11-05", ProtocolVersion)
+	assert.Equal(t, "2024-11-05", GetProtocolVersion())
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+	assert.Equal(t, "2024-11-05", srv.ProtocolVersion())
+	// Verify instructions contain protocol version
+	// mcp-go stores instructions internally; we check via server info tool instead
+	res, err := srv.handleServerInfoTool(context.Background(), mcp.CallToolRequest{})
+	require.NoError(t, err)
+	require.False(t, res.IsError)
+	text := res.Content[0].(mcp.TextContent).Text
+	var data map[string]any
+	require.NoError(t, json.Unmarshal([]byte(text), &data))
+	assert.Equal(t, "2024-11-05", data["protocol_version"])
+}
+
+func TestToolCount_SupersetAtLeast41(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+	tools := srv.MCPServer().ListTools()
+	// Enterprise superset is 56, spec minimum 41. Ensure at least 41.
+	assert.GreaterOrEqual(t, len(tools), 41, "expected at least 41 tools when no filter (enterprise superset)")
+	// Spot-check spec-mandated tools are present
+	required := []string{"gmb_status", "gmb_server_info", "code_read_file", "code_search_symbol", "code_list_directory", "diagram_generate", "diagram_types"}
+	for _, name := range required {
+		// normalize: diagram_types alias may be diagram_types vs system_diagram_types
+		if name == "diagram_generate" {
+			// delegated name is diagram_generate
+			_, ok1 := tools["diagram_generate"]
+			_, ok2 := tools["gmb_render_diagram"]
+			assert.True(t, ok1 || ok2, "expected diagram tool present")
+			continue
+		}
+		if name == "diagram_types" {
+			_, ok1 := tools["diagram_types"]
+			_, ok2 := tools["system_diagram_types"]
+			_, ok3 := tools["gmb_list_diagram_types"]
+			assert.True(t, ok1 || ok2 || ok3, "expected diagram_types present")
+			continue
+		}
+		_, ok := tools[name]
+		assert.True(t, ok, "required tool %q missing", name)
+	}
+}
+
+func TestToolsFilter_CategoryAndExact(t *testing.T) {
+	// Filter by category "code" should include only code-related tools
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+	cfg.ToolsFilter = []string{"code"}
+	require.NoError(t, cfg.Validate())
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+	tools := srv.MCPServer().ListTools()
+	assert.NotEmpty(t, tools)
+	for name := range tools {
+		// All remaining tools should be code category (code_* or gmb_code_* or code_list_*)
+		isCode := strings.HasPrefix(name, "code_") || strings.HasPrefix(name, "gmb_code_")
+		assert.True(t, isCode, "unexpected tool %q for filter code", name)
+	}
+	// Filtering by exact tool name
+	cfg2 := DefaultConfig()
+	cfg2.RootDir = "."
+	cfg2.ToolsFilter = []string{"gmb_status", "gmb_impact_analysis"}
+	require.NoError(t, cfg2.Validate())
+	srv2, err := NewServer(cfg2)
+	require.NoError(t, err)
+	defer srv2.Close()
+	tools2 := srv2.MCPServer().ListTools()
+	assert.Equal(t, 2, len(tools2))
+	_, ok1 := tools2["gmb_status"]
+	_, ok2 := tools2["gmb_impact_analysis"]
+	assert.True(t, ok1 && ok2)
+
+	// Filtering by categories "akg,impact" example from spec
+	cfg3 := DefaultConfig()
+	cfg3.RootDir = "."
+	cfg3.ToolsFilter = []string{"akg", "impact"}
+	require.NoError(t, cfg3.Validate())
+	srv3, err := NewServer(cfg3)
+	require.NoError(t, err)
+	defer srv3.Close()
+	tools3 := srv3.MCPServer().ListTools()
+	for name := range tools3 {
+		isAKG := strings.HasPrefix(name, "akg_")
+		isImpact := name == "gmb_impact_analysis" || name == "gmb_hotspot_rankings"
+		// Also allow query_architecture_memory etc which are category akg
+		isMemoryAKG := name == "query_architecture_memory" || name == "get_architecture_timeline" || name == "get_architecture_patterns"
+		assert.True(t, isAKG || isImpact || isMemoryAKG, "unexpected tool %q for filter akg,impact", name)
+	}
+}
+
+func TestConfigToolsFilterNormalization(t *testing.T) {
+	cfg := ServerConfig{RootDir: ".", ToolsFilter: []string{" AKG ", "code", "AKG", "", "  "}}
+	require.NoError(t, cfg.Validate())
+	assert.Equal(t, []string{"akg", "code"}, cfg.ToolsFilter)
+	cfg2 := ServerConfig{RootDir: ".", ToolsFilter: []string{"akg,impact", "code"}}
+	require.NoError(t, cfg2.Validate())
+	assert.ElementsMatch(t, []string{"akg", "impact", "code"}, cfg2.ToolsFilter)
+}
+
+func TestAuthTokenFlagPrecedence(t *testing.T) {
+	// Ensure Validate picks up env when AuthToken empty, but flag > env is handled in cmd/mcp.go
+	// Here we test config Validate with explicit AuthToken
+	cfg := ServerConfig{RootDir: ".", AuthToken: "1234567890123456"}
+	require.NoError(t, cfg.Validate())
+	assert.Equal(t, "1234567890123456", cfg.AuthToken)
+	cfgShort := ServerConfig{RootDir: ".", AuthToken: "short"}
+	assert.Error(t, cfgShort.Validate())
 }
 
 

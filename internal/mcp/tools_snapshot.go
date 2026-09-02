@@ -14,53 +14,71 @@ import (
 
 // registerSnapshotTools binds point-in-time architecture snapshot query and diff tools.
 func (s *Server) registerSnapshotTools() {
-	// 1. gmb_snapshot_list Tool
-	snapshotListTool := mcp.NewTool("gmb_snapshot_list",
-		mcp.WithDescription("List captured point-in-time architecture snapshots in the repository."),
-		mcp.WithNumber("limit",
-			mcp.Description("Maximum snapshots to list (default 20, max 100)"),
-		),
-	)
-	s.RegisterTool(snapshotListTool, s.handleSnapshotListTool)
-
-	// 2. gmb_snapshot_at Tool
-	snapshotAtTool := mcp.NewTool("gmb_snapshot_at",
-		mcp.WithDescription("Inspect architecture state at a specific snapshot ID, commit hash, or 'HEAD'."),
-		mcp.WithString("ref",
-			mcp.Required(),
-			mcp.Description("Snapshot ID, commit hash, git tag, or 'HEAD'"),
-		),
-	)
-	s.RegisterTool(snapshotAtTool, s.handleSnapshotAtTool)
-
-	// 3. gmb_snapshot_diff Tool
-	snapshotDiffTool := mcp.NewTool("gmb_snapshot_diff",
-		mcp.WithDescription("Compare architectural state (components, metrics, patterns, smells) between two snapshots or commits."),
-		mcp.WithString("base_ref",
-			mcp.Required(),
-			mcp.Description("Base snapshot ID or commit hash"),
-		),
-		mcp.WithString("head_ref",
-			mcp.Required(),
-			mcp.Description("Head snapshot ID, commit hash, or 'HEAD'"),
-		),
-	)
-	s.RegisterTool(snapshotDiffTool, s.handleSnapshotDiffTool)
+	if s.shouldRegister("gmb_snapshot_list", "snapshot") {
+		snapshotListTool := mcp.NewTool("gmb_snapshot_list",
+			mcp.WithDescription("List captured point-in-time architecture snapshots in the repository."),
+			mcp.WithNumber("limit",
+				mcp.Description("Maximum snapshots to list (default 20, max 100)"),
+			),
+			mcp.WithToolAnnotation(mcp.ToolAnnotation{
+				Title:           "gmb_snapshot_list",
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+				OpenWorldHint:   mcp.ToBoolPtr(false),
+			}),
+		)
+		s.RegisterTool(snapshotListTool, s.handleSnapshotListTool)
+	}
+	if s.shouldRegister("gmb_snapshot_at", "snapshot") {
+		snapshotAtTool := mcp.NewTool("gmb_snapshot_at",
+			mcp.WithDescription("Inspect architecture state at a specific snapshot ID, commit hash, or 'HEAD'."),
+			mcp.WithString("ref",
+				mcp.Required(),
+				mcp.Description("Snapshot ID, commit hash, git tag, or 'HEAD'"),
+			),
+			mcp.WithToolAnnotation(mcp.ToolAnnotation{
+				Title:           "gmb_snapshot_at",
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+				OpenWorldHint:   mcp.ToBoolPtr(false),
+			}),
+		)
+		s.RegisterTool(snapshotAtTool, s.handleSnapshotAtTool)
+	}
+	if s.shouldRegister("gmb_snapshot_diff", "snapshot") {
+		snapshotDiffTool := mcp.NewTool("gmb_snapshot_diff",
+			mcp.WithDescription("Compare architectural state (components, metrics, patterns, smells) between two snapshots or commits."),
+			mcp.WithString("base_ref",
+				mcp.Required(),
+				mcp.Description("Base snapshot ID or commit hash"),
+			),
+			mcp.WithString("head_ref",
+				mcp.Required(),
+				mcp.Description("Head snapshot ID, commit hash, or 'HEAD'"),
+			),
+			mcp.WithToolAnnotation(mcp.ToolAnnotation{
+				Title:           "gmb_snapshot_diff",
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+				OpenWorldHint:   mcp.ToBoolPtr(false),
+			}),
+		)
+		s.RegisterTool(snapshotDiffTool, s.handleSnapshotDiffTool)
+	}
 }
-
 func (s *Server) handleSnapshotListTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if r, cancelled := checkCancellation(ctx); cancelled {
+		return r, nil
+	}
 	store, err := s.bridge.SnapshotStore()
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Snapshot store unavailable: %v", err)), nil
 	}
 
-	limit := getIntArg(req, "limit", 20)
-	if limit < 1 {
-		limit = 20
-	}
-	if limit > 100 {
-		limit = 100
-	}
+	limit := getIntArgClamped(req, "limit", 20, 1, 100)
 
 	entries := store.List()
 
@@ -103,9 +121,24 @@ func (s *Server) handleSnapshotListTool(ctx context.Context, req mcp.CallToolReq
 }
 
 func (s *Server) handleSnapshotAtTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if r, cancelled := checkCancellation(ctx); cancelled {
+		return r, nil
+	}
 	ref, err := requireStringArg(req, "ref")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if len(ref) > maxIDArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "ref", maxIDArgLen, len(ref))), nil
+	}
+	if len(ref) > maxStringArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "ref", maxStringArgLen, len(ref))), nil
+	}
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
 	}
 
 	store, err := s.bridge.SnapshotStore()
@@ -127,14 +160,29 @@ func (s *Server) handleSnapshotAtTool(ctx context.Context, req mcp.CallToolReque
 }
 
 func (s *Server) handleSnapshotDiffTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if r, cancelled := checkCancellation(ctx); cancelled {
+		return r, nil
+	}
 	baseRef, err := requireStringArg(req, "base_ref")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if len(baseRef) > maxIDArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "base_ref", maxIDArgLen, len(baseRef))), nil
 	}
 
 	headRef, err := requireStringArg(req, "head_ref")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if len(headRef) > maxIDArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "head_ref", maxIDArgLen, len(headRef))), nil
+	}
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
 	}
 
 	store, err := s.bridge.SnapshotStore()

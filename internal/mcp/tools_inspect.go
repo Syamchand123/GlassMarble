@@ -14,42 +14,63 @@ import (
 
 // registerInspectTools binds symbol inspection and dependency analysis tools.
 func (s *Server) registerInspectTools() {
-	// 1. gmb_inspect_search Tool
-	inspectSearchTool := mcp.NewTool("gmb_inspect_search",
-		mcp.WithDescription("Search AKG graph nodes by symbol name or ID substring, with optional kind filter."),
-		mcp.WithString("query",
-			mcp.Required(),
-			mcp.Description("Substring to search for in symbol name or node ID"),
-		),
-		mcp.WithString("kind",
-			mcp.Description("Optional node kind filter (e.g. FUNCTION, METHOD, STRUCT, CLASS, INTERFACE, FILE, MODULE, PACKAGE)"),
-		),
-		mcp.WithNumber("limit",
-			mcp.Description("Maximum matching nodes to return (default 50, max 200)"),
-		),
-	)
-	s.RegisterTool(inspectSearchTool, s.handleInspectSearchTool)
-
-	// 2. gmb_inspect_node Tool
-	inspectNodeTool := mcp.NewTool("gmb_inspect_node",
-		mcp.WithDescription("Get detailed symbol metadata, file location, properties, and inbound/outbound dependency edges for a node ID."),
-		mcp.WithString("id",
-			mcp.Required(),
-			mcp.Description("Full node ID (e.g. 'cmd/root.go::Execute' or 'internal/akg/graph.go::CodePropertyGraph')"),
-		),
-	)
-	s.RegisterTool(inspectNodeTool, s.handleInspectNodeTool)
-
-	// 3. gmb_dependency_analysis Tool
-	dependencyTool := mcp.NewTool("gmb_dependency_analysis",
-		mcp.WithDescription("Analyze inbound and outbound dependency edges for a file or symbol in the Architecture Knowledge Graph."),
-		mcp.WithString("target",
-			mcp.Description("Target symbol ID or relative file path (leave empty for global dependency summary)"),
-		),
-	)
-	s.RegisterTool(dependencyTool, s.handleDependencyTool)
+	if s.shouldRegister("gmb_inspect_search", "inspect") {
+		inspectSearchTool := mcp.NewTool("gmb_inspect_search",
+			mcp.WithDescription("Search AKG graph nodes by symbol name or ID substring, with optional kind filter."),
+			mcp.WithString("query",
+				mcp.Required(),
+				mcp.Description("Substring to search for in symbol name or node ID"),
+			),
+			mcp.WithString("kind",
+				mcp.Description("Optional node kind filter (e.g. FUNCTION, METHOD, STRUCT, CLASS, INTERFACE, FILE, MODULE, PACKAGE)"),
+			),
+			mcp.WithNumber("limit",
+				mcp.Description("Maximum matching nodes to return (default 50, max 200)"),
+			),
+			mcp.WithToolAnnotation(mcp.ToolAnnotation{
+				Title:           "gmb_inspect_search",
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+				OpenWorldHint:   mcp.ToBoolPtr(false),
+			}),
+		)
+		s.RegisterTool(inspectSearchTool, s.handleInspectSearchTool)
+	}
+	if s.shouldRegister("gmb_inspect_node", "inspect") {
+		inspectNodeTool := mcp.NewTool("gmb_inspect_node",
+			mcp.WithDescription("Get detailed symbol metadata, file location, properties, and inbound/outbound dependency edges for a node ID."),
+			mcp.WithString("id",
+				mcp.Required(),
+				mcp.Description("Full node ID (e.g. 'cmd/root.go::Execute' or 'internal/akg/graph.go::CodePropertyGraph')"),
+			),
+			mcp.WithToolAnnotation(mcp.ToolAnnotation{
+				Title:           "gmb_inspect_node",
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+				OpenWorldHint:   mcp.ToBoolPtr(false),
+			}),
+		)
+		s.RegisterTool(inspectNodeTool, s.handleInspectNodeTool)
+	}
+	if s.shouldRegister("gmb_dependency_analysis", "inspect") {
+		dependencyTool := mcp.NewTool("gmb_dependency_analysis",
+			mcp.WithDescription("Analyze inbound and outbound dependency edges for a file or symbol in the Architecture Knowledge Graph."),
+			mcp.WithString("target",
+				mcp.Description("Target symbol ID or relative file path (leave empty for global dependency summary)"),
+			),
+			mcp.WithToolAnnotation(mcp.ToolAnnotation{
+				Title:           "gmb_dependency_analysis",
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+				OpenWorldHint:   mcp.ToBoolPtr(false),
+			}),
+		)
+		s.RegisterTool(dependencyTool, s.handleDependencyTool)
+	}
 }
-
 type inspectNodeResult struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
@@ -62,18 +83,30 @@ type inspectNodeResult struct {
 }
 
 func (s *Server) handleInspectSearchTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if r, cancelled := checkCancellation(ctx); cancelled {
+		return r, nil
+	}
 	query, err := requireStringArg(req, "query")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
+	if len(query) > maxStringArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "query", maxStringArgLen, len(query))), nil
+	}
+	if len(query) > maxIDArgLen && strings.Contains(strings.ToLower(query), "::") {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "query", maxIDArgLen, len(query))), nil
+	}
 
 	kind := getStringArg(req, "kind", "")
-	limit := getIntArg(req, "limit", 50)
-	if limit < 1 {
-		limit = 50
+	if len(kind) > maxStringArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "kind", maxStringArgLen, len(kind))), nil
 	}
-	if limit > 200 {
-		limit = 200
+	limit := getIntArgClamped(req, "limit", 50, 1, 200)
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
 	}
 
 	graph, err := s.bridge.Snapshot()
@@ -85,6 +118,11 @@ func (s *Server) handleInspectSearchTool(ctx context.Context, req mcp.CallToolRe
 	var matched []inspectNodeResult
 
 	graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
 		if strings.Contains(strings.ToLower(id), lowerQuery) || strings.Contains(strings.ToLower(n.Name), lowerQuery) {
 			if kind == "" || strings.EqualFold(string(n.Kind), kind) {
 				inEdges := len(graph.GetInboundEdges(id))
@@ -102,6 +140,12 @@ func (s *Server) handleInspectSearchTool(ctx context.Context, req mcp.CallToolRe
 			}
 		}
 	})
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
+	}
 
 	sort.Slice(matched, func(i, j int) bool {
 		if matched[i].Inbound == matched[j].Inbound {
@@ -131,9 +175,24 @@ func (s *Server) handleInspectSearchTool(ctx context.Context, req mcp.CallToolRe
 }
 
 func (s *Server) handleInspectNodeTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if r, cancelled := checkCancellation(ctx); cancelled {
+		return r, nil
+	}
 	id, err := requireStringArg(req, "id")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if len(id) > maxIDArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "id", maxIDArgLen, len(id))), nil
+	}
+	if len(id) > maxStringArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "id", maxStringArgLen, len(id))), nil
+	}
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
 	}
 
 	graph, err := s.bridge.Snapshot()
@@ -199,7 +258,22 @@ func (s *Server) handleInspectNodeTool(ctx context.Context, req mcp.CallToolRequ
 }
 
 func (s *Server) handleDependencyTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if r, cancelled := checkCancellation(ctx); cancelled {
+		return r, nil
+	}
 	target := getStringArg(req, "target", "")
+	if len(target) > maxIDArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "target", maxIDArgLen, len(target))), nil
+	}
+	if len(target) > maxStringArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "target", maxStringArgLen, len(target))), nil
+	}
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
+	}
 
 	graph, err := s.bridge.Snapshot()
 	if err != nil {
@@ -214,10 +288,21 @@ func (s *Server) handleDependencyTool(ctx context.Context, req mcp.CallToolReque
 
 		var allNodes []topNode
 		graph.OutboundEdges.Iterate(func(id string, edges []link.ResolvedEdge) {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 			if len(edges) > 0 {
 				allNodes = append(allNodes, topNode{ID: id, Outbound: len(edges)})
 			}
 		})
+
+		select {
+		case <-ctx.Done():
+			return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+		default:
+		}
 
 		sort.Slice(allNodes, func(i, j int) bool {
 			if allNodes[i].Outbound == allNodes[j].Outbound {
@@ -250,12 +335,23 @@ func (s *Server) handleDependencyTool(ctx context.Context, req mcp.CallToolReque
 	if _, ok := graph.GetNode(target); ok {
 		targetIDs = append(targetIDs, target)
 	} else {
-		// Try file match
+			// Try file match
 		graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 			if filepath.ToSlash(n.FileSpec.Path) == cleanTarget || strings.HasSuffix(filepath.ToSlash(n.FileSpec.Path), cleanTarget) {
 				targetIDs = append(targetIDs, id)
 			}
 		})
+	}
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
 	}
 
 	if len(targetIDs) == 0 {
@@ -276,12 +372,27 @@ func (s *Server) handleDependencyTool(ctx context.Context, req mcp.CallToolReque
 
 	var reports []nodeDepReport
 	for _, id := range targetIDs {
+		select {
+		case <-ctx.Done():
+			return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+		default:
+		}
 		outbound := []depEdge{}
 		for _, e := range graph.GetOutboundEdges(id) {
+			select {
+			case <-ctx.Done():
+				return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+			default:
+			}
 			outbound = append(outbound, depEdge{Type: string(e.Type), OtherID: e.TargetID, LineNumber: e.LineNumber})
 		}
 		inbound := []depEdge{}
 		for _, e := range graph.GetInboundEdges(id) {
+			select {
+			case <-ctx.Done():
+				return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+			default:
+			}
 			inbound = append(inbound, depEdge{Type: string(e.Type), OtherID: e.SourceID, LineNumber: e.LineNumber})
 		}
 		reports = append(reports, nodeDepReport{
@@ -344,5 +455,16 @@ func getIntArg(req mcp.CallToolRequest, name string, def int) int {
 		}
 	}
 	return def
+}
+
+func getIntArgClamped(req mcp.CallToolRequest, name string, def, lo, hi int) int {
+	v := getIntArg(req, name, def)
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 

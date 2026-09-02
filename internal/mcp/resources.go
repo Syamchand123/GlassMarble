@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -60,7 +61,17 @@ func (s *Server) registerResources() {
 		s.handleTelemetryResource,
 	)
 
-	// 7. Config Resources (gmb://config & glassmarble://config)
+	// 7. AKG Summary Resource (glassmarble://akg & gmb://akg) — compact summary, not raw 19 MB file
+	s.MCPServer().AddResource(
+		mcp.NewResource("glassmarble://akg", "AKG Summary", mcp.WithResourceDescription("Architecture Knowledge Graph summary (nodes, edges, files, commit, size) — use akg_* tools for paginated detail"), mcp.WithMIMEType("application/json")),
+		s.handleAKGResource,
+	)
+	s.MCPServer().AddResource(
+		mcp.NewResource("gmb://akg", "AKG Summary", mcp.WithResourceDescription("Architecture Knowledge Graph summary (nodes, edges, files, commit, size) — use akg_* tools for paginated detail"), mcp.WithMIMEType("application/json")),
+		s.handleAKGResource,
+	)
+
+	// 8. Config Resources (gmb://config & glassmarble://config)
 	s.MCPServer().AddResource(
 		mcp.NewResource("gmb://config", "GlassMarble Configuration", mcp.WithResourceDescription("Current project configuration (.glassmarble/config.yaml)"), mcp.WithMIMEType("text/yaml")),
 		s.handleConfigResource,
@@ -70,7 +81,7 @@ func (s *Server) registerResources() {
 		s.handleConfigResource,
 	)
 
-	// 8. Rules Resources (gmb://rules & glassmarble://rules)
+	// 9. Rules Resources (gmb://rules & glassmarble://rules)
 	s.MCPServer().AddResource(
 		mcp.NewResource("gmb://rules", "Architecture Rules", mcp.WithResourceDescription("Declarative architecture rules (.glassmarble/rules.yaml)"), mcp.WithMIMEType("text/yaml")),
 		s.handleRulesResource,
@@ -323,6 +334,105 @@ func (s *Server) handleTelemetryResource(ctx context.Context, req mcp.ReadResour
 			URI:      req.Params.URI,
 			MIMEType: "application/json",
 			Text:     string(data),
+		},
+	}, nil
+}
+
+func (s *Server) handleAKGResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	storageDir := s.bridge.StorageDir()
+	jsonPath := s.bridge.AKGStatePath()
+
+	if _, err := os.Stat(jsonPath); os.IsNotExist(err) {
+		body, _ := json.MarshalIndent(map[string]any{
+			"initialized": false,
+			"error":       "AKG database not found — run 'gmb analyze' first",
+			"storage_dir": storageDir,
+		}, "", "  ")
+		return []mcp.ResourceContents{
+			mcp.TextResourceContents{
+				URI:      req.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(body),
+			},
+		}, nil
+	}
+
+	commitHash, schemaVersion, version, err := akg.StateMetadata(storageDir)
+	if err != nil {
+		body, _ := json.MarshalIndent(map[string]any{
+			"initialized": false,
+			"error":       fmt.Sprintf("failed to read AKG metadata: %v — try 'gmb analyze'", err),
+			"storage_dir": storageDir,
+		}, "", "  ")
+		return []mcp.ResourceContents{
+			mcp.TextResourceContents{
+				URI:      req.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(body),
+			},
+		}, nil
+	}
+
+	stateInfo, err := os.Stat(jsonPath)
+	if err != nil {
+		body, _ := json.MarshalIndent(map[string]any{
+			"initialized": false,
+			"error":       fmt.Sprintf("failed to stat AKG state: %v", err),
+			"storage_dir": storageDir,
+		}, "", "  ")
+		return []mcp.ResourceContents{
+			mcp.TextResourceContents{
+				URI:      req.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(body),
+			},
+		}, nil
+	}
+
+	stats, err := akg.StreamGraphStats(storageDir)
+	if err != nil {
+		body, _ := json.MarshalIndent(map[string]any{
+			"initialized":    true,
+			"commit_hash":    commitHash,
+			"schema_version": schemaVersion,
+			"graph_version":  version,
+			"size_bytes":     stateInfo.Size(),
+			"error":          fmt.Sprintf("failed to scan AKG graph stats: %v", err),
+			"storage_dir":    storageDir,
+			"note":           "AKG summary partially available — stats unavailable; use akg_* tools for paginated detail",
+		}, "", "  ")
+		return []mcp.ResourceContents{
+			mcp.TextResourceContents{
+				URI:      req.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(body),
+			},
+		}, nil
+	}
+
+	body, _ := json.MarshalIndent(map[string]any{
+		"initialized":    true,
+		"commit_hash":    commitHash,
+		"schema_version": schemaVersion,
+		"graph_version":  version,
+		"nodes":          stats.NodeCount,
+		"edges":          stats.Edges,
+		"files":          stats.IndexedFiles,
+		"indexed_files":  stats.IndexedFiles,
+		"entrypoints":    stats.Entrypoints,
+		"virtual_nodes":  stats.VirtualCount,
+		"dangling":       stats.Dangling,
+		"size_bytes":     stateInfo.Size(),
+		"json_bytes":     stateInfo.Size(),
+		"storage_dir":    storageDir,
+		"note":           "AKG summary — full graph not served inline due to size; use akg_* tools with pagination for detail",
+	}, "", "  ")
+
+	return []mcp.ResourceContents{
+		mcp.TextResourceContents{
+			URI:      req.Params.URI,
+			MIMEType: "application/json",
+			Text:     string(body),
 		},
 	}, nil
 }

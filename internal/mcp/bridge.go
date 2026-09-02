@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,7 +11,13 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/arch_timeline"
 	"github.com/Syamchand123/GlassMarble/internal/developer_memory"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
+
+var bridgeTracer = otel.Tracer("glassmarble/mcp/bridge")
 
 // Bridge provides thread-safe, lazy-initialized access to GlassMarble's data stores.
 type Bridge struct {
@@ -81,13 +88,28 @@ func (b *Bridge) AKGBridge() (*akgbridge.Bridge, error) {
 	return b.akgBridge, nil
 }
 
-// Snapshot returns the active Architecture Knowledge Graph (CPG).
+// Snapshot returns the active Architecture Knowledge Graph (CPG) with OTel instrumentation.
 func (b *Bridge) Snapshot() (*akg.CodePropertyGraph, error) {
+	ctx, span := bridgeTracer.Start(context.Background(), "bridge.Snapshot", trace.WithAttributes(attribute.String("bridge.root", b.rootDir)))
+	defer span.End()
+
 	br, err := b.AKGBridge()
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
-	return br.Snapshot()
+	g, err := br.Snapshot()
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+	span.AddEvent("bridge.snapshot.success")
+	span.SetStatus(codes.Ok, "")
+	// Ensure ctx is used to avoid unused import linter in no-op tracer case.
+	_ = ctx
+	return g, nil
 }
 
 // TransactionManager returns the AKGTransactionManager, creating it on first access.

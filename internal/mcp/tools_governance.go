@@ -17,50 +17,92 @@ import (
 
 // registerGovernanceTools binds drift, lint, pattern detection, and coupling stats tools.
 func (s *Server) registerGovernanceTools() {
-	// 1. gmb_drift_check Tool
-	driftTool := mcp.NewTool("gmb_drift_check",
-		mcp.WithDescription("Detect architecture drift against declared layering and cycle budgets in config.yaml."),
-		mcp.WithString("config_file",
-			mcp.Description("Optional path to custom config.yaml file"),
-		),
-	)
-	s.RegisterTool(driftTool, s.handleDriftTool)
-
-	// 2. gmb_arch_lint Tool
-	lintTool := mcp.NewTool("gmb_arch_lint",
-		mcp.WithDescription("Lint repository against architectural rules and layer boundaries declared in rules.yaml."),
-		mcp.WithString("rules_file",
-			mcp.Description("Optional path to custom rules.yaml file (default: .glassmarble/rules.yaml)"),
-		),
-	)
-	s.RegisterTool(lintTool, s.handleLintTool)
-
-	// 3. gmb_patterns_smells Tool
-	patternsTool := mcp.NewTool("gmb_patterns_smells",
-		mcp.WithDescription("Detect architectural design patterns (Clean Arch, DDD, Event-Driven) and structural smells."),
-		mcp.WithBoolean("include_smells",
-			mcp.Description("Include architectural code & structural smells in output (default: true)"),
-		),
-		mcp.WithBoolean("include_components",
-			mcp.Description("Include inferred component boundaries in output (default: true)"),
-		),
-	)
-	s.RegisterTool(patternsTool, s.handlePatternsTool)
-
-	// 4. gmb_arch_stats Tool
-	archStatsTool := mcp.NewTool("gmb_arch_stats",
-		mcp.WithDescription("Compute component coupling health metrics: Afferent Coupling (Ca), Efferent Coupling (Ce), and Instability."),
-	)
-	s.RegisterTool(archStatsTool, s.handleArchStatsTool)
+	if s.shouldRegister("gmb_drift_check", "governance") {
+		driftTool := mcp.NewTool("gmb_drift_check",
+			mcp.WithDescription("Detect architecture drift against declared layering and cycle budgets in config.yaml."),
+			mcp.WithString("config_file",
+				mcp.Description("Optional path to custom config.yaml file"),
+			),
+			mcp.WithToolAnnotation(mcp.ToolAnnotation{
+				Title:           "gmb_drift_check",
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+				OpenWorldHint:   mcp.ToBoolPtr(false),
+			}),
+		)
+		s.RegisterTool(driftTool, s.handleDriftTool)
+	}
+	if s.shouldRegister("gmb_arch_lint", "governance") {
+		lintTool := mcp.NewTool("gmb_arch_lint",
+			mcp.WithDescription("Lint repository against architectural rules and layer boundaries declared in rules.yaml."),
+			mcp.WithString("rules_file",
+				mcp.Description("Optional path to custom rules.yaml file (default: .glassmarble/rules.yaml)"),
+			),
+			mcp.WithToolAnnotation(mcp.ToolAnnotation{
+				Title:           "gmb_arch_lint",
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+				OpenWorldHint:   mcp.ToBoolPtr(false),
+			}),
+		)
+		s.RegisterTool(lintTool, s.handleLintTool)
+	}
+	if s.shouldRegister("gmb_patterns_smells", "governance") {
+		patternsTool := mcp.NewTool("gmb_patterns_smells",
+			mcp.WithDescription("Detect architectural design patterns (Clean Arch, DDD, Event-Driven) and structural smells."),
+			mcp.WithBoolean("include_smells",
+				mcp.Description("Include architectural code & structural smells in output (default: true)"),
+			),
+			mcp.WithBoolean("include_components",
+				mcp.Description("Include inferred component boundaries in output (default: true)"),
+			),
+			mcp.WithToolAnnotation(mcp.ToolAnnotation{
+				Title:           "gmb_patterns_smells",
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+				OpenWorldHint:   mcp.ToBoolPtr(false),
+			}),
+		)
+		s.RegisterTool(patternsTool, s.handlePatternsTool)
+	}
+	if s.shouldRegister("gmb_arch_stats", "governance") {
+		archStatsTool := mcp.NewTool("gmb_arch_stats",
+			mcp.WithDescription("Compute component coupling health metrics: Afferent Coupling (Ca), Efferent Coupling (Ce), and Instability."),
+			mcp.WithToolAnnotation(mcp.ToolAnnotation{
+				Title:           "gmb_arch_stats",
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+				OpenWorldHint:   mcp.ToBoolPtr(false),
+			}),
+		)
+		s.RegisterTool(archStatsTool, s.handleArchStatsTool)
+	}
 }
-
 func (s *Server) handleDriftTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if r, cancelled := checkCancellation(ctx); cancelled {
+		return r, nil
+	}
+	configPathCheck := getStringArg(req, "config_file", "")
+	if len(configPathCheck) > maxStringArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "config_file", maxStringArgLen, len(configPathCheck))), nil
+	}
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
+	}
+
 	graph, err := s.bridge.Snapshot()
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("AKG database unavailable: %v — run 'gmb analyze' first", err)), nil
 	}
 
-	configPath := getStringArg(req, "config_file", "")
+	configPath := configPathCheck
 	if configPath == "" {
 		configPath = filepath.Join(s.bridge.StorageDir(), "config.yaml")
 	}
@@ -94,12 +136,26 @@ func (s *Server) handleDriftTool(ctx context.Context, req mcp.CallToolRequest) (
 }
 
 func (s *Server) handleLintTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if r, cancelled := checkCancellation(ctx); cancelled {
+		return r, nil
+	}
+	rulesPathCheck := getStringArg(req, "rules_file", "")
+	if len(rulesPathCheck) > maxStringArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "rules_file", maxStringArgLen, len(rulesPathCheck))), nil
+	}
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
+	}
+
 	graph, err := s.bridge.Snapshot()
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("AKG database unavailable: %v — run 'gmb analyze' first", err)), nil
 	}
 
-	rulesPath := getStringArg(req, "rules_file", "")
+	rulesPath := rulesPathCheck
 	if rulesPath == "" {
 		candidates := []string{
 			filepath.Join(s.bridge.StorageDir(), "rules.yaml"),
@@ -143,9 +199,21 @@ func (s *Server) handleLintTool(ctx context.Context, req mcp.CallToolRequest) (*
 }
 
 func (s *Server) handlePatternsTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if r, cancelled := checkCancellation(ctx); cancelled {
+		return r, nil
+	}
+	token := getProgressToken(req)
+	_ = s.sendProgress(ctx, token, 0, 100, "starting pattern analysis")
+
 	graph, err := s.bridge.Snapshot()
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("AKG database unavailable: %v — run 'gmb analyze' first", err)), nil
+	}
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
 	}
 
 	includeSmells := true
@@ -162,13 +230,27 @@ func (s *Server) handlePatternsTool(ctx context.Context, req mcp.CallToolRequest
 		}
 	}
 
+	_ = s.sendProgress(ctx, token, 30, 100, "running intelligence engine")
 	cfg := config.DefaultIntelligenceConfig()
 	opts := []arch_intelligence.EngineOption{
 		arch_intelligence.WithConfig(cfg),
 	}
 
 	engine := arch_intelligence.NewEngineWithOptions(graph, opts...)
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
+	}
 	res := engine.Run()
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
+	}
+	_ = s.sendProgress(ctx, token, 70, 100, "assembling results")
 
 	response := map[string]any{
 		"metrics":  res.Metrics,
@@ -188,13 +270,28 @@ func (s *Server) handlePatternsTool(ctx context.Context, req mcp.CallToolRequest
 		return mcp.NewToolResultError(fmt.Sprintf("failed to serialize patterns report: %v", err)), nil
 	}
 
+	_ = s.sendProgress(ctx, token, 100, 100, "complete")
 	return mcp.NewToolResultText(string(out)), nil
 }
 
 func (s *Server) handleArchStatsTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if r, cancelled := checkCancellation(ctx); cancelled {
+		return r, nil
+	}
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
+	}
 	graph, err := s.bridge.Snapshot()
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("AKG database unavailable: %v — run 'gmb analyze' first", err)), nil
+	}
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
 	}
 
 	cfg := config.DefaultIntelligenceConfig()
@@ -204,6 +301,12 @@ func (s *Server) handleArchStatsTool(ctx context.Context, req mcp.CallToolReques
 
 	engine := arch_intelligence.NewEngineWithOptions(graph, opts...)
 	res := engine.Run()
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
+	}
 
 	stats := map[string]any{
 		"metrics":            res.Metrics,

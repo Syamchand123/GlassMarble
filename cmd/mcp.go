@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -18,6 +19,8 @@ var (
 	mcpPrintConfigFlag  bool
 	mcpMaxJSONMBFlag    int
 	mcpStrictPathsFlag  bool
+	mcpAuthTokenFlag    string
+	mcpToolsFlag        string
 )
 
 var mcpCmd = &cobra.Command{
@@ -57,11 +60,28 @@ evaluate blast-radius risk, render architecture diagrams, search developer memor
 		}
 
 		// Server execution configuration
+		// AuthToken prefers --auth-token flag over GLASSMARBLE_MCP_TOKEN env var (flag > env).
+		authToken := strings.TrimSpace(mcpAuthTokenFlag)
+		if authToken == "" {
+			authToken = strings.TrimSpace(os.Getenv("GLASSMARBLE_MCP_TOKEN"))
+		}
+		// ToolsFilter parsed from --tools comma-separated flag (categories or exact tool names).
+		var toolsFilter []string
+		if strings.TrimSpace(mcpToolsFlag) != "" {
+			for _, part := range strings.Split(mcpToolsFlag, ",") {
+				p := strings.TrimSpace(part)
+				if p != "" {
+					toolsFilter = append(toolsFilter, p)
+				}
+			}
+		}
 		cfg := mcp.ServerConfig{
-			RootDir:   absDir,
-			Transport: mcpTransportFlag,
-			Port:      mcpPortFlag,
-			MaxJSONMB: mcpMaxJSONMBFlag,
+			RootDir:     absDir,
+			Transport:   mcpTransportFlag,
+			Port:        mcpPortFlag,
+			MaxJSONMB:   mcpMaxJSONMBFlag,
+			AuthToken:   authToken,
+			ToolsFilter: toolsFilter,
 		}
 
 		if err := cfg.Validate(); err != nil {
@@ -138,6 +158,8 @@ func init() {
 	mcpCmd.Flags().IntVar(&mcpMaxJSONMBFlag, "max-json-mb", 256, "Maximum AKG JSON payload size budget in megabytes")
 	mcpCmd.Flags().BoolVar(&mcpStrictPathsFlag, "strict-paths", true, "Enforce strict workspace root boundaries for file operations")
 	mcpCmd.Flags().Bool("json", false, "Emit output as JSON")
+	mcpCmd.Flags().StringVar(&mcpAuthTokenFlag, "auth-token", "", "Bearer token for HTTP/SSE transport (or GLASSMARBLE_MCP_TOKEN)")
+	mcpCmd.Flags().StringVar(&mcpToolsFlag, "tools", "", "Comma-separated tool filter: categories (system,akg,code,diagram) or exact tool names, e.g. --tools akg,impact")
 
 	rootCmd.AddCommand(mcpCmd)
 }

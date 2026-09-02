@@ -15,49 +15,80 @@ import (
 
 // registerMemoryTools binds developer memory and architecture timeline tools to the MCP server.
 func (s *Server) registerMemoryTools() {
-	// 1. gmb_memory_overview Tool
-	memoryOverviewTool := mcp.NewTool("gmb_memory_overview",
-		mcp.WithDescription("Get an overview of developer memory: total architectural events, claims, and components."),
-	)
-	s.RegisterTool(memoryOverviewTool, s.handleMemoryOverviewTool)
-
-	// 2. gmb_memory_query Tool
-	memoryQueryTool := mcp.NewTool("gmb_memory_query",
-		mcp.WithDescription("Query developer memory for architectural rationale, claims, decisions, and component knowledge."),
-		mcp.WithString("query",
-			mcp.Required(),
-			mcp.Description("Topic, architectural concept, component name, or question to search memory for"),
-		),
-	)
-	s.RegisterTool(memoryQueryTool, s.handleMemoryQueryTool)
-
-	// 3. gmb_memory_component Tool
-	memoryComponentTool := mcp.NewTool("gmb_memory_component",
-		mcp.WithDescription("Inspect the longitudinal architectural history and timeline events for a specific component."),
-		mcp.WithString("component",
-			mcp.Required(),
-			mcp.Description("Name or substring of the component to inspect"),
-		),
-	)
-	s.RegisterTool(memoryComponentTool, s.handleMemoryComponentTool)
-
-	// 4. gmb_arch_timeline Tool
-	archTimelineTool := mcp.NewTool("gmb_arch_timeline",
-		mcp.WithDescription("Retrieve the chronological architecture evolution timeline (refactorings, ADRs, component changes)."),
-		mcp.WithString("from",
-			mcp.Description("Start timestamp (RFC3339) or duration (e.g. '2026-01-01', '30d')"),
-		),
-		mcp.WithString("to",
-			mcp.Description("End timestamp (RFC3339) or 'HEAD'"),
-		),
-		mcp.WithString("component",
-			mcp.Description("Optional component name filter"),
-		),
-	)
-	s.RegisterTool(archTimelineTool, s.handleArchTimelineTool)
+	if s.shouldRegister("gmb_memory_overview", "memory") {
+		memoryOverviewTool := mcp.NewTool("gmb_memory_overview",
+			mcp.WithDescription("Get an overview of developer memory: total architectural events, claims, and components."),
+			mcp.WithToolAnnotation(mcp.ToolAnnotation{
+				Title:           "gmb_memory_overview",
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+				OpenWorldHint:   mcp.ToBoolPtr(false),
+			}),
+		)
+		s.RegisterTool(memoryOverviewTool, s.handleMemoryOverviewTool)
+	}
+	if s.shouldRegister("gmb_memory_query", "memory") {
+		memoryQueryTool := mcp.NewTool("gmb_memory_query",
+			mcp.WithDescription("Query developer memory for architectural rationale, claims, decisions, and component knowledge."),
+			mcp.WithString("query",
+				mcp.Required(),
+				mcp.Description("Topic, architectural concept, component name, or question to search memory for"),
+			),
+			mcp.WithToolAnnotation(mcp.ToolAnnotation{
+				Title:           "gmb_memory_query",
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+				OpenWorldHint:   mcp.ToBoolPtr(false),
+			}),
+		)
+		s.RegisterTool(memoryQueryTool, s.handleMemoryQueryTool)
+	}
+	if s.shouldRegister("gmb_memory_component", "memory") {
+		memoryComponentTool := mcp.NewTool("gmb_memory_component",
+			mcp.WithDescription("Inspect the longitudinal architectural history and timeline events for a specific component."),
+			mcp.WithString("component",
+				mcp.Required(),
+				mcp.Description("Name or substring of the component to inspect"),
+			),
+			mcp.WithToolAnnotation(mcp.ToolAnnotation{
+				Title:           "gmb_memory_component",
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+				OpenWorldHint:   mcp.ToBoolPtr(false),
+			}),
+		)
+		s.RegisterTool(memoryComponentTool, s.handleMemoryComponentTool)
+	}
+	if s.shouldRegister("gmb_arch_timeline", "memory") {
+		archTimelineTool := mcp.NewTool("gmb_arch_timeline",
+			mcp.WithDescription("Retrieve the chronological architecture evolution timeline (refactorings, ADRs, component changes)."),
+			mcp.WithString("from",
+				mcp.Description("Start timestamp (RFC3339) or duration (e.g. '2026-01-01', '30d')"),
+			),
+			mcp.WithString("to",
+				mcp.Description("End timestamp (RFC3339) or 'HEAD'"),
+			),
+			mcp.WithString("component",
+				mcp.Description("Optional component name filter"),
+			),
+			mcp.WithToolAnnotation(mcp.ToolAnnotation{
+				Title:           "gmb_arch_timeline",
+				ReadOnlyHint:    mcp.ToBoolPtr(true),
+				DestructiveHint: mcp.ToBoolPtr(false),
+				IdempotentHint:  mcp.ToBoolPtr(true),
+				OpenWorldHint:   mcp.ToBoolPtr(false),
+			}),
+		)
+		s.RegisterTool(archTimelineTool, s.handleArchTimelineTool)
+	}
 }
-
 func (s *Server) handleMemoryOverviewTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if r, cancelled := checkCancellation(ctx); cancelled {
+		return r, nil
+	}
 	store, err := s.bridge.MemoryStore()
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Memory store unavailable: %v", err)), nil
@@ -105,9 +136,21 @@ func (s *Server) handleMemoryOverviewTool(ctx context.Context, req mcp.CallToolR
 }
 
 func (s *Server) handleMemoryQueryTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if r, cancelled := checkCancellation(ctx); cancelled {
+		return r, nil
+	}
 	query, err := requireStringArg(req, "query")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if len(query) > maxStringArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "query", maxStringArgLen, len(query))), nil
+	}
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
 	}
 
 	store, err := s.bridge.MemoryStore()
@@ -190,9 +233,21 @@ func (s *Server) handleMemoryQueryTool(ctx context.Context, req mcp.CallToolRequ
 }
 
 func (s *Server) handleMemoryComponentTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if r, cancelled := checkCancellation(ctx); cancelled {
+		return r, nil
+	}
 	component, err := requireStringArg(req, "component")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if len(component) > maxStringArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "component", maxStringArgLen, len(component))), nil
+	}
+
+	select {
+	case <-ctx.Done():
+		return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+	default:
 	}
 
 	store, err := s.bridge.MemoryStore()
@@ -237,6 +292,9 @@ func (s *Server) handleMemoryComponentTool(ctx context.Context, req mcp.CallTool
 }
 
 func (s *Server) handleArchTimelineTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if r, cancelled := checkCancellation(ctx); cancelled {
+		return r, nil
+	}
 	store, err := s.bridge.MemoryStore()
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Memory store unavailable: %v", err)), nil
@@ -248,6 +306,17 @@ func (s *Server) handleArchTimelineTool(ctx context.Context, req mcp.CallToolReq
 	}
 
 	component := getStringArg(req, "component", "")
+	if len(component) > maxStringArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "component", maxStringArgLen, len(component))), nil
+	}
+	fromArg := getStringArg(req, "from", "")
+	if len(fromArg) > maxStringArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "from", maxStringArgLen, len(fromArg))), nil
+	}
+	toArg := getStringArg(req, "to", "")
+	if len(toArg) > maxStringArgLen {
+		return mcp.NewToolResultError(fmt.Sprintf("input too long: argument %q exceeds %d chars (got %d)", "to", maxStringArgLen, len(toArg))), nil
+	}
 	var entries []archmodel.TimelineEntry
 
 	if component != "" {
