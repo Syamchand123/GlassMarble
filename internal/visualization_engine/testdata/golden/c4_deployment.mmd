@@ -10,5 +10,6 @@ C4Deployment
         Container(sb_db, "db", "Go/Module", "Application Container (4 nodes)")
         Container(sb_models, "models", "Go/Module", "Application Container (2 nodes)")
     }
-    Rel(sb_cmd_node, sb_internal_node, "calls")
+    Rel(sb_app, sb_api, "calls")
+    Rel(sb_api, sb_db, "calls")
     %% Graph Summary: 15 nodes, 5 edges, density=0.0238, diameter=2, avg_path=1.38, clusters=11, largest_scc=1, god_objects=0, components=10

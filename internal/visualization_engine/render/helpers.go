@@ -49,6 +49,11 @@ type aliasRegistry struct {
 	// position-accurate even when two subtrees share a boundary name
 	// (GAP-C4-03).
 	boundaryNodeAlias map[string]string
+	// boundaryBlocks records aliases emitted as pure boundary blocks
+	// (System_Boundary / Enterprise_Boundary / Deployment_Node). Mermaid's
+	// C4 renderer cannot draw a Rel() to a boundary block — it crashes at
+	// layout time — so renderC4Edges must never use these as endpoints.
+	boundaryBlocks map[string]bool
 }
 
 func newAliasRegistry() *aliasRegistry {
@@ -58,6 +63,7 @@ func newAliasRegistry() *aliasRegistry {
 		byID:              make(map[string]string),
 		declared:          make(map[string]bool),
 		boundaryNodeAlias: make(map[string]string),
+		boundaryBlocks:    make(map[string]bool),
 	}
 }
 
@@ -90,6 +96,21 @@ func (r *aliasRegistry) boundaryAliasOf(nodeID string) string {
 		return ""
 	}
 	return r.boundaryNodeAlias[nodeID]
+}
+
+// markBoundaryBlock flags an alias as a non-relatable boundary block.
+func (r *aliasRegistry) markBoundaryBlock(alias string) {
+	if r.boundaryBlocks == nil {
+		r.boundaryBlocks = make(map[string]bool)
+	}
+	r.boundaryBlocks[alias] = true
+}
+
+func (r *aliasRegistry) isBoundaryBlock(alias string) bool {
+	if r.boundaryBlocks == nil {
+		return false
+	}
+	return r.boundaryBlocks[alias]
 }
 
 // uniqueAlias returns base if it is not yet declared, otherwise base with a
@@ -572,6 +593,13 @@ func renderC4Edges(tree *types.LayoutTree, reg *aliasRegistry, sb *strings.Build
 			}
 		}
 		if !reg.isDeclared(src) || !reg.isDeclared(tgt) {
+			continue
+		}
+		// Mermaid's C4 layouter crashes ("Cannot read properties of
+		// undefined (reading 'x')") on any Rel whose endpoint is a boundary
+		// block rather than an element; drop such edges rather than emit a
+		// diagram that cannot render (GAP-C4-05).
+		if reg.isBoundaryBlock(src) || reg.isBoundaryBlock(tgt) {
 			continue
 		}
 		if src == tgt {

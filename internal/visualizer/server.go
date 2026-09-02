@@ -102,7 +102,14 @@ func (s *VisualizerServer) Start(ctx context.Context) (int, error) {
 	}
 
 	fileServer := http.FileServer(http.FS(assetSub))
-	mux.Handle("/assets/", http.StripPrefix("/assets/", fileServer))
+	mux.Handle("/assets/", http.StripPrefix("/assets/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Embedded assets only change with the binary; embed.FS has a zero
+		// ModTime so no ETag/Last-Modified is emitted — without this header
+		// the multi-megabyte vendored libraries re-download on every load.
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		fileServer.ServeHTTP(w, r)
+	})))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -114,6 +121,7 @@ func (s *VisualizerServer) Start(ctx context.Context) (int, error) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Write(data)
 	})
 
@@ -206,14 +214,21 @@ func (s *VisualizerServer) handleStatus(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	schemaVersion := 0
+	commitHash := ""
+	if s.graph != nil {
+		schemaVersion = s.graph.SchemaVersion
+		commitHash = s.graph.CommitHash
+	}
+
 	res := map[string]any{
 		"status":         "healthy",
 		"nodes_count":    nodeCount,
 		"edges_count":    edgeCount,
 		"files_count":    filesCount,
 		"smells_count":   smellsCount,
-		"schema_version": s.graph.SchemaVersion,
-		"commit_hash":    s.graph.CommitHash,
+		"schema_version": schemaVersion,
+		"commit_hash":    commitHash,
 	}
 	json.NewEncoder(w).Encode(res)
 }

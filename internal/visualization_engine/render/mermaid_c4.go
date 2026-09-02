@@ -132,6 +132,9 @@ func renderC4Blocks(tree *types.LayoutTree, reg *aliasRegistry, sb *strings.Buil
 		// declaration is duplicated.
 		emitted = reg.uniqueAlias(emitted)
 		reg.markDeclared(emitted)
+		// Boundary blocks are not relatable elements in Mermaid C4 — edge
+		// rendering must never target this alias (GAP-C4-05).
+		reg.markBoundaryBlock(emitted)
 		var bind func(st *types.LayoutTree)
 		bind = func(st *types.LayoutTree) {
 			for _, n := range st.Nodes {
@@ -191,11 +194,28 @@ func renderContainerElement(node *types.LayoutNode, reg *aliasRegistry) string {
 		alias, name, detectNodeTechnology(node), getNodeDescription(node))
 }
 
+// bindSubtreeToElement points every node in the subtree at a relatable
+// element alias, so aggregated edges resolve to a Container/System element
+// instead of the enclosing boundary block, which Mermaid cannot draw a
+// Rel() against (GAP-C4-05).
+func bindSubtreeToElement(t *types.LayoutTree, alias string, reg *aliasRegistry) {
+	if t == nil {
+		return
+	}
+	for _, n := range t.Nodes {
+		reg.bindBoundary(n.ID, alias)
+	}
+	for _, c := range t.Children {
+		bindSubtreeToElement(c, alias, reg)
+	}
+}
+
 // renderFoldedContainerElement folds a deeper boundary (and its whole
 // subtree) into a single Container element (GAP-C4-03).
 func renderFoldedContainerElement(boundary *types.LayoutTree, count int, reg *aliasRegistry) string {
 	alias := reg.uniqueAlias(reg.boundary(boundary.BoundaryName))
 	reg.markDeclared(alias)
+	bindSubtreeToElement(boundary, alias, reg)
 	name := sanitizeMermaidLabel(boundary.BoundaryName)
 	desc := getContainerDescription(boundary)
 	if len(boundary.Nodes) == 0 {
@@ -330,6 +350,7 @@ func renderC4LandscapeDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 		renderFolded: func(boundary *types.LayoutTree, count int, reg *aliasRegistry) string {
 			alias := reg.uniqueAlias(reg.boundary(boundary.BoundaryName))
 			reg.markDeclared(alias)
+			bindSubtreeToElement(boundary, alias, reg)
 			return fmt.Sprintf("System(%s, \"%s\", \"System Module (%d nodes)\")\n",
 				alias, sanitizeMermaidLabel(boundary.BoundaryName), count)
 		},

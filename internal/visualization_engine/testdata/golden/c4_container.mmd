@@ -25,7 +25,7 @@ C4Container
         Container(module_internal_models, "internal/models", "Go/Module", "Namespace Component")
         Container(file_internal_models_user_go, "user.go", "Go/Generic", "File Component")
     }
-    Rel(sb_cmd_sys, cmd_app_main_go_ParseArgs, "calls")
-    Rel(sb_cmd_sys, internal_api_handler_go_HandleHTTP, "calls")
-    Rel(internal_api_handler_go_HandleHTTP, sb_internal_sys, "calls")
+    Rel(sb_app, cmd_app_main_go_ParseArgs, "calls")
+    Rel(sb_app, internal_api_handler_go_HandleHTTP, "calls")
+    Rel(internal_api_handler_go_HandleHTTP, sb_api, "calls")
     %% Graph Summary: 15 nodes, 5 edges, density=0.0238, diameter=2, avg_path=1.38, clusters=11, largest_scc=1, god_objects=0, components=10
