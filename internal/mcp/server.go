@@ -63,6 +63,10 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	s.registerDiagramTools()
 	s.registerCodeTools()
 
+	// Register Phase 6 Resources & Prompts
+	s.registerResources()
+	s.registerPrompts()
+
 	return s, nil
 }
 

@@ -697,6 +697,99 @@ func TestCodeContextTool(t *testing.T) {
 	}
 }
 
+func TestResources(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	ctx := context.Background()
+
+	// 1. gmb://status
+	statusReq := mcp.ReadResourceRequest{}
+	statusReq.Params.URI = "gmb://status"
+	statusContents, err := srv.handleStatusResource(ctx, statusReq)
+	require.NoError(t, err)
+	require.NotEmpty(t, statusContents)
+
+	// 2. gmb://config
+	cfgReq := mcp.ReadResourceRequest{}
+	cfgReq.Params.URI = "gmb://config"
+	cfgContents, err := srv.handleConfigResource(ctx, cfgReq)
+	require.NoError(t, err)
+	require.NotEmpty(t, cfgContents)
+
+	// 3. gmb://rules
+	rulesReq := mcp.ReadResourceRequest{}
+	rulesReq.Params.URI = "gmb://rules"
+	rulesContents, err := srv.handleRulesResource(ctx, rulesReq)
+	require.NoError(t, err)
+	require.NotEmpty(t, rulesContents)
+
+	// 4. gmb://memory/summary
+	memReq := mcp.ReadResourceRequest{}
+	memReq.Params.URI = "gmb://memory/summary"
+	memContents, err := srv.handleMemorySummaryResource(ctx, memReq)
+	require.NoError(t, err)
+	require.NotEmpty(t, memContents)
+
+	// 5. gmb://timeline/latest
+	timelineReq := mcp.ReadResourceRequest{}
+	timelineReq.Params.URI = "gmb://timeline/latest"
+	timelineContents, err := srv.handleTimelineResource(ctx, timelineReq)
+	require.NoError(t, err)
+	require.NotEmpty(t, timelineContents)
+}
+
+func TestPrompts(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	ctx := context.Background()
+
+	// 1. gmb_pre_commit_audit
+	var auditReq mcp.GetPromptRequest
+	auditReq.Params.Name = "gmb_pre_commit_audit"
+	auditRes, err := srv.handlePreCommitAuditPrompt(ctx, auditReq)
+	require.NoError(t, err)
+	require.NotNil(t, auditRes)
+	assert.NotEmpty(t, auditRes.Messages)
+
+	// 2. gmb_refactor_advisor
+	var refactorReq mcp.GetPromptRequest
+	refactorReq.Params.Name = "gmb_refactor_advisor"
+	refactorReq.Params.Arguments = map[string]string{
+		"target": "cmd/root.go::Execute",
+	}
+	refactorRes, err := srv.handleRefactorAdvisorPrompt(ctx, refactorReq)
+	require.NoError(t, err)
+	require.NotNil(t, refactorRes)
+	assert.NotEmpty(t, refactorRes.Messages)
+
+	// 3. gmb_explain_architecture
+	var explainReq mcp.GetPromptRequest
+	explainReq.Params.Name = "gmb_explain_architecture"
+	explainRes, err := srv.handleExplainArchitecturePrompt(ctx, explainReq)
+	require.NoError(t, err)
+	require.NotNil(t, explainRes)
+	assert.NotEmpty(t, explainRes.Messages)
+
+	// 4. gmb_onboarding_guide
+	var onboardingReq mcp.GetPromptRequest
+	onboardingReq.Params.Name = "gmb_onboarding_guide"
+	onboardingRes, err := srv.handleOnboardingGuidePrompt(ctx, onboardingReq)
+	require.NoError(t, err)
+	require.NotNil(t, onboardingRes)
+	assert.NotEmpty(t, onboardingRes.Messages)
+}
+
+
 
 
 
