@@ -14,6 +14,7 @@ import (
 
 var (
 	mcpTransportFlag    string
+	mcpHostFlag         string
 	mcpPortFlag         int
 	mcpConfigClientFlag string
 	mcpPrintConfigFlag  bool
@@ -21,6 +22,7 @@ var (
 	mcpStrictPathsFlag  bool
 	mcpAuthTokenFlag    string
 	mcpToolsFlag        string
+	mcpToolTimeoutFlag  int
 )
 
 var mcpCmd = &cobra.Command{
@@ -76,12 +78,14 @@ evaluate blast-radius risk, render architecture diagrams, search developer memor
 			}
 		}
 		cfg := mcp.ServerConfig{
-			RootDir:     absDir,
-			Transport:   mcpTransportFlag,
-			Port:        mcpPortFlag,
-			MaxJSONMB:   mcpMaxJSONMBFlag,
-			AuthToken:   authToken,
-			ToolsFilter: toolsFilter,
+			RootDir:        absDir,
+			Transport:      mcpTransportFlag,
+			Host:           mcpHostFlag,
+			Port:           mcpPortFlag,
+			MaxJSONMB:      mcpMaxJSONMBFlag,
+			AuthToken:      authToken,
+			ToolsFilter:    toolsFilter,
+			ToolTimeoutSec: mcpToolTimeoutFlag,
 		}
 
 		if err := cfg.Validate(); err != nil {
@@ -151,15 +155,18 @@ func runMCPClientConfig(absDir, client string, port int, cmd *cobra.Command) err
 }
 
 func init() {
-	mcpCmd.Flags().StringVar(&mcpTransportFlag, "transport", "stdio", "MCP transport protocol: stdio (default), http, or sse")
-	mcpCmd.Flags().IntVar(&mcpPortFlag, "port", 8088, "Port for http/sse transport")
+	mcpCmd.Flags().StringVar(&mcpTransportFlag, "transport", "stdio", "MCP transport protocol: stdio (default), http (Streamable HTTP), or sse (legacy)")
+	mcpCmd.Flags().StringVar(&mcpHostFlag, "host", "127.0.0.1", "Bind address for http/sse transport (loopback by default)")
+	mcpCmd.Flags().IntVar(&mcpPortFlag, "port", 8765, "Port for http/sse transport")
 	mcpCmd.Flags().StringVar(&mcpConfigClientFlag, "config-client", "", "Generate ready-to-paste client configuration (claude, cursor, zed, continue, all)")
 	mcpCmd.Flags().BoolVar(&mcpPrintConfigFlag, "print-config", false, "Print ready-to-paste client configuration JSON snippets")
 	mcpCmd.Flags().IntVar(&mcpMaxJSONMBFlag, "max-json-mb", 256, "Maximum AKG JSON payload size budget in megabytes")
-	mcpCmd.Flags().BoolVar(&mcpStrictPathsFlag, "strict-paths", true, "Enforce strict workspace root boundaries for file operations")
+	mcpCmd.Flags().BoolVar(&mcpStrictPathsFlag, "strict-paths", true, "Deprecated: path sandboxing is always enforced")
+	_ = mcpCmd.Flags().MarkDeprecated("strict-paths", "path sandboxing is always enforced")
 	mcpCmd.Flags().Bool("json", false, "Emit output as JSON")
 	mcpCmd.Flags().StringVar(&mcpAuthTokenFlag, "auth-token", "", "Bearer token for HTTP/SSE transport (or GLASSMARBLE_MCP_TOKEN)")
 	mcpCmd.Flags().StringVar(&mcpToolsFlag, "tools", "", "Comma-separated tool filter: categories (system,akg,code,diagram) or exact tool names, e.g. --tools akg,impact")
+	mcpCmd.Flags().IntVar(&mcpToolTimeoutFlag, "tool-timeout", 0, "Per-tool execution timeout in seconds (0 = default 60, negative = unbounded)")
 
 	rootCmd.AddCommand(mcpCmd)
 }

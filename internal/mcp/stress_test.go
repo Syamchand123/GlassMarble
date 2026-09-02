@@ -81,7 +81,7 @@ func TestStress_ConcurrentToolInvocations(t *testing.T) {
 
 // TestStress_BridgeConcurrency verifies that the Bridge thread-safely handles concurrent snapshot reads.
 func TestStress_BridgeConcurrency(t *testing.T) {
-	b := NewBridge(".", 256)
+	b := NewBridge(".", "", 256)
 	defer b.Close()
 
 	var wg sync.WaitGroup

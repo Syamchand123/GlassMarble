@@ -161,6 +161,11 @@ func (s *Server) buildEvidenceBundle(ctx context.Context, query string, maxItems
 			lowerQ := strings.ToLower(query)
 			var matchedClaims []map[string]string
 			for _, c := range mem.GlobalMemory {
+				// NOTE: a bare `break` inside select only exits the select —
+				// check ctx.Err() directly so cancellation actually stops the scan.
+				if ctx.Err() != nil {
+					break
+				}
 				if strings.Contains(strings.ToLower(c.Subject), lowerQ) ||
 					strings.Contains(strings.ToLower(c.Predicate), lowerQ) ||
 					strings.Contains(strings.ToLower(c.Object), lowerQ) {
@@ -173,11 +178,6 @@ func (s *Server) buildEvidenceBundle(ctx context.Context, query string, maxItems
 					if len(matchedClaims) >= maxItems {
 						break
 					}
-				}
-				select {
-				case <-ctx.Done():
-					break
-				default:
 				}
 			}
 			bundle["matched_claims"] = matchedClaims

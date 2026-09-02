@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased] — v1.1.0
+
+### Changed
+- **Visualization Server (`gmb ui`) — web UI rebuilt from scratch**:
+  - The shipped `app.js` had a top-level SyntaxError, so the previous UI never executed (no tabs, no graph, no data fetches). Rebuilt as a minimal, professional dev-tool front end: system fonts (fully offline — no Google Fonts import), light/dark themes, responsive layout (the old CSS had zero media queries), ARIA tab/combobox semantics, keyboard shortcuts, and empty states with actionable hints.
+  - All server data is HTML-escaped and inline `onclick` handlers removed (the old templates interpolated unescaped symbol names into `innerHTML`).
+  - Client now reads the real API schemas (smells: `kind`/`severity`/`affected_ids`/`evidence`/`suggestion`), populates the Metrics tab from `/api/intelligence` (previously hardcoded placeholders), and lazy-loads the 3.3 MB `mermaid.min.js` only when the Diagrams tab opens.
+  - Graph tab: adaptive layout fallback so force layout never freezes on 5k+ node graphs; cycles/cut-vertices/PageRank/smells overlays now explain themselves when the current view has no matching nodes.
+  - Server: fixed nil-pointer dereference in `/api/status` on nil graph; added `Cache-Control` for embedded assets (previously re-downloaded ~3.7 MB per reload) and `X-Content-Type-Options: nosniff`.
+- **MCP Server (`gmb mcp`) — protocol and hardening overhaul**:
+  - `--transport http` now serves the modern **Streamable HTTP** transport at `/mcp` (previously it silently aliased to deprecated SSE, which remains available via `--transport sse`). HTTP/SSE bind to `127.0.0.1` by default (new `--host` flag; previously bound to all interfaces).
+  - **Bearer token auth is now actually enforced** for HTTP/SSE with constant-time comparison and 401 + `WWW-Authenticate` (previously it was logged as "ENABLED" but never checked).
+  - Protocol version is negotiated per session against the SDK's supported list (2024-11-05 through 2025-11-25); the server previously claimed a pinned 2024-11-05 while negotiating newer revisions.
+  - Capability honesty: `resources.subscribe` is no longer advertised (there are no update emitters); cursor pagination added for tools/resources/prompts lists; `gmb_status` and `gmb_server_info` now return `structuredContent` with a text fallback.
+  - Per-tool execution timeout (default 60s, `--tool-timeout`); context-aware stdio shutdown via `StdioServer.Listen` (no more 5s race that closed the bridge under in-flight handlers); path sandboxing consolidated into a single roots-aware guard (paths were validated twice by near-identical middlewares).
+  - Removed ~1,500 lines of dead parallel implementation (`protocol.go`, `transport.go`, `registry.go`, `handlers/`, `resources/`, `prompts/`) whose error-code tests asserted constants no live code used; JSON-RPC error-code tests now assert the live SDK path.
+  - Fixed: `--storage-dir` config was computed then ignored; port default mismatch (8088 flag vs 8765 config); numeric tool arguments sent as strings were silently dropped; cancellation check in evidence scanning was a no-op (`break` inside `select`); `slog` no longer hijacks the global logger for every `gmb` subcommand via package `init()`.
+- **Diagram engine — C4 diagrams render again**:
+  - Mermaid's C4 layouter crashes on any `Rel()` targeting a boundary block (`System_Boundary`/`Enterprise_Boundary`/`Deployment_Node`), which the edge-aggregation fallback produced — C4 container diagrams of real repositories failed to render. Aggregated edges now bind to the folded `Container`/`System` element (still relatable) and `renderC4Edges` refuses boundary-block endpoints. Golden fixtures rebaselined (`c4_container.mmd`, `c4_deployment.mmd`).
+
+---
+
 ## [v1.0.1] - 2026-08-29
 
 ### Added

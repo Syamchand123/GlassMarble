@@ -41,7 +41,7 @@ func TestFormatClientConfigs(t *testing.T) {
 }
 
 func TestBridge_Basics(t *testing.T) {
-	bridge := NewBridge(".", 0)
+	bridge := NewBridge(".", "", 0)
 	defer bridge.Close()
 
 	assert.NotEmpty(t, bridge.RootDir())
@@ -859,24 +859,30 @@ func TestPrompts(t *testing.T) {
 	assert.NotEmpty(t, diagRes.Messages)
 }
 
-func TestProtocolVersion_Pin(t *testing.T) {
-	assert.Equal(t, "2024-11-05", ProtocolVersion)
-	assert.Equal(t, "2024-11-05", GetProtocolVersion())
+func TestProtocolVersion_TracksSDK(t *testing.T) {
+	// The advertised version must always equal the SDK's latest; negotiation
+	// down to any mcp.ValidProtocolVersions entry happens per session.
+	assert.Equal(t, mcp.LATEST_PROTOCOL_VERSION, ProtocolVersion)
+	assert.Equal(t, mcp.LATEST_PROTOCOL_VERSION, GetProtocolVersion())
+	assert.Contains(t, SupportedProtocolVersions(), "2024-11-05")
 	cfg := DefaultConfig()
 	cfg.RootDir = "."
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 	defer srv.Close()
-	assert.Equal(t, "2024-11-05", srv.ProtocolVersion())
-	// Verify instructions contain protocol version
-	// mcp-go stores instructions internally; we check via server info tool instead
+	assert.Equal(t, mcp.LATEST_PROTOCOL_VERSION, srv.ProtocolVersion())
+	// Verify the server info tool reports the same version (text fallback of
+	// the structured result).
 	res, err := srv.handleServerInfoTool(context.Background(), mcp.CallToolRequest{})
 	require.NoError(t, err)
 	require.False(t, res.IsError)
 	text := res.Content[0].(mcp.TextContent).Text
 	var data map[string]any
 	require.NoError(t, json.Unmarshal([]byte(text), &data))
-	assert.Equal(t, "2024-11-05", data["protocol_version"])
+	assert.Equal(t, mcp.LATEST_PROTOCOL_VERSION, data["protocol_version"])
+	assert.NotEmpty(t, data["supported_protocol_versions"])
+	// The structured content must mirror the text payload.
+	require.NotNil(t, res.StructuredContent, "server info should return structuredContent")
 }
 
 func TestToolCount_SupersetAtLeast41(t *testing.T) {
