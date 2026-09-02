@@ -59,6 +59,10 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	s.registerMemoryTools()
 	s.registerSnapshotTools()
 
+	// Register Phase 5 Diagram & Code tools
+	s.registerDiagramTools()
+	s.registerCodeTools()
+
 	return s, nil
 }
 

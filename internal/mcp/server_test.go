@@ -532,5 +532,171 @@ func TestSnapshotListTool(t *testing.T) {
 	}
 }
 
+func TestListDiagramTypesTool(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	var req mcp.CallToolRequest
+	req.Params.Name = "gmb_list_diagram_types"
+	req.Params.Arguments = map[string]any{}
+
+	res, err := srv.handleListDiagramTypesTool(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	if !res.IsError {
+		text := res.Content[0].(mcp.TextContent).Text
+		var data map[string]any
+		err = json.Unmarshal([]byte(text), &data)
+		require.NoError(t, err)
+		assert.Contains(t, data, "total_types")
+		assert.Contains(t, data, "diagram_types")
+	}
+}
+
+func TestRenderDiagramTool(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	var req mcp.CallToolRequest
+	req.Params.Name = "gmb_render_diagram"
+	req.Params.Arguments = map[string]any{
+		"type":   "DEPENDENCY_GRAPH",
+		"format": "mermaid",
+	}
+
+	res, err := srv.handleRenderDiagramTool(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	if !res.IsError {
+		text := res.Content[0].(mcp.TextContent).Text
+		var data map[string]any
+		err = json.Unmarshal([]byte(text), &data)
+		require.NoError(t, err)
+		assert.Contains(t, data, "markup")
+	}
+}
+
+func TestCodeDefinitionTool(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	var req mcp.CallToolRequest
+	req.Params.Name = "gmb_code_definition"
+	req.Params.Arguments = map[string]any{
+		"symbol": "NewServer",
+	}
+
+	res, err := srv.handleCodeDefinitionTool(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	if !res.IsError {
+		text := res.Content[0].(mcp.TextContent).Text
+		var data map[string]any
+		err = json.Unmarshal([]byte(text), &data)
+		require.NoError(t, err)
+		assert.Contains(t, data, "source")
+	}
+}
+
+func TestCodeReferencesTool(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	var req mcp.CallToolRequest
+	req.Params.Name = "gmb_code_references"
+	req.Params.Arguments = map[string]any{
+		"symbol": "NewServer",
+	}
+
+	res, err := srv.handleCodeReferencesTool(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	if !res.IsError {
+		text := res.Content[0].(mcp.TextContent).Text
+		var data map[string]any
+		err = json.Unmarshal([]byte(text), &data)
+		require.NoError(t, err)
+		assert.Contains(t, data, "references")
+	}
+}
+
+func TestCodeCallgraphTool(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	var req mcp.CallToolRequest
+	req.Params.Name = "gmb_code_callgraph"
+	req.Params.Arguments = map[string]any{
+		"symbol": "NewServer",
+		"depth":  2,
+	}
+
+	res, err := srv.handleCodeCallgraphTool(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	if !res.IsError {
+		text := res.Content[0].(mcp.TextContent).Text
+		var data map[string]any
+		err = json.Unmarshal([]byte(text), &data)
+		require.NoError(t, err)
+		assert.Contains(t, data, "call_edges")
+	}
+}
+
+func TestCodeContextTool(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RootDir = "."
+
+	srv, err := NewServer(cfg)
+	require.NoError(t, err)
+	defer srv.Close()
+
+	var req mcp.CallToolRequest
+	req.Params.Name = "gmb_code_context"
+	req.Params.Arguments = map[string]any{
+		"file":   "internal/mcp/server.go",
+		"line":   35,
+		"radius": 10,
+	}
+
+	res, err := srv.handleCodeContextTool(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	if !res.IsError {
+		text := res.Content[0].(mcp.TextContent).Text
+		var data map[string]any
+		err = json.Unmarshal([]byte(text), &data)
+		require.NoError(t, err)
+		assert.Contains(t, data, "snippet")
+	}
+}
+
+
 
 
