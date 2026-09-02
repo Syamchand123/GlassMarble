@@ -84,56 +84,60 @@ type ClientConfigs struct {
 	ContinueDev   map[string]any `json:"continue_dev"`
 }
 
-// FormatClientConfigs generates copy-paste ready JSON configurations for major AI tools.
-func FormatClientConfigs(targetDir string) string {
+// GetClientConfigs generates structured configurations for major AI tools.
+func GetClientConfigs(targetDir string) ClientConfigs {
 	absDir, err := filepath.Abs(targetDir)
 	if err != nil {
 		absDir = targetDir
 	}
 
-	claudeConfig := map[string]any{
-		"mcpServers": map[string]any{
-			"glassmarble": map[string]any{
-				"command": "gmb",
-				"args":    []string{"mcp", "--dir", absDir},
-			},
-		},
-	}
-
-	cursorConfig := map[string]any{
-		"mcpServers": map[string]any{
-			"glassmarble": map[string]any{
-				"command": "gmb",
-				"args":    []string{"mcp", "--dir", "${workspaceFolder}"},
-			},
-		},
-	}
-
-	zedConfig := map[string]any{
-		"experimental.model_context_protocol": map[string]any{
-			"servers": map[string]any{
+	return ClientConfigs{
+		ClaudeDesktop: map[string]any{
+			"mcpServers": map[string]any{
 				"glassmarble": map[string]any{
 					"command": "gmb",
 					"args":    []string{"mcp", "--dir", absDir},
 				},
 			},
 		},
-	}
-
-	continueConfig := map[string]any{
-		"mcpServers": []map[string]any{
-			{
-				"name":    "glassmarble",
-				"command": "gmb",
-				"args":    []string{"mcp", "--dir", absDir},
+		Cursor: map[string]any{
+			"mcpServers": map[string]any{
+				"glassmarble": map[string]any{
+					"command": "gmb",
+					"args":    []string{"mcp", "--dir", "${workspaceFolder}"},
+				},
+			},
+		},
+		Zed: map[string]any{
+			"experimental.model_context_protocol": map[string]any{
+				"servers": map[string]any{
+					"glassmarble": map[string]any{
+						"command": "gmb",
+						"args":    []string{"mcp", "--dir", absDir},
+					},
+				},
+			},
+		},
+		ContinueDev: map[string]any{
+			"mcpServers": []map[string]any{
+				{
+					"name":    "glassmarble",
+					"command": "gmb",
+					"args":    []string{"mcp", "--dir", absDir},
+				},
 			},
 		},
 	}
+}
 
-	claudeJSON, _ := json.MarshalIndent(claudeConfig, "", "  ")
-	cursorJSON, _ := json.MarshalIndent(cursorConfig, "", "  ")
-	zedJSON, _ := json.MarshalIndent(zedConfig, "", "  ")
-	continueJSON, _ := json.MarshalIndent(continueConfig, "", "  ")
+// FormatClientConfigs generates copy-paste ready JSON configurations for major AI tools.
+func FormatClientConfigs(targetDir string) string {
+	configs := GetClientConfigs(targetDir)
+
+	claudeJSON, _ := json.MarshalIndent(configs.ClaudeDesktop, "", "  ")
+	cursorJSON, _ := json.MarshalIndent(configs.Cursor, "", "  ")
+	zedJSON, _ := json.MarshalIndent(configs.Zed, "", "  ")
+	continueJSON, _ := json.MarshalIndent(configs.ContinueDev, "", "  ")
 
 	var b strings.Builder
 	b.WriteString("=================================================================\n")
