@@ -90,7 +90,7 @@ and updates the local GlassMarble binary for your operating system and architect
 		}
 
 		if !updateJSONFlag {
-			fmt.Printf("Checking for GlassMarble updates (current: %s, platform: %s)...\n", currentVer, platformStr)
+			fmt.Fprintf(cmd.ErrOrStderr(), "Checking for GlassMarble updates (current: %s, platform: %s)...\n", currentVer, platformStr)
 		}
 
 		release, err := fetchRelease(updateTagFlag)
@@ -168,7 +168,7 @@ and updates the local GlassMarble binary for your operating system and architect
 		}
 
 		if !updateJSONFlag {
-			fmt.Printf("Downloading %s from %s...\n", expectedArchivePrefix+"."+archiveExt, release.TagName)
+			fmt.Fprintf(cmd.ErrOrStderr(), "Downloading %s from %s...\n", expectedArchivePrefix+"."+archiveExt, release.TagName)
 		}
 
 		tempDir, err := os.MkdirTemp("", "gmb-update-*")
@@ -185,7 +185,7 @@ and updates the local GlassMarble binary for your operating system and architect
 		// Verify SHA256 against checksums.txt if available
 		if checksumsURL != "" {
 			if !updateJSONFlag {
-				fmt.Println("Verifying SHA256 checksums...")
+				fmt.Fprintln(cmd.ErrOrStderr(), "Verifying SHA256 checksums...")
 			}
 			checksumsData, err := downloadBytes(checksumsURL)
 			if err == nil {
@@ -203,7 +203,7 @@ and updates the local GlassMarble binary for your operating system and architect
 		}
 
 		if !updateJSONFlag {
-			fmt.Println("Extracting binary...")
+			fmt.Fprintln(cmd.ErrOrStderr(), "Extracting binary...")
 		}
 
 		extractedBin, err := extractBinary(archivePath, osName, tempDir)
@@ -212,7 +212,7 @@ and updates the local GlassMarble binary for your operating system and architect
 		}
 
 		if !updateJSONFlag {
-			fmt.Printf("Installing updated binary to %s...\n", execPath)
+			fmt.Fprintf(cmd.ErrOrStderr(), "Installing updated binary to %s...\n", execPath)
 		}
 
 		if err := replaceExecutable(execPath, extractedBin); err != nil {
