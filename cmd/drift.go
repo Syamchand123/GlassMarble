@@ -95,8 +95,9 @@ when declared cycle budgets or forbidden dependencies are breached (suitable for
 		}
 
 		if rep.ExceedsBudget() || rep.ForbiddenEdges > 0 {
-			return fmt.Errorf("architecture drift detected: %d forbidden dependency(ies), %d cycle(s) exceed budget %d — try inspecting violations with 'gmb inspect'",
-				rep.ForbiddenEdges, rep.CycleCount, rep.CycleBudget)
+			return producterrs.Tagged(fmt.Sprintf(
+				"architecture drift detected: %d forbidden dependency(ies), %d cycle(s) exceed budget %d — try inspecting violations with 'gmb inspect'",
+				rep.ForbiddenEdges, rep.CycleCount, rep.CycleBudget), producterrs.ErrPolicyViolation)
 		}
 		return nil
 	},

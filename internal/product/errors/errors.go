@@ -40,6 +40,14 @@ var (
 	// ErrRenderLimit marks a renderer node/edge budget exceeded (MaxNodes,
 	// MaxDepth, or renderer-specific limits).
 	ErrRenderLimit = stderrors.New("render limit exceeded")
+
+	// ErrPolicyViolation marks a command that ran correctly and found
+	// problems: lint or drift violations, failed doctor checks, a blast
+	// radius over its threshold, an exceeded performance budget.
+	//
+	// It exists so CI can tell "the gate found issues" apart from "the tool
+	// crashed or was invoked wrongly". Both previously exited 1.
+	ErrPolicyViolation = stderrors.New("policy violation")
 )
 
 // classified carries a user-facing message plus its classification sentinel

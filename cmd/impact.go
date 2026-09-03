@@ -86,7 +86,7 @@ and exposed test suites before refactoring or deleting a symbol.`,
 			out, _ := json.MarshalIndent(rep, "", "  ")
 			fmt.Println(string(out))
 			if impactThresholdFlag > 0 && rep.RiskScore > impactThresholdFlag {
-				return producterrs.Tagged(fmt.Sprintf("risk score %d exceeds threshold %d", rep.RiskScore, impactThresholdFlag), producterrs.ErrValidation)
+				return producterrs.Tagged(fmt.Sprintf("risk score %d exceeds threshold %d", rep.RiskScore, impactThresholdFlag), producterrs.ErrPolicyViolation)
 			}
 			return nil
 		}
@@ -94,7 +94,7 @@ and exposed test suites before refactoring or deleting a symbol.`,
 		fmt.Println(views.RenderImpactReport(rep))
 
 		if impactThresholdFlag > 0 && rep.RiskScore > impactThresholdFlag {
-			return producterrs.Tagged(fmt.Sprintf("risk score %d exceeds configured threshold of %d", rep.RiskScore, impactThresholdFlag), producterrs.ErrValidation)
+			return producterrs.Tagged(fmt.Sprintf("risk score %d exceeds configured threshold of %d", rep.RiskScore, impactThresholdFlag), producterrs.ErrPolicyViolation)
 		}
 
 		return nil

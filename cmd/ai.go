@@ -819,7 +819,7 @@ the state of the Architecture Knowledge Graph.`,
 			out, _ := json.MarshalIndent(dj, "", "  ")
 			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			if len(rep.Problems) > 0 {
-				return fmt.Errorf("doctor found %d problem(s)", len(rep.Problems))
+				return producterrs.Tagged(fmt.Sprintf("doctor found %d problem(s)", len(rep.Problems)), producterrs.ErrPolicyViolation)
 			}
 			return nil
 		}
@@ -828,7 +828,7 @@ the state of the Architecture Knowledge Graph.`,
 		fmt.Fprintln(w, views.RenderAIDoctor(rep, ai_engine.MaskAPIKey(cfg.APIKey)))
 
 		if len(rep.Problems) > 0 {
-			return fmt.Errorf("doctor found %d problem(s)", len(rep.Problems))
+			return producterrs.Tagged(fmt.Sprintf("doctor found %d problem(s)", len(rep.Problems)), producterrs.ErrPolicyViolation)
 		}
 		return nil
 	},

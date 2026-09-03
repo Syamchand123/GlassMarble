@@ -700,7 +700,7 @@ func runAnalysisBenchmark(cmd *cobra.Command, opts runAnalysisOptions) error {
 	fmt.Fprintf(out, "%-22s %-12s %-10s %s\n", "state size", fmt.Sprintf("%.2fMB", stateMB), "<= 50.0MB", statusStr(passState))
 
 	if !passTotal || !passCommit || !passState {
-		return producterrs.Tagged("benchmark gate exceeded performance budget", producterrs.ErrValidation)
+		return producterrs.Tagged("benchmark gate exceeded performance budget", producterrs.ErrPolicyViolation)
 	}
 	return nil
 }

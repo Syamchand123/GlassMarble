@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
+	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
@@ -101,7 +102,7 @@ parse-back integrity, duplicate node identifiers, and dangling edge references.`
 			out, _ := json.MarshalIndent(dj, "", "  ")
 			fmt.Println(string(out))
 			if failures > 0 {
-				return fmt.Errorf("integrity check failed (%d issue(s)) — try 'gmb analyze --full'", failures)
+				return producterrs.Tagged(fmt.Sprintf("integrity check failed (%d issue(s)) — try 'gmb analyze --full'", failures), producterrs.ErrPolicyViolation)
 			}
 			return nil
 		}
@@ -110,7 +111,7 @@ parse-back integrity, duplicate node identifiers, and dangling edge references.`
 		if failures == 0 {
 			return nil
 		}
-		return fmt.Errorf("integrity check failed (%d issue(s)) — try 'gmb analyze --full'", failures)
+		return producterrs.Tagged(fmt.Sprintf("integrity check failed (%d issue(s)) — try 'gmb analyze --full'", failures), producterrs.ErrPolicyViolation)
 	},
 }
 

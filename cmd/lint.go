@@ -107,7 +107,7 @@ and cyclic coupling. Returns exit code 1 if violations are found.`,
 			out, _ := json.MarshalIndent(res, "", "  ")
 			fmt.Println(string(out))
 			if !res.Passed || (lintStrictFlag && res.WarningsCount > 0) || (lintFailOnWarnFlag && res.WarningsCount > 0) {
-				return producterrs.Tagged(fmt.Sprintf("%d architectural violations detected", res.ViolationsTotal), producterrs.ErrValidation)
+				return producterrs.Tagged(fmt.Sprintf("%d architectural violations detected", res.ViolationsTotal), producterrs.ErrPolicyViolation)
 			}
 			return nil
 		}
@@ -119,7 +119,7 @@ and cyclic coupling. Returns exit code 1 if violations are found.`,
 		fmt.Println(views.RenderLintResult(res, relRulesPath))
 
 		if !res.Passed || (lintStrictFlag && res.WarningsCount > 0) || (lintFailOnWarnFlag && res.WarningsCount > 0) {
-			return producterrs.Tagged(fmt.Sprintf("%d architectural violation(s) detected — check report above", res.ViolationsTotal), producterrs.ErrValidation)
+			return producterrs.Tagged(fmt.Sprintf("%d architectural violation(s) detected — check report above", res.ViolationsTotal), producterrs.ErrPolicyViolation)
 		}
 
 		return nil

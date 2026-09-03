@@ -54,21 +54,34 @@ Precedence: `flag > GLASSMARBLE_* env > .glassmarble/config.yaml > ~/.glassmarbl
 
 ```mermaid
 flowchart LR
-  E0[0 Success] --> E1[1 General]
-  E1 --> E2[2 Usage]
-  E2 --> E3[3 Scope/Target]
-  E3 --> E4[4 Integrity/Bench]
+  E0[0 Success] --> E1[1 Failure]
+  E1 --> E2[2 Entry point]
+  E2 --> E3[3 Empty subgraph]
+  E3 --> E4[4 Render limit]
+  E4 --> E5[5 Policy violation]
   style E0 fill:#10b981,color:#fff
-  style E4 fill:#ef4444,color:#fff
+  style E5 fill:#f59e0b,color:#fff
 ```
 
 | Code | Meaning | Example |
 |---|---|---|
 | `0` | Success | `gmb status`, `gmb analyze` healthy |
-| `1` | General / filesystem | Missing file, permission |
-| `2` | Usage | Unknown flag, missing `--entry` |
-| `3` | Scope / target | `gmb visualize sequence --entry notFound` |
-| `4` | Integrity / budget | `gmb doctor` dangling, `gmb analyze --bench` over budget |
+| `1` | Failure — the command could not run | Unknown flag, missing file, unreadable config, permission |
+| `2` | Entry point missing or not found | `gmb visualize sequence --entry notFound` |
+| `3` | Empty subgraph — nothing to report on | `gmb hotspot` before `gmb analyze` |
+| `4` | Render limit exceeded | Diagram over `--max-nodes` |
+| `5` | **Policy violation — the command ran fine and found problems** | `gmb lint` violations, `gmb drift` over budget, `gmb doctor` integrity failures, `gmb impact --threshold` exceeded, `gmb analyze --bench` over budget |
+
+Code `5` is what CI should gate on: it separates "the gate found issues"
+from "the tool crashed or was invoked wrongly", which both used to exit `1`.
+
+```bash
+gmb lint; case $? in
+  0) echo "clean" ;;
+  5) echo "violations found — failing the build" ;;
+  *) echo "gmb itself failed" ;;
+esac
+```
 
 ---
 
