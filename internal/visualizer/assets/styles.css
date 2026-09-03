@@ -435,7 +435,11 @@ body.theming, body.theming * {
 }
 .seg__btn {
   position: relative; z-index: 1;
-  flex: 1; height: 26px; border-radius: 7px;
+  /* basis:auto so a long label ("Components") never overflows its own
+     button — free space is shared, content width is guaranteed */
+  flex: 1 1 auto;
+  height: 26px; padding: 0 7px; border-radius: 7px;
+  white-space: nowrap;
   color: var(--ink-mid); font-size: 12px; font-weight: 540;
   transition: color var(--t-med) var(--ease-swift), transform var(--t-fast) var(--ease-swift);
 }
@@ -444,8 +448,12 @@ body.theming, body.theming * {
 .seg__btn.is-on { color: var(--ink); font-weight: 620; }
 
 .field { display: block; }
-.field__label { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-mid); margin-bottom: 6px; }
-.field__label output { color: var(--accent-ink); font-weight: 640; font-variant-numeric: tabular-nums; }
+.field__label { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--ink-mid); margin-bottom: 6px; }
+.field__label output {
+  color: var(--accent-ink); font-weight: 700; font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  background: var(--accent-dim); border-radius: 999px; padding: 1.5px 9px;
+}
 .field__input {
   width: 100%; height: 31px;
   background: var(--bg2);
@@ -458,8 +466,104 @@ body.theming, body.theming * {
 }
 .field__input:hover { border-color: var(--line); }
 .field__input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
-.field__range { width: 100%; accent-color: var(--accent); cursor: grab; }
+/* Custom range: gradient-filled track (--pct set by JS) with a ringed
+   thumb that swells and blooms a halo while dragging. */
+.field__range {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 20px;
+  background: transparent;
+  cursor: grab;
+}
 .field__range:active { cursor: grabbing; }
+.field__range:focus { outline: none; }
+.field__range::-webkit-slider-runnable-track {
+  height: 6px; border-radius: 999px;
+  background:
+    linear-gradient(90deg, var(--accent), var(--accent-hi)) 0 / var(--pct, 0%) 100% no-repeat,
+    var(--bg3);
+}
+.field__range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 15px; height: 15px; margin-top: -4.5px;
+  border-radius: 50%;
+  background: var(--bg1);
+  border: 3px solid var(--accent);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  transition: transform var(--t-med) var(--ease-spring), box-shadow var(--t-med) var(--ease-out);
+}
+.field__range:hover::-webkit-slider-thumb { transform: scale(1.13); }
+.field__range:active::-webkit-slider-thumb,
+.field__range:focus-visible::-webkit-slider-thumb {
+  transform: scale(1.24);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3), 0 0 0 6px var(--accent-dim);
+}
+.field__range::-moz-range-track { height: 6px; border-radius: 999px; background: var(--bg3); }
+.field__range::-moz-range-progress {
+  height: 6px; border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-hi));
+}
+.field__range::-moz-range-thumb {
+  width: 15px; height: 15px; border-radius: 50%;
+  background: var(--bg1); border: 3px solid var(--accent);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  transition: transform var(--t-med) var(--ease-spring), box-shadow var(--t-med) var(--ease-out);
+}
+.field__range:hover::-moz-range-thumb { transform: scale(1.13); }
+.field__range:active::-moz-range-thumb { transform: scale(1.24); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3), 0 0 0 6px var(--accent-dim); }
+
+/* ═══ CUSTOM SELECT — native popups cannot be styled, so this is a
+   button + listbox with full keyboard support ═══ */
+.sel { position: relative; }
+.sel__btn {
+  width: 100%; height: 31px;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  background: var(--bg2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+  padding: 0 10px;
+  font-size: 12.5px; color: var(--ink); text-align: left;
+  transition: border-color var(--t-fast), box-shadow var(--t-med) var(--ease-out), background var(--t-fast);
+}
+.sel__btn:hover { border-color: var(--line); }
+.sel__btn[aria-expanded="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+  background: var(--bg1);
+}
+.sel__chev {
+  width: 12px; height: 12px; color: var(--ink-dim); flex: 0 0 auto;
+  transform: rotate(90deg);
+  transition: transform var(--t-med) var(--ease-spring), color var(--t-fast);
+}
+.sel__btn[aria-expanded="true"] .sel__chev { transform: rotate(-90deg); color: var(--accent-ink); }
+.sel__list {
+  position: fixed; z-index: 340;
+  list-style: none;
+  background: var(--bg1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow);
+  padding: 5px;
+  max-height: 264px; overflow-y: auto;
+  transform-origin: top center;
+  animation: popIn 0.2s var(--ease-out);
+}
+.sel__list:focus { outline: none; }
+.sel__opt {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 11px; border-radius: 7px;
+  font-size: 12.5px; color: var(--ink-mid);
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease-swift), color var(--t-fast), transform var(--t-fast) var(--ease-swift);
+}
+.sel__opt::before {
+  content: ''; width: 5px; height: 5px; border-radius: 50%;
+  background: transparent; flex: 0 0 auto;
+  transition: background var(--t-fast), transform var(--t-med) var(--ease-spring);
+}
+.sel__opt:hover, .sel__opt.is-focus { background: var(--bg2); color: var(--ink); transform: translateX(2px); }
+.sel__opt[aria-selected="true"] { color: var(--accent-ink); font-weight: 620; }
+.sel__opt[aria-selected="true"]::before { background: var(--accent); transform: scale(1.5); }
 
 .pills { display: flex; flex-wrap: wrap; gap: 6px; }
 .pill {

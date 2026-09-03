@@ -83,16 +83,23 @@
           <button class="seg__btn" data-view="packages">Packages</button>
           <button class="seg__btn" data-view="symbols">Symbols</button>
         </div>
-        <label class="field">
-          <span class="field__label">Layout</span>
-          <select id="layoutSelect" class="field__input">
-            <option value="cose" selected>Force (cose)</option>
-            <option value="breadthfirst">Hierarchy</option>
-            <option value="concentric">Concentric</option>
-            <option value="circle">Circle</option>
-            <option value="grid">Grid</option>
-          </select>
-        </label>
+        <div class="field">
+          <span class="field__label" id="layoutLbl">Layout</span>
+          <div class="sel" id="layoutSel">
+            <button type="button" class="sel__btn" id="layoutBtn" aria-haspopup="listbox"
+                    aria-expanded="false" aria-controls="layoutList" aria-labelledby="layoutLbl layoutBtn">
+              <span id="layoutVal">Force (cose)</span>
+              <svg class="sel__chev" aria-hidden="true"><use href="#i-chevron"/></svg>
+            </button>
+            <ul class="sel__list" id="layoutList" role="listbox" aria-labelledby="layoutLbl" tabindex="-1" hidden>
+              <li class="sel__opt" role="option" data-val="cose" aria-selected="true">Force (cose)</li>
+              <li class="sel__opt" role="option" data-val="breadthfirst" aria-selected="false">Hierarchy</li>
+              <li class="sel__opt" role="option" data-val="concentric" aria-selected="false">Concentric</li>
+              <li class="sel__opt" role="option" data-val="circle" aria-selected="false">Circle</li>
+              <li class="sel__opt" role="option" data-val="grid" aria-selected="false">Grid</li>
+            </ul>
+          </div>
+        </div>
       </div>
 
       <div class="side__section">

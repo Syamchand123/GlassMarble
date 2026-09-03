@@ -119,13 +119,19 @@ function initTheme() {
 
 const TABS = ['graph', 'intel', 'timeline', 'marbles', 'metrics'];
 
-/* Spring the capsule beneath the active tab (transform-only). */
+/* Spring the capsule beneath the active tab (transform-only).
+   Measured against the rail's padding box — which is what `left: 0`
+   resolves to — so the capsule lands exactly on the tab regardless of
+   the rail's border and padding. */
 function moveTabIndicator() {
   const active = document.querySelector('.tab[aria-selected="true"]');
   const ind = $('tabsInd');
   if (!active || !ind) return;
-  ind.style.width = `${active.offsetWidth}px`;
-  ind.style.transform = `translateX(${active.offsetLeft - 4}px)`;
+  const rail = ind.parentElement;
+  const railBox = rail.getBoundingClientRect();
+  const tabBox = active.getBoundingClientRect();
+  ind.style.width = `${tabBox.width}px`;
+  ind.style.transform = `translateX(${tabBox.left - railBox.left - rail.clientLeft}px)`;
 }
 
 const PANEL_ANIM = ['panel-enter-r', 'panel-enter-l', 'panel-exit-r', 'panel-exit-l'];
@@ -506,6 +512,91 @@ function buildFilterPills() {
   mk('kindFilters', kinds, state.kindsOff);
 }
 
+/* Custom select: a button + listbox pair. The list is position:fixed so
+   the scrollable sidebar cannot clip it; full keyboard support (arrows,
+   Home/End, Enter, Escape) and focus returns to the button on close. */
+function initSelect(id, onChange) {
+  const root = $(id);
+  const btn = root.querySelector('.sel__btn');
+  const list = root.querySelector('.sel__list');
+  const label = root.querySelector('.sel__btn > span');
+  const opts = Array.from(list.querySelectorAll('.sel__opt'));
+  let focusIdx = Math.max(0, opts.findIndex((o) => o.getAttribute('aria-selected') === 'true'));
+  /* Portal the list to <body>: the sidebar clips overflow, and its
+     animated sections create stacking contexts that would paint over a
+     locally-positioned popup. Fixed positioning makes the DOM location
+     irrelevant to layout; aria-controls keeps the pairing. */
+  document.body.appendChild(list);
+
+  const place = () => {
+    const r = btn.getBoundingClientRect();
+    list.style.width = `${r.width}px`;
+    list.style.left = `${r.left}px`;
+    /* flip above the trigger when there isn't room below */
+    const below = window.innerHeight - r.bottom;
+    const h = Math.min(list.scrollHeight + 2, 264);
+    if (below < h + 12 && r.top > below) list.style.top = `${r.top - h - 6}px`;
+    else list.style.top = `${r.bottom + 6}px`;
+  };
+
+  const setFocus = (i) => {
+    focusIdx = (i + opts.length) % opts.length;
+    opts.forEach((o, j) => o.classList.toggle('is-focus', j === focusIdx));
+    opts[focusIdx].scrollIntoView({ block: 'nearest' });
+  };
+
+  const open = () => {
+    list.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+    place();
+    setFocus(opts.findIndex((o) => o.getAttribute('aria-selected') === 'true'));
+    list.focus();
+  };
+
+  const close = (refocus) => {
+    if (list.hidden) return;
+    list.hidden = true;
+    btn.setAttribute('aria-expanded', 'false');
+    opts.forEach((o) => o.classList.remove('is-focus'));
+    if (refocus) btn.focus();
+  };
+
+  const pick = (i) => {
+    const opt = opts[i];
+    if (!opt) return;
+    opts.forEach((o) => o.setAttribute('aria-selected', String(o === opt)));
+    label.textContent = opt.textContent;
+    close(true);
+    onChange(opt.dataset.val);
+  };
+
+  btn.addEventListener('click', () => (list.hidden ? open() : close(true)));
+  opts.forEach((o, i) => {
+    o.addEventListener('click', () => pick(i));
+    o.addEventListener('mousemove', () => setFocus(i));
+  });
+  list.addEventListener('keydown', (e) => {
+    switch (e.key) {
+      case 'ArrowDown': e.preventDefault(); setFocus(focusIdx + 1); break;
+      case 'ArrowUp': e.preventDefault(); setFocus(focusIdx - 1); break;
+      case 'Home': e.preventDefault(); setFocus(0); break;
+      case 'End': e.preventDefault(); setFocus(opts.length - 1); break;
+      case 'Enter': case ' ': e.preventDefault(); pick(focusIdx); break;
+      case 'Escape': case 'Tab': close(true); break;
+      default: break;
+    }
+  });
+  btn.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+  });
+  document.addEventListener('click', (e) => {
+    if (!root.contains(e.target) && !list.contains(e.target)) close(false);
+  });
+  /* fixed positioning would drift on scroll — close instead */
+  window.addEventListener('scroll', () => close(false), true);
+  window.addEventListener('resize', () => close(false));
+}
+
 /* Liquid thumb that glides under the active segment button. */
 function moveSegThumb(seg) {
   const on = seg.querySelector('.seg__btn.is-on');
@@ -517,8 +608,12 @@ function moveSegThumb(seg) {
     seg.prepend(thumb);
   }
   if (!on) return;
-  thumb.style.width = `${on.offsetWidth}px`;
-  thumb.style.transform = `translateX(${on.offsetLeft - 3}px)`;
+  /* Measure against the control's padding box (what `left: 0` resolves to)
+     so the thumb lands exactly on the button, border and padding included. */
+  const segBox = seg.getBoundingClientRect();
+  const onBox = on.getBoundingClientRect();
+  thumb.style.width = `${onBox.width}px`;
+  thumb.style.transform = `translateX(${onBox.left - segBox.left - seg.clientLeft}px)`;
 }
 
 function initControls() {
@@ -535,14 +630,23 @@ function initControls() {
     state.view = b.dataset.view;
     loadGraph();
   });
-  $('layoutSelect').addEventListener('change', (e) => {
-    state.layout = e.target.value;
+  initSelect('layoutSel', (val) => {
+    state.layout = val;
     runLayout();
   });
+  /* Range: --pct drives the gradient fill of the custom track. */
   const range = $('minDegreeRange');
+  const syncRange = () => {
+    const min = Number(range.min) || 0;
+    const span = (Number(range.max) || 100) - min;
+    const pct = span > 0 ? ((Number(range.value) - min) / span) * 100 : 0;
+    range.style.setProperty('--pct', `${pct}%`);
+    $('minDegreeVal').textContent = range.value;
+  };
+  syncRange();
   range.addEventListener('input', () => {
     state.minDegree = Number(range.value);
-    $('minDegreeVal').textContent = range.value;
+    syncRange();
   });
   range.addEventListener('change', renderGraph);
 
