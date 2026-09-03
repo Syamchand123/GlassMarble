@@ -170,6 +170,11 @@ body.theming, body.theming * {
   background: var(--bg1);
   border-bottom: 1px solid var(--line);
   animation: dropIn 0.5s var(--ease-out) both;
+  /* The entrance animation (fill: both) makes the topbar a persistent
+     stacking context, which would trap the search dropdown's z-index
+     beneath later-painted panel content — lift the whole bar above it. */
+  position: relative;
+  z-index: 320;
 }
 .brand { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
 .brand img {
