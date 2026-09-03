@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
@@ -38,6 +39,14 @@ type GraphSnapshot struct {
 	Inbound     map[string][]link.ResolvedEdge
 	Entrypoints []string
 	EdgeCount   int
+
+	// structural caches the structural-edge subset of Outbound. Every
+	// analytics pass -- SCC, PageRank's 20 iterations, reachability, layer
+	// checks, pattern and smell detection -- walks it once per node, and it
+	// was recomputed and reallocated on each of those visits. The snapshot is
+	// immutable, so the filtered result cannot go stale; build it once.
+	structOnce sync.Once
+	structural map[string][]link.ResolvedEdge
 }
 
 // NewGraphSnapshot captures the current CPG state into a GraphSnapshot.
@@ -107,17 +116,36 @@ func (s *GraphSnapshot) Len() int {
 
 // structuralOutbound filters the outbound edges of id to structural edges
 // whose target exists in the snapshot (dangling edges are ignored).
+// The returned slice is owned by the snapshot and shared between callers:
+// read it, never mutate it. Ordering matches Outbound, so the determinism the
+// SCC and PageRank passes rely on is preserved.
 func (s *GraphSnapshot) structuralOutbound(id string) []link.ResolvedEdge {
-	edges := s.Outbound[id]
-	out := make([]link.ResolvedEdge, 0, len(edges))
-	for _, e := range edges {
-		if isStructuralEdge(e.Type) {
-			if _, ok := s.Nodes[e.TargetID]; ok {
-				out = append(out, e)
+	s.structOnce.Do(s.buildStructural)
+	return s.structural[id]
+}
+
+// buildStructural filters every node's outbound edges down to structural
+// edges pointing at nodes that exist in this snapshot.
+func (s *GraphSnapshot) buildStructural() {
+	s.structural = make(map[string][]link.ResolvedEdge, len(s.Outbound))
+	for id, edges := range s.Outbound {
+		var out []link.ResolvedEdge
+		for _, e := range edges {
+			if !isStructuralEdge(e.Type) {
+				continue
 			}
+			if _, ok := s.Nodes[e.TargetID]; !ok {
+				continue
+			}
+			if out == nil {
+				out = make([]link.ResolvedEdge, 0, len(edges))
+			}
+			out = append(out, e)
+		}
+		if out != nil {
+			s.structural[id] = out
 		}
 	}
-	return out
 }
 
 // SCC finds all strongly connected components over structural edges using an
