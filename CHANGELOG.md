@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — v1.1.0
 
+### Fixed — correctness & data integrity
+- **MVCC snapshot corruption (`internal/akg`)**: `rotateLeft`/`rotateRight` mutated the nodes they were given. Because `Set`/`Delete` copy only the path to the touched key and alias every sibling subtree, a rebalance rewrote nodes still owned by earlier snapshots. Reproduced deterministically: a snapshot of `{a,b,c,d,e}` became `[a b b c d e]` — a duplicated key and a broken traversal — after a `Delete` on a *derived* map. Every incremental commit calls `Delete` on six indexes against a shadow that shares structure with the live graph, so any delta commit could corrupt the snapshot being served to readers. Both rotations are now pure; covered by new isolation, double-rotation and 200-key stress tests.
+- **Silent data loss on linker panic (`internal/code_analysis_engine/link`)**: a panicking pass was recovered, logged, and ignored, after which analysis committed a graph missing that pass's output. Since the commit path sweeps every node of each modified file before grafting, the swept nodes and edges were permanently deleted behind one log line. Panics in passes and merge goroutines now abort the run with an error, leaving the stored graph untouched.
+- **Untracked files invisible to incremental analysis (`ingest/git.go`)**: `git diff --name-status HEAD` never lists untracked files, so a newly created source file never entered the graph until some later full rescan. The working-tree delta now unions in `git ls-files --others --exclude-standard`, deduplicated and still respecting `.gitignore`. The root-commit probe also ran without a working directory, resolving against the process CWD instead of the analyzed repository.
+- **Diagram canvas not updating (`gmb ui` → Diagrams)**: selecting a second diagram changed the title but left the previous SVG on screen. The placeholder element lived inside the container being overwritten, so the first render destroyed it and every later selection threw before fetching. Now renders into a dedicated canvas with a render token guarding out-of-order completions.
+- **Untypeable characters in `gmb ai chat`**: vi-style viewport bindings matched before the composer saw the key, so `b`, `f`, `g`, `G` and space were swallowed — typing "before" produced "eore". Letter aliases now apply only when the composer is blurred; `esc` also quits.
+
+### Changed — performance
+- **Graph commit cost roughly halved.** Persistence was 69% of analysis wall-clock. The post-write verification re-read the state file, unmarshaled it into a second document, re-serialized the graph into a third, and byte-compared — paying for the write twice to prove determinism, which CI already gates. Verification now happens *while* writing (zero-dangling checked against the document being emitted) plus a streaming SHA-256 read-back, which additionally detects corruption between serialization and rename. Measured on an identical synthetic graph: 5k nodes 151ms → 88ms, 20k nodes 637ms → 338ms, with ~2.2× less memory and ~3× fewer allocations. End-to-end on this repository at ~15.3k nodes: commit 12,483ms → 9,845ms (−21%), total analysis −27%.
+- `CowMap.Len` was an O(N) tree walk called casually on hot paths; the count is now maintained incrementally and read atomically.
+- The state encoder writes through a 1 MiB buffer instead of issuing many small syscalls, and the storage directory is fsynced after the atomic rename (a rename is not durable until its directory is synced).
+- Graph viewport rendering skips edges and uses a cached texture during pan/zoom, so interacting with a 5k-node / 14k-edge view no longer redraws everything each frame.
+
+### Added
+- `akg.json.sha256` sidecar so corruption at rest is detectable without re-deriving the graph.
+- CI race-detector gate over `internal/akg` and `internal/code_analysis_engine` — the MVCC substrate is lock-free on the read path, so defects there are silent corruption rather than crashes, and the existing `*_NoRace` tests proved nothing without `-race`.
+- Benchmarks comparing the previous and current commit paths on the same graph.
+
+### Changed — CLI/TUI
+- `--quiet` was declared and documented but read by nothing; it now suppresses non-error output.
+- `--color=always` only unset `NO_COLOR`, which does not survive a non-TTY stdout; it now also sets `CLICOLOR_FORCE`, so piping to a pager keeps color.
+- Non-interactive `analyze` printed one line at the start and one at the end, leaving CI runs looking hung. Phase-boundary callbacks that were previously discarded outside the TUI now render as plain log lines on stderr, keeping stdout clean for `--json`.
+
 ### Changed
 - **Visualization Server (`gmb ui`) — web UI rebuilt from scratch**:
   - The shipped `app.js` had a top-level SyntaxError, so the previous UI never executed (no tabs, no graph, no data fetches). Rebuilt as a minimal, professional dev-tool front end: system fonts (fully offline — no Google Fonts import), light/dark themes, responsive layout (the old CSS had zero media queries), ARIA tab/combobox semantics, keyboard shortcuts, and empty states with actionable hints.
