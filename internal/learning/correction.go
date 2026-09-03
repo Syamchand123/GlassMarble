@@ -161,10 +161,23 @@ func validKnowledgeState(s string) bool {
 // correctionID derives the deterministic ID for a correction. Same content,
 // same timestamp → same ID, which is what makes repeated appends
 // idempotent.
-func correctionID(kind CorrectionKind, targetID, correctedValue string, ts time.Time) string {
-	sum := sha256.Sum256([]byte(stringsJoinNonEmpty("\x00",
-		"corr", string(kind), targetID, correctedValue, ts.UTC().Format(time.RFC3339Nano))))
-	return "corr_" + hex.EncodeToString(sum[:16])
+// correctionID derives a correction's identity from its CONTENT only.
+//
+// The timestamp is deliberately excluded. Append sets it to time.Now() when
+// zero, so folding it in meant two identical `gmb memory --correct`
+// invocations produced different IDs and both survived LoadAll's dedup -
+// directly contradicting the documented contract that re-running a CLI
+// command never duplicates the log. Recording the same correction twice is
+// now genuinely idempotent; the timestamp is still stored for audit.
+//
+// Fields are length-prefixed rather than joined, because skipping empty parts
+// let (kind, target, "") and (kind, "", target) hash identically.
+func correctionID(kind CorrectionKind, targetID, correctedValue string, _ time.Time) string {
+	h := sha256.New()
+	for _, part := range []string{"corr", string(kind), targetID, correctedValue} {
+		fmt.Fprintf(h, "%d:%s\x00", len(part), part)
+	}
+	return "corr_" + hex.EncodeToString(h.Sum(nil)[:16])
 }
 
 // stringsJoinNonEmpty joins parts with sep, skipping empty parts so the
