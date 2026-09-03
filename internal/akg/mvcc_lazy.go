@@ -39,30 +39,39 @@ func balanceFactor[K cmp.Ordered, V any](n *cowNode[K, V]) int {
 	return heightOf(n.left) - heightOf(n.right)
 }
 
+// rotateRight and rotateLeft are PURE: they copy every node whose pointers or
+// height they change, and never write through a pointer they were given.
+//
+// This is load-bearing for MVCC. Set and Delete copy only the path to the
+// touched key and alias every sibling subtree, so a rotation reaches nodes that
+// earlier snapshots still own — Delete in particular rotates *into* the aliased
+// side. Mutating in place there silently rewrites the child pointers of a
+// snapshot that concurrent readers are traversing, which corrupted it into a
+// tree with duplicated and out-of-order keys.
 func rotateRight[K cmp.Ordered, V any](y *cowNode[K, V]) *cowNode[K, V] {
-	x := y.left
-	if x == nil {
+	if y == nil || y.left == nil {
 		return y
 	}
-	t2 := x.right
-	x.right = y
-	y.left = t2
-	y.height = maxInt(heightOf(y.left), heightOf(y.right)) + 1
-	x.height = maxInt(heightOf(x.left), heightOf(x.right)) + 1
-	return x
+	newX := *y.left // new pivot (copy)
+	newY := *y      // demoted root (copy)
+	newY.left = newX.right
+	newX.right = &newY
+	newY.height = maxInt(heightOf(newY.left), heightOf(newY.right)) + 1
+	newX.height = maxInt(heightOf(newX.left), heightOf(newX.right)) + 1
+	return &newX
 }
 
 func rotateLeft[K cmp.Ordered, V any](x *cowNode[K, V]) *cowNode[K, V] {
-	y := x.right
-	if y == nil {
+	if x == nil || x.right == nil {
 		return x
 	}
-	t2 := y.left
-	y.left = x
-	x.right = t2
-	x.height = maxInt(heightOf(x.left), heightOf(x.right)) + 1
-	y.height = maxInt(heightOf(y.left), heightOf(y.right)) + 1
-	return y
+	newY := *x.right // new pivot (copy)
+	newX := *x       // demoted root (copy)
+	newX.right = newY.left
+	newY.left = &newX
+	newX.height = maxInt(heightOf(newX.left), heightOf(newX.right)) + 1
+	newY.height = maxInt(heightOf(newY.left), heightOf(newY.right)) + 1
+	return &newY
 }
 
 func cowMapSet[K cmp.Ordered, V any](root *cowNode[K, V], key K, val V) *cowNode[K, V] {
