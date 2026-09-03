@@ -436,10 +436,25 @@ func isSystemBoundary(boundary *types.LayoutTree) bool {
 	return false
 }
 
+// compactTechnology shortens a comma-joined primitive list so it fits a C4
+// element's fixed-width text line. "ALLOCATION,CACHE,DISK_IO,SYNCHRONIZATION"
+// rendered verbatim overflows the mermaid container box; it becomes
+// "ALLOCATION, CACHE +2".
+func compactTechnology(tech string) string {
+	parts := strings.Split(tech, ",")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	if len(parts) <= 2 {
+		return strings.Join(parts, ", ")
+	}
+	return fmt.Sprintf("%s, %s +%d", parts[0], parts[1], len(parts)-2)
+}
+
 func detectContainerTechnology(boundary *types.LayoutTree) string {
 	for _, node := range boundary.Nodes {
 		if node.PrimitiveType != "" && node.PrimitiveType != ont.PrefixGM {
-			return strings.TrimPrefix(node.PrimitiveType, ont.PrefixGM)
+			return compactTechnology(strings.TrimPrefix(node.PrimitiveType, ont.PrefixGM))
 		}
 		tech := detectNodeTechnology(node)
 		if tech != "Go Module" && tech != "Go/Generic" {
@@ -489,7 +504,7 @@ func detectNodeTechnology(node *types.LayoutNode) string {
 		return "Go/Generic"
 	}
 	if node.PrimitiveType != "" && node.PrimitiveType != ont.PrefixGM {
-		return strings.TrimPrefix(node.PrimitiveType, ont.PrefixGM)
+		return compactTechnology(strings.TrimPrefix(node.PrimitiveType, ont.PrefixGM))
 	}
 	if isDatabase(node) {
 		return "Database"

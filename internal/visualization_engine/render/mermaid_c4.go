@@ -277,7 +277,7 @@ func renderC4ComponentDiagram(tree *types.LayoutTree, sb *strings.Builder) {
 				name = sanitizeMermaidLabel(node.ID)
 			}
 			kind := getShortKind(node.Kind)
-			tech := node.PrimitiveType
+			tech := compactTechnology(node.PrimitiveType)
 			if tech == "" {
 				tech = "Go/Core Component"
 			}
