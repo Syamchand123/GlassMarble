@@ -1,6 +1,7 @@
 package knowledge_aging
 
 import (
+	"github.com/Syamchand123/GlassMarble/internal/evidence"
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
@@ -75,11 +76,15 @@ func MissingEntityClaims(
 
 	var missing []string
 	for _, claim := range memory.GlobalMemory {
-		if claim.Subject != "" && entityMissing(present, claim.Subject, claim.SubjectID) {
+		if claim.Subject != "" && claimSubjectMissing(present, claim) {
 			missing = append(missing, claim.ID)
 			continue
 		}
-		if claim.Subject != nonEntitySubject && claim.Object != "" && entityMissing(present, claim.Object, claim.ObjectID) {
+		// The object side gets the same treatment: a document claim's object
+		// ("redis", "600ms latency") is prose too.
+		if claim.Subject != nonEntitySubject && claim.Object != "" &&
+			!(claim.ObjectID == "" && isDocumentSourced(claim)) &&
+			entityMissing(present, claim.Object, claim.ObjectID) {
 			missing = append(missing, claim.ID)
 		}
 	}
@@ -100,6 +105,39 @@ func entityMissing(present presentEntities, name, nodeID string) bool {
 		return false
 	}
 	return nodeID == "" || !present.hasNode(nodeID)
+}
+
+// claimSubjectMissing answers the same question for a claim, but only when the
+// graph can actually answer it.
+//
+// A document-derived claim's subject is prose - an ADR decision title such as
+// "Use Redis for session cache", or a PR summary - which is neither a
+// component name nor a node ID, so its SubjectID is empty by construction.
+// Treating that as "absent from the graph" projected every fused ADR, README,
+// PR and issue claim to HISTORICAL the moment it was created, permanently
+// ranking all fused knowledge as stale. The graph simply has no opinion about
+// such a subject, so it cannot be evidence of removal.
+func claimSubjectMissing(present presentEntities, claim developer_memory.KnowledgeClaim) bool {
+	if claim.SubjectID == "" && isDocumentSourced(claim) {
+		return false
+	}
+	return entityMissing(present, claim.Subject, claim.SubjectID)
+}
+
+// isDocumentSourced reports whether a claim came from prose rather than from
+// the code graph.
+func isDocumentSourced(claim developer_memory.KnowledgeClaim) bool {
+	switch claim.Evidence.PrimarySource {
+	case evidence.SourceDocs, evidence.SourcePR, evidence.SourceIssue:
+		return true
+	}
+	for _, it := range claim.Evidence.Items {
+		switch it.Source {
+		case evidence.SourceDocs, evidence.SourcePR, evidence.SourceIssue:
+			return true
+		}
+	}
+	return false
 }
 
 // presentEntities indexes the snapshot's component names and node IDs for
