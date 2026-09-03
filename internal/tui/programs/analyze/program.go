@@ -59,17 +59,19 @@ type phaseState struct {
 }
 
 type model struct {
-	opts    Options
-	run     RunFn
-	spinner components.GMSpinner
-	phases  [5]phaseState
-	done    bool
-	summary Summary
-	err     error
-	elapsed time.Duration
-	started time.Time
-	width   int
-	height  int
+	opts     Options
+	run      RunFn
+	spinner  components.GMSpinner
+	phases   [5]phaseState
+	done     bool
+	detached bool
+	showHelp bool
+	summary  Summary
+	err      error
+	elapsed  time.Duration
+	started  time.Time
+	width    int
+	height   int
 }
 
 // PhaseStartMsg marks the beginning of a pipeline phase.
@@ -116,7 +118,9 @@ func newModel(opts Options, run RunFn) model {
 // RunAnalyze launches the interactive analysis program and prints the styled
 // summary or error card on completion.
 func RunAnalyze(opts Options, run RunFn, in io.Reader, out io.Writer) error {
-	p := tea.NewProgram(newModel(opts, run), tea.WithOutput(out), tea.WithInput(in))
+	// Alt-screen: without it an interrupted run leaves half-drawn progress
+	// frames scrolled into the user's terminal history.
+	p := tea.NewProgram(newModel(opts, run), tea.WithAltScreen(), tea.WithOutput(out), tea.WithInput(in))
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -147,6 +151,9 @@ func RunAnalyze(opts Options, run RunFn, in io.Reader, out io.Writer) error {
 	if m.err != nil {
 		return m.err
 	}
+	if m.detached {
+		fmt.Fprintln(out, "Analysis is still running in the background; it will finish writing the graph.")
+	}
 	return nil
 }
 
@@ -165,7 +172,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyMsg:
-		if msg.String() == "ctrl+c" || msg.String() == "q" {
+		switch msg.String() {
+		case "?":
+			m.showHelp = !m.showHelp
+			return m, nil
+		case "ctrl+c", "q", "esc":
+			// The pipeline runs in its own goroutine and cannot be torn down
+			// mid-transaction without risking a half-written graph, so quitting
+			// detaches the UI rather than pretending the work stopped. Say so
+			// instead of exiting silently while analysis keeps writing.
+			if !m.done && m.err == nil {
+				m.detached = true
+			}
 			return m, tea.Quit
 		}
 	case tickMsg:
@@ -230,6 +248,11 @@ func (m model) View() string {
 	}
 	if m.done {
 		return renderSummaryCard(m.summary, width)
+	}
+	if m.showHelp {
+		h := components.NewHelpOverlay(tui.DefaultKeyMap())
+		h.Toggle()
+		return h.View()
 	}
 
 	var b strings.Builder
