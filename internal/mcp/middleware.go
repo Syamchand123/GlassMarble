@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -241,6 +242,11 @@ func ArgLengthGuardMiddleware() Middleware {
 	}
 }
 
+// pathArgKeys lists every tool argument that may carry a filesystem path
+// (Section 6.3). Shared by SecurityGuardMiddleware and the roots-aware guard
+// in server.go so the two lists cannot drift.
+var pathArgKeys = []string{"path", "file", "target_file", "rules_file", "config_file", "scope_path", "filename", "target", "scopePath", "scope"}
+
 // SecurityGuardMiddleware validates that file path arguments remain within the repository root
 // and are not blocked secrets (Section 6.3, 6.6 Zero-Trust Validation).
 func SecurityGuardMiddleware(rootDir string) Middleware {
@@ -251,8 +257,7 @@ func SecurityGuardMiddleware(rootDir string) Middleware {
 				absRoot = rootDir
 			}
 
-			// All tool arguments that may carry a filesystem path (Section 6.3).
-			pathKeys := []string{"path", "file", "target_file", "rules_file", "config_file", "scope_path", "filename", "target", "scopePath"}
+			pathKeys := pathArgKeys
 			args := req.Params.Arguments
 
 			if argsMap, ok := args.(map[string]any); ok {
@@ -399,25 +404,80 @@ func validateSafePath(rootDir, targetPath string) error {
 	return nil
 }
 
+// TimeoutMiddleware bounds every tool invocation with a hard deadline so a
+// stuck handler can never hang the client indefinitely (Section 4). The
+// handler runs in a goroutine (with its own panic recovery — RecoveryMiddleware
+// cannot see across goroutines); on timeout the result is an isError tool
+// result and the abandoned handler's context is cancelled.
+func TimeoutMiddleware(toolName string, timeout time.Duration) Middleware {
+	return func(next ToolHandlerFunc) ToolHandlerFunc {
+		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			if timeout <= 0 {
+				return next(ctx, req)
+			}
+			ctx, cancel := context.WithTimeout(ctx, timeout)
+			defer cancel()
+
+			type outcome struct {
+				res *mcp.CallToolResult
+				err error
+			}
+			done := make(chan outcome, 1)
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						slog.Error("MCP tool panic recovered (timeout goroutine)", "tool", toolName, "panic", r)
+						done <- outcome{mcp.NewToolResultError(fmt.Sprintf("tool execution failed unexpectedly (panic recovered): %v", r)), nil}
+					}
+				}()
+				res, err := next(ctx, req)
+				done <- outcome{res, err}
+			}()
+
+			select {
+			case o := <-done:
+				return o.res, o.err
+			case <-ctx.Done():
+				if ctx.Err() == context.DeadlineExceeded {
+					slog.Warn("MCP tool timed out", "tool", toolName, "timeout", timeout)
+					return mcp.NewToolResultError(fmt.Sprintf("tool %q timed out after %s — narrow the scope or raise --tool-timeout", toolName, timeout)), nil
+				}
+				return mcp.NewToolResultError("cancelled: " + ctx.Err().Error()), nil
+			}
+		}
+	}
+}
+
 // StandardMiddlewares returns the standard enterprise middleware chain for a tool.
-// Pipeline order (Section 4.1): [Recovery] -> [OTel Tracing] -> [Security/Path Guard] -> [ArgLengthGuard] -> [Logger] -> [PayloadCompaction] -> handler
-// Recovery is outermost (panic isolation), PayloadCompaction is innermost (truncates final output).
-func StandardMiddlewares(toolName, rootDir string) []Middleware {
+// Pipeline order (Section 4.1):
+// [Recovery] -> [Timeout] -> [OTel Tracing] -> [ArgLengthGuard] -> [Logger] -> [PayloadCompaction] -> handler
+// Recovery is outermost (panic isolation), PayloadCompaction is innermost
+// (truncates final output). Path sandboxing runs once, in the roots-aware
+// guard applied by RegisterTool — the previous chain validated every path
+// twice through two near-identical middlewares.
+func StandardMiddlewares(toolName, rootDir string, timeout time.Duration) []Middleware {
+	_ = rootDir // retained in the signature for call-site clarity and future per-root policies
 	return []Middleware{
 		RecoveryMiddleware(toolName),
+		TimeoutMiddleware(toolName, timeout),
 		TracingMiddleware(toolName),
-		SecurityGuardMiddleware(rootDir),
 		ArgLengthGuardMiddleware(),
 		LoggingMiddleware(toolName),
 		PayloadCompactionMiddleware(toolName),
 	}
 }
 
-func init() {
-	// Configure default slog handler to write strictly to os.Stderr
-	// NEVER write non-JSON-RPC logs to os.Stdout in stdio mode.
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-	slog.SetDefault(logger)
+var configureLoggingOnce sync.Once
+
+// configureMCPLogging routes slog strictly to os.Stderr — stdout must carry
+// JSON-RPC frames only in stdio mode. Called from Serve(); this used to live
+// in an init(), which hijacked the process-global logger for every gmb
+// subcommand that merely imported this package.
+func configureMCPLogging() {
+	configureLoggingOnce.Do(func() {
+		logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		}))
+		slog.SetDefault(logger)
+	})
 }

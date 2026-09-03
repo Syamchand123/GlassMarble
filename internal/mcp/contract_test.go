@@ -75,13 +75,15 @@ func decodeJSONRPCResponse(t *testing.T, raw mcp.JSONRPCMessage) (isError bool, 
 // ---------------------------------------------------------------------------
 
 func TestContract_Initialize_HS(t *testing.T) {
-	// pinned constant
-	assert.Equal(t, "2024-11-05", ProtocolVersion)
-	assert.Equal(t, "2024-11-05", GetProtocolVersion())
+	// The reported version must match the SDK's latest so the advertised and
+	// negotiated versions can never diverge (they previously did: a pinned
+	// "2024-11-05" claim while the SDK negotiated newer revisions).
+	assert.Equal(t, mcp.LATEST_PROTOCOL_VERSION, ProtocolVersion)
+	assert.Equal(t, mcp.LATEST_PROTOCOL_VERSION, GetProtocolVersion())
+	assert.Contains(t, SupportedProtocolVersions(), "2024-11-05", "must keep accepting the 2024-11-05 revision")
 
 	srv := newContractServer(t)
-	// constant golden
-	require.Equal(t, "2024-11-05", srv.ProtocolVersion())
+	require.Equal(t, mcp.LATEST_PROTOCOL_VERSION, srv.ProtocolVersion())
 
 	ctx := ctxWithSession(srv)
 	rawReq := json.RawMessage(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}`)
@@ -95,8 +97,8 @@ func TestContract_Initialize_HS(t *testing.T) {
 	var initRes mcp.InitializeResult
 	require.NoError(t, json.Unmarshal(b, &initRes))
 
-	// golden: protocolVersion
-	assert.Equal(t, "2024-11-05", initRes.ProtocolVersion, "ProtocolVersion == 2024-11-05 per Master Plan §5.3")
+	// golden: a client offering 2024-11-05 gets exactly that version echoed
+	assert.Equal(t, "2024-11-05", initRes.ProtocolVersion, "server must echo a valid client-requested version")
 
 	// golden: serverInfo
 	assert.Equal(t, "GlassMarble Architecture Intelligence", initRes.ServerInfo.Name)
@@ -118,11 +120,11 @@ func TestContract_Initialize_HS(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rawJSON, &full))
 	assert.Contains(t, string(rawJSON), "GlassMarble Architecture Intelligence")
 
-	// instructions contain protocol version
+	// instructions reference the latest supported protocol version
 	var insp map[string]any
 	require.NoError(t, json.Unmarshal(rawJSON, &insp))
 	// instructions lives in InitializeResult
-	assert.Contains(t, initRes.Instructions, "2024-11-05")
+	assert.Contains(t, initRes.Instructions, mcp.LATEST_PROTOCOL_VERSION)
 }
 
 func TestInitialize_HS(t *testing.T) { TestContract_Initialize_HS(t) }
@@ -459,50 +461,14 @@ func TestPromptsList_Golden(t *testing.T) { TestContract_PromptsList_Golden(t) }
 // ---------------------------------------------------------------------------
 
 func TestContract_JSONRPC_ErrorCodes(t *testing.T) {
-	// golden constants inline (no external file)
-	assert.Equal(t, -32700, ErrParse, "ErrParse must be -32700")
-	assert.Equal(t, -32600, ErrInvalidRequest, "ErrInvalidRequest must be -32600")
-	assert.Equal(t, -32601, ErrMethodNotFound, "ErrMethodNotFound must be -32601")
-	assert.Equal(t, -32602, ErrInvalidParams, "ErrInvalidParams must be -32602")
-	assert.Equal(t, -32603, ErrInternal, "ErrInternal must be -32603")
-
-	// cross-check against mcp-go SDK constants
-	assert.Equal(t, mcp.PARSE_ERROR, ErrParse)
-	assert.Equal(t, mcp.INVALID_REQUEST, ErrInvalidRequest)
-	assert.Equal(t, mcp.METHOD_NOT_FOUND, ErrMethodNotFound)
-	assert.Equal(t, mcp.INVALID_PARAMS, ErrInvalidParams)
-	assert.Equal(t, mcp.INTERNAL_ERROR, ErrInternal)
-
-	// via NewErrorResponse helper
-	for _, tc := range []struct {
-		code int
-		msg  string
-	}{
-		{ErrParse, "parse error"},
-		{ErrInvalidRequest, "invalid request"},
-		{ErrMethodNotFound, "method not found"},
-		{ErrInvalidParams, "invalid params"},
-		{ErrInternal, "internal error"},
-	} {
-		id := json.RawMessage(`1`)
-		resp := NewErrorResponse(&id, tc.code, tc.msg, nil)
-		require.NotNil(t, resp)
-		assert.Equal(t, "2.0", resp.JSONRPC)
-		require.NotNil(t, resp.Error)
-		assert.Equal(t, tc.code, resp.Error.Code)
-		assert.Equal(t, tc.msg, resp.Error.Message)
-		// json golden via mcp.JSONRPCError
-		b, _ := json.Marshal(resp)
-		var m map[string]json.RawMessage
-		require.NoError(t, json.Unmarshal(b, &m))
-		assert.Contains(t, string(b), tc.msg)
-		var errObj struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-		}
-		_ = json.Unmarshal(m["error"], &errObj)
-		assert.Equal(t, tc.code, errObj.Code)
-	}
+	// Spec-mandated JSON-RPC error codes, asserted against the live SDK
+	// constants (the previous version asserted a dead parallel
+	// implementation's constants, which tested nothing on the live path).
+	assert.Equal(t, -32700, mcp.PARSE_ERROR, "PARSE_ERROR must be -32700")
+	assert.Equal(t, -32600, mcp.INVALID_REQUEST, "INVALID_REQUEST must be -32600")
+	assert.Equal(t, -32601, mcp.METHOD_NOT_FOUND, "METHOD_NOT_FOUND must be -32601")
+	assert.Equal(t, -32602, mcp.INVALID_PARAMS, "INVALID_PARAMS must be -32602")
+	assert.Equal(t, -32603, mcp.INTERNAL_ERROR, "INTERNAL_ERROR must be -32603")
 
 	// live protocol errors via HandleMessage
 	srv := newContractServer(t)
@@ -526,40 +492,13 @@ func TestContract_JSONRPC_ErrorCodes(t *testing.T) {
 	_, codeNotFound, _ := decodeJSONRPCResponse(t, respNotFound)
 	assert.Equal(t, -32601, codeNotFound, "unknown method must yield METHOD_NOT_FOUND -32601")
 
-	// -32602 invalid params: resources/subscribe without uri returns INVALID_PARAMS when subscribe capability enabled
-	// Our server enables subscribe via WithResourceCapabilities(true,true), so missing uri yields INVALID_PARAMS
-	// Use a session that is initialized; otherwise it may be handled differently.
-	// We trigger via invalid params on tools/call with malformed params type? But mcp-go returns INVALID_REQUEST for unparsable.
-	// Instead trigger via subscribe with empty uri.
-	respInvalidParams := srv.MCPServer().HandleMessage(ctx, json.RawMessage(`{"jsonrpc":"2.0","id":4,"method":"resources/subscribe","params":{}}`))
-	require.NotNil(t, respInvalidParams)
-	_, codeInvalidParams, _ := decodeJSONRPCResponse(t, respInvalidParams)
-	// mcp-go returns INVALID_PARAMS for missing uri when capability present
-	assert.Equal(t, -32602, codeInvalidParams, "missing uri on resources/subscribe must yield INVALID_PARAMS -32602")
-
-	// -32603 internal error: simulate via resource read that fails? Direct check via constant and helper.
-	id := json.RawMessage(`5`)
-	respInternal := NewErrorResponse(&id, ErrInternal, "internal failure", nil)
-	assert.Equal(t, -32603, respInternal.Error.Code)
-	// also verify JSON-RPC error structure via mcp types
-	b, _ := json.Marshal(respInternal)
-	var rpcErr mcp.JSONRPCError
-	_ = json.Unmarshal(b, &rpcErr)
-	assert.Equal(t, -32603, rpcErr.Error.Code)
-
-	// ensure error codes are distinct and match protocol.go golden inline map
-	golden := map[string]int{
-		"ErrParse":          -32700,
-		"ErrInvalidRequest": -32600,
-		"ErrMethodNotFound": -32601,
-		"ErrInvalidParams":  -32602,
-		"ErrInternal":       -32603,
-	}
-	assert.Equal(t, golden["ErrParse"], ErrParse)
-	assert.Equal(t, golden["ErrInvalidRequest"], ErrInvalidRequest)
-	assert.Equal(t, golden["ErrMethodNotFound"], ErrMethodNotFound)
-	assert.Equal(t, golden["ErrInvalidParams"], ErrInvalidParams)
-	assert.Equal(t, golden["ErrInternal"], ErrInternal)
+	// resources/subscribe is intentionally NOT advertised (the server has no
+	// notifications/resources/updated emitters), so the SDK must reject the
+	// method outright rather than accept a subscription it will never honor.
+	respSubscribe := srv.MCPServer().HandleMessage(ctx, json.RawMessage(`{"jsonrpc":"2.0","id":4,"method":"resources/subscribe","params":{"uri":"gmb://status"}}`))
+	require.NotNil(t, respSubscribe)
+	_, codeSubscribe, _ := decodeJSONRPCResponse(t, respSubscribe)
+	assert.Equal(t, -32601, codeSubscribe, "resources/subscribe must be METHOD_NOT_FOUND while the capability is not advertised")
 }
 
 func TestJSONRPC_ErrorCodes(t *testing.T) { TestContract_JSONRPC_ErrorCodes(t) }

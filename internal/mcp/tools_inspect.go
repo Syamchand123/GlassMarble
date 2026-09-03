@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
@@ -452,6 +453,16 @@ func getIntArg(req mcp.CallToolRequest, name string, def int) int {
 			return n
 		case int64:
 			return int(n)
+		case json.Number:
+			if i, err := n.Int64(); err == nil {
+				return int(i)
+			}
+		case string:
+			// Clients sometimes send numeric arguments as strings; a silent
+			// fall-through to the default here masked real caller intent.
+			if i, err := strconv.Atoi(strings.TrimSpace(n)); err == nil {
+				return i
+			}
 		}
 	}
 	return def

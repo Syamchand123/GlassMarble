@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // ServerConfig holds the runtime configuration for the GlassMarble MCP server.
@@ -16,8 +17,13 @@ type ServerConfig struct {
 	// StorageDir is the .glassmarble storage directory. Computed if empty.
 	StorageDir string `json:"storage_dir"`
 
-	// Transport is the protocol transport: "stdio" (default), "http", or "sse".
+	// Transport is the protocol transport: "stdio" (default), "http"
+	// (Streamable HTTP, endpoint /mcp), or "sse" (legacy SSE).
 	Transport string `json:"transport"`
+
+	// Host is the HTTP/SSE bind address (default: 127.0.0.1 — never expose
+	// the graph to the network without opting in explicitly).
+	Host string `json:"host,omitempty"`
 
 	// Port is the HTTP/SSE listening port (default: 8765).
 	Port int `json:"port"`
@@ -28,20 +34,36 @@ type ServerConfig struct {
 	// MaxJSONMB is the maximum allowed size (in MiB) for AKG state files (0 = unlimited).
 	MaxJSONMB int `json:"max_json_mb,omitempty"`
 
-	// ReadOnly enforces strict read-only execution across all tools.
-	ReadOnly bool `json:"read_only"`
+	// ToolTimeoutSec bounds each tool invocation (default: 60; 0 = default,
+	// negative = no timeout).
+	ToolTimeoutSec int `json:"tool_timeout_sec,omitempty"`
 
 	// ToolsFilter restricts active tools to specific categories or names.
 	ToolsFilter []string `json:"tools_filter,omitempty"`
 }
+
+// DefaultToolTimeoutSec is the default per-tool execution deadline.
+const DefaultToolTimeoutSec = 60
 
 // DefaultConfig returns the default server configuration.
 func DefaultConfig() ServerConfig {
 	return ServerConfig{
 		RootDir:   ".",
 		Transport: "stdio",
+		Host:      "127.0.0.1",
 		Port:      8765,
-		ReadOnly:  true,
+	}
+}
+
+// ToolTimeout returns the effective per-tool deadline.
+func (c ServerConfig) ToolTimeout() time.Duration {
+	switch {
+	case c.ToolTimeoutSec < 0:
+		return 0 // explicitly unbounded
+	case c.ToolTimeoutSec == 0:
+		return DefaultToolTimeoutSec * time.Second
+	default:
+		return time.Duration(c.ToolTimeoutSec) * time.Second
 	}
 }
 
@@ -70,6 +92,10 @@ func (c *ServerConfig) Validate() error {
 	}
 	if c.Transport != "stdio" && c.Transport != "http" && c.Transport != "sse" {
 		return fmt.Errorf("unsupported transport %q (must be 'stdio', 'http', or 'sse')", c.Transport)
+	}
+
+	if strings.TrimSpace(c.Host) == "" {
+		c.Host = "127.0.0.1"
 	}
 
 	if c.Port <= 0 || c.Port > 65535 {

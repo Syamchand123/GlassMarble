@@ -2,9 +2,13 @@ package mcp
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"log"
 	"log/slog"
+	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -18,16 +22,21 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// ProtocolVersion is the pinned MCP protocol version for GlassMarble (Master Plan §5.3).
-// mcp-go does not expose WithProtocolVersion; this constant provides explicit pinning
-// and is asserted in handshake tests and surfaced via Instructions.
-//
-// Changing this value is a breaking change — clients negotiate this version during initialize.
-const ProtocolVersion = "2024-11-05"
+// ProtocolVersion is the latest MCP protocol revision this server supports.
+// The actual version for a session is negotiated during initialize by the SDK
+// against mcp.ValidProtocolVersions — this value is informational (the server
+// previously claimed a pinned "2024-11-05" while the SDK negotiated newer
+// revisions; the two must never diverge again).
+var ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
 
-// GetProtocolVersion returns the pinned MCP protocol version (package-level accessor).
-// Named GetProtocolVersion to avoid redeclaration conflict with const ProtocolVersion
-// (Go forbids package-level func and const sharing same identifier).
+// SupportedProtocolVersions lists every protocol revision the server accepts
+// during initialize negotiation, newest first.
+func SupportedProtocolVersions() []string {
+	return append([]string(nil), mcp.ValidProtocolVersions...)
+}
+
+// GetProtocolVersion returns the latest supported MCP protocol version
+// (package-level accessor).
 func GetProtocolVersion() string { return ProtocolVersion }
 
 // Server encapsulates the GlassMarble Model Context Protocol (MCP) server.
@@ -38,13 +47,13 @@ type Server struct {
 	toolsFilterSet map[string]bool
 
 	// rootsMu protects cached client roots for sandboxing (§3.5).
-	rootsMu    sync.RWMutex
-	cachedRoots []mcp.Root
+	rootsMu      sync.RWMutex
+	cachedRoots  []mcp.Root
 	rootsFetched time.Time
 }
 
-// ProtocolVersion returns the pinned MCP protocol version for this server instance.
-// Method form avoids conflict with package const while satisfying spec's ProtocolVersion() requirement.
+// ProtocolVersion returns the latest MCP protocol version this server
+// instance supports; per-session versions are negotiated by the SDK.
 func (s *Server) ProtocolVersion() string { return ProtocolVersion }
 
 // shouldRegister reports whether a tool with given name/category should be registered
@@ -71,7 +80,9 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		return nil, fmt.Errorf("invalid MCP server configuration: %w", err)
 	}
 
-	bridge := NewBridge(cfg.RootDir, cfg.MaxJSONMB)
+	// cfg.StorageDir was previously computed by Validate and then silently
+	// ignored — the bridge recomputed its own. Pass it through.
+	bridge := NewBridge(cfg.RootDir, cfg.StorageDir, cfg.MaxJSONMB)
 
 	// Build ToolsFilter set (lower-cased) for shouldRegister checks.
 	filterSet := make(map[string]bool, len(cfg.ToolsFilter))
@@ -87,11 +98,18 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		product.Version,
 		server.WithRecovery(), // panic isolation (Section 4.1)
 		server.WithToolCapabilities(true),
-		server.WithResourceCapabilities(true, true),
+		// subscribe=false: the server has no notifications/resources/updated
+		// emitters, so advertising the subscribe capability would be a lie —
+		// clients would subscribe and never hear back. listChanged stays on
+		// (NotifyResourcesChanged is the emitting hook).
+		server.WithResourceCapabilities(false, true),
 		server.WithPromptCapabilities(true),
 		server.WithLogging(),
 		server.WithRoots(),
-		server.WithInstructions(fmt.Sprintf("GlassMarble Architecture Intelligence MCP Server — Protocol %s — Architecture Intelligence Platform. Use tools prefixed gmb_* for governance/impact/memory/snapshot/diagram/code and akg_*/code_*/diagram_* for graph queries.", ProtocolVersion)),
+		// Cursor pagination for tools/list, resources/list and prompts/list
+		// (the enterprise superset is 56 tools — one page was unbounded).
+		server.WithPaginationLimit(50),
+		server.WithInstructions(fmt.Sprintf("GlassMarble Architecture Intelligence MCP Server — protocol negotiated per session (latest %s) — Architecture Intelligence Platform. Use tools prefixed gmb_* for governance/impact/memory/snapshot/diagram/code and akg_*/code_*/diagram_* for graph queries.", ProtocolVersion)),
 	)
 	// Enable sampling capability (§3.2) — allows server to request LLM completions via sampling/createMessage.
 	mcpServer.EnableSampling()
@@ -154,91 +172,121 @@ func (s *Server) Config() ServerConfig {
 func (s *Server) RegisterTool(tool mcp.Tool, handler ToolHandlerFunc) {
 	// Inner layer: progress (§3.3) and roots-aware sandboxing (§3.5) — close to handler.
 	inner := Chain(handler, s.RootsAwareSecurityGuardMiddleware(), s.ProgressMiddleware(tool.Name))
-	// Outer layer: standard enterprise middlewares (Recovery outermost, Payload innermost).
-	wrapped := Chain(inner, StandardMiddlewares(tool.Name, s.cfg.RootDir)...)
+	// Outer layer: standard enterprise middlewares (Recovery outermost, Payload innermost),
+	// including a per-request timeout so a stuck handler cannot hang a client forever.
+	wrapped := Chain(inner, StandardMiddlewares(tool.Name, s.cfg.RootDir, s.cfg.ToolTimeout())...)
 	s.mcpServer.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return wrapped(ctx, req)
 	})
 }
 
-// Serve starts the server listening on the configured transport (stdio or SSE/HTTP).
-// It handles context cancellation and graceful shutdown with a 5s grace period (Section 4.5),
-// and wires optional Bearer token auth via GLASSMARBLE_MCP_TOKEN / cfg.AuthToken (Section 9.2).
+// Serve starts the server listening on the configured transport.
 // All logs are emitted to stderr via slog (Section 7.1) to keep stdio JSON-RPC clean.
 // Sampling, Progress, and Cancellation are delegated to mcp-go SDK via context propagation (Section 3).
 func (s *Server) Serve(ctx context.Context) error {
+	configureMCPLogging()
 	defer s.bridge.Close()
 
-	if s.cfg.Transport == "http" || s.cfg.Transport == "sse" {
-		addr := fmt.Sprintf(":%d", s.cfg.Port)
-		baseURL := fmt.Sprintf("http://localhost:%d", s.cfg.Port)
+	switch s.cfg.Transport {
+	case "http", "sse":
+		return s.serveHTTP(ctx)
+	default:
+		return s.serveStdio(ctx)
+	}
+}
 
-		// Bearer token wiring (Section 6.5, 9.2).
-		// mcp-go SSEServer does not natively enforce Bearer auth; we log and document that
-		// a reverse proxy or custom HTTP middleware should validate Authorization: Bearer <token>.
-		// At minimum we validate presence and log activation.
-		if s.cfg.AuthToken != "" {
-			slog.Info("MCP Bearer authentication ENABLED for SSE/HTTP transport",
-				"addr", addr,
-				"hint", "clients must send Authorization: Bearer <GLASSMARBLE_MCP_TOKEN>",
-			)
-		} else {
-			slog.Info("MCP Bearer authentication disabled (no GLASSMARBLE_MCP_TOKEN set)",
-				"addr", addr,
-				"hint", "set GLASSMARBLE_MCP_TOKEN to require Bearer token on HTTP/SSE",
-			)
+// withBearerAuth enforces Bearer token authentication when a token is
+// configured (Section 6.5, 9.2). The comparison is constant-time and failures
+// answer 401 with a WWW-Authenticate challenge. With no token configured the
+// handler passes through (loopback-only binding is the remaining guard).
+func withBearerAuth(next http.Handler, token string) http.Handler {
+	if token == "" {
+		return next
+	}
+	want := []byte("Bearer " + token)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got := []byte(r.Header.Get("Authorization"))
+		// Length-equalizing hash-free compare: ConstantTimeCompare requires
+		// equal lengths, so unequal lengths fail without leaking timing.
+		if len(got) != len(want) || subtle.ConstantTimeCompare(got, want) != 1 {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="glassmarble-mcp"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
 		}
+		next.ServeHTTP(w, r)
+	})
+}
 
-		slog.Info("Starting GlassMarble MCP SSE server", "addr", addr, "baseURL", baseURL)
-		sseServer := server.NewSSEServer(s.mcpServer, server.WithBaseURL(baseURL))
+// serveHTTP runs the Streamable HTTP transport (--transport http, endpoint
+// /mcp) or the legacy SSE transport (--transport sse, endpoints /sse and
+// /message). Previously "http" silently aliased to deprecated SSE and the
+// configured Bearer token was logged as "ENABLED" but never enforced.
+func (s *Server) serveHTTP(ctx context.Context) error {
+	addr := net.JoinHostPort(s.cfg.Host, fmt.Sprintf("%d", s.cfg.Port))
 
-		// Graceful lifecycle: start in goroutine, watch ctx.Done() for cancellation (Section 4.5).
-		errCh := make(chan error, 1)
-		go func() {
-			errCh <- sseServer.Start(addr)
-		}()
-
-		select {
-		case <-ctx.Done():
-			slog.Info("MCP SSE server shutting down due to context cancellation", "reason", ctx.Err())
-			shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := sseServer.Shutdown(shutCtx); err != nil {
-				slog.Error("MCP SSE server shutdown error", "error", err)
-				return err
-			}
-			slog.Info("MCP SSE server stopped gracefully")
-			return nil
-		case err := <-errCh:
-			return err
-		}
+	var handler http.Handler
+	if s.cfg.Transport == "sse" {
+		baseURL := fmt.Sprintf("http://%s", addr)
+		slog.Info("Starting GlassMarble MCP SSE server (legacy transport)", "addr", addr, "baseURL", baseURL)
+		handler = server.NewSSEServer(s.mcpServer, server.WithBaseURL(baseURL))
+	} else {
+		slog.Info("Starting GlassMarble MCP Streamable HTTP server", "addr", addr, "endpoint", "/mcp")
+		handler = server.NewStreamableHTTPServer(s.mcpServer)
 	}
 
-	slog.Info("Starting GlassMarble MCP Stdio server", "rootDir", s.cfg.RootDir)
-	// Stdio mode: ServeStdio blocks until stdin closes or context cancels.
-	// We race the context against ServeStdio (also handles SIGINT/SIGTERM via caller's context).
+	if s.cfg.AuthToken != "" {
+		slog.Info("MCP Bearer authentication enforced", "addr", addr)
+	} else {
+		slog.Warn("MCP Bearer authentication disabled — set GLASSMARBLE_MCP_TOKEN to require a token",
+			"addr", addr, "bind", s.cfg.Host)
+	}
+
+	httpSrv := &http.Server{
+		Addr:              addr,
+		Handler:           withBearerAuth(handler, s.cfg.AuthToken),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- server.ServeStdio(s.mcpServer)
+		err := httpSrv.ListenAndServe()
+		if err == http.ErrServerClosed {
+			err = nil
+		}
+		errCh <- err
 	}()
+
 	select {
 	case <-ctx.Done():
-		slog.Info("MCP Stdio server shutting down due to context cancellation", "reason", ctx.Err())
-		// Give in-flight handlers 5s to complete before returning.
-		// Bridge.Close() is deferred above and will release DB handles.
-		timer := time.NewTimer(5 * time.Second)
-		defer timer.Stop()
-		select {
-		case err := <-errCh:
-			slog.Info("MCP Stdio server stopped", "error", err)
+		slog.Info("MCP HTTP server shutting down", "reason", ctx.Err())
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := httpSrv.Shutdown(shutCtx); err != nil {
+			slog.Error("MCP HTTP server shutdown error", "error", err)
 			return err
-		case <-timer.C:
-			slog.Warn("MCP Stdio server graceful shutdown timed out after 5s")
-			return nil
 		}
+		slog.Info("MCP HTTP server stopped gracefully")
+		return nil
 	case err := <-errCh:
 		return err
 	}
+}
+
+// serveStdio runs the stdio transport. StdioServer.Listen is context-aware:
+// it returns when ctx is cancelled or stdin closes, so shutdown no longer
+// races a detached ServeStdio goroutine against a 5s timer while the bridge
+// is torn down underneath in-flight handlers.
+func (s *Server) serveStdio(ctx context.Context) error {
+	slog.Info("Starting GlassMarble MCP Stdio server", "rootDir", s.cfg.RootDir)
+	stdio := server.NewStdioServer(s.mcpServer)
+	stdio.SetErrorLogger(log.New(os.Stderr, "", log.LstdFlags))
+	err := stdio.Listen(ctx, os.Stdin, os.Stdout)
+	if err != nil && ctx.Err() != nil {
+		// Cancellation-driven shutdown is a clean exit, not a failure.
+		slog.Info("MCP Stdio server stopped", "reason", ctx.Err())
+		return nil
+	}
+	return err
 }
 
 // Close gracefully releases server and bridge resources.
@@ -339,25 +387,27 @@ func (s *Server) handleStatusTool(ctx context.Context, req mcp.CallToolRequest) 
 		return mcp.NewToolResultError(fmt.Sprintf("failed to serialize status: %v", err)), nil
 	}
 
-	return mcp.NewToolResultText(string(out)), nil
+	// structuredContent (2025-06-18) plus a text fallback for older clients.
+	return mcp.NewToolResultStructured(result, string(out)), nil
 }
 
 // handleServerInfoTool returns runtime server metadata.
 func (s *Server) handleServerInfoTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	info := map[string]any{
-		"name":             "GlassMarble Architecture Intelligence",
-		"version":          product.Version,
-		"protocol_version": ProtocolVersion,
-		"root_dir":         s.bridge.RootDir(),
-		"storage_dir":      s.bridge.StorageDir(),
-		"transport":        s.cfg.Transport,
-		"has_akg":          s.bridge.HasAKG(),
-		"capabilities":     []string{"tools", "resources", "prompts", "logging", "sampling", "roots", "progress", "cancellation"},
-		"timestamp":        time.Now().Format(time.RFC3339),
+		"name":                        "GlassMarble Architecture Intelligence",
+		"version":                     product.Version,
+		"protocol_version":            ProtocolVersion,
+		"supported_protocol_versions": SupportedProtocolVersions(),
+		"root_dir":                    s.bridge.RootDir(),
+		"storage_dir":                 s.bridge.StorageDir(),
+		"transport":                   s.cfg.Transport,
+		"has_akg":                     s.bridge.HasAKG(),
+		"capabilities":                []string{"tools", "resources", "prompts", "logging", "sampling", "roots", "progress", "cancellation"},
+		"timestamp":                   time.Now().Format(time.RFC3339),
 	}
 
 	out, _ := json.MarshalIndent(info, "", "  ")
-	return mcp.NewToolResultText(string(out)), nil
+	return mcp.NewToolResultStructured(info, string(out)), nil
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -390,13 +440,18 @@ func (s *Server) getClientRoots(ctx context.Context) []mcp.Root {
 	return result.Roots
 }
 
-// isPathWithinRoots reports whether targetPath (clean relative or absolute) is inside any root.
+// isPathWithinRoots reports whether targetPath is inside any client root.
+// Callers must pass an absolute path (validatePathAgainstRoots resolves
+// relative arguments against RootDir first); a relative path cannot be
+// compared against file:// roots and is rejected.
 func isPathWithinRoots(targetPath string, roots []mcp.Root) bool {
 	if len(roots) == 0 {
 		return false
 	}
 	cleanTarget := filepath.Clean(targetPath)
-	// Resolve absolute target for comparison; if relative, join not needed — compare via Rel.
+	if !filepath.IsAbs(cleanTarget) {
+		return false
+	}
 	for _, r := range roots {
 		uri := r.URI
 		// Only handle file:// roots per spec.
@@ -414,18 +469,9 @@ func isPathWithinRoots(targetPath string, roots []mcp.Root) bool {
 			}
 		}
 		rootPath = filepath.Clean(rootPath)
-		// If target is absolute, check Rel
-		if filepath.IsAbs(cleanTarget) {
-			rel, err := filepath.Rel(rootPath, cleanTarget)
-			if err == nil && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." {
-				return true
-			}
-		} else {
-			// Relative target — consider it inside if root is ancestor of RootDir+target.
-			// For sandboxing, we check absolute resolved path against root.
-			// Fallback: if root path is prefix of target's directory, allow.
-			// We use RootDir as base for relative.
-			continue
+		rel, err := filepath.Rel(rootPath, cleanTarget)
+		if err == nil && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." {
+			return true
 		}
 	}
 	return false
@@ -483,8 +529,10 @@ func (s *Server) handleRootsListChanged(ctx context.Context, notif mcp.JSONRPCNo
 func (s *Server) RootsAwareSecurityGuardMiddleware() Middleware {
 	return func(next ToolHandlerFunc) ToolHandlerFunc {
 		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			// Only enforce roots for tools that carry path-like arguments
-			pathKeys := []string{"path", "file", "target_file", "rules_file", "config_file", "scope_path", "filename", "target", "scopePath", "scope"}
+			// Only enforce roots for tools that carry path-like arguments.
+			// pathArgKeys is shared with middleware.go so the two path guards
+			// can never drift apart again.
+			pathKeys := pathArgKeys
 			args := req.Params.Arguments
 			if argsMap, ok := args.(map[string]any); ok {
 				for _, key := range pathKeys {
@@ -538,18 +586,12 @@ func (s *Server) sendProgress(ctx context.Context, token mcp.ProgressToken, prog
 	if token == nil {
 		return nil
 	}
-	totalPtr := &total
-	msgPtr := &message
-	// Use non-blocking send via SDK — errors are logged but not fatal.
 	params := map[string]any{
 		"progressToken": token,
 		"progress":      progress,
 		"total":         total,
 		"message":       message,
 	}
-	// Prefer typed helper if available; fallback to generic notification
-	_ = totalPtr
-	_ = msgPtr
 	err := s.mcpServer.SendNotificationToClient(ctx, string(mcp.MethodNotificationProgress), params)
 	if err != nil {
 		slog.Debug("progress notification send failed", "token", token, "progress", progress, "error", err)

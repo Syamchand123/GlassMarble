@@ -1,852 +1,320 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GlassMarble — AI Architecture Intelligence &amp; Visualizer</title>
-  <link rel="stylesheet" href="/assets/styles.css">
-  <script src="/assets/cytoscape.min.js"></script>
-  <script src="/assets/mermaid.min.js"></script>
+  <title>GlassMarble — Architecture Explorer</title>
+  <meta name="description" content="Interactive explorer for the GlassMarble Architecture Knowledge Graph.">
+  <link rel="icon" type="image/png" href="/assets/logo.png">
+  <!-- __ASSET_V__ is replaced by the server per process start: assets get a
+       long-lived cache AND every new build/restart busts it automatically. -->
+  <link rel="stylesheet" href="/assets/styles.css?v=__ASSET_V__">
+  <script src="/assets/cytoscape.min.js?v=__ASSET_V__" defer></script>
+  <script src="/assets/app.js?v=__ASSET_V__" defer></script>
 </head>
-<body class="dark-theme">
+<body>
 
-  <!-- ===================================================================
-       DUAL-ROW APP HEADER
-       Row 1 (56px): Brand + Search + Utilities
-       Row 2 (44px): Navigation Tabs
-       =================================================================== -->
-  <header class="app-header">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.2v1.8M8 13v1.8M1.2 8H3M13 8h1.8M3.2 3.2l1.3 1.3M11.5 11.5l1.3 1.3M12.8 3.2l-1.3 1.3M4.5 11.5l-1.3 1.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 16 16"><path d="M13.5 9.5A5.8 5.8 0 0 1 6.5 2.5a5.8 5.8 0 1 0 7 7Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+    <symbol id="i-fit" viewBox="0 0 16 16"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-x" viewBox="0 0 16 16"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 16 16"><path d="M5 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-code" viewBox="0 0 16 16"><path d="M5.5 4L2 8l3.5 4M10.5 4L14 8l-3.5 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 16 16"><path d="M9.5 2h4.5v4.5M14 2L9 7M6.5 14H2V9.5M2 14l5-5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 7.2v3.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="4.9" r="0.9" fill="currentColor"/></symbol>
+    <symbol id="i-warn" viewBox="0 0 16 16"><path d="M8 2 14.5 13.5h-13Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6.5v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="11.6" r="0.8" fill="currentColor"/></symbol>
+    <symbol id="i-check" viewBox="0 0 16 16"><path d="M2.8 8.6 6.4 12 13.2 4.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </defs>
+</svg>
 
-    <!-- ROW 1: Brand, Search, Utilities -->
-    <div class="app-header-top">
+<header class="topbar">
+  <div class="brand">
+    <img src="/assets/logo.png" alt="" width="26" height="26">
+    <span class="brand__name">GlassMarble</span>
+    <span class="brand__sep" aria-hidden="true"></span>
+    <span class="brand__sub">Architecture Explorer</span>
+  </div>
 
-      <!-- Brand -->
-      <div class="header-left">
-        <div class="brand-container">
-          <div class="logo-orb" style="background:none; box-shadow:none;">
-            <img src="/assets/logo.png" alt="GlassMarble Logo" style="width:100%; height:100%; object-fit:contain;">
-          </div>
-          <div class="brand-text">
-            <h1>GlassMarble<span class="version-tag">v1.1.0</span></h1>
-            <span class="brand-subtitle">AI Architecture Intelligence</span>
+  <div class="omni" id="omniWrap">
+    <svg class="omni__icon" aria-hidden="true"><use href="#i-search"/></svg>
+    <input id="omniSearch" type="text" placeholder="Search symbols, files…" autocomplete="off" spellcheck="false"
+           role="combobox" aria-expanded="false" aria-controls="omniResults" aria-label="Search symbols and files">
+    <kbd class="omni__kbd">Ctrl K</kbd>
+    <div class="omni__results" id="omniResults" role="listbox" aria-label="Search results" hidden></div>
+  </div>
+
+  <div class="topbar__right">
+    <span class="status-chip" id="statusChip" title="Graph status">
+      <span class="status-chip__dot" id="statusDot"></span>
+      <span id="statusText">connecting…</span>
+    </span>
+    <button class="icon-btn" id="themeToggle" aria-label="Toggle color theme" title="Toggle theme">
+      <svg class="only-dark" aria-hidden="true"><use href="#i-sun"/></svg>
+      <svg class="only-light" aria-hidden="true"><use href="#i-moon"/></svg>
+    </button>
+  </div>
+</header>
+
+<nav class="tabs" role="tablist" aria-label="Views">
+  <div class="tabs__rail">
+    <span class="tabs__ind" id="tabsInd" aria-hidden="true"></span>
+    <button class="tab" role="tab" id="tabbtn-graph" aria-controls="tab-graph" aria-selected="true" data-tab="graph">Graph</button>
+    <button class="tab" role="tab" id="tabbtn-intel" aria-controls="tab-intel" aria-selected="false" data-tab="intel" tabindex="-1">Intelligence</button>
+    <button class="tab" role="tab" id="tabbtn-timeline" aria-controls="tab-timeline" aria-selected="false" data-tab="timeline" tabindex="-1">Timeline</button>
+    <button class="tab" role="tab" id="tabbtn-marbles" aria-controls="tab-marbles" aria-selected="false" data-tab="marbles" tabindex="-1">Diagrams</button>
+    <button class="tab" role="tab" id="tabbtn-metrics" aria-controls="tab-metrics" aria-selected="false" data-tab="metrics" tabindex="-1">Metrics</button>
+  </div>
+</nav>
+
+<main class="stage">
+
+  <!-- ═══════════ GRAPH ═══════════ -->
+  <section class="panel panel--graph" id="tab-graph" role="tabpanel" aria-labelledby="tabbtn-graph">
+
+    <aside class="side" id="graphSide">
+      <div class="side__section">
+        <h2 class="side__title">View</h2>
+        <div class="seg" role="group" aria-label="Granularity" id="granularitySeg">
+          <button class="seg__btn is-on" data-view="components">Components</button>
+          <button class="seg__btn" data-view="packages">Packages</button>
+          <button class="seg__btn" data-view="symbols">Symbols</button>
+        </div>
+        <div class="field">
+          <span class="field__label" id="layoutLbl">Layout</span>
+          <div class="sel" id="layoutSel">
+            <button type="button" class="sel__btn" id="layoutBtn" aria-haspopup="listbox"
+                    aria-expanded="false" aria-controls="layoutList" aria-labelledby="layoutLbl layoutBtn">
+              <span id="layoutVal">Force (cose)</span>
+              <svg class="sel__chev" aria-hidden="true"><use href="#i-chevron"/></svg>
+            </button>
+            <ul class="sel__list" id="layoutList" role="listbox" aria-labelledby="layoutLbl" tabindex="-1" hidden>
+              <li class="sel__opt" role="option" data-val="cose" aria-selected="true">Force (cose)</li>
+              <li class="sel__opt" role="option" data-val="breadthfirst" aria-selected="false">Hierarchy</li>
+              <li class="sel__opt" role="option" data-val="concentric" aria-selected="false">Concentric</li>
+              <li class="sel__opt" role="option" data-val="circle" aria-selected="false">Circle</li>
+              <li class="sel__opt" role="option" data-val="grid" aria-selected="false">Grid</li>
+            </ul>
           </div>
         </div>
       </div>
 
-      <!-- Omni-Search -->
-      <div class="search-box">
-        <span class="search-icon">
-          <svg class="icon" aria-hidden="true"><use href="#icon-search"/></svg>
-        </span>
-        <input type="text" id="omniSearch"
-               placeholder="Search symbols, components, files... (Ctrl+K)"
-               autocomplete="off" spellcheck="false">
-        <kbd class="search-shortcut">⌘K</kbd>
-        <div id="searchDropdown" class="search-dropdown hidden"></div>
+      <div class="side__section">
+        <h2 class="side__title">Layers</h2>
+        <div class="pills" id="layerFilters" role="group" aria-label="Layer filters"></div>
       </div>
 
-      <!-- Right Utilities -->
-      <div class="header-right">
-        <button id="btnThemeToggle" class="header-icon-btn" title="Toggle Dark/Light Theme">
-          <svg class="icon icon-moon" aria-hidden="true"><use href="#icon-moon"/></svg>
-          <svg class="icon icon-sun" aria-hidden="true" style="display:none"><use href="#icon-sun"/></svg>
-        </button>
+      <div class="side__section">
+        <h2 class="side__title">Kinds</h2>
+        <div class="pills" id="kindFilters" role="group" aria-label="Kind filters"></div>
       </div>
 
-    </div><!-- /app-header-top -->
-
-    <!-- ROW 2: Navigation Tabs -->
-    <nav class="app-header-nav">
-      <div class="nav-tabs">
-
-        <button class="nav-tab active" data-tab="tab-graph">
-          <svg class="icon" aria-hidden="true"><use href="#icon-graph"/></svg>
-          Architecture Graph
-        </button>
-
-        <button class="nav-tab" data-tab="tab-intelligence">
-          <svg class="icon" aria-hidden="true"><use href="#icon-brain"/></svg>
-          Intelligence &amp; Smells
-        </button>
-
-        <button class="nav-tab" data-tab="tab-timeline">
-          <svg class="icon" aria-hidden="true"><use href="#icon-timer"/></svg>
-          Memory &amp; Evolution
-        </button>
-
-        <button class="nav-tab" data-tab="tab-marbles">
-          <svg class="icon" aria-hidden="true"><use href="#icon-ruler"/></svg>
-          Marbles Diagrams
-        </button>
-
-        <button class="nav-tab" data-tab="tab-metrics">
-          <svg class="icon" aria-hidden="true"><use href="#icon-chart"/></svg>
-          Metrics &amp; Rules
-        </button>
-
+      <div class="side__section">
+        <label class="field">
+          <span class="field__label">Min fan-in <output id="minDegreeVal">0</output></span>
+          <input type="range" id="minDegreeRange" min="0" max="25" value="0" step="1" class="field__range">
+        </label>
       </div>
 
-      <!-- Graph view controls (hidden from header — now in floating toolbar) -->
-      <div id="graphViewControls" style="display:none;">
+      <div class="side__section side__section--stats">
+        <div class="kpi"><span class="kpi__n" id="statNodes">–</span><span class="kpi__l">Nodes</span></div>
+        <div class="kpi"><span class="kpi__n" id="statEdges">–</span><span class="kpi__l">Edges</span></div>
+        <div class="kpi"><span class="kpi__n" id="statFiles">–</span><span class="kpi__l">Files</span></div>
+        <div class="kpi"><span class="kpi__n" id="statSmells">–</span><span class="kpi__l">Smells</span></div>
       </div>
-    </nav><!-- /app-header-nav -->
+    </aside>
 
-  </header><!-- /app-header -->
-
-  <!-- ===================================================================
-       MAIN VIEWPORT
-       =================================================================== -->
-  <main class="main-viewport">
-
-    <!-- =================================================================
-         TAB 1: ARCHITECTURE KNOWLEDGE GRAPH
-         ================================================================= -->
-    <section id="tab-graph" class="tab-pane active">
-
-      <!-- Left Intelligence Panel Sidebar -->
-      <aside class="control-panel custom-scroll">
-
-        <!-- Architectural Layers -->
-        <div class="panel-section">
-          <div class="section-title">
-            <h3>— Architectural Layers</h3>
-            <span class="badge-count" id="layerCount">5</span>
-          </div>
-          <div class="filter-list" id="layerFilters">
-
-            <!-- Toggle pill buttons for layers (JS reads data-value for active state) -->
-            <button class="filter-pill-btn active" data-value="presentation" data-filter="layer">
-              <span class="color-dot presentation"></span>
-              Presentation
-            </button>
-            <button class="filter-pill-btn active" data-value="application" data-filter="layer">
-              <span class="color-dot application"></span>
-              Application
-            </button>
-            <button class="filter-pill-btn active" data-value="domain" data-filter="layer">
-              <span class="color-dot domain"></span>
-              Domain Core
-            </button>
-            <button class="filter-pill-btn active" data-value="infrastructure" data-filter="layer">
-              <span class="color-dot infrastructure"></span>
-              Infrastructure
-            </button>
-            <button class="filter-pill-btn active" data-value="common" data-filter="layer">
-              <span class="color-dot common"></span>
-              Common
-            </button>
-
-            <!-- Hidden checkboxes for JS compat (renderFilteredGraph reads these) -->
-            <div style="display:none" aria-hidden="true">
-              <input type="checkbox" value="presentation" checked>
-              <input type="checkbox" value="application" checked>
-              <input type="checkbox" value="domain" checked>
-              <input type="checkbox" value="infrastructure" checked>
-              <input type="checkbox" value="common" checked>
-            </div>
-
-          </div>
+    <div class="canvas">
+      <div class="toolbar" role="toolbar" aria-label="Graph tools">
+        <div class="toolbar__group" id="overlaySeg">
+          <button class="tool" data-overlay="cycles" title="Highlight dependency cycles">Cycles</button>
+          <button class="tool" data-overlay="cutvertices" title="Highlight articulation points">Cut&nbsp;vertices</button>
+          <button class="tool" data-overlay="pagerank" title="Scale nodes by PageRank">PageRank</button>
+          <button class="tool" data-overlay="smells" title="Highlight nodes referenced by smells">Smells</button>
+          <button class="tool" id="btnPathTrace" title="Trace shortest path between two symbols">Path&nbsp;trace</button>
         </div>
-
-        <!-- Symbol Types -->
-        <div class="panel-section">
-          <div class="section-title">
-            <h3>— Symbol Types</h3>
-          </div>
-          <div class="kind-filter-grid" id="kindFilters">
-
-            <button class="kind-filter-btn active" data-value="STRUCT" data-filter="kind">
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="1" y="1" width="8" height="8" rx="1.5"/></svg>
-              STRUCT
-            </button>
-            <button class="kind-filter-btn active" data-value="INTERFACE" data-filter="kind">
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><polygon points="5,1 9,5 5,9 1,5"/></svg>
-              IFACE
-            </button>
-            <button class="kind-filter-btn active" data-value="FUNCTION" data-filter="kind">
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="5" cy="5" r="4"/></svg>
-              FUNC
-            </button>
-            <button class="kind-filter-btn active" data-value="COMPONENT" data-filter="kind">
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><polygon points="5,1 9,3.5 9,6.5 5,9 1,6.5 1,3.5"/></svg>
-              COMP
-            </button>
-            <button class="kind-filter-btn active" data-value="DATABASE" data-filter="kind">
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><ellipse cx="5" cy="2.5" rx="4" ry="1.5"/><path d="M1 2.5v5c0 .83 1.79 1.5 4 1.5s4-.67 4-1.5v-5"/></svg>
-              DB
-            </button>
-            <button class="kind-filter-btn active" data-value="ENTRYPOINT" data-filter="kind">
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><polygon points="5,1 6.5,3.8 9.5,4.2 7.5,6.2 8,9.2 5,7.7 2,9.2 2.5,6.2 0.5,4.2 3.5,3.8"/></svg>
-              ENTRY
-            </button>
-
-            <!-- Hidden checkboxes for JS compat -->
-            <div style="display:none" aria-hidden="true">
-              <input type="checkbox" value="STRUCT" checked>
-              <input type="checkbox" value="INTERFACE" checked>
-              <input type="checkbox" value="FUNCTION" checked>
-              <input type="checkbox" value="COMPONENT" checked>
-              <input type="checkbox" value="DATABASE" checked>
-              <input type="checkbox" value="ENTRYPOINT" checked>
-            </div>
-
-          </div>
+        <div class="toolbar__group">
+          <button class="tool tool--icon" id="btnFit" title="Fit graph (F)" aria-label="Fit graph"><svg aria-hidden="true"><use href="#i-fit"/></svg></button>
         </div>
-
-        <!-- Coupling Filter -->
-        <div class="panel-section">
-          <div class="section-title">
-            <h3>— Coupling Filter</h3>
-          </div>
-          <div class="range-control">
-            <div class="range-labels">
-              <span>Min In-Degree:</span>
-              <strong id="minDegreeVal">0</strong>
-            </div>
-            <input type="range" id="minDegreeRange" min="0" max="25" value="0" class="slider-input">
-          </div>
-        </div>
-
-        <!-- Repository Metrics (animated KPI cards) -->
-        <div class="panel-section stats-section">
-          <div class="section-title">
-            <h3>— Repository Metrics</h3>
-          </div>
-          <div class="stat-grid">
-            <div class="stat-card">
-              <span class="stat-label">Symbols</span>
-              <span class="stat-value" id="statTotalNodes">—</span>
-            </div>
-            <div class="stat-card">
-              <span class="stat-label">Relations</span>
-              <span class="stat-value" id="statTotalEdges">—</span>
-            </div>
-            <div class="stat-card">
-              <span class="stat-label">Files</span>
-              <span class="stat-value" id="statTotalFiles">—</span>
-            </div>
-            <div class="stat-card">
-              <span class="stat-label">Smells</span>
-              <span class="stat-value danger-text" id="statTotalSmells">0</span>
-            </div>
-          </div>
-        </div>
-
-      </aside><!-- /control-panel -->
-
-      <!-- Center: Graph Canvas + Floating Toolbar + HUD -->
-      <div class="graph-stage">
-
-        <!-- Floating Graph Toolbar -->
-        <div class="graph-toolbar" id="graphToolbar">
-
-          <!-- Granularity + Layout selects -->
-          <div class="toolbar-segment">
-            <select id="granularitySelect" class="toolbar-select">
-              <option value="components" selected>Components</option>
-              <option value="packages">Packages</option>
-              <option value="symbols">Core Symbols</option>
-            </select>
-            <select id="layoutSelect" class="toolbar-select">
-              <option value="cose" selected>Force-Directed</option>
-              <option value="breadthfirst">Layered DAG</option>
-              <option value="concentric">Concentric</option>
-              <option value="circle">Circular</option>
-              <option value="grid">Grid</option>
-            </select>
-          </div>
-
-          <div class="toolbar-divider"></div>
-
-          <!-- Algorithm Buttons -->
-          <div class="toolbar-segment">
-            <button id="btnBlastRadius" class="toolbar-btn btn-tool" title="Simulate Refactoring Blast Radius">
-              <svg class="icon" aria-hidden="true"><use href="#icon-flame"/></svg>
-              Blast
-            </button>
-            <button id="btnPathTrace" class="toolbar-btn btn-tool" title="Trace Shortest Call Path">
-              <svg class="icon" aria-hidden="true"><use href="#icon-lightning"/></svg>
-              Trace
-            </button>
-            <button id="btnCutVertices" class="toolbar-btn btn-tool" title="Find Architectural Cut Vertices">
-              <svg class="icon" aria-hidden="true"><use href="#icon-warning-circle"/></svg>
-              Cut Pts
-            </button>
-            <button id="btnCycles" class="toolbar-btn btn-tool" title="Detect Circular Dependencies">
-              <svg class="icon" aria-hidden="true"><use href="#icon-arrows-rotate"/></svg>
-              Cycles
-            </button>
-            <button id="btnPageRank" class="toolbar-btn btn-tool" title="Colorize by PageRank Centrality">
-              <svg class="icon" aria-hidden="true"><use href="#icon-star"/></svg>
-              PageRank
-            </button>
-            <button id="btnSmellsRadar" class="toolbar-btn btn-tool" title="Highlight Architectural Smells">
-              <svg class="icon" aria-hidden="true"><use href="#icon-warning"/></svg>
-              Smells
-            </button>
-          </div>
-
-          <div class="toolbar-divider"></div>
-
-          <!-- Viewport Actions -->
-          <div class="toolbar-segment">
-            <button id="btnFit" class="toolbar-btn" title="Fit to Viewport">
-              <svg class="icon" aria-hidden="true"><use href="#icon-expand"/></svg>
-            </button>
-            <button id="btnExportPNG" class="toolbar-btn" title="Export High-Res PNG">
-              <svg class="icon" aria-hidden="true"><use href="#icon-camera"/></svg>
-            </button>
-          </div>
-
-        </div><!-- /graph-toolbar -->
-
-        <!-- Cytoscape Canvas -->
-        <div id="cy" class="cytoscape-container"></div>
-
-        <!-- HUD Status Bar (full-width bottom strip) -->
-        <div class="hud-badge" id="hudOverlay">
-          <span class="hud-pulse"></span>
-          <span class="hud-live-label">Live</span>
-          <span class="hud-divider">·</span>
-          <span id="hudStatus">Loading Architecture Graph...</span>
-          <span class="hud-divider">·</span>
-          <span id="hudSelection" class="hud-accent">Click any node to inspect</span>
-          <span class="hud-hint">Ctrl+K to search</span>
-        </div>
-
-        <!-- Shortest Path Trace Bar -->
-        <div id="pathTraceBar" class="path-trace-bar hidden">
-          <svg class="icon" aria-hidden="true"><use href="#icon-lightning"/></svg>
-          <strong>Shortest Path:</strong>
-          <input type="text" id="pathSourceInput" placeholder="Source symbol..." class="trace-input">
-          <span>→</span>
-          <input type="text" id="pathTargetInput" placeholder="Target symbol..." class="trace-input">
-          <button id="btnRunTrace" class="btn btn-primary btn-sm">Find Path</button>
-          <button id="btnCloseTrace" class="btn-close-sm" aria-label="Close">
-            <svg class="icon" aria-hidden="true"><use href="#icon-x"/></svg>
-          </button>
-        </div>
-
-      </div><!-- /graph-stage -->
-
-      <!-- Slide-Out Inspector Drawer -->
-      <aside id="inspector" class="inspector-drawer hidden custom-scroll">
-
-        <div class="drawer-header">
-          <div class="drawer-title-row">
-            <div class="drawer-title-box">
-              <span class="node-badge" id="nodeKindBadge">STRUCT</span>
-              <h2 id="nodeName">SymbolName</h2>
-            </div>
-            <button id="btnCloseDrawer" class="btn-close" aria-label="Close Inspector">
-              <svg class="icon" aria-hidden="true"><use href="#icon-x"/></svg>
-            </button>
-          </div>
-          <div class="drawer-subtitle" id="nodeSubtitle">
-            <span class="code-text" id="nodeFilePath">internal/service/user.go:42</span>
-            &nbsp;·&nbsp;
-            <span class="code-text" id="nodePackage">internal/service</span>
-            &nbsp;·&nbsp;
-            <span class="layer-pill" id="nodeLayer">APPLICATION</span>
-          </div>
-        </div>
-
-        <div class="drawer-body custom-scroll">
-
-          <!-- Architecture Metrics Trio -->
-          <div class="metrics-card">
-            <h3>Architecture Metrics</h3>
-            <div class="metrics-grid">
-              <div class="metric-box">
-                <span class="m-label">Inbound Ca</span>
-                <span class="m-val" id="mInDegree">0</span>
-              </div>
-              <div class="metric-box">
-                <span class="m-label">Outbound Ce</span>
-                <span class="m-val" id="mOutDegree">0</span>
-              </div>
-              <div class="metric-box">
-                <span class="m-label">PageRank</span>
-                <span class="m-val" id="mPageRank">0.000</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Blast Radius Simulator Card -->
-          <div class="blast-trigger-card">
-            <div class="blast-card-header">
-              <h3>
-                <svg class="icon" aria-hidden="true"><use href="#icon-flame"/></svg>
-                Blast Radius Simulator
-              </h3>
-              <span class="risk-badge low" id="riskBadge">LOW RISK</span>
-            </div>
-            <p class="blast-desc">
-              Simulates cascading ripple effects and broken tests if this symbol is refactored or deleted.
-            </p>
-            <div class="risk-meter-box">
-              <div class="meter-bar">
-                <div class="meter-fill" id="riskMeterFill" style="width: 0%"></div>
-              </div>
-              <span class="risk-score" id="riskMeterScore">0 / 100</span>
-            </div>
-            <button id="btnSimulateBlast" class="btn-blast-action">
-              <svg class="icon" aria-hidden="true"><use href="#icon-lightning"/></svg>
-              Run Blast Simulation
-            </button>
-          </div>
-
-          <!-- Impacted Tests -->
-          <div class="impact-section hidden" id="impactedTestsSection">
-            <div class="section-sub-header">
-              <h4>
-                <svg class="icon" aria-hidden="true"><use href="#icon-beaker"/></svg>
-                Impacted Tests (<span id="impactedTestsCount">0</span>)
-              </h4>
-              <button id="btnCopyTestCmd" class="btn-copy-sm" title="Copy exact go test command">
-                <svg class="icon-sm" aria-hidden="true"><use href="#icon-copy"/></svg>
-                Copy
-              </button>
-            </div>
-            <div class="test-cmd-banner" id="testCmdBanner">go test ./...</div>
-            <ul class="compact-list custom-scroll" id="impactedTestsList"></ul>
-          </div>
-
-          <!-- Relations Accordion -->
-          <div class="relations-accordion">
-            <div class="relation-group active">
-              <button class="accordion-header" onclick="this.parentElement.classList.toggle('active')">
-                <svg class="icon-sm chevron" aria-hidden="true"><use href="#icon-chevron-right"/></svg>
-                Inbound Callers (<span id="inboundCount">0</span>)
-              </button>
-              <div class="accordion-body">
-                <ul class="relation-list custom-scroll" id="inboundList"></ul>
-              </div>
-            </div>
-            <div class="relation-group active">
-              <button class="accordion-header" onclick="this.parentElement.classList.toggle('active')">
-                <svg class="icon-sm chevron" aria-hidden="true"><use href="#icon-chevron-right"/></svg>
-                Outbound Dependencies (<span id="outboundCount">0</span>)
-              </button>
-              <div class="accordion-body">
-                <ul class="relation-list custom-scroll" id="outboundList"></ul>
-              </div>
-            </div>
-          </div>
-
-        </div><!-- /drawer-body -->
-      </aside><!-- /inspector -->
-
-    </section><!-- /tab-graph -->
-
-    <!-- =================================================================
-         TAB 2: INTELLIGENCE & ARCHITECTURAL SMELLS
-         ================================================================= -->
-    <section id="tab-intelligence" class="tab-pane">
-      <div class="intelligence-container custom-scroll">
-
-        <div class="intel-header">
-          <h2>
-            <svg class="icon icon-lg" aria-hidden="true"><use href="#icon-brain"/></svg>
-            Architecture Intelligence &amp; Smells Radar
-          </h2>
-          <p>
-            Real-time architectural pattern detection, structural debt diagnosis, and hotspot analysis
-            from <code>intelligence/latest.json</code>.
-          </p>
-        </div>
-
-        <div class="intel-split">
-          <!-- Detected Patterns -->
-          <div class="intel-section">
-            <h3>Detected Architectural Patterns</h3>
-            <div class="pattern-grid" id="patternGrid">
-              <!-- Populated via JS -->
-            </div>
-          </div>
-
-          <!-- Architectural Smells Table -->
-          <div class="intel-section">
-            <div class="section-header-flex">
-              <h3>Architectural Smells &amp; Structural Debt (<span id="intelSmellCount">0</span>)</h3>
-            </div>
-            <div class="smells-table-container custom-scroll">
-              <table class="data-table" id="smellsTable">
-                <colgroup>
-                  <col style="width: 90px">
-                  <col style="width: 220px">
-                  <col style="width: 130px">
-                  <col>
-                  <col style="width: 160px">
-                </colgroup>
-                <thead>
-                  <tr>
-                  <th onclick="handleSmellsSort('severity', this)">Severity <span class="sort-arrow">↕</span></th>
-                  <th onclick="handleSmellsSort('title', this)">Smell Title <span class="sort-arrow">↕</span></th>
-                  <th onclick="handleSmellsSort('category', this)">Category <span class="sort-arrow">↕</span></th>
-                  <th>Description</th>
-                  <th>Affected Nodes</th>
-                </tr>
-                </thead>
-                <tbody id="smellsTableBody">
-                  <!-- Populated via JS -->
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        <!-- Hotspot Leaderboard -->
-        <div class="intel-section">
-          <h3>Top Architectural Hotspots (PageRank &amp; Degree Centrality)</h3>
-          <div class="hotspots-grid" id="hotspotsGrid">
-            <!-- Populated via JS -->
-          </div>
-        </div>
-
       </div>
-    </section><!-- /tab-intelligence -->
 
-    <!-- =================================================================
-         TAB 3: MEMORY & EVOLUTION TIMELINE
-         ================================================================= -->
-    <section id="tab-timeline" class="tab-pane">
-      <div class="timeline-container custom-scroll">
-
-        <div class="timeline-header">
-          <div class="timeline-title-box">
-            <h2>
-              <svg class="icon icon-lg" aria-hidden="true"><use href="#icon-timer"/></svg>
-              Architectural Evolution Timeline
-            </h2>
-            <p>Chronological record of architectural decisions, dependency mutations, and refactorings across git commits.</p>
-          </div>
-          <div class="timeline-filter-bar">
-            <button class="filter-chip active" data-filter="ALL">All Events</button>
-            <button class="filter-chip" data-filter="FEATURE">
-              <svg class="icon-sm" aria-hidden="true"><use href="#icon-rocket"/></svg>
-              Features
-            </button>
-            <button class="filter-chip" data-filter="REFACTOR">
-              <svg class="icon-sm" aria-hidden="true"><use href="#icon-arrows-rotate"/></svg>
-              Refactors
-            </button>
-            <button class="filter-chip" data-filter="FIX_BUG">
-              <svg class="icon-sm" aria-hidden="true"><use href="#icon-bug"/></svg>
-              Fixes
-            </button>
-          </div>
-        </div>
-
-        <div class="timeline-stream" id="timelineStream">
-          <!-- Populated via JS -->
-        </div>
-
+      <div class="tracebar" id="traceBar" hidden>
+        <input class="field__input" id="traceSource" placeholder="Source symbol" aria-label="Path source">
+        <svg class="tracebar__arrow" aria-hidden="true"><use href="#i-chevron"/></svg>
+        <input class="field__input" id="traceTarget" placeholder="Target symbol" aria-label="Path target">
+        <button class="btn btn--primary btn--sm" id="btnRunTrace">Trace</button>
+        <button class="icon-btn" id="btnCloseTrace" aria-label="Close path trace"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
       </div>
-    </section><!-- /tab-timeline -->
 
-    <!-- =================================================================
-         TAB 4: MARBLES DIAGRAM GALLERY
-         ================================================================= -->
-    <section id="tab-marbles" class="tab-pane">
-      <div class="marbles-container">
+      <div id="cy" aria-label="Architecture graph canvas"></div>
 
-        <aside class="marbles-sidebar custom-scroll">
-          <h3>Marbles Catalog</h3>
-          <p class="catalog-hint">Pre-compiled C4, UML &amp; Callgraph diagrams.</p>
-          <ul class="marbles-nav-list" id="marblesList">
-            <!-- Populated via JS -->
-          </ul>
-        </aside>
-
-        <div class="marbles-viewport">
-          <div class="diagram-viewer-header">
-            <div class="viewer-title-box">
-              <span class="badge-tag" id="currentDiagType">C4 CONTEXT</span>
-              <h2 id="currentDiagTitle">System Context Diagram</h2>
-            </div>
-            <div class="viewer-actions">
-              <button id="btnToggleMermaidSource" class="btn btn-sm">
-                <svg class="icon-sm" aria-hidden="true"><use href="#icon-code"/></svg>
-                Toggle Source
-              </button>
-              <button id="btnFullscreenMermaid" class="btn btn-sm">
-                <svg class="icon-sm" aria-hidden="true"><use href="#icon-expand"/></svg>
-                Fullscreen
-              </button>
-            </div>
-          </div>
-
-          <div class="diagram-canvas-box custom-scroll">
-            <div id="mermaidStage" class="mermaid-stage"></div>
-            <pre id="mermaidSource" class="mermaid-source-code hidden"></pre>
-          </div>
-        </div>
-
+      <div class="hud" id="hud">
+        <span id="hudStatus">Loading graph…</span>
+        <span class="hud__sep" aria-hidden="true"></span>
+        <span id="hudSelection">Nothing selected</span>
       </div>
-    </section><!-- /tab-marbles -->
 
-    <!-- =================================================================
-         TAB 5: SYSTEM METRICS & INVARIANTS
-         ================================================================= -->
-    <section id="tab-metrics" class="tab-pane">
-      <div class="metrics-dashboard-container custom-scroll">
-
-        <div class="dashboard-header">
-          <h2>
-            <svg class="icon icon-lg" aria-hidden="true"><use href="#icon-chart"/></svg>
-            System Coupling, Instability &amp; Architectural Rules
-          </h2>
-          <p>Robert C. Martin metric distributions and discovered repository conventions.</p>
-        </div>
-
-        <!-- KPI Cards Row -->
-        <div class="metrics-cards-row">
-          <div class="metric-card-lg">
-            <span class="m-card-title">Average Instability (I)</span>
-            <span class="m-card-value" id="metricInstability">0.50</span>
-            <div class="m-card-bar"><div class="m-card-bar-fill" id="barInstability" style="width:50%"></div></div>
-            <span class="m-card-hint">I = Ce / (Ca + Ce) · 0 = Stable Core, 1 = Volatile</span>
-          </div>
-          <div class="metric-card-lg">
-            <span class="m-card-title">Graph Density</span>
-            <span class="m-card-value" id="metricDensity">0.0001</span>
-            <div class="m-card-bar"><div class="m-card-bar-fill" id="barDensity" style="width:1%"></div></div>
-            <span class="m-card-hint">Total connections vs maximum potential edges</span>
-          </div>
-          <div class="metric-card-lg">
-            <span class="m-card-title">Dead Code Nodes</span>
-            <span class="m-card-value danger-text" id="metricDeadCode">2,595</span>
-            <div class="m-card-bar"><div class="m-card-bar-fill" id="barDeadCode" style="width:70%"></div></div>
-            <span class="m-card-hint">Unreachable or unreferenced AST declarations</span>
-          </div>
-          <div class="metric-card-lg">
-            <span class="m-card-title">Layer Rule Violations</span>
-            <span class="m-card-value" id="metricLayerViolations">0</span>
-            <div class="m-card-bar"><div class="m-card-bar-fill" id="barViolations" style="width:0%"></div></div>
-            <span class="m-card-hint">Clean Architecture layer breaches detected</span>
-          </div>
-        </div>
-
-        <!-- Components Coupling Breakdown -->
-        <div class="components-breakdown-section">
-          <h3>Inferred System Components &amp; Coupling Ratios</h3>
-          <div class="components-table-container custom-scroll">
-            <table class="data-table" id="componentsTable">
-              <colgroup>
-                <col style="width: 180px">
-                <col style="width: 90px">
-                <col>
-                <col style="width: 80px">
-                <col style="width: 80px">
-                <col style="width: 140px">
-                <col style="width: 130px">
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>Component <span class="sort-arrow">↕</span></th>
-                  <th>Kind</th>
-                  <th>Directories</th>
-                  <th>Afferent Ca <span class="sort-arrow">↕</span></th>
-                  <th>Efferent Ce <span class="sort-arrow">↕</span></th>
-                  <th>Instability (I) <span class="sort-arrow">↕</span></th>
-                  <th>Stability Status <span class="sort-arrow">↕</span></th>
-                </tr>
-              </thead>
-              <tbody id="componentsTableBody">
-                <!-- Populated via JS -->
-              </tbody>
-            </table>
-          </div>
-        </div>
-
+      <div class="empty" id="graphEmpty" hidden>
+        <p class="empty__title">No graph to show</p>
+        <p class="empty__hint">Run <code>gmb analyze</code> in this repository, then reload.</p>
       </div>
-    </section><!-- /tab-metrics -->
+    </div>
 
-  </main>
+    <aside class="inspector" id="inspector" aria-label="Node inspector" hidden>
+      <header class="inspector__head">
+        <span class="badge" id="nodeKindBadge">NODE</span>
+        <button class="icon-btn" id="btnCloseInspector" aria-label="Close inspector"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+      </header>
+      <h2 class="inspector__name" id="nodeName">—</h2>
+      <p class="inspector__file" id="nodeFile"></p>
+      <dl class="inspector__meta">
+        <div><dt>Layer</dt><dd id="nodeLayer">—</dd></div>
+        <div><dt>Fan-in</dt><dd id="mInDegree">—</dd></div>
+        <div><dt>Fan-out</dt><dd id="mOutDegree">—</dd></div>
+        <div><dt>Instability</dt><dd id="mInstability">—</dd></div>
+      </dl>
 
-  <!-- Toast Notifications Container -->
-  <div id="toastContainer" aria-live="polite" aria-atomic="true"></div>
+      <div class="inspector__section">
+        <div class="impact__row">
+          <h3 class="inspector__sub">Change impact</h3>
+          <button class="btn btn--sm" id="btnImpact">Analyze</button>
+        </div>
+        <div id="impactResult" hidden>
+          <div class="impact__score">
+            <span class="badge" id="riskBadge">—</span>
+            <div class="meter"><div class="meter__fill" id="riskMeterFill"></div></div>
+            <span class="impact__num" id="riskScore">0</span>
+          </div>
+          <dl class="inspector__meta">
+            <div><dt>Direct</dt><dd id="impDirect">—</dd></div>
+            <div><dt>Transitive</dt><dd id="impTransitive">—</dd></div>
+            <div><dt>Files</dt><dd id="impFiles">—</dd></div>
+            <div><dt>Tests</dt><dd id="impTests">—</dd></div>
+          </dl>
+          <div id="testCmdWrap" hidden>
+            <code class="testcmd" id="testCmd"></code>
+            <button class="btn btn--sm" id="btnCopyTestCmd">Copy</button>
+          </div>
+        </div>
+      </div>
 
-  <!-- ===================================================================
-       SVG ICON SPRITE SHEET (hidden, inline)
-       All icons: currentColor stroke, no fill, 24x24 viewBox
-       =================================================================== -->
-  <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+      <div class="inspector__section">
+        <details class="acc" open>
+          <summary class="acc__head">Inbound <span class="count" id="inboundCount">0</span></summary>
+          <ul class="acc__list" id="inboundList"></ul>
+        </details>
+        <details class="acc">
+          <summary class="acc__head">Outbound <span class="count" id="outboundCount">0</span></summary>
+          <ul class="acc__list" id="outboundList"></ul>
+        </details>
+      </div>
+    </aside>
+  </section>
 
-    <!-- Gem / Logo -->
-    <symbol id="icon-gem" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <polygon points="6,3 18,3 22,9 12,22 2,9"/>
-      <polyline points="2,9 6,3"/>
-      <line x1="6" y1="3" x2="12" y2="22"/>
-      <line x1="18" y1="3" x2="12" y2="22"/>
-      <line x1="22" y1="9" x2="2" y2="9"/>
-    </symbol>
+  <!-- ═══════════ INTELLIGENCE ═══════════ -->
+  <section class="panel panel--pad" id="tab-intel" role="tabpanel" aria-labelledby="tabbtn-intel" hidden>
+    <div class="grid2">
+      <div>
+        <h2 class="h2">Detected patterns</h2>
+        <div class="cards" id="patternGrid"></div>
+      </div>
+      <div>
+        <h2 class="h2">Hotspots</h2>
+        <div class="cards" id="hotspotsGrid"></div>
+      </div>
+    </div>
+    <h2 class="h2">Architecture smells</h2>
+    <div class="tablewrap">
+      <table class="table" id="smellsTable">
+        <thead>
+          <tr>
+            <th><button class="th-sort" data-sort="severity">Severity</button></th>
+            <th><button class="th-sort" data-sort="title">Smell</button></th>
+            <th>Details</th>
+            <th class="num">Affected</th>
+          </tr>
+        </thead>
+        <tbody id="smellsBody"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="intelEmpty" hidden>
+      <p class="empty__title">No intelligence data</p>
+      <p class="empty__hint">Run <code>gmb analyze</code> to generate architecture intelligence.</p>
+    </div>
+  </section>
 
-    <!-- Graph / Architecture tab -->
-    <symbol id="icon-graph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="5" cy="12" r="2.5"/>
-      <circle cx="19" cy="5" r="2.5"/>
-      <circle cx="19" cy="19" r="2.5"/>
-      <line x1="7.5" y1="11.2" x2="16.5" y2="6.2"/>
-      <line x1="7.5" y1="12.8" x2="16.5" y2="17.8"/>
-      <line x1="19" y1="7.5" x2="19" y2="16.5"/>
-    </symbol>
+  <!-- ═══════════ TIMELINE ═══════════ -->
+  <section class="panel panel--pad panel--narrow" id="tab-timeline" role="tabpanel" aria-labelledby="tabbtn-timeline" hidden>
+    <div class="chipsrow" id="timelineFilters" role="group" aria-label="Timeline filters">
+      <button class="chip is-on" data-filter="ALL">All</button>
+      <button class="chip" data-filter="FEATURE">Features</button>
+      <button class="chip" data-filter="REFACTOR">Refactors</button>
+      <button class="chip" data-filter="FIX_BUG">Fixes</button>
+    </div>
+    <ol class="timeline" id="timelineStream"></ol>
+    <div class="empty" id="timelineEmpty" hidden>
+      <p class="empty__title">No timeline yet</p>
+      <p class="empty__hint">Developer memory builds up as you analyze commits.</p>
+    </div>
+  </section>
 
-    <!-- Brain / Intelligence tab -->
-    <symbol id="icon-brain" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M12 5a4 4 0 0 0-4 4 4 4 0 0 0-4 4 4.5 4.5 0 0 0 4.5 4.5H12"/>
-      <path d="M12 5a4 4 0 0 1 4 4 4 4 0 0 1 4 4 4.5 4.5 0 0 1-4.5 4.5H12"/>
-      <line x1="12" y1="5" x2="12" y2="17.5"/>
-      <path d="M8 9.5a2 2 0 0 0 4 0"/>
-      <path d="M12 9.5a2 2 0 0 0 4 0"/>
-    </symbol>
+  <!-- ═══════════ DIAGRAMS (MARBLES) ═══════════ -->
+  <section class="panel panel--marbles" id="tab-marbles" role="tabpanel" aria-labelledby="tabbtn-marbles" hidden>
+    <aside class="side side--list">
+      <h2 class="side__title">Saved diagrams</h2>
+      <ul class="marbles" id="marblesList"></ul>
+      <div class="empty empty--side" id="marblesEmpty" hidden>
+        <p class="empty__hint">No saved diagrams.<br>Try <code>gmb visualize c4container --save architecture</code>.</p>
+      </div>
+    </aside>
+    <div class="diagram">
+      <header class="diagram__head" id="diagramHead" hidden>
+        <div>
+          <span class="badge" id="diagType">—</span>
+          <h2 class="diagram__title" id="diagTitle">—</h2>
+        </div>
+        <div class="diagram__actions">
+          <button class="tool tool--icon" id="btnDiagSource" title="Toggle Mermaid source" aria-label="Toggle source" aria-pressed="false"><svg aria-hidden="true"><use href="#i-code"/></svg></button>
+          <button class="tool tool--icon" id="btnDiagFull" title="Fullscreen" aria-label="Fullscreen diagram"><svg aria-hidden="true"><use href="#i-expand"/></svg></button>
+        </div>
+      </header>
+      <div class="diagram__stage" id="diagStage">
+        <p class="diagram__placeholder" id="diagPlaceholder">Select a diagram from the list.</p>
+      </div>
+      <pre class="diagram__source" id="diagSource" hidden></pre>
+    </div>
+  </section>
 
-    <!-- Timer / Timeline tab -->
-    <symbol id="icon-timer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="12" cy="13" r="8"/>
-      <polyline points="12,9 12,13 15,15"/>
-      <line x1="9" y1="3" x2="15" y2="3"/>
-      <line x1="12" y1="3" x2="12" y2="5"/>
-    </symbol>
+  <!-- ═══════════ METRICS ═══════════ -->
+  <section class="panel panel--pad" id="tab-metrics" role="tabpanel" aria-labelledby="tabbtn-metrics" hidden>
+    <div class="kpirow" id="metricsKpis"></div>
+    <h2 class="h2">Components</h2>
+    <div class="tablewrap">
+      <table class="table" id="componentsTable">
+        <thead>
+          <tr>
+            <th><button class="th-sort" data-sort="name">Component</button></th>
+            <th>Kind</th>
+            <th class="num"><button class="th-sort" data-sort="ca">Ca</button></th>
+            <th class="num"><button class="th-sort" data-sort="ce">Ce</button></th>
+            <th class="num"><button class="th-sort" data-sort="instability">Instability</button></th>
+            <th class="num"><button class="th-sort" data-sort="confidence">Confidence</button></th>
+          </tr>
+        </thead>
+        <tbody id="componentsBody"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="metricsEmpty" hidden>
+      <p class="empty__title">No metrics data</p>
+      <p class="empty__hint">Run <code>gmb analyze</code> to compute architecture metrics.</p>
+    </div>
+  </section>
 
-    <!-- Ruler / Marbles tab -->
-    <symbol id="icon-ruler" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M3 17.25V5.25A2.25 2.25 0 0 1 5.25 3h13.5A2.25 2.25 0 0 1 21 5.25v13.5A2.25 2.25 0 0 1 18.75 21H5.25A2.25 2.25 0 0 1 3 18.75z"/>
-      <line x1="9" y1="3" x2="9" y2="12"/>
-      <line x1="3" y1="9" x2="9" y2="9"/>
-      <line x1="3" y1="6" x2="6" y2="6"/>
-      <line x1="3" y1="12" x2="6" y2="12"/>
-    </symbol>
+</main>
 
-    <!-- Chart Bar / Metrics tab -->
-    <symbol id="icon-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <rect x="3" y="10" width="4" height="11" rx="1"/>
-      <rect x="10" y="6" width="4" height="15" rx="1"/>
-      <rect x="17" y="13" width="4" height="8" rx="1"/>
-      <line x1="3" y1="21" x2="21" y2="21"/>
-    </symbol>
+<div class="toasts" id="toasts" aria-live="polite"></div>
 
-    <!-- Flame / Blast Radius -->
-    <symbol id="icon-flame" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M12 2c0 6-5 7.5-5 12.5a5 5 0 0 0 10 0C17 9.5 12 8 12 2z"/>
-      <path d="M12 12c0 3-2 4.5-2 6a2 2 0 0 0 4 0c0-1.5-2-3-2-6z"/>
-    </symbol>
-
-    <!-- Lightning / Path Trace -->
-    <symbol id="icon-lightning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <polygon points="13,2 3,14 12,14 11,22 21,10 12,10"/>
-    </symbol>
-
-    <!-- Warning Circle / Cut Vertices -->
-    <symbol id="icon-warning-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="12" cy="12" r="10"/>
-      <line x1="12" y1="8" x2="12" y2="12"/>
-      <line x1="12" y1="16" x2="12.01" y2="16"/>
-    </symbol>
-
-    <!-- Arrows Rotate / Cycles -->
-    <symbol id="icon-arrows-rotate" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
-      <path d="M3 3v5h5"/>
-    </symbol>
-
-    <!-- Star / PageRank -->
-    <symbol id="icon-star" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"/>
-    </symbol>
-
-    <!-- Warning Triangle / Smells -->
-    <symbol id="icon-warning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-      <line x1="12" y1="9" x2="12" y2="13"/>
-      <line x1="12" y1="17" x2="12.01" y2="17"/>
-    </symbol>
-
-    <!-- Search / Magnifying Glass -->
-    <symbol id="icon-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="11" cy="11" r="8"/>
-      <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-    </symbol>
-
-    <!-- Moon / Dark theme toggle -->
-    <symbol id="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-    </symbol>
-
-    <!-- Sun / Light theme toggle -->
-    <symbol id="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="12" cy="12" r="5"/>
-      <line x1="12" y1="1" x2="12" y2="3"/>
-      <line x1="12" y1="21" x2="12" y2="23"/>
-      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
-      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
-      <line x1="1" y1="12" x2="3" y2="12"/>
-      <line x1="21" y1="12" x2="23" y2="12"/>
-      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
-      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
-    </symbol>
-
-    <!-- X / Close -->
-    <symbol id="icon-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <line x1="18" y1="6" x2="6" y2="18"/>
-      <line x1="6" y1="6" x2="18" y2="18"/>
-    </symbol>
-
-    <!-- Chevron Right -->
-    <symbol id="icon-chevron-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <polyline points="9 18 15 12 9 6"></polyline>
-    </symbol>
-
-    <!-- Expand / Fit viewport -->
-    <symbol id="icon-expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <polyline points="15,3 21,3 21,9"/>
-      <polyline points="9,21 3,21 3,15"/>
-      <line x1="21" y1="3" x2="14" y2="10"/>
-      <line x1="3" y1="21" x2="10" y2="14"/>
-    </symbol>
-
-    <!-- Camera / Export PNG -->
-    <symbol id="icon-camera" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
-      <circle cx="12" cy="13" r="4"/>
-    </symbol>
-
-    <!-- Code / Toggle source -->
-    <symbol id="icon-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <polyline points="16,18 22,12 16,6"/>
-      <polyline points="8,6 2,12 8,18"/>
-    </symbol>
-
-    <!-- Beaker / Tests -->
-    <symbol id="icon-beaker" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M14.5 2v6.5l5 7.5A2 2 0 0 1 17.8 19H6.2a2 2 0 0 1-1.7-3L9.5 8.5V2"/>
-      <line x1="8.5" y1="2" x2="15.5" y2="2"/>
-    </symbol>
-
-    <!-- Copy / Clipboard -->
-    <symbol id="icon-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <rect x="9" y="9" width="13" height="13" rx="2"/>
-      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-    </symbol>
-
-    <!-- Rocket / Features -->
-    <symbol id="icon-rocket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/>
-      <path d="m3.5 15.5 4-4"/>
-      <path d="M20 2c0 0-4 .5-7.5 4L11 8l-4.5.5 4 4L11 17l.5-4.5 4-1.5c3.5-3.5 4-7.5 4-7.5z"/>
-    </symbol>
-
-    <!-- Bug / Fixes -->
-    <symbol id="icon-bug" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-      <rect x="8" y="6" width="8" height="14" rx="4"/>
-      <path d="M19 9l3-1M19 15l3 1M5 9l-3-1M5 15l-3 1"/>
-      <line x1="12" y1="10" x2="12" y2="18"/>
-      <line x1="8" y1="14" x2="16" y2="14"/>
-    </symbol>
-
-  </svg><!-- /icon sprite sheet -->
-
-  <script src="/assets/app.js"></script>
 </body>
 </html>

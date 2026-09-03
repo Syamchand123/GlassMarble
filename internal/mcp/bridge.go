@@ -33,10 +33,16 @@ type Bridge struct {
 }
 
 // NewBridge creates a new domain bridge for the given repository root.
-func NewBridge(rootDir string, maxJSONMB int) *Bridge {
+// storageDir overrides the default <root>/.glassmarble location when non-empty.
+func NewBridge(rootDir, storageDir string, maxJSONMB int) *Bridge {
 	absRoot, err := filepath.Abs(rootDir)
 	if err != nil {
 		absRoot = rootDir
+	}
+	if storageDir == "" {
+		storageDir = filepath.Join(absRoot, ".glassmarble")
+	} else if !filepath.IsAbs(storageDir) {
+		storageDir = filepath.Join(absRoot, storageDir)
 	}
 	var maxBytes int64
 	if maxJSONMB > 0 {
@@ -44,7 +50,7 @@ func NewBridge(rootDir string, maxJSONMB int) *Bridge {
 	}
 	return &Bridge{
 		rootDir:    absRoot,
-		storageDir: filepath.Join(absRoot, ".glassmarble"),
+		storageDir: storageDir,
 		maxBytes:   maxBytes,
 	}
 }
