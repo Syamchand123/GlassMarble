@@ -213,7 +213,9 @@ function kindColor(kind) {
 function cyStylesheet() {
   const dark = theme() === 'dark';
   const label = dark ? '#c8c8d4' : '#3a3a44';
-  const edge = dark ? '#3c3c4a' : '#c4c4d0';
+  /* light-theme edges need a darker base: at the low opacities dense
+     graphs use, a pale grey vanishes into the near-white canvas */
+  const edge = dark ? '#3c3c4a' : '#8f8fa8';
   const compoundBg = dark ? 'rgba(255,255,255,0.03)' : 'rgba(20,20,40,0.03)';
   const compoundLine = dark ? '#33333f' : '#d8d8e2';
   /* Smooth dim/highlight fades — only on graphs small enough that
@@ -295,6 +297,12 @@ function initCy() {
     wheelSensitivity: 0.25,
     maxZoom: 3,
     minZoom: 0.08,
+    /* Viewport performance: during pan/zoom render a cached texture and
+       skip edges entirely — on the symbols view that is 14k+ edges the
+       browser no longer redraws on every frame. */
+    textureOnViewport: true,
+    hideEdgesOnViewport: true,
+    motionBlur: false,
   });
 
   state.cy.on('tap', 'node', (e) => {
@@ -386,6 +394,16 @@ function applyDepth(nodes, edges) {
     if (n.data.is_compound) continue;
     maxDeg = Math.max(maxDeg, (n.data.in_degree || 0) + (n.data.out_degree || 0));
   }
+  /* Dense graphs invert the contrast problem: thousands of translucent
+     edges stack into a flat haze that hides the nodes. There, keep nodes
+     near-opaque and drop edges to a whisper so density reads as shading
+     rather than fog. */
+  const dense = nodes.length + edges.length > 1500;
+  const nodeFloor = dense ? 0.86 : 0.58;
+  const nodeRange = dense ? 0.14 : 0.42;
+  const edgeFloor = dense ? 0.05 : 0.3;
+  const edgeRange = dense ? 0.14 : 0.55;
+
   const depthOf = {};
   for (const n of nodes) {
     const d = n.data;
@@ -393,13 +411,13 @@ function applyDepth(nodes, edges) {
     const deg = (d.in_degree || 0) + (d.out_degree || 0);
     const depth = Math.sqrt(deg / maxDeg);
     d.depth = depth;
-    d.vis = 0.58 + 0.42 * depth;
+    d.vis = nodeFloor + nodeRange * depth;
     d.fsize = Math.round(8 + depth * 3);
     depthOf[d.id] = depth;
   }
   for (const e of edges) {
     const d = Math.min(depthOf[e.data.source] ?? 0.5, depthOf[e.data.target] ?? 0.5);
-    e.data.eop = 0.3 + 0.55 * d;
+    e.data.eop = edgeFloor + edgeRange * d;
   }
 }
 
@@ -654,15 +672,38 @@ function initControls() {
   $('btnExportPNG').addEventListener('click', exportPNG);
 }
 
+/* Browsers cap canvas dimensions (~16k px per side) and total area; a
+   full-extent 2x export of a 5k-node graph blows past both and silently
+   yields an empty image. Scale down to fit, and emit a blob rather than
+   a multi-hundred-megabyte data URI. */
 function exportPNG() {
+  const MAX_DIM = 6000;
+  const MAX_AREA = 12e6; // ~12 MP — poster-sized, but a sane file size
   try {
     const bg = getComputedStyle(document.body).getPropertyValue('--canvas').trim() || '#ffffff';
-    const uri = state.cy.png({ full: true, scale: 2, bg });
+    const bb = state.cy.elements().boundingBox();
+    let scale = 2;
+    if (bb && bb.w > 1 && bb.h > 1) {
+      /* The lower bound must stay far below every cap — a floor above the
+         cap-derived scale silently defeats the limit (a 71k-unit graph
+         wants 0.05x; a 0.2 floor put it back at 205 megapixels). */
+      scale = Math.min(2, MAX_DIM / bb.w, MAX_DIM / bb.h, Math.sqrt(MAX_AREA / (bb.w * bb.h)));
+      scale = Math.max(0.01, scale);
+    }
+    const blob = state.cy.png({ full: true, scale, bg, output: 'blob' });
+    if (!blob || blob.size < 1024) {
+      toast('Export failed — the rendered image came back empty', 'err');
+      return;
+    }
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = uri;
+    a.href = url;
     a.download = `glassmarble-${state.view}-${Date.now()}.png`;
     a.click();
-    toast('PNG exported', 'ok');
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    const mb = blob.size / 1048576;
+    const size = mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.round(blob.size / 1024)} KB`;
+    toast(`PNG exported · ${size}${scale < 2 ? ` · scaled to fit (${scale.toFixed(2)}x)` : ''}`, 'ok');
   } catch (err) {
     toast(`Export failed: ${err.message}`, 'err');
   }
