@@ -84,7 +84,7 @@ func RenderAnalysisSummary(d AnalysisCardData) string {
 		"  State Size:    " + humanBytes(d.StateBytes),
 		"  Duration:      " + fmt.Sprintf("%.1fs", d.DurationSec),
 		"",
-		"  " + tui.Divider("Graph Metrics", 56),
+		"  " + tui.Divider("Graph Metrics", maxCardLine()),
 		"  " + exactSummaryLine,
 		"  Files Analyzed: " + itoa(d.FilesAnalyzed),
 		"  Total Nodes:    " + itoa(d.Nodes) + fmt.Sprintf(" (+%d)", d.NodesDelta),
@@ -94,7 +94,7 @@ func RenderAnalysisSummary(d AnalysisCardData) string {
 
 	// Architectural Intelligence section
 	if d.ComponentsCount > 0 || len(d.Patterns) > 0 || len(d.Smells) > 0 || d.CyclesCount > 0 || d.LayerViolations > 0 {
-		rows = append(rows, "", "  "+tui.Divider("Architectural Intelligence", 56))
+		rows = append(rows, "", "  "+tui.Divider("Architectural Intelligence", maxCardLine()))
 		intelHeader := fmt.Sprintf("Intelligence: %d components | %d patterns | %d smells | %d cycles | %d layer violations",
 			d.ComponentsCount, len(d.Patterns), len(d.Smells), d.CyclesCount, d.LayerViolations)
 		rows = append(rows, "  "+intelHeader)
@@ -122,7 +122,7 @@ func RenderAnalysisSummary(d AnalysisCardData) string {
 
 	// Developer Memory & Commit Reasoning
 	if d.ReasonedChanges > 0 || d.MemoryEventsCount > 0 {
-		rows = append(rows, "", "  "+tui.Divider("Developer Memory & Evolution", 56))
+		rows = append(rows, "", "  "+tui.Divider("Developer Memory & Evolution", maxCardLine()))
 		if d.ReasonedChanges > 0 {
 			rows = append(rows, fmt.Sprintf("  Commit reasoning: reasoned %d architectural change(s)", d.ReasonedChanges))
 		}

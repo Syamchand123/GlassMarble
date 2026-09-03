@@ -18,7 +18,7 @@ func RenderCompare(diff *akg.GraphDiff) string {
 		tui.StyleH2.Render("  AKG Architecture Diff"),
 		fmt.Sprintf("  Base: %s  →  Head: %s", shortHash(diff.BaseCommit), shortHash(diff.HeadCommit)),
 		"",
-		"  " + tui.Divider("Summary", 56),
+		"  " + tui.Divider("Summary", maxCardLine()),
 		"  Nodes added:   " + itoa(len(diff.NodesAdded)) +
 			tui.StyleMuted.Render("  (+ ") + tui.StyleOK.Render(itoa(len(diff.NodesAdded))) + tui.StyleMuted.Render(" / - ") + tui.StyleError.Render(itoa(len(diff.NodesRemoved))) + tui.StyleMuted.Render(")"),
 		"  Edges added:   " + itoa(len(diff.EdgesAdded)) +
@@ -34,13 +34,13 @@ func RenderCompare(diff *akg.GraphDiff) string {
 	}
 
 	if len(diff.NodesAdded) > 0 || len(diff.NodesRemoved) > 0 {
-		rows = append(rows, "", "  "+tui.Divider("Nodes", 56))
+		rows = append(rows, "", "  "+tui.Divider("Nodes", maxCardLine()))
 		left := renderNodeColumn("Added", diff.NodesAdded, "+", tui.StyleOK)
 		right := renderNodeColumn("Removed", diff.NodesRemoved, "-", tui.StyleError)
 		rows = append(rows, tui.Indent(tui.Columns(left, right, 34), 2))
 	}
 	if len(diff.EdgesAdded) > 0 || len(diff.EdgesRemoved) > 0 {
-		rows = append(rows, "", "  "+tui.Divider("Edges", 56))
+		rows = append(rows, "", "  "+tui.Divider("Edges", maxCardLine()))
 		left := renderEdgeColumn("Added", diff.EdgesAdded, "+", tui.StyleOK)
 		right := renderEdgeColumn("Removed", diff.EdgesRemoved, "-", tui.StyleError)
 		rows = append(rows, tui.Indent(tui.Columns(left, right, 34), 2))

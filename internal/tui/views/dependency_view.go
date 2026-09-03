@@ -45,7 +45,7 @@ func RenderDependencyTarget(target string, outbound, inbound []DependencyEdge) s
 		"  Node: " + tui.StyleCode.Render(target),
 	}
 
-	rows = append(rows, "", "  "+tui.Divider(fmt.Sprintf("Outbound Dependencies (%d)", len(outbound)), 56))
+	rows = append(rows, "", "  "+tui.Divider(fmt.Sprintf("Outbound Dependencies (%d)", len(outbound)), maxCardLine()))
 	if len(outbound) == 0 {
 		rows = append(rows, "  Direct Outbound Dependencies: None")
 	} else {
@@ -55,7 +55,7 @@ func RenderDependencyTarget(target string, outbound, inbound []DependencyEdge) s
 		}
 	}
 
-	rows = append(rows, "", "  "+tui.Divider(fmt.Sprintf("Inbound Callers (%d)", len(inbound)), 56))
+	rows = append(rows, "", "  "+tui.Divider(fmt.Sprintf("Inbound Callers (%d)", len(inbound)), maxCardLine()))
 	if len(inbound) == 0 {
 		rows = append(rows, "  Direct Inbound Callers/Dependents: None")
 	} else {

@@ -2,6 +2,7 @@ package views
 
 import (
 	"fmt"
+	"github.com/charmbracelet/lipgloss"
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/tui"
@@ -67,9 +68,11 @@ func primitiveBadge(p string) string {
 }
 
 // pad right-pads s to width.
+// pad measures display cells so emoji/CJK rows stay aligned.
 func pad(s string, width int) string {
-	if len(s) >= width {
+	w := lipgloss.Width(s)
+	if w >= width {
 		return s
 	}
-	return s + strings.Repeat(" ", width-len(s))
+	return s + strings.Repeat(" ", width-w)
 }

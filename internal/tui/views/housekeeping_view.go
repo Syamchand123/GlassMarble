@@ -20,7 +20,7 @@ func RenderHousekeepingReport(areas []HousekeepingArea, totalBytes int64, totalF
 		tui.StyleH2.Render("  .glassmarble Working Set"),
 		"",
 		"  " + tui.StyleLabel.Render(pad("Area", 32)+pad("Size", 10)+"Files"),
-		"  " + tui.Divider("", 56),
+		"  " + tui.Divider("", maxCardLine()),
 	}
 	for _, a := range areas {
 		if a.Files == 0 && a.Bytes == 0 {
@@ -33,7 +33,7 @@ func RenderHousekeepingReport(areas []HousekeepingArea, totalBytes int64, totalF
 			tui.StyleTextSecondary.Render(pad(humanBytes(a.Bytes), 10)),
 			a.Files))
 	}
-	rows = append(rows, "  "+tui.Divider("", 56))
+	rows = append(rows, "  "+tui.Divider("", maxCardLine()))
 	rows = append(rows, fmt.Sprintf("  %s %s %d",
 		tui.StyleH2.Render(pad("Total", 32)), tui.StyleH2.Render(pad(humanBytes(totalBytes), 10)), totalFiles))
 	return tui.StyleCard.Render("  " + joinLines(rows))

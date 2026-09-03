@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -16,13 +17,14 @@ import (
 func joinLines(rows []string) string {
 	bounded := make([]string, 0, len(rows))
 	for _, r := range rows {
-		if lipgloss.Width(r) > maxCardLine {
+		limit := maxCardLine()
+		if lipgloss.Width(r) > limit {
 			runes := []rune(r)
 			w := 0
 			i := 0
 			for ; i < len(runes); i++ {
 				w += lipgloss.Width(string(runes[i]))
-				if w > maxCardLine-1 {
+				if w > limit-1 {
 					break
 				}
 			}
@@ -78,10 +80,17 @@ func shortHash(h string) string {
 // truncateLeft shortens an over-long identifier from the left with an ellipsis
 // prefix (the interesting suffix, e.g. the symbol name, is kept).
 func truncateLeft(s string, max int) string {
-	if len(s) <= max {
+	// Measured and cut on runes: slicing by byte offset could split a UTF-8
+	// sequence and emit replacement characters mid-path.
+	if lipgloss.Width(s) <= max || max < 4 {
 		return s
 	}
-	return "..." + s[len(s)-max+3:]
+	r := []rune(s)
+	keep := max - 3
+	for keep > 0 && lipgloss.Width(string(r[len(r)-keep:])) > max-3 {
+		keep--
+	}
+	return "..." + string(r[len(r)-keep:])
 }
 
 // wrapText word-wraps s to the given display width (runes counted by
@@ -145,8 +154,28 @@ func wrapText(s string, width int) []string {
 	return lines
 }
 
-// maxCardLine is the longest rendered line allowed inside a styled card. Cards
-// must not auto-size to an over-long line (e.g. a long absolute path), since a
-// width that large inflates every padded line and can blow past the Windows
-// os.Pipe 4KB buffer used by the CLI tests.
-const maxCardLine = 100
+// maxCardLine is the longest rendered line allowed inside a styled card.
+// Cards must not auto-size to an over-long line (e.g. a long absolute path),
+// since a width that large inflates every padded line and can blow past the
+// Windows os.Pipe 4KB buffer used by the CLI tests.
+//
+// On a real terminal it follows the window so wide terminals are not wasted
+// and narrow ones do not wrap into garbage; when output is redirected (pipes,
+// CI, the test suite) it stays at the fixed legacy width so captured output
+// remains deterministic.
+func maxCardLine() int {
+	w, ok := tui.OutputWidth()
+	if !ok {
+		return 100
+	}
+	// leave room for the card border (2), its horizontal padding (4) and the
+	// two-space indent every row carries
+	w -= 8
+	if w < 24 {
+		return 24
+	}
+	if w > 140 {
+		return 140
+	}
+	return w
+}
