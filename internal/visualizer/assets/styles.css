@@ -939,7 +939,19 @@ body.theming, body.theming * {
   background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
   background-size: 22px 22px;
 }
-.diagram__stage svg { max-width: none; animation: popIn 0.4s var(--ease-out); transform-origin: top center; }
+/* Saved diagrams pin their own mermaid theme via an %%{init}%% directive,
+   so they render light regardless of app theme. Present that as an
+   intentional paper sheet instead of a stray white slab. */
+.diagram__canvas { display: flex; justify-content: center; }
+.diagram__stage svg {
+  max-width: none;
+  background: #fff;
+  border-radius: var(--r-lg);
+  padding: 16px;
+  box-shadow: var(--shadow);
+  animation: popIn 0.4s var(--ease-out);
+  transform-origin: top center;
+}
 .diagram__stage.is-full { position: fixed; inset: 0; z-index: 400; }
 .diagram__placeholder { color: var(--ink-dim); text-align: center; margin-top: 64px; }
 .diagram__source {

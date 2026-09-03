@@ -282,6 +282,9 @@
       </header>
       <div class="diagram__stage" id="diagStage">
         <p class="diagram__placeholder" id="diagPlaceholder">Select a diagram from the list.</p>
+        <!-- rendered SVG goes here; the placeholder must never be inside
+             the element we overwrite, or it is destroyed on first render -->
+        <div class="diagram__canvas" id="diagCanvas"></div>
       </div>
       <pre class="diagram__source" id="diagSource" hidden></pre>
     </div>
