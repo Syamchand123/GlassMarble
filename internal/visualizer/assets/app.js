@@ -221,7 +221,12 @@ function cyStylesheet() {
       'background-color': 'data(color)',
       'label': 'data(label)',
       'color': label,
-      'font-size': 9,
+      /* depth cues: leaves fade back and shrink their labels, hubs come forward */
+      'opacity': 'data(vis)',
+      'font-size': 'data(fsize)',
+      /* labels materialize as you zoom in — at fit-zoom on a 5k-node view,
+         thousands of overlapping labels otherwise wash the canvas out */
+      'min-zoomed-font-size': 7,
       'font-family': 'ui-monospace, Consolas, monospace',
       'text-valign': 'bottom',
       'text-margin-y': 4,
@@ -230,6 +235,13 @@ function cyStylesheet() {
       'width': 'data(size)',
       'height': 'data(size)',
       'border-width': 0,
+    } },
+    /* hubs float closest — a soft accent halo lifts them off the board */
+    { selector: 'node[depth > 0.72]', style: {
+      'underlay-color': '#7c5cfb',
+      'underlay-opacity': dark ? 0.18 : 0.13,
+      'underlay-padding': 7,
+      'underlay-shape': 'ellipse',
     } },
     { selector: 'node[is_entry]', style: { 'border-width': 2, 'border-color': '#d64545' } },
     { selector: ':parent', style: {
@@ -251,19 +263,21 @@ function cyStylesheet() {
       'target-arrow-shape': 'triangle',
       'arrow-scale': 0.7,
       'curve-style': 'bezier',
+      /* edges inherit the depth of their deepest endpoint */
+      'opacity': 'data(eop)',
     } },
     { selector: 'edge[?is_cycle]', style: { 'line-style': 'dashed' } },
-    { selector: '.dimmed', style: { 'opacity': 0.12 } },
-    { selector: 'node.hl', style: { 'border-width': 2, 'border-color': '#7c5cfb' } },
-    { selector: 'node:selected', style: { 'border-width': 3, 'border-color': '#7c5cfb' } },
-    { selector: 'edge.hl', style: { 'line-color': '#7c5cfb', 'target-arrow-color': '#7c5cfb', 'width': 2 } },
-    { selector: '.ov-cycle', style: { 'line-color': '#d64545', 'target-arrow-color': '#d64545', 'width': 2 } },
+    { selector: '.dimmed', style: { 'opacity': 0.1 } },
+    { selector: 'node.hl', style: { 'border-width': 2, 'border-color': '#7c5cfb', 'opacity': 1 } },
+    { selector: 'node:selected', style: { 'border-width': 3, 'border-color': '#7c5cfb', 'opacity': 1 } },
+    { selector: 'edge.hl', style: { 'line-color': '#7c5cfb', 'target-arrow-color': '#7c5cfb', 'width': 2, 'opacity': 1 } },
+    { selector: '.ov-cycle', style: { 'line-color': '#d64545', 'target-arrow-color': '#d64545', 'width': 2, 'opacity': 1 } },
     { selector: 'node.ov-cut', style: { 'background-color': '#d97036', 'border-width': 3, 'border-color': '#d64545' } },
     { selector: 'node.ov-smell', style: { 'background-color': '#d64545' } },
     { selector: 'node.ov-pr', style: { 'width': 'data(prSize)', 'height': 'data(prSize)', 'background-color': '#7c5cfb' } },
     { selector: '.path-hl', style: {
       'background-color': '#22a06b', 'line-color': '#22a06b',
-      'target-arrow-color': '#22a06b', 'width': 2.5,
+      'target-arrow-color': '#22a06b', 'width': 2.5, 'opacity': 1,
     } },
   ];
 }
@@ -284,6 +298,24 @@ function initCy() {
   });
   state.cy.on('tap', (e) => {
     if (e.target === state.cy) clearSelection();
+  });
+
+  /* Parallax board: the dotted grid drifts slower than the graph and its
+     dots breathe with zoom, so the graph reads as floating above a board.
+     rAF-throttled; direct-manipulation feedback, not an autonomous
+     animation, so it stays on under prefers-reduced-motion too. */
+  const board = document.querySelector('.panel--graph .canvas');
+  let gridRaf = false;
+  const syncBoard = () => {
+    gridRaf = false;
+    const pan = state.cy.pan();
+    const z = state.cy.zoom();
+    const s = Math.max(15, Math.min(34, 22 * Math.pow(z, 0.4)));
+    board.style.backgroundPosition = `${pan.x * 0.22}px ${pan.y * 0.22}px`;
+    board.style.backgroundSize = `${s}px ${s}px`;
+  };
+  state.cy.on('pan zoom', () => {
+    if (!gridRaf) { gridRaf = true; requestAnimationFrame(syncBoard); }
   });
 }
 
@@ -330,8 +362,39 @@ function decorate(el) {
     d.color = kindColor(d.kind);
     const deg = (d.in_degree || 0) + (d.out_degree || 0);
     d.size = Math.max(14, Math.min(46, 14 + Math.sqrt(deg) * 4));
+    /* depth defaults — refined per-view in applyDepth() */
+    d.depth = 0.5;
+    d.vis = 1;
+    d.fsize = 9;
   }
   return el;
+}
+
+/* Atmospheric depth: connectivity decides how "close" an element floats.
+   Leaves fade toward the board, hubs stay vivid with larger labels; edges
+   inherit the depth of their deepest endpoint. Purely data-driven — the
+   stylesheet maps vis/fsize/eop, so this costs nothing per frame. */
+function applyDepth(nodes, edges) {
+  let maxDeg = 1;
+  for (const n of nodes) {
+    if (n.data.is_compound) continue;
+    maxDeg = Math.max(maxDeg, (n.data.in_degree || 0) + (n.data.out_degree || 0));
+  }
+  const depthOf = {};
+  for (const n of nodes) {
+    const d = n.data;
+    if (d.is_compound) { d.depth = 0; d.vis = 1; d.fsize = 10; continue; }
+    const deg = (d.in_degree || 0) + (d.out_degree || 0);
+    const depth = Math.sqrt(deg / maxDeg);
+    d.depth = depth;
+    d.vis = 0.58 + 0.42 * depth;
+    d.fsize = Math.round(8 + depth * 3);
+    depthOf[d.id] = depth;
+  }
+  for (const e of edges) {
+    const d = Math.min(depthOf[e.data.source] ?? 0.5, depthOf[e.data.target] ?? 0.5);
+    e.data.eop = 0.3 + 0.55 * d;
+  }
 }
 
 function renderGraph() {
@@ -357,7 +420,21 @@ function renderGraph() {
   const keptEdges = edges.filter((e) => keptNodes.has(e.data.source) && keptNodes.has(e.data.target));
   /* drop compound parents that lost all children */
   const parentsInUse = new Set(nodes.filter((n) => n.data.parent).map((n) => n.data.parent));
-  const finalNodes = nodes.filter((n) => !n.data.is_compound || parentsInUse.has(n.data.id));
+  let finalNodes = nodes.filter((n) => !n.data.is_compound || parentsInUse.has(n.data.id));
+
+  /* Above the force-layout limit the fallback layouts scatter children
+     without regard to grouping, so every translucent package box stretches
+     across the whole canvas — dozens stacked wash the view out entirely.
+     The boxes carry no meaning there: strip compounds (clone the data;
+     rawElements must stay intact for later re-renders). */
+  const plainCount = finalNodes.filter((n) => !n.data.is_compound).length;
+  if (plainCount > COSE_NODE_LIMIT) {
+    finalNodes = finalNodes
+      .filter((n) => !n.data.is_compound)
+      .map((n) => ({ ...n, data: { ...n.data, parent: undefined } }));
+  }
+
+  applyDepth(finalNodes, keptEdges);
 
   cy.startBatch();
   cy.elements().remove();
