@@ -119,13 +119,13 @@ function initTheme() {
 
 const TABS = ['graph', 'intel', 'timeline', 'marbles', 'metrics'];
 
-/* Slide the gradient indicator under the active tab (transform-only). */
+/* Spring the capsule beneath the active tab (transform-only). */
 function moveTabIndicator() {
   const active = document.querySelector('.tab[aria-selected="true"]');
   const ind = $('tabsInd');
   if (!active || !ind) return;
-  ind.style.width = `${active.offsetWidth - 16}px`;
-  ind.style.transform = `translateX(${active.offsetLeft + 8}px)`;
+  ind.style.width = `${active.offsetWidth}px`;
+  ind.style.transform = `translateX(${active.offsetLeft - 4}px)`;
 }
 
 const PANEL_ANIM = ['panel-enter-r', 'panel-enter-l', 'panel-exit-r', 'panel-exit-l'];
