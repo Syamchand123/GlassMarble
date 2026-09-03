@@ -51,24 +51,37 @@ when declared cycle budgets or forbidden dependencies are breached (suitable for
 			return producterrs.Tagged("AKG database is empty — try 'gmb analyze' first", producterrs.ErrEmptySubgraph)
 		}
 
+		// A malformed config must fail loudly. Swallowing the parse error left
+		// cfg empty, so drift checked nothing and reported success - the worst
+		// possible outcome for a governance gate wired into CI.
 		cfg := config.Config{}
-		if data, rerr := os.ReadFile(filepath.Join(storageDir, "config.yaml")); rerr == nil {
+		cfgPath := filepath.Join(storageDir, "config.yaml")
+		if data, rerr := os.ReadFile(cfgPath); rerr == nil {
 			var local config.Config
-			if yerr := yaml.Unmarshal(data, &local); yerr == nil {
-				cfg = local
+			if yerr := yaml.Unmarshal(data, &local); yerr != nil {
+				return producterrs.Tagged(
+					fmt.Sprintf("%s is not valid YAML: %v — fix the file, or remove it to fall back to the global config", cfgPath, yerr),
+					producterrs.ErrEntryMissing)
 			}
+			cfg = local
+		} else if !os.IsNotExist(rerr) {
+			return fmt.Errorf("failed to read %s: %w", cfgPath, rerr)
 		}
-		if cfg.Drift.Layers == nil && cfg.Drift.ForbiddenDeps == nil {
-			if global, gerr := config.Load(config.Config{}); gerr == nil {
-				if cfg.Drift.Layers == nil {
-					cfg.Drift.Layers = global.Drift.Layers
-				}
-				if cfg.Drift.ForbiddenDeps == nil {
-					cfg.Drift.ForbiddenDeps = global.Drift.ForbiddenDeps
-				}
-				if cfg.Drift.CycleBudget == 0 {
-					cfg.Drift.CycleBudget = global.Drift.CycleBudget
-				}
+
+		// Each drift setting falls back to the global config independently.
+		// Gating the whole fallback on "both Layers and ForbiddenDeps are nil"
+		// meant a repo that declared layers locally could never inherit the
+		// global CycleBudget, which then stayed 0 — so any cycle at all
+		// "exceeded budget" and failed CI.
+		if global, gerr := config.Load(config.Config{}); gerr == nil {
+			if cfg.Drift.Layers == nil {
+				cfg.Drift.Layers = global.Drift.Layers
+			}
+			if cfg.Drift.ForbiddenDeps == nil {
+				cfg.Drift.ForbiddenDeps = global.Drift.ForbiddenDeps
+			}
+			if cfg.Drift.CycleBudget == 0 {
+				cfg.Drift.CycleBudget = global.Drift.CycleBudget
 			}
 		}
 
