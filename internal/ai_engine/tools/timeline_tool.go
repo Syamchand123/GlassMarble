@@ -36,7 +36,7 @@ var TimelineTool = Tool{
 			return nil, err
 		}
 
-		store := developer_memory.NewMemoryStore(env.RootDir)
+		store := developer_memory.NewStoreForRepo(env.RootDir)
 		component := strArg(args, "component", "")
 
 		var rawTimeline []archmodel.TimelineEntry

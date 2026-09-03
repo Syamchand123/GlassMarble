@@ -139,6 +139,18 @@ func applyEvent(mem *DeveloperMemory, ev archmodel.ArchEvent) {
 	}
 	mem.TotalEvents++
 
+	// Claims are derived once and indexed by subject so each component's
+	// history can carry its own claims. ComponentHistory.Claims is documented
+	// as "claims whose subject is this component" but was never populated:
+	// claims only ever reached mem.GlobalMemory, leaving every component with
+	// an empty list. That silently emptied `gmb memory --component`, the
+	// aging pass's claim projection and knowledge_aging's referencedBy scan.
+	claims := claimsFromEvent(ev)
+	claimsBySubject := make(map[string][]KnowledgeClaim, len(claims))
+	for _, c := range claims {
+		claimsBySubject[c.Subject] = append(claimsBySubject[c.Subject], c)
+	}
+
 	for _, comp := range ev.Components {
 		history, ok := mem.ComponentMemory[comp]
 		if !ok {
@@ -166,10 +178,15 @@ func applyEvent(mem *DeveloperMemory, ev archmodel.ArchEvent) {
 				history.State = KnowledgeState(s)
 			}
 		}
+		for _, c := range claimsBySubject[comp] {
+			if !containsClaimID(history.Claims, c.ID) {
+				history.Claims = append(history.Claims, c)
+			}
+		}
 		mem.ComponentMemory[comp] = history
 	}
 
-	for _, claim := range claimsFromEvent(ev) {
+	for _, claim := range claims {
 		mem.GlobalMemory = append(mem.GlobalMemory, claim)
 	}
 
@@ -345,6 +362,17 @@ func claimID(eventID, subject, predicate, object string) string {
 }
 
 // containsString reports whether v is present in the slice.
+// containsClaimID reports whether a claim with the given ID is already
+// attached, so replaying the WAL cannot duplicate a component's claims.
+func containsClaimID(claims []KnowledgeClaim, id string) bool {
+	for _, c := range claims {
+		if c.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 func containsString(v []string, s string) bool {
 	for _, item := range v {
 		if item == s {
