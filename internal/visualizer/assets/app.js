@@ -669,44 +669,6 @@ function initControls() {
   range.addEventListener('change', renderGraph);
 
   $('btnFit').addEventListener('click', () => state.cy.fit(undefined, 40));
-  $('btnExportPNG').addEventListener('click', exportPNG);
-}
-
-/* Browsers cap canvas dimensions (~16k px per side) and total area; a
-   full-extent 2x export of a 5k-node graph blows past both and silently
-   yields an empty image. Scale down to fit, and emit a blob rather than
-   a multi-hundred-megabyte data URI. */
-function exportPNG() {
-  const MAX_DIM = 6000;
-  const MAX_AREA = 12e6; // ~12 MP — poster-sized, but a sane file size
-  try {
-    const bg = getComputedStyle(document.body).getPropertyValue('--canvas').trim() || '#ffffff';
-    const bb = state.cy.elements().boundingBox();
-    let scale = 2;
-    if (bb && bb.w > 1 && bb.h > 1) {
-      /* The lower bound must stay far below every cap — a floor above the
-         cap-derived scale silently defeats the limit (a 71k-unit graph
-         wants 0.05x; a 0.2 floor put it back at 205 megapixels). */
-      scale = Math.min(2, MAX_DIM / bb.w, MAX_DIM / bb.h, Math.sqrt(MAX_AREA / (bb.w * bb.h)));
-      scale = Math.max(0.01, scale);
-    }
-    const blob = state.cy.png({ full: true, scale, bg, output: 'blob' });
-    if (!blob || blob.size < 1024) {
-      toast('Export failed — the rendered image came back empty', 'err');
-      return;
-    }
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `glassmarble-${state.view}-${Date.now()}.png`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
-    const mb = blob.size / 1048576;
-    const size = mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.round(blob.size / 1024)} KB`;
-    toast(`PNG exported · ${size}${scale < 2 ? ` · scaled to fit (${scale.toFixed(2)}x)` : ''}`, 'ok');
-  } catch (err) {
-    toast(`Export failed: ${err.message}`, 'err');
-  }
 }
 
 /* ─── selection / inspector ─── */
