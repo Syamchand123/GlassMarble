@@ -169,18 +169,17 @@ func rebuildIndexes(graph *CodePropertyGraph) {
 	if graph.LineIndex == nil {
 		graph.LineIndex = NewCowMap[string, []*link.ResolvedNode]()
 	}
+	// Bucket per path first: appending through the CowMap re-copied the whole
+	// slice for every node in a file, which is O(m^2) per file and runs on
+	// every load.
+	byPath := make(map[string][]*link.ResolvedNode)
 	graph.Nodes.Iterate(func(_ string, node *link.ResolvedNode) {
 		normPath := normalizePath(node.FileSpec.Path)
 		if normPath != "" {
-			lineNodes, _ := graph.LineIndex.Get(normPath)
-			newLineNodes := make([]*link.ResolvedNode, len(lineNodes)+1)
-			copy(newLineNodes, lineNodes)
-			newLineNodes[len(newLineNodes)-1] = node
-			graph.LineIndex = graph.LineIndex.Set(normPath, newLineNodes)
+			byPath[normPath] = append(byPath[normPath], node)
 		}
 	})
-	for _, normPath := range graph.LineIndex.Keys() {
-		lineNodes, _ := graph.LineIndex.Get(normPath)
+	for normPath, lineNodes := range byPath {
 		sort.Slice(lineNodes, func(i, j int) bool {
 			return lineNodes[i].FileSpec.LineStart < lineNodes[j].FileSpec.LineStart
 		})
@@ -301,33 +300,41 @@ func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, p
 	// pointing at them (AUDIT Issue 3 Phase 3B-9).
 	oldNodeIDs := make(map[string]bool)
 	deletedNodeIDs := make(map[string]bool)
+
+	// Index maintenance is batched. The values behind KindIndex/HashIndex are
+	// whole collections, so touching them once per node re-copied the entire
+	// collection per node - O(N^2/K) on a full rescan (~12M map inserts for
+	// 15k nodes across ~20 kinds). Instead, mutate one working copy per
+	// affected key here and publish a single CowMap.Set per key afterwards.
+	kindWork := make(map[string]map[string]bool)
+	hashWork := make(map[string]map[string]bool) // hash -> node IDs to drop
+
 	for _, filePath := range modifiedFiles {
 		normPath := normalizePath(filePath)
 		if nodeSet, exists := shadow.FileNodeIndex.Get(normPath); exists {
 			for nodeID := range nodeSet {
 				oldNodeIDs[nodeID] = true
 				if node, ok := shadow.Nodes.Get(nodeID); ok {
-					if kindSet, kindExists := shadow.KindIndex.Get(node.Kind); kindExists {
-						newKindSet := make(map[string]bool, len(kindSet))
-						for k, v := range kindSet {
-							newKindSet[k] = v
+					if _, staged := kindWork[node.Kind]; !staged {
+						if kindSet, kindExists := shadow.KindIndex.Get(node.Kind); kindExists {
+							working := make(map[string]bool, len(kindSet))
+							for k, v := range kindSet {
+								working[k] = v
+							}
+							kindWork[node.Kind] = working
 						}
-						delete(newKindSet, nodeID)
-						shadow.KindIndex = shadow.KindIndex.Set(node.Kind, newKindSet)
+					}
+					if working, ok := kindWork[node.Kind]; ok {
+						delete(working, nodeID)
 					}
 					if node.Properties != nil {
 						if h, ok := node.Properties["hash"]; ok && h != "" {
-							if hashList, hashExists := shadow.HashIndex.Get(h); hashExists {
-								for i, v := range hashList {
-									if v == nodeID {
-										newHashList := make([]string, len(hashList)-1)
-										copy(newHashList, hashList[:i])
-										copy(newHashList[i:], hashList[i+1:])
-										shadow.HashIndex = shadow.HashIndex.Set(h, newHashList)
-										break
-									}
-								}
+							drop, staged := hashWork[h]
+							if !staged {
+								drop = make(map[string]bool)
+								hashWork[h] = drop
 							}
+							drop[nodeID] = true
 						}
 					}
 				}
@@ -339,6 +346,25 @@ func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, p
 			shadow.FileNodeIndex = shadow.FileNodeIndex.Delete(normPath)
 			shadow.LineIndex = shadow.LineIndex.Delete(normPath)
 		}
+	}
+
+	// Publish the batched kind removals (one Set per kind, not per node).
+	for kind, working := range kindWork {
+		shadow.KindIndex = shadow.KindIndex.Set(kind, working)
+	}
+	// Publish the batched hash removals (one rebuild per hash bucket).
+	for h, drop := range hashWork {
+		hashList, exists := shadow.HashIndex.Get(h)
+		if !exists {
+			continue
+		}
+		filtered := make([]string, 0, len(hashList))
+		for _, v := range hashList {
+			if !drop[v] {
+				filtered = append(filtered, v)
+			}
+		}
+		shadow.HashIndex = shadow.HashIndex.Set(h, filtered)
 	}
 
 	// Clean up Entrypoints associated with deleted nodes
@@ -357,51 +383,76 @@ func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, p
 	// ------------------------------------------------------------------------
 	// Step C.1: Vertex Grafting
 	updatedPaths := make(map[string]bool)
+
+	// Same batching as the sweep: accumulate per-key working copies and publish
+	// one CowMap.Set per key after the loop. Grafting node-by-node previously
+	// re-copied an entire kind set / file set / hash list / line list for every
+	// single node.
+	graftKind := make(map[string]map[string]bool)
+	graftHash := make(map[string][]string)
+	graftFile := make(map[string]map[string]bool)
+	graftLine := make(map[string][]*link.ResolvedNode)
+
 	for nodeID, node := range payload.GraphNodes {
 		if node == nil {
 			continue
 		}
 		shadow.Nodes = shadow.Nodes.Set(nodeID, node)
 
-		existingSet, _ := shadow.KindIndex.Get(node.Kind)
-		newKindSet := make(map[string]bool)
-		for k, v := range existingSet {
-			newKindSet[k] = v
+		if _, staged := graftKind[node.Kind]; !staged {
+			existingSet, _ := shadow.KindIndex.Get(node.Kind)
+			working := make(map[string]bool, len(existingSet)+1)
+			for k, v := range existingSet {
+				working[k] = v
+			}
+			graftKind[node.Kind] = working
 		}
-		newKindSet[nodeID] = true
-		shadow.KindIndex = shadow.KindIndex.Set(node.Kind, newKindSet)
+		graftKind[node.Kind][nodeID] = true
 
 		if node.Properties != nil {
 			if h, ok := node.Properties["hash"]; ok && h != "" {
-				hashList, _ := shadow.HashIndex.Get(h)
-				newHashList := make([]string, len(hashList)+1)
-				copy(newHashList, hashList)
-				newHashList[len(newHashList)-1] = nodeID
-				shadow.HashIndex = shadow.HashIndex.Set(h, newHashList)
+				if _, staged := graftHash[h]; !staged {
+					hashList, _ := shadow.HashIndex.Get(h)
+					working := make([]string, len(hashList), len(hashList)+1)
+					copy(working, hashList)
+					graftHash[h] = working
+				}
+				graftHash[h] = append(graftHash[h], nodeID)
 			}
 		}
 
 		normPath := normalizePath(node.FileSpec.Path)
 		if normPath != "" {
-			fileSet, _ := shadow.FileNodeIndex.Get(normPath)
-			newFileSet := make(map[string]bool, len(fileSet))
-			for k, v := range fileSet {
-				newFileSet[k] = v
-			}
-			newFileSet[nodeID] = true
-			shadow.FileNodeIndex = shadow.FileNodeIndex.Set(normPath, newFileSet)
+			if _, staged := graftFile[normPath]; !staged {
+				fileSet, _ := shadow.FileNodeIndex.Get(normPath)
+				working := make(map[string]bool, len(fileSet)+1)
+				for k, v := range fileSet {
+					working[k] = v
+				}
+				graftFile[normPath] = working
 
-			lineNodes, _ := shadow.LineIndex.Get(normPath)
-			newLineNodes := make([]*link.ResolvedNode, len(lineNodes)+1)
-			copy(newLineNodes, lineNodes)
-			newLineNodes[len(newLineNodes)-1] = node
-			shadow.LineIndex = shadow.LineIndex.Set(normPath, newLineNodes)
+				lineNodes, _ := shadow.LineIndex.Get(normPath)
+				lineWorking := make([]*link.ResolvedNode, len(lineNodes), len(lineNodes)+1)
+				copy(lineWorking, lineNodes)
+				graftLine[normPath] = lineWorking
+			}
+			graftFile[normPath][nodeID] = true
+			graftLine[normPath] = append(graftLine[normPath], node)
 			updatedPaths[normPath] = true
 		}
 	}
 
-	for normPath := range updatedPaths {
-		lineNodes, _ := shadow.LineIndex.Get(normPath)
+	// Publish the batched graft indexes.
+	for kind, working := range graftKind {
+		shadow.KindIndex = shadow.KindIndex.Set(kind, working)
+	}
+	for h, working := range graftHash {
+		shadow.HashIndex = shadow.HashIndex.Set(h, working)
+	}
+	for path, working := range graftFile {
+		shadow.FileNodeIndex = shadow.FileNodeIndex.Set(path, working)
+	}
+	for normPath, lineNodes := range graftLine {
 		sort.Slice(lineNodes, func(i, j int) bool {
 			return lineNodes[i].FileSpec.LineStart < lineNodes[j].FileSpec.LineStart
 		})
