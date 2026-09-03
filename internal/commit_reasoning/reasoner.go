@@ -172,13 +172,26 @@ func (r *Reasoner) buildEvent(meta *git.CommitMeta, c ClassifiedChange, intent I
 	for _, it := range c.Evidence.Items {
 		b.Add(it)
 	}
-	b.Add(evidence.EvidenceItem{
-		Source:     intent.Source,
-		Reference:  intentRef(meta),
-		Excerpt:    intent.Excerpt,
-		Confidence: intent.Confidence,
-		Timestamp:  meta.Timestamp,
-	})
+	// The intent claim is a separate assertion ("this change happened
+	// BECAUSE X"), not corroborating evidence for the structural change
+	// itself. Bundle.Aggregate is a weighted MINIMUM, so folding a weak
+	// keyword guess in here capped every enriched event at that guess's
+	// weight: on this repository 98 events carrying real git (1.0) and code
+	// (0.9) evidence scored 0.525, while 12 events with no enrichment at all
+	// scored 0.68 - so the best-supported events ranked LAST in
+	// developer_memory's confidence ordering.
+	//
+	// Only intents backed by more than a message keyword join the bundle;
+	// the intent and its source are recorded on the event either way.
+	if intent.Intent != IntentUnknown && intent.Level != IntentLevelKeyword {
+		b.Add(evidence.EvidenceItem{
+			Source:     intent.Source,
+			Reference:  intentRef(meta),
+			Excerpt:    intent.Excerpt,
+			Confidence: intent.Confidence,
+			Timestamp:  meta.Timestamp,
+		})
+	}
 	components := c.Names
 	if len(components) == 0 {
 		components = impact
