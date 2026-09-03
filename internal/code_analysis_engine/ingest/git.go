@@ -23,7 +23,12 @@ func CollectGitDiff(rootDir string, commitHash string) ([]FileTask, error) {
 		args := []string{"diff-tree", "-r", "--no-commit-id", "--name-status"}
 		// A root commit has no parent, so diff-tree would report nothing;
 		// --root makes it diff against the empty tree.
-		if _, err := exec.Command("git", "rev-parse", commitHash+"^").Output(); err != nil {
+		// The probe must run inside the analyzed repository: without Dir it
+		// resolved against the process working directory, so analyzing any
+		// other checkout misclassified root commits.
+		parentProbe := exec.Command("git", "rev-parse", commitHash+"^")
+		parentProbe.Dir = absRoot
+		if _, err := parentProbe.Output(); err != nil {
 			args = append(args, "--root")
 		}
 		args = append(args, commitHash)
@@ -138,7 +143,58 @@ func CollectGitDiff(rootDir string, commitHash string) ([]FileTask, error) {
 		})
 	}
 
+	// `git diff HEAD` never reports untracked files, so a newly created but
+	// unstaged source file was invisible to incremental analysis — it simply
+	// never entered the graph until something else forced a full rescan.
+	// Union in the untracked set for working-tree diffs.
+	if commitHash == "" {
+		seen := make(map[string]bool, len(tasks))
+		for _, t := range tasks {
+			seen[t.RelPath] = true
+		}
+		for _, t := range collectUntracked(absRoot, reg, now) {
+			if !seen[t.RelPath] {
+				tasks = append(tasks, t)
+				seen[t.RelPath] = true
+			}
+		}
+	}
+
 	return tasks, nil
+}
+
+// collectUntracked lists files git knows nothing about yet (respecting
+// .gitignore) and returns them as added-file tasks. Failures are non-fatal:
+// the caller still has the tracked diff.
+func collectUntracked(absRoot string, reg []LanguageSpec, now time.Time) []FileTask {
+	cmd := exec.Command("git", "ls-files", "--others", "--exclude-standard")
+	cmd.Dir = absRoot
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return nil
+	}
+
+	var tasks []FileTask
+	for _, line := range strings.Split(out.String(), "\n") {
+		relPath := strings.TrimSpace(line)
+		if relPath == "" || deltaPathFiltered(relPath) {
+			continue
+		}
+		fullPath := filepath.Join(absRoot, relPath)
+		lang, _, ok := DetectLanguage(fullPath, reg)
+		if !ok {
+			continue
+		}
+		tasks = append(tasks, FileTask{
+			FilePath: fullPath,
+			RelPath:  relPath,
+			Language: lang,
+			Change:   ChangeAdded,
+			Time:     now,
+		})
+	}
+	return tasks
 }
 
 // GitCommandOutput runs a git command in rootDir and returns its trimmed

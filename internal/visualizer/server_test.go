@@ -138,6 +138,11 @@ func TestVisualizerServer(t *testing.T) {
 		resp.Body.Close()
 	}
 
+	// Release pooled keep-alive connections before shutting down; otherwise
+	// Shutdown waits on this client's idle sockets and the test races its own
+	// grace period under parallel load.
+	client.CloseIdleConnections()
+
 	// Graceful Stop
 	if err := server.Stop(); err != nil {
 		t.Errorf("server.Stop failed: %v", err)

@@ -20,6 +20,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/impact_analyzer"
+	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 )
 
 //go:embed assets/*
@@ -169,12 +170,25 @@ func (s *VisualizerServer) Start(ctx context.Context) (int, error) {
 	return s.port, nil
 }
 
-// Stop gracefully shuts down the visualizer server.
+// Stop gracefully shuts down the visualizer server, then force-closes anything
+// still connected. Shutdown alone waits on in-flight requests and on clients
+// holding keep-alive connections, so a browser left open on the dashboard could
+// stall the caller until the grace period expired.
 func (s *VisualizerServer) Stop() error {
-	if s.server != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		return s.server.Shutdown(ctx)
+	if s.server == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := s.server.Shutdown(ctx)
+	if err != nil {
+		// Grace expired: drop the remaining connections rather than leaking
+		// the listener and reporting failure to the caller.
+		if closeErr := s.server.Close(); closeErr == nil {
+			return nil
+		}
+		return err
 	}
 	return nil
 }
@@ -354,7 +368,7 @@ func (s *VisualizerServer) handleGraph(w http.ResponseWriter, r *http.Request) {
 				}
 
 				pr := 0.0
-				if val, ok := n.Properties["gm:pagerank"]; ok {
+				if val, ok := n.Properties[ont.PredPagerank]; ok {
 					pr, _ = strconv.ParseFloat(val, 64)
 				}
 
