@@ -222,6 +222,15 @@ func Diff(base, head *archmodel.ArchSnapshot) *DiffResult {
 			i++
 			continue
 		}
+		// Coverage must measure how much of the REMOVED component the targets
+		// account for: |r.NodeIDs ∩ ⋃targets| / |r.NodeIDs|. Counting every
+		// node of every target instead let the ratio exceed 1.0, so the 0.6
+		// gate below passed for any removed component that shared a single
+		// node with two added ones.
+		source := make(map[string]bool, len(r.NodeIDs))
+		for _, id := range r.NodeIDs {
+			source[id] = true
+		}
 		var targets []archmodel.DetectedComponent
 		covered := make(map[string]bool, len(r.NodeIDs))
 		for _, a := range addedAfter {
@@ -230,7 +239,9 @@ func Diff(base, head *archmodel.ArchSnapshot) *DiffResult {
 			}
 			targets = append(targets, a)
 			for _, id := range a.NodeIDs {
-				covered[id] = true
+				if source[id] {
+					covered[id] = true
+				}
 			}
 		}
 		if len(targets) >= 2 && float64(len(covered))/float64(len(r.NodeIDs)) >= 0.6 {
@@ -256,6 +267,12 @@ func Diff(base, head *archmodel.ArchSnapshot) *DiffResult {
 			i++
 			continue
 		}
+		// Same correction as the split case, in the other direction:
+		// |a.NodeIDs ∩ ⋃sources| / |a.NodeIDs|.
+		target := make(map[string]bool, len(a.NodeIDs))
+		for _, id := range a.NodeIDs {
+			target[id] = true
+		}
 		var sources []archmodel.DetectedComponent
 		covered := make(map[string]bool, len(a.NodeIDs))
 		for _, r := range removedAfter {
@@ -264,7 +281,9 @@ func Diff(base, head *archmodel.ArchSnapshot) *DiffResult {
 			}
 			sources = append(sources, r)
 			for _, id := range r.NodeIDs {
-				covered[id] = true
+				if target[id] {
+					covered[id] = true
+				}
 			}
 		}
 		if len(sources) >= 2 && float64(len(covered))/float64(len(a.NodeIDs)) >= 0.6 {
