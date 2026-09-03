@@ -46,7 +46,10 @@ and — with --smells — code & structural smell detection.`,
 			if asJSON {
 				out, _ := json.MarshalIndent(map[string]any{"error": "no active AKG database"}, "", "  ")
 				fmt.Println(string(out))
-				return nil
+				// The payload is still emitted for machine consumers, but the exit
+				// code must match the human path: reporting an error and exiting 0
+				// made --json silently pass in CI where the same command failed.
+				return producterrs.Tagged("AKG database is empty — try 'gmb analyze' first", producterrs.ErrEmptySubgraph)
 			}
 			return producterrs.Tagged("AKG database is empty — try 'gmb analyze' first", producterrs.ErrEmptySubgraph)
 		}
