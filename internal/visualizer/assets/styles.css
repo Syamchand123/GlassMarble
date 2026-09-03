@@ -376,7 +376,9 @@ body.theming, body.theming * {
 .panel--graph { display: flex; }
 
 .side {
-  flex: 0 0 236px;
+  /* wide enough that the three view segments fit on one row with room
+     to spare across font stacks */
+  flex: 0 0 248px;
   background: var(--bg1);
   border-right: 1px solid var(--line);
   overflow-y: auto;
@@ -438,7 +440,8 @@ body.theming, body.theming * {
   /* basis:auto so a long label ("Components") never overflows its own
      button — free space is shared, content width is guaranteed */
   flex: 1 1 auto;
-  height: 26px; padding: 0 7px; border-radius: 7px;
+  min-width: 0;
+  height: 26px; padding: 0 5px; border-radius: 7px;
   white-space: nowrap;
   color: var(--ink-mid); font-size: 12px; font-weight: 540;
   transition: color var(--t-med) var(--ease-swift), transform var(--t-fast) var(--ease-swift);
