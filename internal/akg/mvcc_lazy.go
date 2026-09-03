@@ -214,6 +214,10 @@ func cowMapToMap[K cmp.Ordered, V any](root *cowNode[K, V]) map[K]V {
 
 type CowMap[K cmp.Ordered, V any] struct {
 	root unsafe.Pointer
+	// count is maintained incrementally by Set/Delete. Len used to walk the
+	// whole tree, and it is called casually on hot paths (commit accounting,
+	// quality scoring, doctor, the reasoner), making an O(1) question O(N).
+	count int64
 }
 
 func NewCowMap[K cmp.Ordered, V any]() *CowMap[K, V] {
@@ -227,23 +231,30 @@ func (m *CowMap[K, V]) Get(key K) (V, bool) {
 
 func (m *CowMap[K, V]) Set(key K, val V) *CowMap[K, V] {
 	root := (*cowNode[K, V])(atomic.LoadPointer(&m.root))
+	_, existed := cowMapGet(root, key)
 	newRoot := cowMapSet(root, key, val)
-	newMap := &CowMap[K, V]{}
+	newMap := &CowMap[K, V]{count: atomic.LoadInt64(&m.count)}
+	if !existed {
+		newMap.count++
+	}
 	atomic.StorePointer(&newMap.root, unsafe.Pointer(newRoot))
 	return newMap
 }
 
 func (m *CowMap[K, V]) Delete(key K) *CowMap[K, V] {
 	root := (*cowNode[K, V])(atomic.LoadPointer(&m.root))
+	_, existed := cowMapGet(root, key)
 	newRoot := cowMapDelete(root, key)
-	newMap := &CowMap[K, V]{}
+	newMap := &CowMap[K, V]{count: atomic.LoadInt64(&m.count)}
+	if existed {
+		newMap.count--
+	}
 	atomic.StorePointer(&newMap.root, unsafe.Pointer(newRoot))
 	return newMap
 }
 
 func (m *CowMap[K, V]) Len() int {
-	root := (*cowNode[K, V])(atomic.LoadPointer(&m.root))
-	return cowMapLen(root)
+	return int(atomic.LoadInt64(&m.count))
 }
 
 func (m *CowMap[K, V]) Iterate(f func(K, V)) {
@@ -258,7 +269,7 @@ func (m *CowMap[K, V]) Snapshot() map[K]V {
 
 func (m *CowMap[K, V]) Clone() *CowMap[K, V] {
 	root := (*cowNode[K, V])(atomic.LoadPointer(&m.root))
-	newMap := &CowMap[K, V]{}
+	newMap := &CowMap[K, V]{count: atomic.LoadInt64(&m.count)}
 	atomic.StorePointer(&newMap.root, unsafe.Pointer(root))
 	return newMap
 }

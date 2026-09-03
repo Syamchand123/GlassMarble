@@ -3,7 +3,9 @@ package akg
 import (
 	"fmt"
 	"sort"
+	"sync/atomic"
 	"testing"
+	"unsafe"
 )
 
 // snapshotKeys returns the in-order key traversal of a CowMap.
@@ -166,4 +168,51 @@ func TestCowMap_ManySnapshotsRemainIndependent(t *testing.T) {
 			t.Fatalf("version %d: Len()=%d want %d", vi, v.m.Len(), len(v.want))
 		}
 	}
+}
+
+// TestCowMap_LenMatchesTraversal pins the incrementally-maintained counter
+// against a real traversal. Len used to walk the whole tree on every call;
+// it is now O(1), so the count must stay exactly in step with Set/Delete —
+// including no-op deletes and overwriting Sets.
+func TestCowMap_LenMatchesTraversal(t *testing.T) {
+	m := NewCowMap[string, int]()
+	check := func(stage string) {
+		t.Helper()
+		walked := cowMapLen((*cowNode[string, int])(atomicLoadRoot(m)))
+		if m.Len() != walked {
+			t.Fatalf("%s: Len()=%d but traversal counted %d", stage, m.Len(), walked)
+		}
+	}
+
+	for i := 0; i < 50; i++ {
+		m = m.Set(fmt.Sprintf("k%02d", i), i)
+	}
+	check("after inserts")
+
+	// overwriting an existing key must not change the count
+	m = m.Set("k10", 999)
+	if m.Len() != 50 {
+		t.Fatalf("overwrite changed Len: %d", m.Len())
+	}
+	check("after overwrite")
+
+	for i := 0; i < 20; i++ {
+		m = m.Delete(fmt.Sprintf("k%02d", i))
+	}
+	check("after deletes")
+	if m.Len() != 30 {
+		t.Fatalf("expected 30 keys after deletes, Len()=%d", m.Len())
+	}
+
+	// deleting an absent key must not change the count
+	m = m.Delete("does-not-exist")
+	if m.Len() != 30 {
+		t.Fatalf("no-op delete changed Len: %d", m.Len())
+	}
+	check("after no-op delete")
+}
+
+// atomicLoadRoot exposes the tree root for invariant checks.
+func atomicLoadRoot(m *CowMap[string, int]) unsafe.Pointer {
+	return atomic.LoadPointer(&m.root)
 }

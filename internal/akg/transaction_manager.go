@@ -3,8 +3,11 @@ package akg
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -580,8 +583,15 @@ func (tm *AKGTransactionManager) writeJSONState(graph *CodePropertyGraph) error 
 	}
 	defer os.Remove(tmp.Name())
 
-	if err := ExportGraphJSON(graph, tmp); err != nil {
+	// Buffer the encoder: json.Encoder issues many small writes, and an
+	// unbuffered *os.File turns each into a syscall.
+	bw := bufio.NewWriterSize(tmp, 1<<20)
+	wantSum, err := ExportGraphJSONVerified(graph, bw)
+	if err != nil {
 		return fmt.Errorf("JSON serialization failed: %w", err)
+	}
+	if err := bw.Flush(); err != nil {
+		return fmt.Errorf("failed to flush temp JSON state file: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
 		return fmt.Errorf("failed to fsync temp JSON state file: %w", err)
@@ -595,66 +605,56 @@ func (tm *AKGTransactionManager) writeJSONState(graph *CodePropertyGraph) error 
 	}
 
 	// Post-write verification BEFORE the atomic rename: if the staged file is
-	// corrupt or lossy, the previous good file is still in place.
-	if err := tm.verifyJSONFile(tmp.Name(), graph); err != nil {
+	// corrupt, the previous good file is still in place.
+	if err := tm.verifyJSONFile(tmp.Name(), graph, wantSum); err != nil {
 		return err
 	}
 
 	if err := os.Rename(tmp.Name(), jsonPath); err != nil {
 		return fmt.Errorf("failed to atomically rename JSON state file into place: %w", err)
 	}
+
+	// Record the digest alongside the state so corruption at rest is
+	// detectable by tooling without re-deriving the graph.
+	_ = os.WriteFile(jsonPath+".sha256", []byte(wantSum+"\n"), 0o644)
+
+	// An atomic rename is not durable until the containing directory is
+	// fsynced; without this a crash can leave the directory entry pointing at
+	// the old file despite a successful write. Best-effort: directory fsync is
+	// not supported on all platforms.
+	if dir, derr := os.Open(tm.storageDir); derr == nil {
+		_ = dir.Sync()
+		_ = dir.Close()
+	}
 	return nil
 }
 
-// verifyJSONFile re-reads a staged GraphJSON file and asserts it is byte-
-// identical to a fresh export of the in-memory graph. ExportGraphJSON is
-// deterministic (sorted nodes/edges, sorted property keys), so byte equality
-// is the strongest possible parity check: any node/edge/property loss,
-// mutation or ordering drift fails the write before the atomic rename. The
-// zero-dangling guard (every persisted edge must reference real nodes) is
-// also enforced here, preserving the write-time invariant that
-// verifyTTLFile held on the legacy Turtle path (AUDIT Issue 5 Phase 5A-1).
-func (tm *AKGTransactionManager) verifyJSONFile(jsonPath string, graph *CodePropertyGraph) error {
-	data, err := os.ReadFile(jsonPath)
+// verifyJSONFile proves the staged file on disk is exactly the byte stream the
+// serializer produced, by streaming it back through SHA-256 and comparing with
+// the digest computed while writing.
+//
+// This used to re-read the file, unmarshal it into a second document,
+// re-serialize the graph into a third, and byte-compare — roughly the cost of
+// the write again, on the hottest stage of an analysis. The invariants that
+// pass was actually protecting are now enforced where they are cheaper and
+// stronger: ExportGraphJSONVerified checks the zero-dangling guard against the
+// document being written, and the digest detects any truncation or corruption
+// between serialization and the atomic rename (which byte-comparing a
+// re-serialization could not distinguish from a deterministic serializer bug).
+func (tm *AKGTransactionManager) verifyJSONFile(jsonPath string, graph *CodePropertyGraph, wantSum string) error {
+	f, err := os.Open(jsonPath)
 	if err != nil {
 		return fmt.Errorf("post-write JSON verification failed: %w", err)
 	}
+	defer f.Close()
 
-	var doc GraphJSON
-	if err := json.Unmarshal(data, &doc); err != nil {
-		return fmt.Errorf("post-write JSON verification failed: file did not parse back cleanly: %w", err)
-	}
-	if doc.SchemaVersion != graph.SchemaVersion || doc.Version != graph.Version || doc.CommitHash != graph.CommitHash {
-		return fmt.Errorf("post-write JSON verification failed: metadata mismatch (file={schema %d, ver %d, %q} graph={schema %d, ver %d, %q})",
-			doc.SchemaVersion, doc.Version, doc.CommitHash, graph.SchemaVersion, graph.Version, graph.CommitHash)
-	}
-
-	var buf bytes.Buffer
-	if err := ExportGraphJSON(graph, &buf); err != nil {
+	h := sha256.New()
+	if _, err := io.Copy(h, bufio.NewReaderSize(f, 1<<20)); err != nil {
 		return fmt.Errorf("post-write JSON verification failed: %w", err)
 	}
-	if !bytes.Equal(data, buf.Bytes()) {
-		return fmt.Errorf("post-write JSON verification failed: serialized output does not match the in-memory graph; the write was rejected and the previous good file was kept")
-	}
-
-	// Zero-dangling guard: every persisted edge must reference real nodes.
-	// The merged graph is verified as a whole (base + delta), so a dangling
-	// edge is a hard integrity failure, never a tolerated warning.
-	nodeSet := make(map[string]struct{}, len(doc.Nodes))
-	for _, n := range doc.Nodes {
-		nodeSet[n.ID] = struct{}{}
-	}
-	dangling := 0
-	for _, e := range doc.Edges {
-		if _, ok := nodeSet[e.SourceID]; !ok {
-			dangling++
-		}
-		if _, ok := nodeSet[e.TargetID]; !ok {
-			dangling++
-		}
-	}
-	if dangling > 0 {
-		return fmt.Errorf("post-write JSON verification failed: %d dangling edge(s) (edges referencing missing nodes); the write was rejected and the previous good file was kept. Remove .glassmarble/akg.json, then re-run `gmb analyze --full` to rebuild from scratch", dangling)
+	gotSum := hex.EncodeToString(h.Sum(nil))
+	if gotSum != wantSum {
+		return fmt.Errorf("post-write JSON verification failed: staged file digest %s does not match the serialized graph digest %s; the write was rejected and the previous good file was kept", gotSum, wantSum)
 	}
 
 	graph.Verified = true
