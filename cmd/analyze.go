@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/ingest"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/normalize"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/aggregate"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/ingest"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/normalize"
 	"github.com/Syamchand123/GlassMarble/internal/config"
 	"github.com/Syamchand123/GlassMarble/internal/git"
 	"github.com/Syamchand123/GlassMarble/internal/product"
@@ -34,14 +34,14 @@ var isTUI bool
 var tuiOut io.Writer = os.Stdout
 
 func tuiPrintf(format string, a ...any) {
-	if isTUI {
+	if isTUI || tui.Quiet() {
 		return
 	}
 	fmt.Fprintf(tuiOut, format, a...)
 }
 
 func tuiPrintln(a ...any) {
-	if isTUI {
+	if isTUI || tui.Quiet() {
 		return
 	}
 	fmt.Fprintln(tuiOut, a...)
@@ -118,8 +118,44 @@ See also: 'gmb status', 'gmb watch', 'gmb doctor'`,
 		if tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout()) {
 			return runAnalyzeTUI(cmd, opts)
 		}
+		// Non-interactive runs (CI, redirected output) previously printed one
+		// line at the start and one at the end, leaving multi-minute analyses
+		// looking hung. The pipeline already emits phase-boundary callbacks;
+		// render them as plain, log-friendly lines on stderr.
+		if !opts.json && !tui.Quiet() {
+			opts.progress = plainProgressReporter(cmd.ErrOrStderr())
+		}
 		return runAnalysis(cmd, opts)
 	},
+}
+
+// plainProgressReporter returns a progress callback that prints one line per
+// phase transition, suitable for CI logs. Repeated updates within a phase
+// (ingestion reports per-file counts) are collapsed to the phase's first and
+// final line so the log stays readable.
+func plainProgressReporter(w io.Writer) func(step int, name string, current, total int) {
+	const totalPhases = 5
+	var (
+		started   = time.Now()
+		lastStep  int
+		lastPhase time.Time
+	)
+	return func(step int, name string, current, total int) {
+		// Only announce a phase once, on its first callback.
+		if step == lastStep {
+			return
+		}
+		if lastStep != 0 {
+			fmt.Fprintf(w, "  done in %.1fs\n", time.Since(lastPhase).Seconds())
+		}
+		lastStep = step
+		lastPhase = time.Now()
+		fmt.Fprintf(w, "[%d/%d] %s", step, totalPhases, name)
+		if total > 0 {
+			fmt.Fprintf(w, " (%d files)", total)
+		}
+		fmt.Fprintf(w, "  +%.1fs\n", time.Since(started).Seconds())
+	}
 }
 
 // runAnalysisOptions carries the flags that control a single analysis run.
@@ -140,6 +176,11 @@ type runAnalysisOptions struct {
 	// program can animate the pipeline. It is purely additive: nil behaves
 	// exactly as before.
 	progress func(step int, name string, current, total int)
+	// interactive marks a run driven by a BubbleTea program, which owns the
+	// screen and therefore suppresses the plain human output. It is distinct
+	// from progress != nil: non-interactive runs also report progress (as
+	// plain log lines) without giving up the textual summary.
+	interactive bool
 	// onSummary, when non-nil, receives the QA numbers of a completed run so
 	// the TUI layer can render its own styled summary card.
 	onSummary func(s analysisSummary)
@@ -149,7 +190,7 @@ type runAnalysisOptions struct {
 	// includeDocs controls whether knowledge fusion (ADR/README/PR
 	// claims) runs after the graph is committed. Opt-in by design — doc
 	// scanning and git-history walks are not free on large repositories.
-	includeDocs bool
+	includeDocs     bool
 	snapshotNoGraph bool
 	snapshotKeep    int
 	// out is the writer for human-readable output. When nil, os.Stdout or
@@ -191,7 +232,7 @@ type analysisJSON struct {
 // runAnalysis executes the full four-phase pipeline. It is shared by
 // `gmb analyze` and `gmb watch` so both commands drive the same engine.
 func runAnalysis(cmd *cobra.Command, opts runAnalysisOptions) error {
-	isTUI = opts.progress != nil
+	isTUI = opts.interactive
 	prevOut := tuiOut
 	defer func() {
 		isTUI = false
@@ -229,7 +270,7 @@ func runAnalysis(cmd *cobra.Command, opts runAnalysisOptions) error {
 	}
 	tuiOut = outWriter
 	gatedPrintf := func(format string, a ...any) {
-		if opts.progress != nil {
+		if opts.interactive || tui.Quiet() {
 			return
 		}
 		fmt.Fprintf(outWriter, format, a...)
@@ -548,6 +589,8 @@ func runAnalyzeTUI(c *cobra.Command, opts runAnalysisOptions) error {
 	var summary analyze.Summary
 	run := func(progress func(step int, name string, current, total int)) (analyze.Summary, error) {
 		opts.progress = progress
+		// The bubbletea program owns the screen: suppress plain human output.
+		opts.interactive = true
 		opts.onSummary = func(s analysisSummary) {
 			summary = analyze.Summary{
 				TargetDir:     s.targetDir,

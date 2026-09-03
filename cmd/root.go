@@ -8,6 +8,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/app"
 	"github.com/Syamchand123/GlassMarble/internal/config"
 	"github.com/Syamchand123/GlassMarble/internal/product"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/charmbracelet/fang"
 	"github.com/spf13/cobra"
 )
@@ -46,9 +47,19 @@ Documentation: https://github.com/Syamchand123/GlassMarble#readme`,
 			case "never":
 				os.Setenv("NO_COLOR", "1")
 			case "always":
+				// Clearing NO_COLOR is not enough: when stdout is not a TTY
+				// the color profile is degraded to plain ASCII regardless.
+				// CLICOLOR_FORCE is the variable the profiler honours, so
+				// `--color=always | less -R` actually keeps its color.
 				os.Unsetenv("NO_COLOR")
+				os.Setenv("CLICOLOR_FORCE", "1")
 			}
 		}
+
+		// --quiet was declared and documented but read by nothing; wire it
+		// into the shared output gate so non-error output is suppressed.
+		quiet, _ := cmd.Flags().GetBool("quiet")
+		tui.SetQuiet(quiet)
 
 		// Unified dir handling (UX-01)
 		dir, _ := cmd.Flags().GetString("dir")

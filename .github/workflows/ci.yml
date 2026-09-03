@@ -116,6 +116,13 @@ jobs:
       - name: Full test suite (no -short)
         run: go test ./... -count=1 -timeout 30m
 
+      # The MVCC substrate is lock-free on the read path and shares structure
+      # between snapshots, so concurrency defects there are silent data
+      # corruption rather than crashes. The *_NoRace tests in internal/akg
+      # only prove anything under -race.
+      - name: Race detector (graph core)
+        run: go test -race -count=1 -timeout 30m ./internal/akg/... ./internal/code_analysis_engine/...
+
       - name: AKG determinism gate
         run: go test ./internal/akg/... -run TestGraphJSONDeterministic -count=1 -v
 
