@@ -98,11 +98,15 @@ func CalculateMetricsFromSnapshot(snap *GraphSnapshot) archmodel.ArchMetrics {
 		}
 	}
 
-	// 5. Dead code.
-	dead := DeadCodeNodesSnapshot(snap)
-	metrics.DeadCodeNodeCount = len(dead)
-	if snap.Len() > 0 {
-		metrics.ReachableFromEntrypoints = 1.0 - float64(len(dead))/float64(snap.Len())
+	// 5. Dead code. Reachability is a ratio over the code units the sweep
+	// actually decided, not over every node in the graph, and it stays 0
+	// when there are no entrypoints -- see EntrypointCount, which is what
+	// tells a reader 0 means "undefined" rather than "nothing is reachable".
+	reach := DeadCodeStatsSnapshot(snap)
+	metrics.DeadCodeNodeCount = len(reach.Dead)
+	metrics.EntrypointCount = reach.Entrypoints
+	if reach.Entrypoints > 0 && reach.Candidates > 0 {
+		metrics.ReachableFromEntrypoints = 1.0 - float64(len(reach.Dead))/float64(reach.Candidates)
 	}
 
 	// 6. PageRank hotspots (top 10 non-function nodes).

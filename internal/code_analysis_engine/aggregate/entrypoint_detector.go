@@ -1,7 +1,6 @@
 package aggregate
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 
@@ -21,10 +20,10 @@ const (
 
 // EntryPoint is a v2 (W1-08) structured root execution node.
 type EntryPoint struct {
-	FQN      string           `json:"fqn"`
-	Name     string           `json:"name"`
-	Kind     EntryPointKind   `json:"kind"`
-	FilePath string           `json:"file_path,omitempty"`
+	FQN      string              `json:"fqn"`
+	Name     string              `json:"name"`
+	Kind     EntryPointKind      `json:"kind"`
+	FilePath string              `json:"file_path,omitempty"`
 	Node     *normalize.GASTNode `json:"-"`
 }
 
@@ -37,7 +36,13 @@ func FindEntryPoints(output *AggregateOutput) []EntryPoint {
 		return entries
 	}
 
-	seen := make(map[string]bool)
+	// Dedupe on pointer identity, which is what "same GASTNode" means here.
+	// Keying on node.ID collapsed every entrypoint that shares a symbol name:
+	// GASTNode.ID is the bare name ("main"), not a unique identifier, so a
+	// repository with main.go, cmd/man/main.go and cmd/completions/main.go
+	// registered exactly one main() -- whichever had the lexicographically
+	// smallest FQN -- and every init() across the tree collapsed to one too.
+	seen := make(map[*normalize.GASTNode]bool)
 	// Sorted FQN keys for determinism (C2-10/C2-18): same GASTNode indexed under
 	// ~4 keys must yield the lexicographically smallest FQN deterministically.
 	fqnKeys := make([]string, 0, len(output.GlobalDefinitionIndex))
@@ -51,15 +56,13 @@ func FindEntryPoints(output *AggregateOutput) []EntryPoint {
 			if node == nil {
 				continue
 			}
-			// C2-18: dedupe by node ID (same GASTNode indexed under ~4 keys). Fallback to pointer when ID empty (test fixtures).
-			key := node.ID
-			if key == "" {
-				key = fmt.Sprintf("%p", node)
-			}
-			if seen[key] {
+			// C2-18: the same GASTNode is indexed under ~4 FQN keys; skip the
+			// repeats. Iteration order over sorted fqnKeys makes the FQN kept
+			// for a node the lexicographically smallest one, deterministically.
+			if seen[node] {
 				continue
 			}
-			seen[key] = true
+			seen[node] = true
 			kind := entryPointKindOf(node)
 			if kind == "" {
 				continue

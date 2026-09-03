@@ -1,12 +1,13 @@
 // Package archmodel is the central type registry for all GlassMarble V2 cross-phase types.
 //
 // WHY THIS PACKAGE EXISTS (execution_plan.md §2, Problem P1):
-//   The original design placed ArchEvent in arch_intelligence, ArchSnapshot in
-//   arch_timeline, and TimelineEntry in developer_memory, creating a compile-blocking
-//   circular import cycle:
-//       arch_intelligence → arch_timeline → developer_memory → arch_intelligence
-//   The corrected execution plan resolves this by extracting ALL shared types into this
-//   single leaf package. No phase package imports another — they all import archmodel.
+//
+//	The original design placed ArchEvent in arch_intelligence, ArchSnapshot in
+//	arch_timeline, and TimelineEntry in developer_memory, creating a compile-blocking
+//	circular import cycle:
+//	    arch_intelligence → arch_timeline → developer_memory → arch_intelligence
+//	The corrected execution plan resolves this by extracting ALL shared types into this
+//	single leaf package. No phase package imports another — they all import archmodel.
 //
 // WHAT IS IN HERE:
 //   - ArchEvent + EventKind enum          — one architectural change event
@@ -20,12 +21,13 @@
 //   - StaleEntity                         — component present in memory but gone from graph
 //
 // DEPENDENCY DIRECTION (strict, cycle-free):
-//   evidence (leaf) → archmodel (leaf) → phase packages → cmd/
+//
+//	evidence (leaf) → archmodel (leaf) → phase packages → cmd/
 package archmodel
 
 import (
-	"time"
 	"github.com/Syamchand123/GlassMarble/internal/evidence"
+	"time"
 )
 
 // EventKind describes what type of architectural change occurred.
@@ -220,26 +222,35 @@ type HotspotEntry struct {
 // ArchMetrics holds quantitative architecture quality measurements from architecture intelligenceA.
 // Derived entirely from the CodePropertyGraph — no LLM.
 type ArchMetrics struct {
-	TotalNodes                  int            `json:"total_nodes"`
-	TotalEdges                  int            `json:"total_edges"`
-	GraphDensity                float64        `json:"graph_density"`
-	MaxFanIn                    int            `json:"max_fan_in"`
-	MaxFanOut                   int            `json:"max_fan_out"`
-	AvgFanIn                    float64        `json:"avg_fan_in"`
-	AvgFanOut                   float64        `json:"avg_fan_out"`
-	AfferentCoupling            float64        `json:"afferent_coupling"`
-	EfferentCoupling            float64        `json:"efferent_coupling"`
-	Instability                 float64        `json:"instability"`
-	LCOM4                       float64        `json:"lcom4"`
-	CyclomaticMax               int            `json:"cyclomatic_max"`
-	CyclomaticAvg               float64        `json:"cyclomatic_avg"`
-	StronglyConnectedComponents int            `json:"sccs"`
-	CycleCount                  int            `json:"cycle_count"`
-	MaxCycleLength              int            `json:"max_cycle_length"`
-	DeadCodeNodeCount           int            `json:"dead_code_node_count"`
-	ReachableFromEntrypoints    float64        `json:"reachable_from_entrypoints"`
-	TopHotspots                 []HotspotEntry `json:"top_hotspots"`
-	LayerViolationCount         int            `json:"layer_violation_count"`
+	TotalNodes                  int     `json:"total_nodes"`
+	TotalEdges                  int     `json:"total_edges"`
+	GraphDensity                float64 `json:"graph_density"`
+	MaxFanIn                    int     `json:"max_fan_in"`
+	MaxFanOut                   int     `json:"max_fan_out"`
+	AvgFanIn                    float64 `json:"avg_fan_in"`
+	AvgFanOut                   float64 `json:"avg_fan_out"`
+	AfferentCoupling            float64 `json:"afferent_coupling"`
+	EfferentCoupling            float64 `json:"efferent_coupling"`
+	Instability                 float64 `json:"instability"`
+	LCOM4                       float64 `json:"lcom4"`
+	CyclomaticMax               int     `json:"cyclomatic_max"`
+	CyclomaticAvg               float64 `json:"cyclomatic_avg"`
+	StronglyConnectedComponents int     `json:"sccs"`
+	CycleCount                  int     `json:"cycle_count"`
+	MaxCycleLength              int     `json:"max_cycle_length"`
+	DeadCodeNodeCount           int     `json:"dead_code_node_count"`
+	// EntrypointCount is how many entrypoints the reachability sweep found
+	// in the graph. When it is 0, ReachableFromEntrypoints and
+	// DeadCodeNodeCount are undefined, not zero: with no roots to walk from
+	// there is no evidence of deadness either way.
+	EntrypointCount int `json:"entrypoint_count"`
+	// ReachableFromEntrypoints is the fraction of code units (functions,
+	// methods, types, modules outside excluded paths) reachable from an
+	// entrypoint or exposed as library API surface. Read it only when
+	// EntrypointCount > 0.
+	ReachableFromEntrypoints float64        `json:"reachable_from_entrypoints"`
+	TopHotspots              []HotspotEntry `json:"top_hotspots"`
+	LayerViolationCount      int            `json:"layer_violation_count"`
 }
 
 // MetricDelta is the signed diff between two ArchMetrics. Stored inside SnapshotDelta.
@@ -259,10 +270,10 @@ type MetricDelta struct {
 // --diff and --replay compare real graph state, not summaries.
 // Skip-write: if TopologyHash matches the previous snapshot, no file is written.
 type ArchSnapshot struct {
-	ID           string              `json:"id"`
-	CommitHash   string              `json:"commit_hash"`
-	Version      string              `json:"version,omitempty"`
-	Timestamp    time.Time           `json:"timestamp"`
+	ID         string    `json:"id"`
+	CommitHash string    `json:"commit_hash"`
+	Version    string    `json:"version,omitempty"`
+	Timestamp  time.Time `json:"timestamp"`
 	// Order is the commit's position in git history (git rev-list --count),
 	// used by the snapshot store to order snapshots when several commits
 	// share the same author timestamp (sub-second commit bursts). 0 means

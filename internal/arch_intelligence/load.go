@@ -38,8 +38,18 @@ func LoadLatestResult(storageDir string) (*IntelligenceResult, error) {
 // summary from a intelligence metrics measurement. Used by the evidence retrieval evidence context
 // and the pattern tool so both share one rendering.
 func MetricSummary(m archmodel.ArchMetrics) string {
-	return fmt.Sprintf("%d nodes, %d edges, density %.3f, %d strongly-connected components, %d cycles, %.0f%% reachable from entrypoints, %d dead-code nodes, %d layer violations",
+	// With no entrypoints the sweep returns no dead nodes, which the old
+	// phrasing rendered as "100% reachable from entrypoints, 0 dead-code
+	// nodes" -- a perfect score reported for a measurement that never ran.
+	// This string is fed to the AI evidence context and the pattern tool, so
+	// say the measurement is unavailable instead of inventing a result.
+	reach := fmt.Sprintf("%.0f%% reachable from entrypoints, %d dead-code nodes",
+		m.ReachableFromEntrypoints*100, m.DeadCodeNodeCount)
+	if m.EntrypointCount == 0 {
+		reach = "reachability not measured (no entrypoints detected)"
+	}
+	return fmt.Sprintf("%d nodes, %d edges, density %.3f, %d strongly-connected components, %d cycles, %s, %d layer violations",
 		m.TotalNodes, m.TotalEdges, m.GraphDensity,
 		m.StronglyConnectedComponents, m.CycleCount,
-		m.ReachableFromEntrypoints*100, m.DeadCodeNodeCount, m.LayerViolationCount)
+		reach, m.LayerViolationCount)
 }
