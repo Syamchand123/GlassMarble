@@ -207,10 +207,10 @@ func runArchStats(storageDir string, cmd *cobra.Command, asJSON bool) error {
 
 	if asJSON {
 		type archStatsJSON struct {
-			Metrics   archmodel.ArchMetrics                 `json:"metrics"`
-			Coupling  []arch_intelligence.ComponentCoupling `json:"component_coupling"`
-			Patterns  []archmodel.DetectedPattern           `json:"patterns"`
-			Smells    []archmodel.ArchSmell                 `json:"smells"`
+			Metrics  archmodel.ArchMetrics                 `json:"metrics"`
+			Coupling []arch_intelligence.ComponentCoupling `json:"component_coupling"`
+			Patterns []archmodel.DetectedPattern           `json:"patterns"`
+			Smells   []archmodel.ArchSmell                 `json:"smells"`
 		}
 		out, _ := json.MarshalIndent(archStatsJSON{
 			Metrics:  res.Metrics,
