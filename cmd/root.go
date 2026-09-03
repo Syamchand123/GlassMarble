@@ -89,13 +89,19 @@ Documentation: https://github.com/Syamchand123/GlassMarble#readme`,
 
 // Execute runs the CLI wrapped with Fang's styled help/error/version skin.
 func Execute() error {
-	return fang.Execute(context.Background(), rootCmd, fang.WithVersion(product.Version))
+	return fang.Execute(context.Background(), rootCmd,
+		fang.WithVersion(product.Version),
+		fang.WithCommit(product.Commit),
+		fang.WithColorSchemeFunc(tui.FangColorScheme))
 }
 
 // ExecuteContext runs the CLI with a caller-supplied context (used by main.go
 // to propagate OS signal cancellation) wrapped with Fang's styled output.
 func ExecuteContext(ctx context.Context) error {
-	return fang.Execute(ctx, rootCmd, fang.WithVersion(product.Version))
+	return fang.Execute(ctx, rootCmd,
+		fang.WithVersion(product.Version),
+		fang.WithCommit(product.Commit),
+		fang.WithColorSchemeFunc(tui.FangColorScheme))
 }
 
 // RootCmd returns the root cobra command for man page and completions generators.
