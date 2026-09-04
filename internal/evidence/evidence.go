@@ -148,9 +148,34 @@ func (b *Bundle) Add(e EvidenceItem) {
 
 // Aggregate recomputes AggConfidence and PrimarySource from the current Items.
 //
-// AggConfidence = weighted minimum across all items, where weight is SourceReliability.
-// The weighted minimum ensures that a single low-confidence item (e.g., an LLM inference)
-// can lower the aggregate even if all other items are high-confidence.
+// AggConfidence = max(item.Confidence * SourceReliability(item.Source)): a claim
+// is as well supported as the strongest thing supporting it.
+//
+// This was a weighted MINIMUM, which inverted the meaning of a bundle. A bundle
+// is corroboration -- several reasons to believe one claim -- not a chain of
+// inference where the weakest step governs. Under a minimum, attaching evidence
+// could only ever lower a claim's score, so the better-supported a claim was,
+// the worse it ranked. On this repository every DEPENDENCY_ADDED event carried
+// direct code evidence (0.9) plus the git commit that made the change (0.8) and
+// scored 0.8 -- strictly worse than the identical claim with the corroborating
+// commit removed. The package's own test pinned the extreme case: code evidence
+// at 0.9 collapsed to 0.39 because an LLM rationale was attached alongside it,
+// devaluing a claim the code itself proves by 57% for the sin of also asking a
+// model about it.
+//
+// Taking the maximum keeps the half of the original intent that was sound --
+// a weak item still cannot inflate a claim ABOVE what its best evidence
+// supports, so an LLM guess never manufactures confidence -- while dropping the
+// half that was not: a weak item no longer destroys confidence that better
+// evidence has already established. Weak items remain in Items for provenance,
+// which is what they are actually good for.
+//
+// Deliberately NOT rewarded: the NUMBER of corroborating items. Two independent
+// code observations score the same as one. Rewarding count needs a disjunctive
+// combiner (noisy-OR and relatives), and every such combiner also lets a
+// speculative item raise the score, which is precisely the behaviour the
+// original design set out to prevent. Ranking is the only consumer of this
+// number, so the conservative rule is the right default.
 //
 // Returns 0.0 if the bundle is empty (empty bundle = bug, caught by tests).
 func (b *Bundle) Aggregate() float64 {
@@ -168,17 +193,15 @@ func (b *Bundle) Aggregate() float64 {
 	}
 	b.PrimarySource = best
 
-	// Weighted minimum: min(item.Confidence * SourceReliability(item.Source)) for all items.
-	minWeighted := 1.0
+	strongest := 0.0
 	for _, item := range b.Items {
-		w := item.Confidence * SourceReliability(item.Source)
-		if w < minWeighted {
-			minWeighted = w
+		if w := item.Confidence * SourceReliability(item.Source); w > strongest {
+			strongest = w
 		}
 	}
 
-	b.AggConfidence = minWeighted
-	return minWeighted
+	b.AggConfidence = strongest
+	return strongest
 }
 
 // IsEmpty returns true if the bundle has no evidence items.

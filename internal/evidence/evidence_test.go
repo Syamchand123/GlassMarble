@@ -52,7 +52,13 @@ func TestBundle_SingleItem(t *testing.T) {
 	}
 }
 
-func TestBundle_MultipleItems_WeightedMin(t *testing.T) {
+// TestBundle_MultipleItems_StrongestWins previously asserted the weighted
+// minimum, i.e. that this bundle scored 0.39. That was the defect written down
+// as an expectation: the claim has direct code evidence at 0.9, and attaching a
+// speculative LLM rationale alongside it cut its confidence by 57%. The
+// aggregate is now the strongest supporting evidence, so the LLM item is
+// recorded as provenance without devaluing what the code already shows.
+func TestBundle_MultipleItems_StrongestWins(t *testing.T) {
 	b := evidence.Bundle{}
 
 	// High-confidence code evidence.
@@ -62,7 +68,7 @@ func TestBundle_MultipleItems_WeightedMin(t *testing.T) {
 		Confidence: 0.9,
 		Timestamp:  time.Now(),
 	})
-	// Lower-confidence LLM inference — should drag down aggregate.
+	// Lower-confidence LLM inference — provenance, not a penalty.
 	b.Add(evidence.EvidenceItem{
 		Source:     evidence.SourceLLM,
 		Reference:  "llm-session-2026-08",
@@ -70,17 +76,61 @@ func TestBundle_MultipleItems_WeightedMin(t *testing.T) {
 		Timestamp:  time.Now(),
 	})
 
-	// LLM item: 0.6 * 0.65 = 0.39
-	// Code item: 0.9 * 1.0  = 0.90
-	// Weighted min = 0.39
-	expectedMin := 0.6 * evidence.SourceReliability(evidence.SourceLLM)
-	if b.AggConfidence != expectedMin {
-		t.Errorf("expected weighted-min AggConfidence=%f, got %f", expectedMin, b.AggConfidence)
+	// LLM item:  0.6 * 0.65 = 0.39
+	// Code item: 0.9 * 1.0  = 0.90  <- strongest
+	expected := 0.9 * evidence.SourceReliability(evidence.SourceCode)
+	if b.AggConfidence != expected {
+		t.Errorf("expected AggConfidence=%f (strongest evidence), got %f", expected, b.AggConfidence)
 	}
 
 	// PrimarySource should be SourceCode (highest reliability).
 	if b.PrimarySource != evidence.SourceCode {
 		t.Errorf("expected PrimarySource=SourceCode, got %s", b.PrimarySource)
+	}
+}
+
+// TestBundle_CorroborationNeverLowersScore is the property the minimum broke:
+// adding evidence to a claim must never make the claim rank lower than it did
+// without that evidence.
+func TestBundle_CorroborationNeverLowersScore(t *testing.T) {
+	code := evidence.EvidenceItem{
+		Source: evidence.SourceCode, Reference: "internal/akg/mvcc.go",
+		Confidence: 0.9, Timestamp: time.Now(),
+	}
+
+	alone := evidence.NewBundle(code)
+
+	for _, extra := range []evidence.EvidenceItem{
+		{Source: evidence.SourceGit, Reference: "abc123", Confidence: 1.0, Timestamp: time.Now()},
+		{Source: evidence.SourceLLM, Reference: "llm-1", Confidence: 0.6, Timestamp: time.Now()},
+		{Source: evidence.SourceHeuristic, Reference: "h-1", Confidence: 0.2, Timestamp: time.Now()},
+	} {
+		corroborated := evidence.NewBundle(code)
+		corroborated.Add(extra)
+		if corroborated.AggConfidence < alone.AggConfidence {
+			t.Errorf("adding %s evidence lowered the score: %f -> %f",
+				extra.Source, alone.AggConfidence, corroborated.AggConfidence)
+		}
+	}
+}
+
+// TestBundle_WeakEvidenceCannotInflate keeps the sound half of the original
+// design: a speculative item must not lift a claim above what its best
+// evidence supports.
+func TestBundle_WeakEvidenceCannotInflate(t *testing.T) {
+	b := evidence.NewBundle(evidence.EvidenceItem{
+		Source: evidence.SourceHeuristic, Reference: "h-1",
+		Confidence: 0.5, Timestamp: time.Now(),
+	})
+	ceiling := 0.5 * evidence.SourceReliability(evidence.SourceHeuristic)
+
+	for i := 0; i < 5; i++ {
+		b.Add(evidence.EvidenceItem{
+			Source: evidence.SourceLLM, Reference: "llm", Confidence: 0.5, Timestamp: time.Now(),
+		})
+	}
+	if b.AggConfidence > ceiling {
+		t.Errorf("piling on weak items manufactured confidence: %f > %f", b.AggConfidence, ceiling)
 	}
 }
 
