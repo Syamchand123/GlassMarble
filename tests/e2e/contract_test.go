@@ -23,6 +23,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/cmd"
 	"github.com/Syamchand123/GlassMarble/internal/akg"
+	"github.com/Syamchand123/GlassMarble/internal/product"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
 	"github.com/Syamchand123/GlassMarble/internal/product/ont"
 	"github.com/Syamchand123/GlassMarble/tests/harness"
@@ -75,7 +76,7 @@ func TestRootHelpContract(t *testing.T) {
 
 func TestVersionContract(t *testing.T) {
 	sb := harness.NewSandbox(t)
-	out := gmbWant(t, sb, []string{"v0.1.0", "GlassMarble"}, "version")
+	out := gmbWant(t, sb, []string{"v" + product.Version, "GlassMarble"}, "version")
 	if !strings.HasPrefix(strings.TrimSpace(out), "GlassMarble") {
 		t.Errorf("version output should start with the product name:\n%s", out)
 	}

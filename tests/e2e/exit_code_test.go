@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Syamchand123/GlassMarble/internal/product"
 	"github.com/Syamchand123/GlassMarble/tests/harness"
 )
 
@@ -36,7 +37,7 @@ func TestExitCodeContractViaRealBinary(t *testing.T) {
 		{
 			name:    "version exits 0",
 			args:    []string{"version"},
-			wantOut: []string{"v0.1.0"},
+			wantOut: []string{"v" + product.Version},
 		},
 		{
 			// The styled Fang help surface (the one shipped in the README) is

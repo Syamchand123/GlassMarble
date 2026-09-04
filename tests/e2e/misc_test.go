@@ -9,12 +9,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Syamchand123/GlassMarble/internal/product"
 	"github.com/Syamchand123/GlassMarble/tests/harness"
 )
 
 func TestVersionCommand(t *testing.T) {
 	sb := harness.NewSandbox(t)
-	gmbWant(t, sb, []string{"GlassMarble", "0.1.0", "AI Architecture Intelligence"}, "version")
+	gmbWant(t, sb, []string{"GlassMarble", product.Version, "AI Architecture Intelligence"}, "version")
 }
 
 func TestCompletionScripts(t *testing.T) {

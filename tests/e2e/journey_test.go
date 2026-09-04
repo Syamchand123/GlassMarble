@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Syamchand123/GlassMarble/internal/product"
 	"github.com/Syamchand123/GlassMarble/tests/harness"
 )
 
@@ -381,7 +382,7 @@ func (p *Processor) Complete(customer string) string {
 	})
 
 	t.Run("version", func(t *testing.T) {
-		gmbWant(t, sb, []string{"GlassMarble", "0.1.0"}, "version")
+		gmbWant(t, sb, []string{"GlassMarble", product.Version}, "version")
 	})
 
 	// --- 16. benchmark gate ----------------------------------------------------

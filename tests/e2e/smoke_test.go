@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Syamchand123/GlassMarble/internal/product"
 	"github.com/Syamchand123/GlassMarble/tests/harness"
 )
 
@@ -16,7 +17,7 @@ func TestSmokeVersionCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version failed: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "0.1.0") {
+	if !strings.Contains(out, product.Version) {
 		t.Errorf("version output missing version number:\n%s", out)
 	}
 }
