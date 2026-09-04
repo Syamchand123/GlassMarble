@@ -42,6 +42,7 @@
    - [timeline](#825-gmb-timeline)
    - [why](#826-gmb-why)
    - [dev](#827-gmb-dev)
+   - [mcp](#828-gmb-mcp)
 9. [Analysis Pipeline Execution Flow](#9-analysis-pipeline-execution-flow)
 10. [Use Cases & Command Workflows](#10-use-cases--command-workflows)
 11. [Best Practices](#11-best-practices)
@@ -1379,6 +1380,37 @@ speculating. Requires AI configuration (`gmb ai configure` / env vars).
 
 **Behavior:** `rebase-goldens` regenerates the golden diagram test fixtures
 from the current pipeline output. Used after intentional renderer changes.
+
+---
+
+### 8.28 `gmb mcp`
+
+**Purpose:** Start the Model Context Protocol (MCP) server, exposing the live Architecture Knowledge Graph (AKG) to external AI agents and IDE assistants (Claude Code, Cursor, Windsurf, Claude Desktop).
+
+**Syntax:** `gmb mcp [flags]`
+
+**Transports Supported:**
+- `stdio` (default): Standard input/output communication for local CLI agents and IDE subprocesses.
+- `http`: Modern Streamable HTTP transport at `/mcp` (MCP 2024-11-05 → 2025-11-25 specification).
+- `sse`: Server-Sent Events HTTP transport at `/sse` (legacy fallback).
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--transport` | string | `stdio` | Transport protocol: `stdio`, `http`, or `sse` |
+| `--host` | string | `127.0.0.1` | Host address to bind HTTP/SSE server to (defaults to loopback for security) |
+| `--port` | int | `8765` | Port number for HTTP/SSE server |
+| `--auth-token` | string | `""` | Bearer token required for HTTP/SSE requests (constant-time validated) |
+| `--tool-timeout` | duration | `60s` | Per-tool execution timeout deadline |
+| `--read-only` | bool | `true` | Enforce read-only inspection modes on workspace and graph |
+| `--print-config` | string | `""` | Print ready-to-use client JSON config (`claude-code`, `claude-desktop`, `cursor`, `windsurf`, `generic`) |
+
+**Features:**
+- Exposes 30+ built-in architecture intelligence tools (`akg_query`, `analyze_impact`, `find_dead_code`, `detect_cycles`, etc.).
+- Dual URI schemes for resources: `gmb://` and `glassmarble://` (`status`, `intelligence`, `timeline`, `memory`, `conventions`, etc.).
+- Architectural prompt templates (`explain_architecture`, `analyze_impact`, `ci_gate_check`, `onboard_developer`).
+- Protocol version negotiation supporting latest MCP specifications (2024-11-05 to 2025-11-25) with `structuredContent` and text fallbacks.
 
 ---
 

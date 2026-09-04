@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased] — v1.1.0
+## [v1.1.0] - 2026-09-04
 
 ### Fixed — correctness & data integrity
 - **MVCC snapshot corruption (`internal/akg`)**: `rotateLeft`/`rotateRight` mutated the nodes they were given. Because `Set`/`Delete` copy only the path to the touched key and alias every sibling subtree, a rebalance rewrote nodes still owned by earlier snapshots. Reproduced deterministically: a snapshot of `{a,b,c,d,e}` became `[a b b c d e]` — a duplicated key and a broken traversal — after a `Delete` on a *derived* map. Every incremental commit calls `Delete` on six indexes against a shadow that shares structure with the live graph, so any delta commit could corrupt the snapshot being served to readers. Both rotations are now pure; covered by new isolation, double-rotation and 200-key stress tests.

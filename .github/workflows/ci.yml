@@ -27,11 +27,11 @@ name: GlassMarble CI & Quality Gates
 
 on:
   push:
-    branches: [main, dev, feature/*]
+    branches: [main, dev, "feature/*", "release/*"]
     tags:
       - "v*"
   pull_request:
-    branches: [main, dev]
+    branches: [main, dev, "release/*"]
   workflow_dispatch:
 
 concurrency:

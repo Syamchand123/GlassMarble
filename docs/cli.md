@@ -85,7 +85,7 @@ esac
 
 ---
 
-## 28 commands in 6 groups
+## 29 commands in 6 groups
 
 ### 1. Analyze & Index
 
@@ -139,6 +139,7 @@ Flags: `--format`, `--scope`, `--entry` (required for `sequence`), `--depth 7`, 
 | `gmb ai doctor / models / sessions` | Config, connectivity, session list |
 | `gmb memory [--ask] [--component] [--correct] [--json]` | Developer memory + corrections overlay |
 | `gmb why "<q>"` | Fast grounded reasoning |
+| `gmb mcp [--transport] [--host] [--port] [--tool-timeout] [--print-config]` | Model Context Protocol server exposing AKG tools, resources & prompts to AI agents |
 
 ### 6. Utility
 

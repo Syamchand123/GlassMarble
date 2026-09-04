@@ -40,7 +40,9 @@
   <a href="docs/architecture.md">Architecture</a> ·
   <a href="docs/cli.md">CLI</a> ·
   <a href="docs/diagrams.md">Diagrams</a> ·
+  <a href="docs/visualization_engine.md">Web UI</a> ·
   <a href="docs/ai.md">AI Architect</a> ·
+  <a href="docs/mcp.md">MCP Server</a> ·
   <a href="docs/configuration.md">Config</a> ·
   <a href="docs/README.md">All Docs</a>
 </p>
@@ -186,13 +188,15 @@ flowchart TD
 |---|---|
 | [Getting Started](docs/getting-started.md) | Matrix, verification, first `analyze`, troubleshooting |
 | [Architecture](docs/architecture.md) | Pipeline, modules, algorithms, storage & transactions |
-| [CLI Overview](docs/cli.md) | 28 commands in 6 groups, flags, exit codes |
-| [CLI Master Reference](docs/commands_master_reference.md) | Every flag, example, JSON field (1234 lines) |
+| [CLI Overview](docs/cli.md) | 29 commands in 6 groups, flags, exit codes |
+| [CLI Master Reference](docs/commands_master_reference.md) | Every flag, example, JSON field (source of truth) |
 | [Diagrams](docs/diagrams.md) | 31 types, scopes, gallery, projection rules |
+| [Visualization Engine & Web UI](docs/visualization_engine.md) | Interactive Web UI (`gmb ui`), 31 notations, layout engines, canvas |
 | [AKG Format](docs/akg_format.md) | GraphJSON v3, storage contract |
 | [Configuration](docs/configuration.md) | `config.yaml` / `ai.yaml`, env vars, `intelligence/` `fusion/` `learning/` `aging` |
 | [Architecture Intelligence](docs/architecture_intelligence.md) | Events, claims, corrections, PR-01..PR-07 |
 | [AI Architect](docs/ai.md) | Providers, 32 tools, streaming, sessions, guardrails |
+| [MCP Server Protocol](docs/mcp.md) | Model Context Protocol server (`gmb mcp`), Stdio/HTTP/SSE, 30+ tools |
 | [Supported Languages](docs/supported_languages.txt) | 17 languages + extensions |
 | [Docs Index](docs/README.md) | Visual map of all guides |
 
