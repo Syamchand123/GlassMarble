@@ -33,9 +33,11 @@ func benchDetach(b *testing.B, n int) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		// A fresh copy per iteration: detaching twice on the same graph would
-		// measure the second, cheaper pass over already-private maps.
-		clone := *g
+		// A fresh graph per iteration sharing the same node map: detaching
+		// twice over one graph would measure the second, cheaper pass over
+		// already-private maps. CodePropertyGraph carries a mutex, so the
+		// struct is rebuilt rather than copied.
+		clone := NewCodePropertyGraph("bench")
 		clone.Nodes = g.Nodes
 		clone.detachNodesForWrite()
 	}
