@@ -70,22 +70,33 @@ const (
 // ArchEvent is one architectural change event — the fundamental atom of memory.
 // MUST carry non-empty Evidence.Bundle. ID is deterministic sha256[0:16].
 type ArchEvent struct {
-	ID            string          `json:"id"`
-	Kind          EventKind       `json:"kind"`
-	CommitHash    string          `json:"commit_hash"`
-	Timestamp     time.Time       `json:"timestamp"`
-	Title         string          `json:"title"`
-	Description   string          `json:"description"`
-	AffectedIDs   []string        `json:"affected_ids"`
-	Components    []string        `json:"components"`
-	Evidence      evidence.Bundle `json:"evidence"`
-	Intent        string          `json:"intent"`
-	IntentSrc     evidence.Source `json:"intent_src"`
-	Tags          []string        `json:"tags"`
-	RelatedPRs    []string        `json:"related_prs"`
-	RelatedIssues []string        `json:"related_issues"`
-	ValidFrom     time.Time       `json:"valid_from"`
-	ValidUntil    *time.Time      `json:"valid_until,omitempty"`
+	ID   string    `json:"id"`
+	Kind EventKind `json:"kind"`
+	// CommitHash is the commit the analysis ran AT, which is not necessarily
+	// the commit that caused the change. Structural events come from diffing
+	// two snapshots, and when analysis has not run for a while that diff spans
+	// every commit since BaseCommitHash. Attributing the whole span to HEAD is
+	// unavoidable without re-analysing each commit, but silently presenting it
+	// as a single commit's work is not: read the pair, not CommitHash alone.
+	CommitHash string `json:"commit_hash"`
+	// BaseCommitHash is the commit of the snapshot this event was diffed
+	// against. Empty when there was no baseline (the first analysis). When it
+	// differs from the previous commit of CommitHash, this event describes a
+	// range rather than one commit.
+	BaseCommitHash string          `json:"base_commit_hash,omitempty"`
+	Timestamp      time.Time       `json:"timestamp"`
+	Title          string          `json:"title"`
+	Description    string          `json:"description"`
+	AffectedIDs    []string        `json:"affected_ids"`
+	Components     []string        `json:"components"`
+	Evidence       evidence.Bundle `json:"evidence"`
+	Intent         string          `json:"intent"`
+	IntentSrc      evidence.Source `json:"intent_src"`
+	Tags           []string        `json:"tags"`
+	RelatedPRs     []string        `json:"related_prs"`
+	RelatedIssues  []string        `json:"related_issues"`
+	ValidFrom      time.Time       `json:"valid_from"`
+	ValidUntil     *time.Time      `json:"valid_until,omitempty"`
 }
 
 // StateTagPrefix is the well-known tag prefix STATE_CHANGE events use to
