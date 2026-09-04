@@ -10,6 +10,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
 	"github.com/Syamchand123/GlassMarble/internal/config"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -45,7 +46,7 @@ and — with --smells — code & structural smell detection.`,
 		if graph == nil || graph.Nodes == nil || graph.Nodes.Len() == 0 {
 			if asJSON {
 				out, _ := json.MarshalIndent(map[string]any{"error": "no active AKG database"}, "", "  ")
-				fmt.Println(string(out))
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
 				// The payload is still emitted for machine consumers, but the exit
 				// code must match the human path: reporting an error and exiting 0
 				// made --json silently pass in CI where the same command failed.
@@ -64,9 +65,11 @@ and — with --smells — code & structural smell detection.`,
 			arch_intelligence.WithLayerForbidden(cfgForbiddenPairs(storageDir)),
 		}
 		if !asJSON {
+			// Engine chatter is a diagnostic, not the pattern report: it
+			// belongs on stderr so `gmb patterns -v > report.txt` stays clean.
 			opts = append(opts, arch_intelligence.WithLogger(func(format string, args ...any) {
 				if verboseFlag(cmd) {
-					fmt.Printf(format+"\n", args...)
+					tui.Fprintf(cmd.ErrOrStderr(), format+"\n", args...)
 				}
 			}))
 		}
@@ -86,33 +89,41 @@ and — with --smells — code & structural smell detection.`,
 				Smells:     res.Smells,
 				Metrics:    res.Metrics,
 			}, "", "  ")
-			fmt.Println(string(out))
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			return nil
 		}
 
-		fmt.Println("=== Architecture Intelligence ===")
-		fmt.Println("")
+		w := cmd.OutOrStdout()
+		// The component ID is the widest hardcoded column; it absorbs the
+		// shrink on a terminal too narrow for the full row.
+		const componentRow = 45 + 1 + 20
+		idW := 45 - (componentRow - fitWidth(componentRow))
+		if idW < 16 {
+			idW = 16
+		}
+		tui.Fprintln(w, "=== Architecture Intelligence ===")
+		tui.Fprintln(w, "")
 		if len(res.Patterns) == 0 {
-			fmt.Println("Patterns: none detected")
+			tui.Fprintln(w, "Patterns: none detected")
 		} else {
-			fmt.Println("Patterns:")
+			tui.Fprintln(w, "Patterns:")
 			for _, p := range res.Patterns {
-				fmt.Printf("  %-12s %-30s confidence=%.2f\n", p.Kind, p.Name, p.Confidence)
+				tui.Fprintf(w, "  %-12s %-30s confidence=%.2f\n", p.Kind, p.Name, p.Confidence)
 			}
 		}
-		fmt.Println("")
-		fmt.Printf("Components: %d\n", len(res.Components))
+		tui.Fprintln(w, "")
+		tui.Fprintf(w, "Components: %d\n", len(res.Components))
 		for _, c := range res.Components {
-			fmt.Printf("  %-45s %-20s %d nodes\n", c.ID, c.Name, len(c.NodeIDs))
+			tui.Fprintf(w, "  %-*s %-20s %d nodes\n", idW, c.ID, c.Name, len(c.NodeIDs))
 		}
 		if showSmells {
-			fmt.Println("")
+			tui.Fprintln(w, "")
 			if len(res.Smells) == 0 {
-				fmt.Println("Smells: none detected")
+				tui.Fprintln(w, "Smells: none detected")
 			} else {
-				fmt.Println("Smells:")
+				tui.Fprintln(w, "Smells:")
 				for _, s := range res.Smells {
-					fmt.Printf("  [%s] %-10s %s\n", s.Severity, s.Kind, s.Title)
+					tui.Fprintf(w, "  [%s] %-10s %s\n", s.Severity, s.Kind, s.Title)
 				}
 			}
 		}

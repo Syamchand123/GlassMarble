@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,7 +35,10 @@ changes made outside the watcher's scope are also picked up.`,
   gmb watch --interval 1s
 
   # Watch specific repository path
-  gmb watch --dir ./backend`,
+  gmb watch --dir ./backend
+
+  # Stream watcher events as newline-delimited JSON
+  gmb watch --json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		targetDir := resolveDir(cmd)
 		commitHash, _ := cmd.Flags().GetString("commit")
@@ -43,6 +48,7 @@ changes made outside the watcher's scope are also picked up.`,
 		macroInference, _ := cmd.Flags().GetString("macro-inference")
 		maxNodes, _ := cmd.Flags().GetInt("max-nodes")
 		abortOnLimit, _ := cmd.Flags().GetBool("abort-on-limit")
+		asJSON, _ := cmd.Flags().GetBool("json")
 
 		absDir, err := filepath.Abs(targetDir)
 		if err != nil {
@@ -64,12 +70,116 @@ changes made outside the watcher's scope are also picked up.`,
 			out:            cmd.OutOrStdout(),
 		}
 
+		// --json is machine-readable and must bypass the interactive layer,
+		// and the pipeline's own human report must not reach stdout.
+		if asJSON {
+			opts.out = io.Discard
+			return runWatchPlain(cmd, opts, watchReporter{out: cmd.OutOrStdout(), json: true})
+		}
+
 		if tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout()) {
 			return runWatchTUI(cmd, opts)
 		}
 
-		return runWatchPlain(cmd, opts)
+		return runWatchPlain(cmd, opts, watchReporter{out: cmd.OutOrStdout()})
 	},
+}
+
+// watchReporter renders the watcher's lifecycle events.
+//
+// `watch` never terminates on its own, so there is no single result document
+// to emit: the machine-readable shape is a stream of newline-delimited JSON
+// objects (one per line, one per event), which stays parseable incrementally
+// for as long as the watcher runs. The human reporter keeps the original
+// timestamped lines verbatim.
+type watchReporter struct {
+	out  io.Writer
+	json bool
+}
+
+// event writes one NDJSON object. Fields are merged into a fresh map so the
+// event name and timestamp are always present and always first-class.
+func (r watchReporter) event(name string, fields map[string]any) {
+	doc := map[string]any{"event": name, "time": time.Now().Format(time.RFC3339)}
+	for k, v := range fields {
+		doc[k] = v
+	}
+	// Marshal, not Encode-with-indent: NDJSON requires exactly one line.
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return
+	}
+	fmt.Fprintln(r.out, string(out))
+}
+
+func (r watchReporter) started(dir string, debounce time.Duration) {
+	if r.json {
+		r.event("watch_started", map[string]any{"target_dir": dir, "debounce_ms": debounce.Milliseconds()})
+		return
+	}
+	fmt.Fprintf(r.out, "GlassMarble Watcher active on '%s' (fsnotify, debounce: %s)\nPress Ctrl+C to stop.\n\n", dir, debounce)
+}
+
+func (r watchReporter) analysisStarted(reason string) {
+	if r.json {
+		r.event("analysis_started", map[string]any{"reason": reason})
+		return
+	}
+	if reason == "initial" {
+		fmt.Fprintf(r.out, "[%s] Initial analysis...\n", time.Now().Format("15:04:05"))
+		return
+	}
+	fmt.Fprintf(r.out, "[%s] Repository changes detected, running analysis...\n", time.Now().Format("15:04:05"))
+}
+
+// analysisFinished reports the outcome of one rebuild. sum is nil when the run
+// failed; err is nil when it succeeded.
+func (r watchReporter) analysisFinished(reason string, sum *analysisSummary, err error) {
+	if r.json {
+		if err != nil {
+			r.event("analysis_failed", map[string]any{"reason": reason, "error": err.Error()})
+			return
+		}
+		fields := map[string]any{"reason": reason}
+		if sum != nil {
+			fields["target_dir"] = sum.targetDir
+			fields["files_analyzed"] = sum.filesAnalyzed
+			fields["nodes"] = sum.nodes
+			fields["edges"] = sum.edges
+			fields["virtual_nodes"] = sum.virtualNodes
+			fields["dangling_edges"] = sum.danglingEdges
+			fields["state_bytes"] = sum.stateBytes
+			fields["duration_ms"] = sum.duration.Milliseconds()
+			fields["storage_dir"] = sum.storageDir
+		}
+		r.event("analysis_completed", fields)
+		return
+	}
+	if err != nil {
+		label := "Analysis failed"
+		if reason == "initial" {
+			label = "Initial analysis failed"
+		}
+		fmt.Fprintf(r.out, "[%s] %s: %v\n", time.Now().Format("15:04:05"), label, err)
+	}
+	// The success line is the pipeline's own report, already written by
+	// runAnalysis to opts.out.
+}
+
+func (r watchReporter) watcherError(err error) {
+	if r.json {
+		r.event("watcher_error", map[string]any{"error": err.Error()})
+		return
+	}
+	fmt.Fprintf(r.out, "[%s] watcher error: %v\n", time.Now().Format("15:04:05"), err)
+}
+
+func (r watchReporter) stopped() {
+	if r.json {
+		r.event("watch_stopped", nil)
+		return
+	}
+	fmt.Fprintln(r.out, "\nWatcher stopped.")
 }
 
 // runWatchTUI launches the interactive watcher, handing the fsnotify helpers
@@ -90,20 +200,40 @@ func runWatchTUI(c *cobra.Command, opts runAnalysisOptions) error {
 	}, register, relevant, fingerprint, runFn, c.InOrStdin(), c.OutOrStdout())
 }
 
-// runWatchPlain runs the non-interactive ticker loop with plain-text output.
-// Its behavior and output are unchanged from the pre-TUI implementation.
+// runWatchPlain runs the non-interactive ticker loop, rendering its lifecycle
+// through the supplied reporter (plain lines or NDJSON).
 // C6-4: pending / lastFingerprint are guarded by sync.Mutex and a single
 // serialized worker channel prevents concurrent analyses and data races.
-func runWatchPlain(cmd *cobra.Command, opts runAnalysisOptions) error {
+func runWatchPlain(cmd *cobra.Command, opts runAnalysisOptions, rep watchReporter) error {
 	absDir := opts.targetDir
 
-	fmt.Printf("GlassMarble Watcher active on '%s' (fsnotify, debounce: %s)\nPress Ctrl+C to stop.\n\n", absDir, watchInterval)
+	// Capture the pipeline's QA numbers so the JSON reporter can put them in
+	// the completion event instead of parsing the human report line.
+	var lastSummary analysisSummary
+	var haveSummary bool
+	opts.onSummary = func(s analysisSummary) {
+		lastSummary = s
+		haveSummary = true
+	}
+	runOnce := func(reason string) {
+		haveSummary = false
+		rep.analysisStarted(reason)
+		err := runAnalysis(cmd, opts)
+		var sum *analysisSummary
+		if haveSummary {
+			sum = &lastSummary
+		}
+		rep.analysisFinished(reason, sum, err)
+	}
+
+	debounceForReport := watchInterval
+	if debounceForReport <= 0 {
+		debounceForReport = 500 * time.Millisecond
+	}
+	rep.started(absDir, debounceForReport)
 
 	// Run an initial analysis so the AKG is current before watching.
-	fmt.Printf("[%s] Initial analysis...\n", time.Now().Format("15:04:05"))
-	if err := runAnalysis(cmd, opts); err != nil {
-		fmt.Printf("[%s] Initial analysis failed: %v\n", time.Now().Format("15:04:05"), err)
-	}
+	runOnce("initial")
 
 	var mu sync.Mutex
 	lastFingerprint := workingTreeFingerprint(absDir, opts.commitHash)
@@ -146,10 +276,7 @@ func runWatchPlain(cmd *cobra.Command, opts runAnalysisOptions) error {
 			}
 			lastFingerprint = fp
 			mu.Unlock()
-			fmt.Printf("[%s] Repository changes detected, running analysis...\n", time.Now().Format("15:04:05"))
-			if err := runAnalysis(cmd, opts); err != nil {
-				fmt.Printf("[%s] Analysis failed: %v\n", time.Now().Format("15:04:05"), err)
-			}
+			runOnce("change")
 			// Drain any additional coalesced signal that arrived while we were
 			// busy, so we immediately loop for another debounced check.
 			select {
@@ -179,7 +306,7 @@ func runWatchPlain(cmd *cobra.Command, opts runAnalysisOptions) error {
 	for {
 		select {
 		case <-cmd.Context().Done():
-			fmt.Println("\nWatcher stopped.")
+			rep.stopped()
 			return nil
 		case ev, ok := <-watcher.Events:
 			if !ok {
@@ -192,7 +319,7 @@ func runWatchPlain(cmd *cobra.Command, opts runAnalysisOptions) error {
 			if !ok {
 				return nil
 			}
-			fmt.Printf("[%s] watcher error: %v\n", time.Now().Format("15:04:05"), err)
+			rep.watcherError(err)
 		}
 	}
 }
@@ -313,5 +440,6 @@ func init() {
 	watchCmd.Flags().Bool("abort-on-limit", false, "Abort analysis if --max-nodes is exceeded (otherwise warn)")
 	watchCmd.Flags().Bool("verbose", false, "Enable verbose output")
 	watchCmd.Flags().DurationVar(&watchInterval, "interval", 500*time.Millisecond, "Debounce interval for file-system events")
+	watchCmd.Flags().Bool("json", false, "Stream machine-readable newline-delimited JSON events")
 	rootCmd.AddCommand(watchCmd)
 }

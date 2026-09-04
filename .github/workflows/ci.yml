@@ -90,6 +90,12 @@ jobs:
       - name: Golden parity gate (visualization)
         run: go test ./internal/visualization_engine/render -run TestGoldenParity -count=1 -v
 
+      # docs/man is generated from the cobra command tree. This fails when a
+      # command gains a flag or changes its help text without the pages being
+      # regenerated, which is how they went missing entirely before.
+      - name: Man page freshness gate
+        run: go run ./cmd/man -check
+
       - name: Testdata comprehensiveness gate
         shell: bash
         run: |
