@@ -2,7 +2,6 @@ package knowledge_aging
 
 import (
 	"github.com/Syamchand123/GlassMarble/internal/evidence"
-	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
 	"github.com/Syamchand123/GlassMarble/internal/developer_memory"
@@ -205,10 +204,4 @@ func snapshotHasComponent(snap *archmodel.ArchSnapshot, compName string) bool {
 		return false
 	}
 	return indexPresentEntities(snap).hasComponent(compName)
-}
-
-// staleSince returns the reference timestamp for "when did the knowledge
-// about this component stop being observed". Zero when unknown.
-func staleSince(se StaleEntity) time.Time {
-	return se.LastSeen
 }
