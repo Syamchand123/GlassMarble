@@ -179,7 +179,15 @@ and updates the local GlassMarble binary for your operating system and architect
 		defer os.RemoveAll(tempDir)
 
 		archivePath := filepath.Join(tempDir, expectedArchivePrefix+"."+archiveExt)
-		if err := downloadFile(archiveURL, archivePath); err != nil {
+
+		// Progress goes to stderr so it never contaminates --json output, and
+		// only when a human is watching: a redraw-in-place line is noise in a
+		// CI log or a pipe, and --quiet asked for silence.
+		var prog *downloadProgress
+		if !updateJSONFlag && !tui.Quiet() && tui.IsInteractive(cmd.InOrStdin(), cmd.OutOrStdout()) {
+			prog = &downloadProgress{w: cmd.ErrOrStderr(), label: "  downloading"}
+		}
+		if err := downloadFile(archiveURL, archivePath, prog); err != nil {
 			return fmt.Errorf("failed to download release archive: %w", err)
 		}
 
@@ -283,7 +291,61 @@ func fetchRelease(tag string) (*githubRelease, error) {
 	return &rel, nil
 }
 
-func downloadFile(url, destPath string) error {
+// downloadProgress reports how far a download has got, refreshing one line in
+// place. A release archive is several megabytes over an arbitrary network
+// link, and the command previously printed "Downloading ..." and then went
+// silent for the duration, which is indistinguishable from a hang.
+//
+// It is an io.Writer so the byte count comes from the copy itself rather than
+// from polling the destination file. progress is a no-op when w is nil, which
+// is how --quiet and non-TTY runs opt out.
+type downloadProgress struct {
+	w     io.Writer
+	label string
+	// total is the Content-Length, or 0 when the server did not send one.
+	total    int64
+	written  int64
+	lastDraw time.Time
+}
+
+func (p *downloadProgress) Write(b []byte) (int, error) {
+	n := len(b)
+	if p == nil || p.w == nil {
+		return n, nil
+	}
+	p.written += int64(n)
+	// Redraw at most ten times a second: a fast link delivers chunks far
+	// faster than a terminal can usefully repaint, and every repaint is a
+	// write syscall.
+	if time.Since(p.lastDraw) < 100*time.Millisecond {
+		return n, nil
+	}
+	p.lastDraw = time.Now()
+	p.draw()
+	return n, nil
+}
+
+func (p *downloadProgress) draw() {
+	if p.total > 0 {
+		fmt.Fprintf(p.w, "\r%s %3d%% (%s / %s)", p.label,
+			p.written*100/p.total, humanBytes(p.written), humanBytes(p.total))
+		return
+	}
+	// No Content-Length: the percentage is unknowable, so report throughput
+	// evidence instead of inventing a denominator.
+	fmt.Fprintf(p.w, "\r%s %s", p.label, humanBytes(p.written))
+}
+
+// done finishes the progress line so following output starts on a fresh row.
+func (p *downloadProgress) done() {
+	if p == nil || p.w == nil {
+		return
+	}
+	p.draw()
+	fmt.Fprintln(p.w)
+}
+
+func downloadFile(url, destPath string, prog *downloadProgress) error {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err
@@ -307,7 +369,18 @@ func downloadFile(url, destPath string) error {
 	}
 	defer out.Close()
 
-	_, err = io.Copy(out, resp.Body)
+	dst := io.Writer(out)
+	if prog != nil && prog.w != nil {
+		// ContentLength is -1 when the server does not declare a size; keep
+		// total at 0 in that case so draw() takes the unknown-size branch.
+		if resp.ContentLength > 0 {
+			prog.total = resp.ContentLength
+		}
+		dst = io.MultiWriter(out, prog)
+		defer prog.done()
+	}
+
+	_, err = io.Copy(dst, resp.Body)
 	return err
 }
 
