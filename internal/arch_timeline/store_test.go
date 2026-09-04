@@ -142,7 +142,7 @@ func TestStore_LatestUsesMaxTimestamp(t *testing.T) {
 	if latest.CommitHash != "c2" {
 		t.Errorf("Latest = %q, want c2 (newest timestamp, not last appended)", latest.CommitHash)
 	}
-	if latest.ID != "snap_" + strings.Repeat("b", 8) {
+	if latest.ID != "snap_"+strings.Repeat("b", 8) {
 		t.Errorf("Latest ID = %q, want snap_bbbbbbbb", latest.ID)
 	}
 

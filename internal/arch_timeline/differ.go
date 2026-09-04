@@ -14,10 +14,10 @@ import (
 // snapshot boundary while its name changed. Evidence: name-token similarity
 // and/or shared node coverage between the old and new membership.
 type ComponentRename struct {
-	OldName    string  `json:"old_name"`
-	NewName    string  `json:"new_name"`
-	Similarity float64 `json:"similarity"`
-	NodeOverlap int    `json:"node_overlap"`
+	OldName     string  `json:"old_name"`
+	NewName     string  `json:"new_name"`
+	Similarity  float64 `json:"similarity"`
+	NodeOverlap int     `json:"node_overlap"`
 }
 
 // ServiceSplit is one component in the base that became two or more in the
@@ -49,7 +49,7 @@ type DependencyChange struct {
 // stable output and CI use.
 type DiffResult struct {
 	Delta             *archmodel.SnapshotDelta `json:"delta"`
-	Graph             *akg.GraphDiff            `json:"graph,omitempty"`
+	Graph             *akg.GraphDiff           `json:"graph,omitempty"`
 	Renames           []ComponentRename        `json:"renames,omitempty"`
 	Splits            []ServiceSplit           `json:"splits,omitempty"`
 	Merges            []ServiceMerge           `json:"merges,omitempty"`

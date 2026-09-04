@@ -174,12 +174,16 @@ func (r *Reasoner) buildEvent(meta *git.CommitMeta, c ClassifiedChange, intent I
 	}
 	// The intent claim is a separate assertion ("this change happened
 	// BECAUSE X"), not corroborating evidence for the structural change
-	// itself. Bundle.Aggregate is a weighted MINIMUM, so folding a weak
-	// keyword guess in here capped every enriched event at that guess's
-	// weight: on this repository 98 events carrying real git (1.0) and code
-	// (0.9) evidence scored 0.525, while 12 events with no enrichment at all
-	// scored 0.68 - so the best-supported events ranked LAST in
-	// developer_memory's confidence ordering.
+	// itself, so a keyword guess about motive does not belong in the bundle
+	// that says the change occurred.
+	//
+	// This also used to be load-bearing for a different reason: Aggregate was
+	// a weighted MINIMUM, so folding a weak guess in here capped every
+	// enriched event at that guess's weight and the best-supported events
+	// ranked last. Aggregate now takes the strongest item, so a weak intent
+	// item would no longer drag the score down -- but it would still be a
+	// category error to file motive as proof of structure, which is why the
+	// distinction stands on its own.
 	//
 	// Only intents backed by more than a message keyword join the bundle;
 	// the intent and its source are recorded on the event either way.

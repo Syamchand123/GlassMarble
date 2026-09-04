@@ -158,13 +158,13 @@ func fingerprintComponents(cs []archmodel.DetectedComponent) string {
 	parts := make([]string, 0, len(cs))
 	for _, c := range cs {
 		parts = append(parts, canonicalJSON(struct {
-			ID, Name           string
-			Kind               archmodel.ComponentKind
-			NodeIDs            []string
-			Directories        []string
-			Confidence         float64
-			Dependencies       []string
-			EvidenceSignature  string
+			ID, Name          string
+			Kind              archmodel.ComponentKind
+			NodeIDs           []string
+			Directories       []string
+			Confidence        float64
+			Dependencies      []string
+			EvidenceSignature string
 		}{
 			ID: c.ID, Name: c.Name, Kind: c.Kind,
 			NodeIDs: sortedStrings(c.NodeIDs), Directories: sortedStrings(c.Directories),
@@ -214,13 +214,13 @@ func fingerprintSmells(ss []archmodel.ArchSmell) string {
 // but it keeps --no-graph snapshots (which carry no AKGJSON) distinguishable.
 func fingerprintMetrics(m archmodel.ArchMetrics) string {
 	return canonicalJSON(struct {
-		Density               float64
-		CycleCount            int
-		LayerViolations       int
-		LCOM4                 float64
-		AvgFanIn              float64
-		SCCs                  int
-		DeadCode              int
+		Density         float64
+		CycleCount      int
+		LayerViolations int
+		LCOM4           float64
+		AvgFanIn        float64
+		SCCs            int
+		DeadCode        int
 	}{
 		Density: m.GraphDensity, CycleCount: m.CycleCount, LayerViolations: m.LayerViolationCount,
 		LCOM4: m.LCOM4, AvgFanIn: m.AvgFanIn, SCCs: m.StronglyConnectedComponents, DeadCode: m.DeadCodeNodeCount,

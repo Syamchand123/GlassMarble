@@ -17,6 +17,14 @@ Compares the committed AKG against the invariants declared in
 Reports forbidden cross-layer dependencies and layer cycles, and exits non-zero
 when declared cycle budgets or forbidden dependencies are breached (suitable for CI gates).
 
+.PP
+With --since, the report becomes a comparison against a stored snapshot and
+reports movement rather than state: which violations are new, which were fixed,
+and which have simply always been there. In that mode the exit code tracks
+newly introduced violations instead of the total, so a codebase carrying a
+known backlog can gate on "do not make it worse" without first having to reach
+zero.
+
 
 .SH OPTIONS
 \fB-h\fP, \fB--help\fP[=false]
@@ -25,6 +33,10 @@ when declared cycle budgets or forbidden dependencies are breached (suitable for
 .PP
 \fB--json\fP[=false]
 	Emit machine-readable JSON output
+
+.PP
+\fB--since\fP=""
+	Compare against a stored snapshot and report movement: a commit hash prefix, or an age such as 7d/24h/30m
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
@@ -66,6 +78,12 @@ when declared cycle budgets or forbidden dependencies are breached (suitable for
 
   # Run drift checks on a specific directory
   gmb drift --dir ./backend
+
+  # What has drifted since a given commit
+  gmb drift --since a1b2c3d
+
+  # What has drifted in the last week (ratchet gate: fails only on new breaches)
+  gmb drift --since 7d
 .EE
 
 
