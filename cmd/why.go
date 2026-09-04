@@ -128,7 +128,7 @@ Architecture Knowledge Graph and developer memory evidence.`,
 				Provider:  cfg.Provider,
 				Citations: citations,
 			}, "", "  ")
-			fmt.Println(string(out))
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			return nil
 		}
 

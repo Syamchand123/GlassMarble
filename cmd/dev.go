@@ -7,6 +7,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/product"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/visualization_engine/types"
 	"github.com/spf13/cobra"
 )
@@ -69,9 +70,9 @@ var rebaseGoldensCmd = &cobra.Command{
 			}
 		}
 
-		fmt.Printf("Successfully rebased %d golden fixtures in %s\n", count, goldenDir)
+		tui.Fprintf(cmd.OutOrStdout(), "Successfully rebased %d golden fixtures in %s\n", count, goldenDir)
 		if skipped > 0 {
-			fmt.Printf("Warning: skipped %d types (no entrypoint in target): %v\n", skipped, skippedTypes)
+			tui.Fprintf(cmd.OutOrStdout(), "Warning: skipped %d types (no entrypoint in target): %v\n", skipped, skippedTypes)
 		}
 		return nil
 	},

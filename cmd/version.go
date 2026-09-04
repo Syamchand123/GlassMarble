@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/Syamchand123/GlassMarble/internal/product"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
@@ -35,10 +36,10 @@ var versionCmd = &cobra.Command{
 				Date:    product.Date,
 				BuiltBy: product.BuiltBy,
 			}, "", "  ")
-			fmt.Println(string(out))
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			return
 		}
-		fmt.Println(views.RenderVersion(product.Version, product.Commit, product.Date, product.BuiltBy))
+		tui.Fprintln(cmd.OutOrStdout(), views.RenderVersion(product.Version, product.Commit, product.Date, product.BuiltBy))
 	},
 }
 

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
@@ -44,10 +45,10 @@ in akg.json).`,
 		if _, err := os.Stat(statePath); err != nil {
 			if asJSON {
 				out, _ := json.MarshalIndent(diffJSON{Initialized: false, Error: "no active AKG database"}, "", "  ")
-				fmt.Println(string(out))
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
 				return nil
 			}
-			fmt.Println(views.RenderStatusUninitialized(statePath))
+			tui.Fprintln(cmd.OutOrStdout(), views.RenderStatusUninitialized(statePath))
 			return nil
 		}
 
@@ -65,11 +66,11 @@ in akg.json).`,
 				CommitHash:    commitHash,
 			}
 			out, _ := json.MarshalIndent(dj, "", "  ")
-			fmt.Println(string(out))
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			return nil
 		}
 
-		fmt.Println(views.RenderDiff(commitHash, schemaVersion, version, nil))
+		tui.Fprintln(cmd.OutOrStdout(), views.RenderDiff(commitHash, schemaVersion, version, nil))
 		return nil
 	},
 }

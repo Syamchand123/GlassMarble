@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
@@ -76,7 +77,7 @@ var hooksCmd = &cobra.Command{
 						}
 						receipt.BackupPath = bakPath
 						if !asJSON {
-							fmt.Printf("Existing post-commit hook backed up to %s\n", bakPath)
+							tui.Fprintf(cmd.ErrOrStderr(), "Existing post-commit hook backed up to %s\n", bakPath)
 						}
 					} else {
 						chained := string(existing) + "\n" + script
@@ -86,7 +87,7 @@ var hooksCmd = &cobra.Command{
 						receipt.Installed, receipt.Changed, receipt.Chained = true, true, true
 						receipt.Message = "GlassMarble post-commit hook chained onto the existing hook"
 						if !asJSON {
-							fmt.Println(views.RenderHooksInstalled(hookPath, binary, absDir))
+							tui.Fprintln(cmd.OutOrStdout(), views.RenderHooksInstalled(hookPath, binary, absDir))
 						}
 						break
 					}
@@ -98,7 +99,7 @@ var hooksCmd = &cobra.Command{
 			receipt.Installed, receipt.Changed = true, true
 			receipt.Message = "GlassMarble post-commit hook installed"
 			if !asJSON {
-				fmt.Println(views.RenderHooksInstalled(hookPath, binary, absDir))
+				tui.Fprintln(cmd.OutOrStdout(), views.RenderHooksInstalled(hookPath, binary, absDir))
 			}
 
 		case "uninstall":
@@ -107,7 +108,7 @@ var hooksCmd = &cobra.Command{
 				if os.IsNotExist(readErr) {
 					receipt.Message = "no post-commit hook present"
 					if !asJSON {
-						fmt.Println(views.RenderHooksNone())
+						tui.Fprintln(cmd.OutOrStdout(), views.RenderHooksNone())
 					}
 					break
 				}
@@ -117,7 +118,7 @@ var hooksCmd = &cobra.Command{
 				receipt.Installed = true
 				receipt.Message = fmt.Sprintf("refused to remove %s: does not contain the GlassMarble marker; user hook left intact", hookPath)
 				if !asJSON {
-					fmt.Printf("Refusing to remove %s: does not contain GlassMarble marker (# GlassMarble); leaving user hook intact\n", hookPath)
+					tui.Fprintf(cmd.ErrOrStderr(), "Refusing to remove %s: does not contain GlassMarble marker (# GlassMarble); leaving user hook intact\n", hookPath)
 				}
 				break
 			}
@@ -133,12 +134,12 @@ var hooksCmd = &cobra.Command{
 					receipt.BackupPath = bakPath
 					receipt.Message = "GlassMarble post-commit hook removed; previous hook restored"
 					if !asJSON {
-						fmt.Printf("Restored previous hook from %s\n", bakPath)
+						tui.Fprintf(cmd.ErrOrStderr(), "Restored previous hook from %s\n", bakPath)
 					}
 				}
 			}
 			if !asJSON {
-				fmt.Println(views.RenderHooksUninstalled())
+				tui.Fprintln(cmd.OutOrStdout(), views.RenderHooksUninstalled())
 			}
 
 		default:

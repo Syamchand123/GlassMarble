@@ -9,6 +9,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
@@ -63,7 +64,7 @@ var dependencyCmd = &cobra.Command{
 		if snapshot == nil || snapshot.Nodes.Len() == 0 {
 			if asJSON {
 				out, _ := json.MarshalIndent(map[string]string{"error": "no active AKG database"}, "", "  ")
-				fmt.Println(string(out))
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
 				return nil
 			}
 			return producterrs.Tagged("AKG database is empty — try 'gmb analyze' first", producterrs.ErrEmptySubgraph)
@@ -100,7 +101,7 @@ var dependencyCmd = &cobra.Command{
 
 			if asJSON {
 				out, _ := json.MarshalIndent(summary, "", "  ")
-				fmt.Println(string(out))
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
 				return nil
 			}
 
@@ -108,7 +109,7 @@ var dependencyCmd = &cobra.Command{
 			for _, n := range topNodes {
 				topNodesView = append(topNodesView, views.TopDependencyNode{ID: n.ID, Outbound: n.Outbound})
 			}
-			fmt.Println(views.RenderDependencySummary(snapshot.Nodes.Len(), snapshot.OutboundEdges.Len(), snapshot.InboundEdges.Len(), topNodesView))
+			tui.Fprintln(cmd.OutOrStdout(), views.RenderDependencySummary(snapshot.Nodes.Len(), snapshot.OutboundEdges.Len(), snapshot.InboundEdges.Len(), topNodesView))
 			return nil
 		}
 
@@ -147,7 +148,7 @@ var dependencyCmd = &cobra.Command{
 				"target": target,
 				"nodes":  jsonNodes,
 			}, "", "  ")
-			fmt.Println(string(out))
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			return nil
 		}
 
@@ -165,7 +166,7 @@ var dependencyCmd = &cobra.Command{
 					inboundView = append(inboundView, views.DependencyEdge{Type: string(edge.Type), OtherID: edge.SourceID, LineNumber: edge.LineNumber})
 				}
 			}
-			fmt.Println(views.RenderDependencyTarget(nodeID, outboundView, inboundView))
+			tui.Fprintln(cmd.OutOrStdout(), views.RenderDependencyTarget(nodeID, outboundView, inboundView))
 		}
 
 		return nil

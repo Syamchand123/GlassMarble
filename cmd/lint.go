@@ -8,6 +8,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/arch_linter"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
@@ -53,8 +54,8 @@ and cyclic coupling. Returns exit code 1 if violations are found.`,
 			if err != nil {
 				return err
 			}
-			fmt.Printf("✓ Created starter architecture rules at %s\n", createdPath)
-			fmt.Println("Run 'gmb lint' to evaluate your repository against these rules.")
+			tui.Fprintf(cmd.OutOrStdout(), "✓ Created starter architecture rules at %s\n", createdPath)
+			tui.Fprintln(cmd.OutOrStdout(), "Run 'gmb lint' to evaluate your repository against these rules.")
 			return nil
 		}
 
@@ -105,7 +106,7 @@ and cyclic coupling. Returns exit code 1 if violations are found.`,
 
 		if lintJSONFlag {
 			out, _ := json.MarshalIndent(res, "", "  ")
-			fmt.Println(string(out))
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			if !res.Passed || (lintStrictFlag && res.WarningsCount > 0) || (lintFailOnWarnFlag && res.WarningsCount > 0) {
 				return producterrs.Tagged(fmt.Sprintf("%d architectural violations detected", res.ViolationsTotal), producterrs.ErrPolicyViolation)
 			}
@@ -116,7 +117,7 @@ and cyclic coupling. Returns exit code 1 if violations are found.`,
 		if relRulesPath == "" {
 			relRulesPath = rulesPath
 		}
-		fmt.Println(views.RenderLintResult(res, relRulesPath))
+		tui.Fprintln(cmd.OutOrStdout(), views.RenderLintResult(res, relRulesPath))
 
 		if !res.Passed || (lintStrictFlag && res.WarningsCount > 0) || (lintFailOnWarnFlag && res.WarningsCount > 0) {
 			return producterrs.Tagged(fmt.Sprintf("%d architectural violation(s) detected — check report above", res.ViolationsTotal), producterrs.ErrPolicyViolation)

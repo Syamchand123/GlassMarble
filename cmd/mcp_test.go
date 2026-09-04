@@ -86,4 +86,3 @@ func TestMCPCommand_PrintConfig(t *testing.T) {
 	assert.Contains(t, out, "Claude Desktop")
 	assert.Contains(t, out, "Cursor")
 }
-

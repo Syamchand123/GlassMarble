@@ -11,6 +11,7 @@ import (
 	"time"
 
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/Syamchand123/GlassMarble/internal/visualizer"
 	"github.com/spf13/cobra"
@@ -120,7 +121,7 @@ process serving.`,
 			}, "", "  ")
 			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 		} else {
-			fmt.Println(views.RenderUIServerStart(uiHostFlag, port, nodeCount, edgeCount))
+			tui.Fprintln(cmd.OutOrStdout(), views.RenderUIServerStart(uiHostFlag, port, nodeCount, edgeCount))
 		}
 
 		<-ctx.Done()
@@ -128,7 +129,7 @@ process serving.`,
 			// stdout is spoken for by the startup document.
 			fmt.Fprintln(cmd.ErrOrStderr(), "Shutting down visualizer server...")
 		} else {
-			fmt.Println("\nShutting down visualizer server...")
+			tui.Fprintln(cmd.ErrOrStderr(), "\nShutting down visualizer server...")
 		}
 		return server.Stop()
 	},

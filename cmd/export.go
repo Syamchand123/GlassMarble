@@ -9,6 +9,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
@@ -111,11 +112,11 @@ executable CREATE scripts for direct import into Neo4j graph database instances.
 				SizeBytes: size,
 			}
 			out, _ := json.MarshalIndent(receipt, "", "  ")
-			fmt.Println(string(out))
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			return nil
 		}
 
-		fmt.Println(views.RenderExportSuccess(format, output, graph.Nodes.Len(), size))
+		tui.Fprintln(cmd.OutOrStdout(), views.RenderExportSuccess(format, output, graph.Nodes.Len(), size))
 		return nil
 	},
 }

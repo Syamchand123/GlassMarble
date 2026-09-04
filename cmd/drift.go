@@ -9,6 +9,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/config"
 	"github.com/Syamchand123/GlassMarble/internal/drift"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -45,7 +46,7 @@ when declared cycle budgets or forbidden dependencies are breached (suitable for
 		if graph == nil || graph.Nodes == nil || graph.Nodes.Len() == 0 {
 			if asJSON {
 				out, _ := json.MarshalIndent(map[string]string{"error": "no active AKG database"}, "", "  ")
-				fmt.Println(string(out))
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
 				return nil
 			}
 			return producterrs.Tagged("AKG database is empty — try 'gmb analyze' first", producterrs.ErrEmptySubgraph)
@@ -89,9 +90,9 @@ when declared cycle budgets or forbidden dependencies are breached (suitable for
 
 		if asJSON {
 			out, _ := json.MarshalIndent(rep, "", "  ")
-			fmt.Println(string(out))
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 		} else {
-			fmt.Println(views.RenderDrift(rep))
+			tui.Fprintln(cmd.OutOrStdout(), views.RenderDrift(rep))
 		}
 
 		if rep.ExceedsBudget() || rep.ForbiddenEdges > 0 {

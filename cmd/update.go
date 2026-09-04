@@ -18,6 +18,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/product"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
@@ -115,14 +116,14 @@ and updates the local GlassMarble binary for your operating system and architect
 					Platform:       platformStr,
 					Message:        fmt.Sprintf("Current: %s, Latest: %s", currentVer, latestVer),
 				}, "", "  ")
-				fmt.Println(string(out))
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
 				return nil
 			}
 
 			if isUpToDate && !updateForceFlag {
-				fmt.Println(views.RenderUpdateAlreadyLatest(currentVer, execPath))
+				tui.Fprintln(cmd.OutOrStdout(), views.RenderUpdateAlreadyLatest(currentVer, execPath))
 			} else {
-				fmt.Println(views.RenderUpdateCheckAvailable(currentVer, latestVer, release.HTMLURL))
+				tui.Fprintln(cmd.OutOrStdout(), views.RenderUpdateCheckAvailable(currentVer, latestVer, release.HTMLURL))
 			}
 			return nil
 		}
@@ -139,10 +140,10 @@ and updates the local GlassMarble binary for your operating system and architect
 					Platform:       platformStr,
 					Message:        "Already on the latest version",
 				}, "", "  ")
-				fmt.Println(string(out))
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
 				return nil
 			}
-			fmt.Println(views.RenderUpdateAlreadyLatest(currentVer, execPath))
+			tui.Fprintln(cmd.OutOrStdout(), views.RenderUpdateAlreadyLatest(currentVer, execPath))
 			return nil
 		}
 
@@ -196,7 +197,7 @@ and updates the local GlassMarble binary for your operating system and architect
 						return producterrs.Tagged(fmt.Sprintf("SHA256 checksum mismatch for %s (computed: %s) — aborting for security", filepath.Base(archivePath), computedHash), producterrs.ErrValidation)
 					}
 					if !updateJSONFlag {
-						fmt.Printf("SHA256 checksum verified: %s\n", computedHash)
+						tui.Fprintf(cmd.ErrOrStderr(), "SHA256 checksum verified: %s\n", computedHash)
 					}
 				}
 			}
@@ -230,11 +231,11 @@ and updates the local GlassMarble binary for your operating system and architect
 				Platform:       platformStr,
 				Message:        "GlassMarble updated successfully",
 			}, "", "  ")
-			fmt.Println(string(out))
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			return nil
 		}
 
-		fmt.Println("\n" + views.RenderUpdateSuccess(views.UpdateData{
+		tui.Fprintln(cmd.OutOrStdout(), "\n"+views.RenderUpdateSuccess(views.UpdateData{
 			CurrentVersion: currentVer,
 			LatestVersion:  latestVer,
 			BinaryPath:     execPath,

@@ -9,9 +9,9 @@ import (
 )
 
 var completionCmd = &cobra.Command{
-	Use:       "completion [bash|zsh|fish|powershell]",
-	GroupID:   GroupUtility.ID,
-	Short:     "Generate shell completion scripts",
+	Use:     "completion [bash|zsh|fish|powershell]",
+	GroupID: GroupUtility.ID,
+	Short:   "Generate shell completion scripts",
 	Long: `Generate shell completion script for gmb:
   Bash:       source <(gmb completion bash)
   Zsh:        gmb completion zsh > "${fpath[1]}/_gmb"

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
@@ -99,11 +100,11 @@ var initCmd = &cobra.Command{
 				GitignoreUpdated: gitignoreUpdated,
 			}
 			out, _ := json.MarshalIndent(receipt, "", "  ")
-			fmt.Println(string(out))
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			return nil
 		}
 
-		fmt.Println(views.RenderInitSuccess(gmDir, gitignoreUpdated))
+		tui.Fprintln(cmd.OutOrStdout(), views.RenderInitSuccess(gmDir, gitignoreUpdated))
 		return nil
 	},
 }
