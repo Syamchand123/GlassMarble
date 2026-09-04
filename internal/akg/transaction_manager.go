@@ -3,6 +3,7 @@ package akg
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -43,6 +44,18 @@ type AKGTransactionManager struct {
 	// Loading and committing are refused when the state file would exceed it;
 	// 0 means unlimited.
 	MaxStateBytes int64
+
+	// lockMu guards the db.lock ownership fields below. It is separate from
+	// mu: ReleaseLock runs from deferred calls while mu may be held.
+	lockMu sync.Mutex
+	// lockNonce is the token this manager wrote into db.lock when it acquired
+	// it, and empty when it holds nothing. Release and heartbeat both require
+	// the on-disk token to still match it, so one manager can never free or
+	// refresh a lock another holder owns. A PID cannot serve here: PIDs are
+	// reused, and two managers in one process share one.
+	lockNonce string
+	// lockStop ends the heartbeat goroutine for the currently held lock.
+	lockStop chan struct{}
 }
 
 // metadataNodeURI is the ID of the metadata node block written at the top of
@@ -237,17 +250,25 @@ func (tm *AKGTransactionManager) ExecuteDeltaTransaction(payload *link.LinkOutpu
 	// ------------------------------------------------------------------------
 	// SUB-PHASE D.3: Atomic Commit & Persistence
 	// ------------------------------------------------------------------------
-	// Promote shadow snapshot to active graph snapshot
-	tm.container.PromoteShadowSnapshot(shadow)
-
 	// Persist synchronously (single writer, lock held) with tmp+fsync+rename
 	// semantics: the previous good file survives any failure, and errors reach
 	// the caller instead of being swallowed (AUDIT Issue 3 Phase 3B-4/3B-10).
 	// Since Phase C the atomic JSON write is the durability story — no WAL is
 	// involved in the primary write path.
+	//
+	// Durable BEFORE visible. Promoting first meant a failed write left the
+	// in-memory graph strictly ahead of akg.json: this process kept serving a
+	// commit that no restart would ever see, and the error returned to the
+	// caller said the commit had failed while the store behaved as if it had
+	// succeeded. saveToDisk takes the shadow explicitly and PromoteShadowSnapshot
+	// only swaps the active pointer, so ordering them this way costs nothing.
+	// Import (above) already committed in this order.
 	if err := tm.saveToDisk(shadow); err != nil {
 		return fmt.Errorf("failed to persist AKG state: %w", err)
 	}
+
+	// Promote shadow snapshot to active graph snapshot
+	tm.container.PromoteShadowSnapshot(shadow)
 
 	// Broadcast commit event to visual layout subscribers
 	totalEdges := 0
@@ -1135,6 +1156,42 @@ const staleLockAge = 60 * time.Second
 // lockTimeout bounds how long AcquireLock waits before failing.
 const lockTimeout = 60 * time.Second
 
+// heartbeatInterval is how often the lock holder refreshes db.lock while it
+// works. Staleness is judged from the file's mtime, so without a refresh any
+// transaction running longer than staleLockAge would have its lock stolen out
+// from under it and a second writer would proceed in parallel. Refreshing at
+// a fraction of staleLockAge keeps a live holder unambiguously live.
+const heartbeatInterval = staleLockAge / 4
+
+// lockFileContents is the db.lock payload: pid, unix mtime and the owner's
+// nonce, one per line. The nonce is the ownership proof; pid and timestamp
+// remain for humans debugging a stuck lock.
+func lockFileContents(nonce string) string {
+	return fmt.Sprintf("%d\n%d\n%s\n", os.Getpid(), time.Now().Unix(), nonce)
+}
+
+// lockNonceOf reads the owner nonce out of a db.lock payload. Locks written
+// before the nonce existed have only two lines and yield "", which no live
+// manager will ever match, so such a lock is only ever reclaimed by the
+// staleness path rather than being freed by the wrong holder.
+func lockNonceOf(data []byte) string {
+	lines := strings.Split(string(data), "\n")
+	if len(lines) < 3 {
+		return ""
+	}
+	return strings.TrimSpace(lines[2])
+}
+
+func newLockNonce() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand failing is not a reason to hand out a lock with a
+		// guessable token; fall back to something still unique per call.
+		return fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
+}
+
 func (tm *AKGTransactionManager) AcquireLock() error {
 	lockPath := filepath.Join(tm.storageDir, "db.lock")
 	start := time.Now()
@@ -1143,9 +1200,24 @@ func (tm *AKGTransactionManager) AcquireLock() error {
 	for {
 		file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0666)
 		if err == nil {
-			pid := os.Getpid()
-			fmt.Fprintf(file, "%d\n%d\n", pid, time.Now().Unix())
-			file.Close()
+			nonce := newLockNonce()
+			_, werr := io.WriteString(file, lockFileContents(nonce))
+			cerr := file.Close()
+			if werr != nil || cerr != nil {
+				// A lock nobody can prove ownership of is worse than none:
+				// drop it rather than leave a token we did not write.
+				_ = os.Remove(lockPath)
+				if werr != nil {
+					return fmt.Errorf("akg: write db.lock: %w", werr)
+				}
+				return fmt.Errorf("akg: close db.lock: %w", cerr)
+			}
+			tm.lockMu.Lock()
+			tm.lockNonce = nonce
+			tm.lockStop = make(chan struct{})
+			stop := tm.lockStop
+			tm.lockMu.Unlock()
+			go tm.heartbeatLock(lockPath, nonce, stop)
 			return nil
 		}
 
@@ -1155,7 +1227,14 @@ func (tm *AKGTransactionManager) AcquireLock() error {
 		// §4.5); file age is deterministic. A crashed holder's lock is
 		// reclaimed once it is stale.
 		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > staleLockAge {
-			_ = os.Remove(lockPath)
+			// Re-read before stealing. Between the Stat above and this point
+			// the holder may have released and a third manager acquired a
+			// fresh lock; removing on the strength of the earlier mtime alone
+			// would delete that new owner's lock. Only remove the exact stale
+			// file we judged, identified by its nonce.
+			if stale, readErr := os.ReadFile(lockPath); readErr == nil {
+				tm.removeLockIfNonce(lockPath, lockNonceOf(stale))
+			}
 			continue
 		}
 
@@ -1170,9 +1249,60 @@ func (tm *AKGTransactionManager) AcquireLock() error {
 	}
 }
 
-func (tm *AKGTransactionManager) ReleaseLock() {
-	lockPath := filepath.Join(tm.storageDir, "db.lock")
+// heartbeatLock refreshes db.lock's mtime while this manager holds it, and
+// stops the moment the on-disk nonce stops being ours.
+func (tm *AKGTransactionManager) heartbeatLock(lockPath, nonce string, stop <-chan struct{}) {
+	ticker := time.NewTicker(heartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			data, err := os.ReadFile(lockPath)
+			if err != nil || lockNonceOf(data) != nonce {
+				// Someone else owns it now (we were judged stale, or the file
+				// was removed). Refreshing would corrupt their claim.
+				return
+			}
+			_ = os.WriteFile(lockPath, []byte(lockFileContents(nonce)), 0666)
+		}
+	}
+}
+
+// removeLockIfNonce removes db.lock only when it still carries want, so a
+// stale-lock steal cannot delete a lock that was re-acquired in the meantime.
+func (tm *AKGTransactionManager) removeLockIfNonce(lockPath, want string) {
+	data, err := os.ReadFile(lockPath)
+	if err != nil {
+		return
+	}
+	if lockNonceOf(data) != want {
+		return
+	}
 	_ = os.Remove(lockPath)
+}
+
+// ReleaseLock frees db.lock if and only if this manager is the holder.
+// Releasing a lock this manager does not own is a no-op: it used to be an
+// unconditional os.Remove, so any manager pointed at the directory -- one
+// that had never acquired anything -- silently unlocked the database and let
+// a second writer in alongside the real holder.
+func (tm *AKGTransactionManager) ReleaseLock() {
+	tm.lockMu.Lock()
+	nonce := tm.lockNonce
+	stop := tm.lockStop
+	tm.lockNonce = ""
+	tm.lockStop = nil
+	tm.lockMu.Unlock()
+
+	if nonce == "" {
+		return
+	}
+	if stop != nil {
+		close(stop)
+	}
+	tm.removeLockIfNonce(filepath.Join(tm.storageDir, "db.lock"), nonce)
 }
 
 func normalizePath(path string) string {
