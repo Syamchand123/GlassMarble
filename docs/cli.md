@@ -93,8 +93,8 @@ esac
 |---|---|
 | `gmb init [--dir]` | Create `.glassmarble/` + `config.yaml` + empty `akg.json` + `.gitignore` |
 | `gmb analyze [--full] [--commit] [--workers] [--intelligence] [--include-docs] [--json]` | 4-phase pipeline → MVCC commit → intelligence → memory |
-| `gmb watch [--interval 5s]` | Poll for changes, incremental re-analyze |
-| `gmb hooks install\|uninstall` | Git `post-commit` hook |
+| `gmb watch [--interval 5s] [--json]` | Poll for changes, incremental re-analyze. `--json` streams newline-delimited JSON, one object per lifecycle event |
+| `gmb hooks install\|uninstall [--json]` | Git `post-commit` hook. `--json` emits an install/uninstall receipt including whether anything changed |
 
 ### 2. Inspect & Query
 
@@ -125,6 +125,7 @@ esac
 | `gmb visualize <type> [flags]` | 31 types → Mermaid/PlantUML/DOT; `--scope global|folder:|file:` |
 | `gmb visualize list` | Catalog (14 UML + 7 C4 + 4 specialized + 6 analysis) |
 | `gmb visualize check <type>` | Validate type against live graph |
+| `gmb ui [--port] [--host] [--no-open] [--json]` | Local interactive graph server (alias `gmb serve`). `--json` writes one startup document — bound URL, port, pid, graph size — as soon as the listener is up, then keeps serving, so a script can discover a `--port 0` address |
 
 Flags: `--format`, `--scope`, `--entry` (required for `sequence`), `--depth 7`, `--link-level architecture|standard|full`, `--max-nodes`, `--save`, `--render .svg/.png` → [diagrams.md](diagrams.md).
 
@@ -150,3 +151,5 @@ Flags: `--format`, `--scope`, `--entry` (required for `sequence`), `--depth 7`, 
 | `gmb version [--json]` | Version + commit + toolchain |
 
 > Every command supports `--help` and `--json` where noted. Master reference with every flag and example → [commands_master_reference.md](commands_master_reference.md).
+
+Man pages for every command live in [`docs/man/`](man/) (`man -l docs/man/gmb-analyze.1`). They are generated from the command tree — regenerate with `go run ./cmd/man -o docs/man` after changing a command's flags or help text; CI runs `go run ./cmd/man -check` and fails if they are out of date.
