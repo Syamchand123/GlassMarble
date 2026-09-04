@@ -113,7 +113,7 @@ esac
 
 | Command | One-liner |
 |---|---|
-| `gmb drift [--json]` | Layer + `forbidden_deps` + `cycle_budget` check |
+| `gmb drift [--since <commit\|7d>] [--json]` | Layer + `forbidden_deps` + `cycle_budget` check. `--since` compares against a stored snapshot and reports movement (introduced / resolved / pre-existing), failing only on newly introduced breaches |
 | `gmb compare [base.json head.json] [--json]` | Two GraphJSON diffs → structural delta |
 | `gmb snapshot --create\|--list\|--at\|--diff\|--replay` | Point-in-time snapshots (see `architecture_intelligence.md`) |
 | `gmb timeline [--component] [--format]` | Events timeline (text/json/mermaid) |
