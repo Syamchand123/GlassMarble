@@ -111,8 +111,21 @@ func gmVersion(t *testing.T, sb *harness.Sandbox) uint64 {
 
 // exportNodeIDs runs `gmb export` and returns the sorted node IDs, commit
 // hash, and edge count of the exported GraphJSON document.
+// out must be a dot-prefixed name. The export lands inside the sandbox, which
+// is also the repository under analysis, and JSON is a parsed language — so an
+// export written as "graph1.json" becomes a ~100KB source file in the very
+// repository a determinism test is about to re-analyze, and the second run
+// legitimately sees a graph the first did not. Hidden files are skipped by the
+// walker, which keeps the artifact out of the tree being measured.
+//
+// This only surfaced once untracked-but-not-ignored files entered the scan;
+// before that the fixture was writing into the tree and being saved by a
+// filter that hid it.
 func exportNodeIDs(t *testing.T, sb *harness.Sandbox, out string) (ids []string, commit string, edges int) {
 	t.Helper()
+	if !strings.HasPrefix(out, ".") {
+		t.Fatalf("export target %q must be dot-prefixed so it is not analyzed as part of the repository", out)
+	}
 	if _, err := harness.RunGmb(t, sb, "export", "--output", out); err != nil {
 		t.Fatalf("export to %s: %v", out, err)
 	}

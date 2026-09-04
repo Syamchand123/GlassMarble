@@ -59,14 +59,25 @@ func TestStatusDoctorUninitializedRawDir(t *testing.T) {
 	mustRunContains(t, sb, []string{"GlassMarble Doctor: Uninitialized"}, "doctor")
 }
 
-// TestAnalyzeGitRepoNoCommits: git initialized but HEAD never created — every
-// file is untracked, so analysis succeeds and skips them (deviation 2).
+// TestAnalyzeGitRepoNoCommits: git initialized but HEAD never created, so
+// every file is untracked. Analysis ingests them anyway.
+//
+// This asserted "Analyzed 0 files" and "(untracked by git)" until the scan
+// filter was widened from "files git tracks" to "files git does not ignore".
+// Reporting zero files here was the filter's most visible symptom rather than
+// a property worth keeping: someone who runs `git init` and then `gmb analyze`
+// has a repository full of real source code and no commits yet, and telling
+// them nothing was analysed is an answer about git plumbing, not about their
+// code. Nothing is ignored in this sandbox, so main.go is now in scope.
 func TestAnalyzeGitRepoNoCommits(t *testing.T) {
 	sb := harness.NewSandbox(t)
 	sb.RequireGit()
 	sb.MustGit("init", "-q", "-b", "main")
 	sb.WriteFile("main.go", "package main\n\nfunc main() {}\n")
-	out := mustRunContains(t, sb, []string{"Analyzed 0 files", "(untracked by git)"}, "analyze")
+	out := mustRunContains(t, sb, []string{"Analyzed 1 file"}, "analyze")
+	if strings.Contains(out, "(untracked by git)") {
+		t.Errorf("main.go is untracked but not ignored, so it must not be skipped:\n%s", out)
+	}
 	if strings.Contains(out, "HEAD") && strings.Contains(out, "error") {
 		t.Errorf("unexpected HEAD error surfaced:\n%s", out)
 	}

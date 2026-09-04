@@ -141,7 +141,17 @@ type Config struct {
 	// (git ls-files). When the directory is not a git repository the walker
 	// falls back to scanning everything (AUDIT Issue 1.8 / Phase 1C-9).
 	GitTrackedOnly bool
-	Ctx            context.Context
+	// IncludeUntracked widens GitTrackedOnly from "files git tracks" to
+	// "files git does not ignore", adding untracked-but-not-ignored files to
+	// the scan. It has no effect unless GitTrackedOnly is set.
+	//
+	// These are different questions and a code analyser wants the second one:
+	// a source file that has been written but not yet `git add`ed is neither
+	// tracked nor ignored, and excluding it makes new code invisible to
+	// analysis for as long as it is new. Ignored files stay ignored either
+	// way (--exclude-standard).
+	IncludeUntracked bool
+	Ctx              context.Context
 	// OnProgress, when non-nil, is invoked as files are discovered and parsed
 	// so a BubbleTea program can animate a live per-file counter. done is the
 	// number of files emitted so far; total is the number of parse tasks

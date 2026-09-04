@@ -303,6 +303,10 @@ func runAnalysis(cmd *cobra.Command, opts runAnalysisOptions) error {
 	}
 	if _, err := os.Stat(filepath.Join(absDir, ".git")); err == nil {
 		cfg.GitTrackedOnly = true
+		// Analysis wants everything git does not ignore, not merely everything
+		// git tracks: a file written a minute ago is the one most likely to be
+		// asked about, and it is not in the index yet.
+		cfg.IncludeUntracked = true
 	}
 	// Live per-file progress during ingestion so the TUI can animate a real
 	// counter (currently ingestion only reports start/end boundaries).

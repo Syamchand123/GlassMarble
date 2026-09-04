@@ -33,8 +33,8 @@ func TestAnalyzeDeterministicAcrossCheckouts(t *testing.T) {
 		t.Fatalf("fixed-date commits differ across checkouts: %s vs %s", hashA, hashB)
 	}
 
-	idsA, commitA, edgesA := exportNodeIDs(t, sbA, "graphA.json")
-	idsB, commitB, edgesB := exportNodeIDs(t, sbB, "graphB.json")
+	idsA, commitA, edgesA := exportNodeIDs(t, sbA, ".graphA.json")
+	idsB, commitB, edgesB := exportNodeIDs(t, sbB, ".graphB.json")
 
 	if commitA != commitB {
 		t.Errorf("exported commit hash differs: %s vs %s", commitA, commitB)
@@ -65,7 +65,7 @@ func TestRepeatedAnalyzeStableWithVersionBump(t *testing.T) {
 	if v1 != 1 {
 		t.Fatalf("version after first analyze = %d, want 1", v1)
 	}
-	ids1, commit1, edges1 := exportNodeIDs(t, sb, "graph1.json")
+	ids1, commit1, edges1 := exportNodeIDs(t, sb, ".graph1.json")
 
 	if _, err := harness.RunGmb(t, sb, "analyze"); err != nil {
 		t.Fatalf("second analyze: %v", err)
@@ -74,7 +74,7 @@ func TestRepeatedAnalyzeStableWithVersionBump(t *testing.T) {
 	if v2 != v1+1 {
 		t.Errorf("version = %d after re-analyze, want %d", v2, v1+1)
 	}
-	ids2, commit2, edges2 := exportNodeIDs(t, sb, "graph2.json")
+	ids2, commit2, edges2 := exportNodeIDs(t, sb, ".graph2.json")
 
 	if commit1 != commit2 {
 		t.Errorf("commit hash changed across stable re-analyze: %s vs %s", commit1, commit2)

@@ -79,7 +79,7 @@ func Discover(cfg Config, pathCh chan<- string, errorCh chan<- error, skipWarnCh
 	// walking. Falls back to scanning everything if git is unavailable.
 	var tracked map[string]bool
 	if cfg.GitTrackedOnly {
-		tracked = collectGitTrackedFiles(abs, skipWarnCh)
+		tracked = collectGitTrackedFiles(abs, cfg.IncludeUntracked, skipWarnCh)
 	}
 
 	err = filepath.WalkDir(abs, func(p string, d fs.DirEntry, walkErr error) error {
@@ -150,11 +150,27 @@ func Discover(cfg Config, pathCh chan<- string, errorCh chan<- error, skipWarnCh
 	}
 }
 
-// collectGitTrackedFiles runs `git ls-files` in rootDir and returns the set of
-// tracked relative paths (slash-normalized). Returns nil when git is not
-// available so the caller falls back to an unfiltered scan.
-func collectGitTrackedFiles(rootDir string, skipWarnCh chan<- string) map[string]bool {
-	cmd := exec.Command("git", "ls-files", "-z")
+// collectGitTrackedFiles returns the set of relative paths (slash-normalized)
+// a scan is allowed to visit. Returns nil when git is not available so the
+// caller falls back to an unfiltered scan.
+//
+// With includeUntracked, the set also contains files git does not track and
+// does not ignore. That is a different question from "what does git track",
+// and it is the one a code analyser usually means: a source file written but
+// not yet `git add`ed is neither tracked nor ignored, and excluding it makes
+// new code invisible to analysis for exactly as long as it is new — which is
+// when someone is most likely to be asking about it.
+//
+// --others adds the untracked files and --exclude-standard applies .gitignore,
+// .git/info/exclude and the global excludes to them, so ignored files stay
+// ignored either way. Deleted-but-staged paths remain listed and simply are
+// not visited, since the walk only offers paths that exist on disk.
+func collectGitTrackedFiles(rootDir string, includeUntracked bool, skipWarnCh chan<- string) map[string]bool {
+	args := []string{"ls-files", "-z"}
+	if includeUntracked {
+		args = append(args, "--cached", "--others", "--exclude-standard")
+	}
+	cmd := exec.Command("git", args...)
 	cmd.Dir = rootDir
 	var out bytes.Buffer
 	cmd.Stdout = &out
