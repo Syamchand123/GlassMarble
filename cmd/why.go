@@ -62,7 +62,7 @@ Architecture Knowledge Graph and developer memory evidence.`,
 
 		// 1. Retrieve Deterministic Evidence
 		if !asJSON {
-			fmt.Println("Retrieving architectural evidence...")
+			fmt.Fprintln(cmd.ErrOrStderr(), "Retrieving architectural evidence...")
 		}
 		retriever := ai_engine.NewRetriever(rootDir)
 		ctxData := retriever.RetrieveForQuestion(question, ai_engine.RetrieveOptions{
@@ -77,7 +77,7 @@ Architecture Knowledge Graph and developer memory evidence.`,
 
 		// 2. Query AI Architect (with tool capabilities enabled)
 		if !asJSON {
-			fmt.Println("Querying AI Architect...")
+			fmt.Fprintln(cmd.ErrOrStderr(), "Querying AI Architect...")
 		}
 
 		ctx := cmd.Context()
@@ -128,15 +128,15 @@ Architecture Knowledge Graph and developer memory evidence.`,
 				Provider:  cfg.Provider,
 				Citations: citations,
 			}, "", "  ")
-			fmt.Println(string(out))
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			return nil
 		}
 
-		fmt.Println("\n" + tui.StyleH2.Render("=== GlassMarble Architect ==="))
-		fmt.Println(answerText)
+		fmt.Fprintln(cmd.OutOrStdout(), "\n"+tui.StyleH2.Render("=== GlassMarble Architect ==="))
+		fmt.Fprintln(cmd.OutOrStdout(), answerText)
 
 		if len(citations) > 0 {
-			fmt.Println("\n" + tui.StyleMuted.Render("Evidence Citations: "+strings.Join(citations, ", ")))
+			fmt.Fprintln(cmd.OutOrStdout(), "\n"+tui.StyleMuted.Render("Evidence Citations: "+strings.Join(citations, ", ")))
 		}
 
 		return nil

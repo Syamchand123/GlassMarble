@@ -26,7 +26,7 @@ var QueryMemoryTool = Tool{
 			return nil, fmt.Errorf("missing 'query' parameter")
 		}
 
-		store := developer_memory.NewMemoryStore(env.RootDir)
+		store := developer_memory.NewStoreForRepo(env.RootDir)
 		result := developer_memory.QueryMemory(store, query)
 
 		claims := result.Claims

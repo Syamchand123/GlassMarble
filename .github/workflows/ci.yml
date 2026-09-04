@@ -90,6 +90,12 @@ jobs:
       - name: Golden parity gate (visualization)
         run: go test ./internal/visualization_engine/render -run TestGoldenParity -count=1 -v
 
+      # docs/man is generated from the cobra command tree. This fails when a
+      # command gains a flag or changes its help text without the pages being
+      # regenerated, which is how they went missing entirely before.
+      - name: Man page freshness gate
+        run: go run ./cmd/man -check
+
       - name: Testdata comprehensiveness gate
         shell: bash
         run: |
@@ -115,6 +121,13 @@ jobs:
 
       - name: Full test suite (no -short)
         run: go test ./... -count=1 -timeout 30m
+
+      # The MVCC substrate is lock-free on the read path and shares structure
+      # between snapshots, so concurrency defects there are silent data
+      # corruption rather than crashes. The *_NoRace tests in internal/akg
+      # only prove anything under -race.
+      - name: Race detector (graph core)
+        run: go test -race -count=1 -timeout 30m ./internal/akg/... ./internal/code_analysis_engine/...
 
       - name: AKG determinism gate
         run: go test ./internal/akg/... -run TestGraphJSONDeterministic -count=1 -v

@@ -61,7 +61,7 @@ var treeCmd = &cobra.Command{
 		if snapshot == nil || snapshot.Nodes.Len() == 0 {
 			if asJSON {
 				out, _ := json.MarshalIndent(treeJSON{Depth: treeDepth, TotalFiles: 0, TotalSymbols: 0, Files: []treeFileJSON{}}, "", "  ")
-				fmt.Println(string(out))
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
 				return nil
 			}
 			return producterrs.Tagged(fmt.Sprintf("AKG database is empty — try 'gmb analyze' first"), producterrs.ErrEmptySubgraph)
@@ -113,7 +113,7 @@ var treeCmd = &cobra.Command{
 				Files:        files,
 			}
 			out, _ := json.MarshalIndent(tj, "", "  ")
-			fmt.Println(string(out))
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			return nil
 		}
 
@@ -156,7 +156,7 @@ var treeCmd = &cobra.Command{
 		}
 
 		for _, l := range lines {
-			fmt.Println(l)
+			tui.Fprintln(cmd.OutOrStdout(), l)
 		}
 
 		return nil

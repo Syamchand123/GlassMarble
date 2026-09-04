@@ -30,23 +30,23 @@ import (
 )
 
 var (
-	entryPointID  string
-	maxDepth      int
-	includeUnused bool
-	storagePath   string
-	saveFile      string
-	formatFlag    string
-	scopeFlag     string
-	outputFlag    string
-	summaryFlag   bool
-	pagerankFlag  bool
-	communityFlag bool
-	sccFlag       bool
-	renderFlag    string
-	maxNodesFlag  int
-	changedFiles  []string
-	relativeFlag  bool
-	linkLevelFlag string
+	entryPointID     string
+	maxDepth         int
+	includeUnused    bool
+	storagePath      string
+	saveFile         string
+	formatFlag       string
+	scopeFlag        string
+	outputFlag       string
+	summaryFlag      bool
+	pagerankFlag     bool
+	communityFlag    bool
+	sccFlag          bool
+	renderFlag       string
+	maxNodesFlag     int
+	changedFiles     []string
+	relativeFlag     bool
+	linkLevelFlag    string
 	themeFlag        string
 	directionFlag    string
 	includeTestsFlag bool
@@ -137,10 +137,10 @@ Run 'gmb visualize list' to view all 31 supported diagram types.`,
 			ScopePath:     scopePath,
 			MaxNodes:      maxNodesFlag,
 			ChangedFiles:  changedFiles,
-			LinkLevel:    linkLevelFlag,
-			Theme:        themeFlag,
-			Direction:    directionFlag,
-			IncludeTests: includeTestsFlag,
+			LinkLevel:     linkLevelFlag,
+			Theme:         themeFlag,
+			Direction:     directionFlag,
+			IncludeTests:  includeTestsFlag,
 		}
 
 		if cmd.Flags().Changed("pagerank") || cmd.Flags().Changed("community") || cmd.Flags().Changed("scc") {

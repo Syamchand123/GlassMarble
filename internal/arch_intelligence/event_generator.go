@@ -17,6 +17,10 @@ import (
 type CommitMeta struct {
 	Hash      string
 	Timestamp time.Time
+	// BaseHash is the commit of the snapshot being diffed against, stamped
+	// onto every generated event so consumers can tell a single-commit change
+	// from a change accumulated over a range.
+	BaseHash string
 }
 
 // defaultCouplingChangePct is the instability delta that counts as a
@@ -55,16 +59,17 @@ func newEvent(meta CommitMeta, kind archmodel.EventKind, title string, component
 		Timestamp:  meta.Timestamp,
 	})
 	return archmodel.ArchEvent{
-		ID:          eventID(meta.Hash, kind, affected),
-		Kind:        kind,
-		CommitHash:  meta.Hash,
-		Timestamp:   meta.Timestamp,
-		Title:       title,
-		Components:  components,
-		AffectedIDs: affected,
-		Evidence:    b,
-		IntentSrc:   evidence.SourceGit,
-		ValidFrom:   meta.Timestamp,
+		ID:             eventID(meta.Hash, kind, affected),
+		Kind:           kind,
+		CommitHash:     meta.Hash,
+		BaseCommitHash: meta.BaseHash,
+		Timestamp:      meta.Timestamp,
+		Title:          title,
+		Components:     components,
+		AffectedIDs:    affected,
+		Evidence:       b,
+		IntentSrc:      evidence.SourceGit,
+		ValidFrom:      meta.Timestamp,
 	}
 }
 
@@ -117,6 +122,19 @@ func GenerateEvents(
 	}
 	if commitMeta.Timestamp.IsZero() {
 		commitMeta.Timestamp = time.Now()
+	}
+	// The caller already has the baseline; take the commit from it rather than
+	// making every call site remember to pass it.
+	if commitMeta.BaseHash == "" && base != nil {
+		commitMeta.BaseHash = base.CommitHash
+	}
+	// head is guarded above but base was dereferenced in nine places, so a nil
+	// baseline panicked instead of meaning anything. It has an obvious meaning:
+	// the first analysis diffs against an empty architecture, which yields
+	// additions and no removals. Substituting the empty snapshot says that once
+	// rather than threading a nil check through every comparison below.
+	if base == nil {
+		base = &archmodel.ArchSnapshot{}
 	}
 
 	// 1. Component additions/removals.

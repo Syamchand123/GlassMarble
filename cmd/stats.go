@@ -5,14 +5,31 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/arch_intelligence"
 	"github.com/Syamchand123/GlassMarble/internal/archmodel"
 	"github.com/Syamchand123/GlassMarble/internal/config"
 	"github.com/Syamchand123/GlassMarble/internal/product"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/spf13/cobra"
 )
+
+// fitWidth clamps a hardcoded layout width to the terminal when the terminal
+// is narrower, so fixed-width rules and tables stop wrapping into noise on a
+// small screen. Redirected output (pipes, files, CI) reports no width and
+// keeps the natural layout so captured output stays deterministic.
+func fitWidth(natural int) int {
+	w, ok := tui.OutputWidth()
+	if !ok || w >= natural {
+		return natural
+	}
+	if w < 20 {
+		return 20
+	}
+	return w
+}
 
 var (
 	statsBench bool
@@ -79,20 +96,21 @@ link, akg-commit, extract, project, render) and architectural coupling health me
 			}
 			if asJSON {
 				out, _ := json.MarshalIndent(thresholds, "", "  ")
-				fmt.Println(string(out))
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
 				return nil
 			}
 
-			fmt.Println("=== GlassMarble Pipeline Benchmark Gate ===")
-			fmt.Println("For live measurement: gmb analyze --bench")
-			fmt.Println("")
-			fmt.Println("Phase                  Budget     Status")
-			fmt.Println("----------------------------------------")
+			w := cmd.OutOrStdout()
+			tui.Fprintln(w, "=== GlassMarble Pipeline Benchmark Gate ===")
+			tui.Fprintln(w, "For live measurement: gmb analyze --bench")
+			tui.Fprintln(w, "")
+			tui.Fprintln(w, "Phase                  Budget     Status")
+			tui.Fprintln(w, strings.Repeat("-", fitWidth(40)))
 			for _, t := range thresholds {
-				fmt.Printf("%-22s %-10s %s\n", t.Phase, t.Budget, "PASS")
+				tui.Fprintf(w, "%-22s %-10s %s\n", t.Phase, t.Budget, "PASS")
 			}
-			fmt.Println("")
-			fmt.Println("See internal/product/performance.md for Big-O complexity bounds.")
+			tui.Fprintln(w, "")
+			tui.Fprintln(w, "See internal/product/performance.md for Big-O complexity bounds.")
 			return nil
 		}
 
@@ -101,10 +119,12 @@ link, akg-commit, extract, project, render) and architectural coupling health me
 			if os.IsNotExist(err) || len(spans) == 0 {
 				if asJSON {
 					out, _ := json.MarshalIndent(statsTelemetryJSON{Spans: []statsTelemetrySpanJSON{}}, "", "  ")
-					fmt.Println(string(out))
+					fmt.Fprintln(cmd.OutOrStdout(), string(out))
 					return nil
 				}
-				fmt.Println("No telemetry found — run 'gmb analyze' or 'gmb visualize' first to record telemetry.")
+				// A "nothing recorded yet" note explains an empty result; it
+				// is not the telemetry table `gmb stats > file` asked for.
+				tui.Fprintln(cmd.ErrOrStderr(), "No telemetry found — run 'gmb analyze' or 'gmb visualize' first to record telemetry.")
 				return nil
 			}
 			return fmt.Errorf("failed to load telemetry: %w — try 'gmb analyze'", err)
@@ -147,24 +167,26 @@ link, akg-commit, extract, project, render) and architectural coupling health me
 				CommitGate: commitGate,
 			}
 			out, _ := json.MarshalIndent(tj, "", "  ")
-			fmt.Println(string(out))
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			return nil
 		}
 
-		fmt.Println("=== GlassMarble Pipeline Telemetry Spans ===")
-		fmt.Println("")
+		w := cmd.OutOrStdout()
+		rule := strings.Repeat("-", fitWidth(37))
+		tui.Fprintln(w, "=== GlassMarble Pipeline Telemetry Spans ===")
+		tui.Fprintln(w, "")
 
 		if commitGate != nil {
-			fmt.Printf("commit: %.0fms → target ≤ 8s (%s)\n\n", commitGate.DurationMS, commitGate.Status)
+			tui.Fprintf(w, "commit: %.0fms → target ≤ 8s (%s)\n\n", commitGate.DurationMS, commitGate.Status)
 		}
 
-		fmt.Println("Phase                   Duration (ms)")
-		fmt.Println("-------------------------------------")
+		tui.Fprintln(w, "Phase                   Duration (ms)")
+		tui.Fprintln(w, rule)
 		for _, s := range spans {
-			fmt.Printf("%-23s %.2f ms\n", s.Name, s.DurationMS)
+			tui.Fprintf(w, "%-23s %.2f ms\n", s.Name, s.DurationMS)
 		}
-		fmt.Println("-------------------------------------")
-		fmt.Printf("%-23s %.2f ms\n", "Total Pipeline Time", totalMS)
+		tui.Fprintln(w, rule)
+		tui.Fprintf(w, "%-23s %.2f ms\n", "Total Pipeline Time", totalMS)
 		return nil
 	},
 }
@@ -187,8 +209,11 @@ func runArchStats(storageDir string, cmd *cobra.Command, asJSON bool) error {
 	if graph == nil || graph.Nodes == nil || graph.Nodes.Len() == 0 {
 		if asJSON {
 			out, _ := json.MarshalIndent(map[string]string{"error": "no active AKG database"}, "", "  ")
-			fmt.Println(string(out))
-			return nil
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
+			// The payload is still emitted for machine consumers, but the exit
+			// code must match the human path: reporting an error and exiting 0
+			// made --json silently pass in CI where the same command failed.
+			return producterrs.Tagged("AKG database is empty — try 'gmb analyze' first", producterrs.ErrEmptySubgraph)
 		}
 		return producterrs.Tagged("AKG database is empty — try 'gmb analyze' first", producterrs.ErrEmptySubgraph)
 	}
@@ -204,10 +229,10 @@ func runArchStats(storageDir string, cmd *cobra.Command, asJSON bool) error {
 
 	if asJSON {
 		type archStatsJSON struct {
-			Metrics   archmodel.ArchMetrics                 `json:"metrics"`
-			Coupling  []arch_intelligence.ComponentCoupling `json:"component_coupling"`
-			Patterns  []archmodel.DetectedPattern           `json:"patterns"`
-			Smells    []archmodel.ArchSmell                 `json:"smells"`
+			Metrics  archmodel.ArchMetrics                 `json:"metrics"`
+			Coupling []arch_intelligence.ComponentCoupling `json:"component_coupling"`
+			Patterns []archmodel.DetectedPattern           `json:"patterns"`
+			Smells   []archmodel.ArchSmell                 `json:"smells"`
 		}
 		out, _ := json.MarshalIndent(archStatsJSON{
 			Metrics:  res.Metrics,
@@ -215,18 +240,28 @@ func runArchStats(storageDir string, cmd *cobra.Command, asJSON bool) error {
 			Patterns: res.Patterns,
 			Smells:   res.Smells,
 		}, "", "  ")
-		fmt.Println(string(out))
+		fmt.Fprintln(cmd.OutOrStdout(), string(out))
 		return nil
 	}
 
-	fmt.Println("=== Architecture Health (Intelligence) ===")
-	fmt.Println("")
-	fmt.Printf("Nodes: %d | Edges: %d | Components: %d | Cycles: %d | Layer violations: %d\n",
+	w := cmd.OutOrStdout()
+	ruleW := fitWidth(76)
+	rule := strings.Repeat("-", ruleW)
+	// The component-name column absorbs the shrink on a narrow terminal so
+	// the fixed numeric columns stay aligned with their headers.
+	nameW := 48 - (76 - ruleW)
+	if nameW < 16 {
+		nameW = 16
+	}
+
+	tui.Fprintln(w, "=== Architecture Health (Intelligence) ===")
+	tui.Fprintln(w, "")
+	tui.Fprintf(w, "Nodes: %d | Edges: %d | Components: %d | Cycles: %d | Layer violations: %d\n",
 		res.Metrics.TotalNodes, res.Metrics.TotalEdges, len(res.Components),
 		res.Metrics.CycleCount, res.Metrics.LayerViolationCount)
-	fmt.Println("")
-	fmt.Printf("%-48s %-8s %-8s %-8s %-8s %s\n", "Component", "Nodes", "Ca", "Ce", "Instab.", "Status")
-	fmt.Println("----------------------------------------------------------------------------")
+	tui.Fprintln(w, "")
+	tui.Fprintf(w, "%-*s %-8s %-8s %-8s %-8s %s\n", nameW, "Component", "Nodes", "Ca", "Ce", "Instab.", "Status")
+	tui.Fprintln(w, rule)
 	stableWeight := 0
 	totalWeight := 0
 	for _, cc := range res.ComponentCoupling {
@@ -237,25 +272,25 @@ func runArchStats(storageDir string, cmd *cobra.Command, asJSON bool) error {
 		} else {
 			stableWeight += cc.Weight
 		}
-		fmt.Printf("%-48s %-8d %-8d %-8d %-8.2f %s\n", cc.Name, cc.Weight, cc.Ca, cc.Ce, cc.Instability, status)
+		tui.Fprintf(w, "%-*s %-8d %-8d %-8d %-8.2f %s\n", nameW, cc.Name, cc.Weight, cc.Ca, cc.Ce, cc.Instability, status)
 	}
-	fmt.Println("----------------------------------------------------------------------------")
+	tui.Fprintln(w, rule)
 	if totalWeight > 0 {
-		fmt.Printf("Stable component weight: %.0f%% (threshold %.0f%%)\n",
+		tui.Fprintf(w, "Stable component weight: %.0f%% (threshold %.0f%%)\n",
 			float64(stableWeight)/float64(totalWeight)*100, cfg.StableComponentsThreshold*100)
 	}
 	if len(res.Patterns) > 0 {
-		fmt.Println("")
-		fmt.Println("Patterns:")
+		tui.Fprintln(w, "")
+		tui.Fprintln(w, "Patterns:")
 		for _, p := range res.Patterns {
-			fmt.Printf("  %-12s confidence=%.2f\n", p.Kind, p.Confidence)
+			tui.Fprintf(w, "  %-12s confidence=%.2f\n", p.Kind, p.Confidence)
 		}
 	}
 	if len(res.Smells) > 0 {
-		fmt.Println("")
-		fmt.Println("Smells:")
+		tui.Fprintln(w, "")
+		tui.Fprintln(w, "Smells:")
 		for _, s := range res.Smells {
-			fmt.Printf("  [%s] %s\n", s.Severity, s.Title)
+			tui.Fprintf(w, "  [%s] %s\n", s.Severity, s.Title)
 		}
 	}
 	return nil

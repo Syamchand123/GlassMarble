@@ -5,7 +5,11 @@
 // this package only renders display state.
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // === Color Palette (OKLCH-derived AdaptiveColor pairs) ===
 // Primary brand: violet (OKLCH chroma balanced).
@@ -14,10 +18,10 @@ import "github.com/charmbracelet/lipgloss"
 // Neutrals: slate/zinc ramp with >=4.5:1 WCAG AA contrast in both light and dark.
 var (
 	// Brand
-	ColorPrimary  = lipgloss.AdaptiveColor{Light: "#6D28D9", Dark: "#7C3AED"} // violet
-	ColorAccent   = lipgloss.AdaptiveColor{Light: "#0891B2", Dark: "#06B6D4"} // cyan
-	ColorDim      = lipgloss.AdaptiveColor{Light: "#64748B", Dark: "#9CA3AF"} // slate
-	ColorSubtle   = lipgloss.AdaptiveColor{Light: "#CBD5E1", Dark: "#374151"} // border/subtle
+	ColorPrimary = lipgloss.AdaptiveColor{Light: "#6D28D9", Dark: "#7C3AED"} // violet
+	ColorAccent  = lipgloss.AdaptiveColor{Light: "#0891B2", Dark: "#06B6D4"} // cyan
+	ColorDim     = lipgloss.AdaptiveColor{Light: "#64748B", Dark: "#9CA3AF"} // slate
+	ColorSubtle  = lipgloss.AdaptiveColor{Light: "#CBD5E1", Dark: "#374151"} // border/subtle
 
 	// Semantic
 	ColorSuccess   = lipgloss.AdaptiveColor{Light: "#059669", Dark: "#10B981"} // emerald
@@ -155,6 +159,19 @@ const LogoBanner = `
 
 // RenderLogoBanner returns the GlassMarble ASCII art logo banner styled in brand colors.
 func RenderLogoBanner() string {
+	// The ASCII logo has a fixed width. On a terminal too narrow to hold it
+	// the art wraps into noise, so fall back to a single styled line.
+	widest := 0
+	for _, line := range strings.Split(LogoBanner, "\n") {
+		if w := lipgloss.Width(line); w > widest {
+			widest = w
+		}
+	}
+	if w, ok := OutputWidth(); ok && w < widest {
+		return R.NewStyle().Foreground(ColorPrimary).Bold(true).Render("GlassMarble") + "\n" +
+			StyleMuted.Render("AI Architecture Intelligence Platform") + "\n"
+	}
+
 	banner := R.NewStyle().Foreground(ColorPrimary).Bold(true).Render(LogoBanner)
 	tagline := StyleMuted.Render("       AI Architecture Intelligence Platform")
 	return banner + "\n" + tagline + "\n"

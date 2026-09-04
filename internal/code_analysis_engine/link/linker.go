@@ -1,8 +1,10 @@
 package link
 
 import (
+	"errors"
 	"fmt"
 	"log"
+	"runtime/debug"
 	"strings"
 	"sync"
 
@@ -93,6 +95,21 @@ func Link(aggregateOut *aggregate.AggregateOutput, modifiedFiles []string, db Gr
 		buffers[i].SetDB(db)
 	}
 
+	// A panicking pass must fail the whole analysis, never be swallowed.
+	// The commit path sweeps every node of every modified file before
+	// grafting the link output, so silently dropping a pass's buffer
+	// permanently deletes those nodes and edges from the persisted graph.
+	var (
+		passErrMu sync.Mutex
+		passErrs  []error
+	)
+	recordPanic := func(what string, r any) {
+		passErrMu.Lock()
+		defer passErrMu.Unlock()
+		passErrs = append(passErrs, fmt.Errorf("%s panicked: %v", what, r))
+		log.Printf("link: %s panicked: %v\n%s", what, r, debug.Stack())
+	}
+
 	// Launch enabled passes concurrently
 	var wg sync.WaitGroup
 	wg.Add(len(enabled))
@@ -103,7 +120,7 @@ func Link(aggregateOut *aggregate.AggregateOutput, modifiedFiles []string, db Gr
 			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
-					log.Printf("link: pass %q panicked: %v", p.name, r)
+					recordPanic(fmt.Sprintf("pass %q", p.name), r)
 				}
 			}()
 			p.fn(aggregateOut, buffers[i])
@@ -111,6 +128,11 @@ func Link(aggregateOut *aggregate.AggregateOutput, modifiedFiles []string, db Gr
 	}
 
 	wg.Wait()
+
+	if len(passErrs) > 0 {
+		return nil, fmt.Errorf("linking aborted, %d pass(es) failed (the graph was left untouched): %w",
+			len(passErrs), errors.Join(passErrs...))
+	}
 
 	// Merge phase: combine nodes and edges from all buffers.
 	// Nodes are already in per-pass private maps — merge only new ones
@@ -122,7 +144,7 @@ func Link(aggregateOut *aggregate.AggregateOutput, modifiedFiles []string, db Gr
 		defer mergeWg.Done()
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("link: node merge panicked: %v", r)
+				recordPanic("node merge", r)
 			}
 		}()
 		for _, buf := range buffers {
@@ -138,7 +160,7 @@ func Link(aggregateOut *aggregate.AggregateOutput, modifiedFiles []string, db Gr
 		defer mergeWg.Done()
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("link: outbound merge panicked: %v", r)
+				recordPanic("outbound merge", r)
 			}
 		}()
 		outboundCap := make(map[string]int)
@@ -163,7 +185,7 @@ func Link(aggregateOut *aggregate.AggregateOutput, modifiedFiles []string, db Gr
 		defer mergeWg.Done()
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("link: inbound merge panicked: %v", r)
+				recordPanic("inbound merge", r)
 			}
 		}()
 		inboundCap := make(map[string]int)
@@ -185,6 +207,10 @@ func Link(aggregateOut *aggregate.AggregateOutput, modifiedFiles []string, db Gr
 	}()
 
 	mergeWg.Wait()
+
+	if len(passErrs) > 0 {
+		return nil, fmt.Errorf("linking aborted, merge failed: %w", errors.Join(passErrs...))
+	}
 
 	// Post-merge interface dispatch fix (C2-3): call graph may have missed
 	// polymorphic calls because InboundEdges[interface] was empty in its

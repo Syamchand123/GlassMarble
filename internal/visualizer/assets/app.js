@@ -1323,25 +1323,44 @@ async function loadMarbles() {
 }
 
 let mermaidSeq = 0;
+let renderToken = 0;
 
 async function renderMarble(m, rethemeOnly = false) {
   state.currentMarble = m;
+  /* Guard against out-of-order completions: clicking B while A is still
+     fetching must not let A's SVG land last. */
+  const token = ++renderToken;
+  const placeholder = $('diagPlaceholder');
+  const canvas = $('diagCanvas');
+
   $('diagramHead').hidden = false;
   $('diagType').textContent = m.type || 'DIAGRAM';
   $('diagTitle').textContent = m.title || m.name;
-  $('diagPlaceholder').hidden = true;
-  const stage = $('diagStage');
+  canvas.textContent = '';
+  placeholder.hidden = false;
+  placeholder.textContent = 'Rendering…';
+
+  const showMessage = (html) => {
+    if (token !== renderToken) return;
+    placeholder.hidden = false;
+    placeholder.innerHTML = html;
+  };
 
   try {
     const detail = await api(`/api/marbles?name=${encodeURIComponent(m.name)}`);
+    if (token !== renderToken) return;
+
     const code = detail.mermaid || '';
     $('diagSource').textContent = code || detail.raw || '';
     if (!code) {
-      stage.innerHTML = '<p class="diagram__placeholder">This file has no mermaid block — showing raw source below.</p>';
       $('diagSource').hidden = false;
+      $('btnDiagSource').setAttribute('aria-pressed', 'true');
+      showMessage('This file has no mermaid block — showing raw source below.');
       return;
     }
+
     await ensureMermaid();
+    if (token !== renderToken) return;
     window.mermaid.initialize({
       startOnLoad: false,
       securityLevel: 'strict',
@@ -1349,10 +1368,13 @@ async function renderMarble(m, rethemeOnly = false) {
       theme: theme() === 'dark' ? 'dark' : 'neutral',
     });
     const { svg } = await window.mermaid.render(`gmb-diag-${++mermaidSeq}`, code);
-    stage.innerHTML = svg;
+    if (token !== renderToken) return;
+
+    canvas.innerHTML = svg;
+    placeholder.hidden = true;
   } catch (err) {
-    if (!rethemeOnly) toast('Diagram failed to render — showing source', 'warn');
-    stage.innerHTML = `<p class="diagram__placeholder">Mermaid could not render this diagram (${esc(err.message)}).<br>The source is shown below.</p>`;
+    if (!rethemeOnly && token === renderToken) toast('Diagram failed to render — showing source', 'warn');
+    showMessage(`Mermaid could not render this diagram (${esc(err.message)}).<br>The source is shown below.`);
     $('diagSource').hidden = false;
     $('btnDiagSource').setAttribute('aria-pressed', 'true');
   }

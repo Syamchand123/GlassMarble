@@ -54,21 +54,34 @@ Precedence: `flag > GLASSMARBLE_* env > .glassmarble/config.yaml > ~/.glassmarbl
 
 ```mermaid
 flowchart LR
-  E0[0 Success] --> E1[1 General]
-  E1 --> E2[2 Usage]
-  E2 --> E3[3 Scope/Target]
-  E3 --> E4[4 Integrity/Bench]
+  E0[0 Success] --> E1[1 Failure]
+  E1 --> E2[2 Entry point]
+  E2 --> E3[3 Empty subgraph]
+  E3 --> E4[4 Render limit]
+  E4 --> E5[5 Policy violation]
   style E0 fill:#10b981,color:#fff
-  style E4 fill:#ef4444,color:#fff
+  style E5 fill:#f59e0b,color:#fff
 ```
 
 | Code | Meaning | Example |
 |---|---|---|
 | `0` | Success | `gmb status`, `gmb analyze` healthy |
-| `1` | General / filesystem | Missing file, permission |
-| `2` | Usage | Unknown flag, missing `--entry` |
-| `3` | Scope / target | `gmb visualize sequence --entry notFound` |
-| `4` | Integrity / budget | `gmb doctor` dangling, `gmb analyze --bench` over budget |
+| `1` | Failure — the command could not run | Unknown flag, missing file, unreadable config, permission |
+| `2` | Entry point missing or not found | `gmb visualize sequence --entry notFound` |
+| `3` | Empty subgraph — nothing to report on | `gmb hotspot` before `gmb analyze` |
+| `4` | Render limit exceeded | Diagram over `--max-nodes` |
+| `5` | **Policy violation — the command ran fine and found problems** | `gmb lint` violations, `gmb drift` over budget, `gmb doctor` integrity failures, `gmb impact --threshold` exceeded, `gmb analyze --bench` over budget |
+
+Code `5` is what CI should gate on: it separates "the gate found issues"
+from "the tool crashed or was invoked wrongly", which both used to exit `1`.
+
+```bash
+gmb lint; case $? in
+  0) echo "clean" ;;
+  5) echo "violations found — failing the build" ;;
+  *) echo "gmb itself failed" ;;
+esac
+```
 
 ---
 
@@ -80,8 +93,8 @@ flowchart LR
 |---|---|
 | `gmb init [--dir]` | Create `.glassmarble/` + `config.yaml` + empty `akg.json` + `.gitignore` |
 | `gmb analyze [--full] [--commit] [--workers] [--intelligence] [--include-docs] [--json]` | 4-phase pipeline → MVCC commit → intelligence → memory |
-| `gmb watch [--interval 5s]` | Poll for changes, incremental re-analyze |
-| `gmb hooks install\|uninstall` | Git `post-commit` hook |
+| `gmb watch [--interval 5s] [--json]` | Poll for changes, incremental re-analyze. `--json` streams newline-delimited JSON, one object per lifecycle event |
+| `gmb hooks install\|uninstall [--json]` | Git `post-commit` hook. `--json` emits an install/uninstall receipt including whether anything changed |
 
 ### 2. Inspect & Query
 
@@ -100,7 +113,7 @@ flowchart LR
 
 | Command | One-liner |
 |---|---|
-| `gmb drift [--json]` | Layer + `forbidden_deps` + `cycle_budget` check |
+| `gmb drift [--since <commit\|7d>] [--json]` | Layer + `forbidden_deps` + `cycle_budget` check. `--since` compares against a stored snapshot and reports movement (introduced / resolved / pre-existing), failing only on newly introduced breaches |
 | `gmb compare [base.json head.json] [--json]` | Two GraphJSON diffs → structural delta |
 | `gmb snapshot --create\|--list\|--at\|--diff\|--replay` | Point-in-time snapshots (see `architecture_intelligence.md`) |
 | `gmb timeline [--component] [--format]` | Events timeline (text/json/mermaid) |
@@ -112,6 +125,7 @@ flowchart LR
 | `gmb visualize <type> [flags]` | 31 types → Mermaid/PlantUML/DOT; `--scope global|folder:|file:` |
 | `gmb visualize list` | Catalog (14 UML + 7 C4 + 4 specialized + 6 analysis) |
 | `gmb visualize check <type>` | Validate type against live graph |
+| `gmb ui [--port] [--host] [--no-open] [--json]` | Local interactive graph server (alias `gmb serve`). `--json` writes one startup document — bound URL, port, pid, graph size — as soon as the listener is up, then keeps serving, so a script can discover a `--port 0` address |
 
 Flags: `--format`, `--scope`, `--entry` (required for `sequence`), `--depth 7`, `--link-level architecture|standard|full`, `--max-nodes`, `--save`, `--render .svg/.png` → [diagrams.md](diagrams.md).
 
@@ -137,3 +151,5 @@ Flags: `--format`, `--scope`, `--entry` (required for `sequence`), `--depth 7`, 
 | `gmb version [--json]` | Version + commit + toolchain |
 
 > Every command supports `--help` and `--json` where noted. Master reference with every flag and example → [commands_master_reference.md](commands_master_reference.md).
+
+Man pages for every command live in [`docs/man/`](man/) (`man -l docs/man/gmb-analyze.1`). They are generated from the command tree — regenerate with `go run ./cmd/man -o docs/man` after changing a command's flags or help text; CI runs `go run ./cmd/man -check` and fails if they are out of date.

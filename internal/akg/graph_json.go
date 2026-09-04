@@ -1,6 +1,8 @@
 package akg
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -163,6 +165,53 @@ func ExportGraphJSON(graph *CodePropertyGraph, w io.Writer) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(doc)
+}
+
+// ExportGraphJSONVerified serializes the graph exactly as ExportGraphJSON does
+// while, in the same pass, (a) asserting every emitted edge references an
+// emitted node and (b) computing the SHA-256 of the bytes written. It returns
+// the hex digest.
+//
+// This replaces a post-write pass that re-read the whole state file, unmarshaled
+// it into a second document, re-serialized the graph into a third, and compared
+// the two byte slices. That cost roughly the write again — on a 15.5k-node graph
+// the commit was the single most expensive stage of an analysis. Checking the
+// invariant against the document being written gives the same guarantee for one
+// traversal, and the digest lets the caller prove what landed on disk without
+// parsing it back.
+func ExportGraphJSONVerified(graph *CodePropertyGraph, w io.Writer) (string, error) {
+	if graph == nil {
+		return "", fmt.Errorf("cannot export nil graph")
+	}
+	doc := buildGraphJSONDoc(graph)
+
+	// Zero-dangling guard: every persisted edge must reference a persisted
+	// node. Verified against the document actually being written, so a
+	// serialization that dropped nodes still fails the commit.
+	nodeSet := make(map[string]struct{}, len(doc.Nodes))
+	for _, n := range doc.Nodes {
+		nodeSet[n.ID] = struct{}{}
+	}
+	dangling := 0
+	for _, e := range doc.Edges {
+		if _, ok := nodeSet[e.SourceID]; !ok {
+			dangling++
+		}
+		if _, ok := nodeSet[e.TargetID]; !ok {
+			dangling++
+		}
+	}
+	if dangling > 0 {
+		return "", fmt.Errorf("%d dangling edge(s) (edges referencing missing nodes); the write was rejected and the previous good file was kept. Remove .glassmarble/akg.json, then re-run `gmb analyze --full` to rebuild from scratch", dangling)
+	}
+
+	h := sha256.New()
+	enc := json.NewEncoder(io.MultiWriter(w, h))
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(doc); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // ExportGraphJSONCompact serializes the graph with the same deterministic

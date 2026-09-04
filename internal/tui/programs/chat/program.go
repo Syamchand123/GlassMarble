@@ -227,10 +227,23 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case msg.Type == tea.KeyCtrlS:
 			return m.saveLast()
-		case key.Matches(msg, key.NewBinding(key.WithKeys("pgup", "b"))):
+		case msg.Type == tea.KeyEsc:
+			m.quitting = true
+			if m.cancel != nil {
+				m.cancel()
+			}
+			return m, tea.Quit
+
+		// Navigation keys that can never be typed into the composer are always
+		// active. The vi-style letter aliases (b/f/g/G/j/k/space) are only
+		// consulted when the composer is NOT focused — binding them
+		// unconditionally made those characters untypeable in a chat box.
+		case key.Matches(msg, key.NewBinding(key.WithKeys("pgup"))),
+			!m.input.Focused() && key.Matches(msg, key.NewBinding(key.WithKeys("b"))):
 			m.history.PageUp()
 			return m, nil
-		case key.Matches(msg, key.NewBinding(key.WithKeys("pgdown", "f", "space"))):
+		case key.Matches(msg, key.NewBinding(key.WithKeys("pgdown"))),
+			!m.input.Focused() && key.Matches(msg, key.NewBinding(key.WithKeys("f", " ", "space"))):
 			m.history.PageDown()
 			return m, nil
 		case key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+u"))):
@@ -239,25 +252,24 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+d"))):
 			m.history.HalfViewDown()
 			return m, nil
-		case key.Matches(msg, key.NewBinding(key.WithKeys("home", "g"))):
+		case key.Matches(msg, key.NewBinding(key.WithKeys("home"))),
+			!m.input.Focused() && key.Matches(msg, key.NewBinding(key.WithKeys("g"))):
 			m.history.GotoTop()
 			return m, nil
-		case key.Matches(msg, key.NewBinding(key.WithKeys("end", "G"))):
+		case key.Matches(msg, key.NewBinding(key.WithKeys("end"))),
+			!m.input.Focused() && key.Matches(msg, key.NewBinding(key.WithKeys("G"))):
 			m.history.GotoBottom()
 			return m, nil
-		case key.Matches(msg, key.NewBinding(key.WithKeys("up", "k"))):
-			// Scroll history line-by-line. This intentionally takes precedence
-			// over textarea cursor movement when history can still scroll up;
-			// otherwise let textarea handle it (cursor within input).
-			if !m.history.AtTop() {
-				m.history.LineUp(1)
-				return m, nil
-			}
-		case key.Matches(msg, key.NewBinding(key.WithKeys("down", "j"))):
-			if !m.history.AtBottom() {
-				m.history.LineDown(1)
-				return m, nil
-			}
+		case key.Matches(msg, key.NewBinding(key.WithKeys("shift+up"))),
+			!m.input.Focused() && key.Matches(msg, key.NewBinding(key.WithKeys("up", "k"))):
+			// Line-by-line history scroll. With the composer focused the plain
+			// arrows belong to the textarea cursor, so shift+arrows scroll.
+			m.history.LineUp(1)
+			return m, nil
+		case key.Matches(msg, key.NewBinding(key.WithKeys("shift+down"))),
+			!m.input.Focused() && key.Matches(msg, key.NewBinding(key.WithKeys("down", "j"))):
+			m.history.LineDown(1)
+			return m, nil
 		}
 		var inputCmd, vpCmd tea.Cmd
 		m.input, inputCmd = m.input.Update(msg)

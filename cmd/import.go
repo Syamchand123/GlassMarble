@@ -8,6 +8,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
@@ -73,11 +74,11 @@ state always stays verified.`,
 				Edges:      edges,
 			}
 			out, _ := json.MarshalIndent(receipt, "", "  ")
-			fmt.Println(string(out))
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			return nil
 		}
 
-		fmt.Println(views.RenderImportSuccess(input, storageDir, graph.Nodes.Len(), edges))
+		tui.Fprintln(cmd.OutOrStdout(), views.RenderImportSuccess(input, storageDir, graph.Nodes.Len(), edges))
 		return nil
 	},
 }

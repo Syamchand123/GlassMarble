@@ -45,8 +45,13 @@ func TestLearnerCorrectAutoFillsOriginalValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(all) != 2 {
-		t.Fatalf("expected 2 entries (timestamps differ → distinct IDs), got %d", len(all))
+	// Correction IDs are content-derived, so recording the same correction
+	// again is idempotent - matching both the comment above and the documented
+	// contract on Correction.ID ("re-running a CLI command never duplicates
+	// the log"). This previously asserted 2, because the ID folded in
+	// time.Now() and every re-run produced a fresh ID.
+	if len(all) != 1 {
+		t.Fatalf("expected the repeated correction to dedup to 1 entry, got %d", len(all))
 	}
 }
 

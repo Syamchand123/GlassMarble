@@ -5,10 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/ingest"
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/normalize"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/aggregate"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/ingest"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/normalize"
 )
 
 // TestBloatRegressionGuard runs the REAL ingestion pipeline over this

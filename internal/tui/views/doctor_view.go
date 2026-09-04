@@ -20,7 +20,7 @@ func RenderDoctor(rep *akg.DoctorReport) string {
 		"  Graph version: " + itoa(int(rep.GraphVersion)),
 		"  Commit:        " + shortHash(rep.CommitHash),
 		"",
-		"  " + tui.Divider("Checks", 56),
+		"  " + tui.Divider("Checks", maxCardLine()),
 	}
 
 	if !rep.LoadOK {

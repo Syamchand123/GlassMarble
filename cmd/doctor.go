@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
+	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
@@ -61,10 +63,10 @@ parse-back integrity, duplicate node identifiers, and dangling edge references.`
 					FailureCount: 0,
 					Error:        "database uninitialized",
 				}, "", "  ")
-				fmt.Println(string(out))
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
 				return nil
 			}
-			fmt.Println(views.RenderDoctorUninitialized(rep.StatePath))
+			tui.Fprintln(cmd.OutOrStdout(), views.RenderDoctorUninitialized(rep.StatePath))
 			return nil
 		}
 
@@ -99,18 +101,18 @@ parse-back integrity, duplicate node identifiers, and dangling edge references.`
 				FailureCount:  failures,
 			}
 			out, _ := json.MarshalIndent(dj, "", "  ")
-			fmt.Println(string(out))
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			if failures > 0 {
-				return fmt.Errorf("integrity check failed (%d issue(s)) — try 'gmb analyze --full'", failures)
+				return producterrs.Tagged(fmt.Sprintf("integrity check failed (%d issue(s)) — try 'gmb analyze --full'", failures), producterrs.ErrPolicyViolation)
 			}
 			return nil
 		}
 
-		fmt.Println(views.RenderDoctor(rep))
+		tui.Fprintln(cmd.OutOrStdout(), views.RenderDoctor(rep))
 		if failures == 0 {
 			return nil
 		}
-		return fmt.Errorf("integrity check failed (%d issue(s)) — try 'gmb analyze --full'", failures)
+		return producterrs.Tagged(fmt.Sprintf("integrity check failed (%d issue(s)) — try 'gmb analyze --full'", failures), producterrs.ErrPolicyViolation)
 	},
 }
 

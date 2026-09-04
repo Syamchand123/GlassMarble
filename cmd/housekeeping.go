@@ -134,18 +134,18 @@ bulk of snapshot storage (previously 1 GB+ for 29 full-graph snapshots).`,
 					TotalFiles: totalFiles,
 					Warning:    warning,
 				}, "", "  ")
-				fmt.Println(string(out))
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
 				if warning != "" {
 					fmt.Fprintln(os.Stderr, "WARNING: "+warning)
 				}
 				return nil
 			}
-			fmt.Println(views.RenderHousekeepingReport(areaRows, totalBytes, totalFiles))
+			tui.Fprintln(cmd.OutOrStdout(), views.RenderHousekeepingReport(areaRows, totalBytes, totalFiles))
 			if warning != "" {
-				fmt.Printf("\nWARNING: %s\n", warning)
+				tui.Fprintf(cmd.ErrOrStderr(), "\nWARNING: %s\n", warning)
 			}
-			fmt.Println("\nRun `gmb housekeeping --prune` to delete marbles/sessions older than the retention window.")
-			fmt.Println("Run `gmb housekeeping --prune-snapshots --keep 10` to prune old snapshots.")
+			tui.Fprintln(cmd.OutOrStdout(), "\nRun `gmb housekeeping --prune` to delete marbles/sessions older than the retention window.")
+			tui.Fprintln(cmd.OutOrStdout(), "Run `gmb housekeeping --prune-snapshots --keep 10` to prune old snapshots.")
 			return nil
 		}
 
@@ -190,7 +190,7 @@ bulk of snapshot storage (previously 1 GB+ for 29 full-graph snapshots).`,
 					return err
 				}
 				if !ok {
-					fmt.Println("Prune cancelled.")
+					tui.Fprintln(cmd.ErrOrStderr(), "Prune cancelled.")
 					return nil
 				}
 			}
@@ -224,18 +224,18 @@ bulk of snapshot storage (previously 1 GB+ for 29 full-graph snapshots).`,
 				PrunedFiles: prunedFiles,
 				Warning:     warning,
 			}, "", "  ")
-			fmt.Println(string(out))
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			return nil
 		}
 
-		fmt.Println(views.RenderHousekeepingReport(areaRows, totalBytes, totalFiles))
+		tui.Fprintln(cmd.OutOrStdout(), views.RenderHousekeepingReport(areaRows, totalBytes, totalFiles))
 		if pruneSnapshots {
-			fmt.Printf("\nPruned %d snapshot file(s), %s reclaimed (keep: %d).\n", prunedFiles, humanBytes(prunedBytes), keep)
+			tui.Fprintf(cmd.OutOrStdout(), "\nPruned %d snapshot file(s), %s reclaimed (keep: %d).\n", prunedFiles, humanBytes(prunedBytes), keep)
 		} else {
-			fmt.Printf("\nPruned %d file(s), %s reclaimed (retention: %d days).\n", prunedFiles, humanBytes(prunedBytes), olderThan)
+			tui.Fprintf(cmd.OutOrStdout(), "\nPruned %d file(s), %s reclaimed (retention: %d days).\n", prunedFiles, humanBytes(prunedBytes), olderThan)
 		}
 		if warning != "" {
-			fmt.Printf("Remaining total: %s (post-prune estimate)\n", humanBytes(totalBytes-prunedBytes))
+			tui.Fprintf(cmd.OutOrStdout(), "Remaining total: %s (post-prune estimate)\n", humanBytes(totalBytes-prunedBytes))
 		}
 		return nil
 	},

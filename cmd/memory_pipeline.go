@@ -32,18 +32,18 @@ func runMemoryPipelineWithSnapshotOpts(storageDir string, tm *akg.AKGTransaction
 		// will be handled in buildAndStoreSnapshot via noGraph param
 	}
 	//
-//  1. persists the intelligence result to .glassmarble/intelligence/latest.json,
-//  2. builds an ArchSnapshot and stores it in .glassmarble/snapshots/
-//     (skip-writes when the topology is unchanged),
-//  3. generates ArchEvents by diffing against the previous snapshot
-//     (skipped on the very first analysis — there is nothing to diff
-//     against, and GenerateEvents requires a non-nil base),
-//  4. folds the events into developer memory (.glassmarble/memory/),
-//     idempotently — re-analyzing the same commit never duplicates memory.
-//
-// The entire phase is non-fatal (§15.6): a failure here warns and continues,
-// because `gmb analyze` must never fail after the graph is committed.
-graph := tm.GetActiveGraph()
+	//  1. persists the intelligence result to .glassmarble/intelligence/latest.json,
+	//  2. builds an ArchSnapshot and stores it in .glassmarble/snapshots/
+	//     (skip-writes when the topology is unchanged),
+	//  3. generates ArchEvents by diffing against the previous snapshot
+	//     (skipped on the very first analysis — there is nothing to diff
+	//     against, and GenerateEvents requires a non-nil base),
+	//  4. folds the events into developer memory (.glassmarble/memory/),
+	//     idempotently — re-analyzing the same commit never duplicates memory.
+	//
+	// The entire phase is non-fatal (§15.6): a failure here warns and continues,
+	// because `gmb analyze` must never fail after the graph is committed.
+	graph := tm.GetActiveGraph()
 	if graph == nil || graph.Nodes == nil || graph.Nodes.Len() == 0 {
 		return
 	}

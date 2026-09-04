@@ -3,8 +3,12 @@ package akg
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -40,6 +44,18 @@ type AKGTransactionManager struct {
 	// Loading and committing are refused when the state file would exceed it;
 	// 0 means unlimited.
 	MaxStateBytes int64
+
+	// lockMu guards the db.lock ownership fields below. It is separate from
+	// mu: ReleaseLock runs from deferred calls while mu may be held.
+	lockMu sync.Mutex
+	// lockNonce is the token this manager wrote into db.lock when it acquired
+	// it, and empty when it holds nothing. Release and heartbeat both require
+	// the on-disk token to still match it, so one manager can never free or
+	// refresh a lock another holder owns. A PID cannot serve here: PIDs are
+	// reused, and two managers in one process share one.
+	lockNonce string
+	// lockStop ends the heartbeat goroutine for the currently held lock.
+	lockStop chan struct{}
 }
 
 // metadataNodeURI is the ID of the metadata node block written at the top of
@@ -166,18 +182,17 @@ func rebuildIndexes(graph *CodePropertyGraph) {
 	if graph.LineIndex == nil {
 		graph.LineIndex = NewCowMap[string, []*link.ResolvedNode]()
 	}
+	// Bucket per path first: appending through the CowMap re-copied the whole
+	// slice for every node in a file, which is O(m^2) per file and runs on
+	// every load.
+	byPath := make(map[string][]*link.ResolvedNode)
 	graph.Nodes.Iterate(func(_ string, node *link.ResolvedNode) {
 		normPath := normalizePath(node.FileSpec.Path)
 		if normPath != "" {
-			lineNodes, _ := graph.LineIndex.Get(normPath)
-			newLineNodes := make([]*link.ResolvedNode, len(lineNodes)+1)
-			copy(newLineNodes, lineNodes)
-			newLineNodes[len(newLineNodes)-1] = node
-			graph.LineIndex = graph.LineIndex.Set(normPath, newLineNodes)
+			byPath[normPath] = append(byPath[normPath], node)
 		}
 	})
-	for _, normPath := range graph.LineIndex.Keys() {
-		lineNodes, _ := graph.LineIndex.Get(normPath)
+	for normPath, lineNodes := range byPath {
 		sort.Slice(lineNodes, func(i, j int) bool {
 			return lineNodes[i].FileSpec.LineStart < lineNodes[j].FileSpec.LineStart
 		})
@@ -235,17 +250,25 @@ func (tm *AKGTransactionManager) ExecuteDeltaTransaction(payload *link.LinkOutpu
 	// ------------------------------------------------------------------------
 	// SUB-PHASE D.3: Atomic Commit & Persistence
 	// ------------------------------------------------------------------------
-	// Promote shadow snapshot to active graph snapshot
-	tm.container.PromoteShadowSnapshot(shadow)
-
 	// Persist synchronously (single writer, lock held) with tmp+fsync+rename
 	// semantics: the previous good file survives any failure, and errors reach
 	// the caller instead of being swallowed (AUDIT Issue 3 Phase 3B-4/3B-10).
 	// Since Phase C the atomic JSON write is the durability story — no WAL is
 	// involved in the primary write path.
+	//
+	// Durable BEFORE visible. Promoting first meant a failed write left the
+	// in-memory graph strictly ahead of akg.json: this process kept serving a
+	// commit that no restart would ever see, and the error returned to the
+	// caller said the commit had failed while the store behaved as if it had
+	// succeeded. saveToDisk takes the shadow explicitly and PromoteShadowSnapshot
+	// only swaps the active pointer, so ordering them this way costs nothing.
+	// Import (above) already committed in this order.
 	if err := tm.saveToDisk(shadow); err != nil {
 		return fmt.Errorf("failed to persist AKG state: %w", err)
 	}
+
+	// Promote shadow snapshot to active graph snapshot
+	tm.container.PromoteShadowSnapshot(shadow)
 
 	// Broadcast commit event to visual layout subscribers
 	totalEdges := 0
@@ -298,33 +321,41 @@ func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, p
 	// pointing at them (AUDIT Issue 3 Phase 3B-9).
 	oldNodeIDs := make(map[string]bool)
 	deletedNodeIDs := make(map[string]bool)
+
+	// Index maintenance is batched. The values behind KindIndex/HashIndex are
+	// whole collections, so touching them once per node re-copied the entire
+	// collection per node - O(N^2/K) on a full rescan (~12M map inserts for
+	// 15k nodes across ~20 kinds). Instead, mutate one working copy per
+	// affected key here and publish a single CowMap.Set per key afterwards.
+	kindWork := make(map[string]map[string]bool)
+	hashWork := make(map[string]map[string]bool) // hash -> node IDs to drop
+
 	for _, filePath := range modifiedFiles {
 		normPath := normalizePath(filePath)
 		if nodeSet, exists := shadow.FileNodeIndex.Get(normPath); exists {
 			for nodeID := range nodeSet {
 				oldNodeIDs[nodeID] = true
 				if node, ok := shadow.Nodes.Get(nodeID); ok {
-					if kindSet, kindExists := shadow.KindIndex.Get(node.Kind); kindExists {
-						newKindSet := make(map[string]bool, len(kindSet))
-						for k, v := range kindSet {
-							newKindSet[k] = v
+					if _, staged := kindWork[node.Kind]; !staged {
+						if kindSet, kindExists := shadow.KindIndex.Get(node.Kind); kindExists {
+							working := make(map[string]bool, len(kindSet))
+							for k, v := range kindSet {
+								working[k] = v
+							}
+							kindWork[node.Kind] = working
 						}
-						delete(newKindSet, nodeID)
-						shadow.KindIndex = shadow.KindIndex.Set(node.Kind, newKindSet)
+					}
+					if working, ok := kindWork[node.Kind]; ok {
+						delete(working, nodeID)
 					}
 					if node.Properties != nil {
 						if h, ok := node.Properties["hash"]; ok && h != "" {
-							if hashList, hashExists := shadow.HashIndex.Get(h); hashExists {
-								for i, v := range hashList {
-									if v == nodeID {
-										newHashList := make([]string, len(hashList)-1)
-										copy(newHashList, hashList[:i])
-										copy(newHashList[i:], hashList[i+1:])
-										shadow.HashIndex = shadow.HashIndex.Set(h, newHashList)
-										break
-									}
-								}
+							drop, staged := hashWork[h]
+							if !staged {
+								drop = make(map[string]bool)
+								hashWork[h] = drop
 							}
+							drop[nodeID] = true
 						}
 					}
 				}
@@ -336,6 +367,25 @@ func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, p
 			shadow.FileNodeIndex = shadow.FileNodeIndex.Delete(normPath)
 			shadow.LineIndex = shadow.LineIndex.Delete(normPath)
 		}
+	}
+
+	// Publish the batched kind removals (one Set per kind, not per node).
+	for kind, working := range kindWork {
+		shadow.KindIndex = shadow.KindIndex.Set(kind, working)
+	}
+	// Publish the batched hash removals (one rebuild per hash bucket).
+	for h, drop := range hashWork {
+		hashList, exists := shadow.HashIndex.Get(h)
+		if !exists {
+			continue
+		}
+		filtered := make([]string, 0, len(hashList))
+		for _, v := range hashList {
+			if !drop[v] {
+				filtered = append(filtered, v)
+			}
+		}
+		shadow.HashIndex = shadow.HashIndex.Set(h, filtered)
 	}
 
 	// Clean up Entrypoints associated with deleted nodes
@@ -354,51 +404,76 @@ func (tm *AKGTransactionManager) applyDeltaToShadow(shadow *CodePropertyGraph, p
 	// ------------------------------------------------------------------------
 	// Step C.1: Vertex Grafting
 	updatedPaths := make(map[string]bool)
+
+	// Same batching as the sweep: accumulate per-key working copies and publish
+	// one CowMap.Set per key after the loop. Grafting node-by-node previously
+	// re-copied an entire kind set / file set / hash list / line list for every
+	// single node.
+	graftKind := make(map[string]map[string]bool)
+	graftHash := make(map[string][]string)
+	graftFile := make(map[string]map[string]bool)
+	graftLine := make(map[string][]*link.ResolvedNode)
+
 	for nodeID, node := range payload.GraphNodes {
 		if node == nil {
 			continue
 		}
 		shadow.Nodes = shadow.Nodes.Set(nodeID, node)
 
-		existingSet, _ := shadow.KindIndex.Get(node.Kind)
-		newKindSet := make(map[string]bool)
-		for k, v := range existingSet {
-			newKindSet[k] = v
+		if _, staged := graftKind[node.Kind]; !staged {
+			existingSet, _ := shadow.KindIndex.Get(node.Kind)
+			working := make(map[string]bool, len(existingSet)+1)
+			for k, v := range existingSet {
+				working[k] = v
+			}
+			graftKind[node.Kind] = working
 		}
-		newKindSet[nodeID] = true
-		shadow.KindIndex = shadow.KindIndex.Set(node.Kind, newKindSet)
+		graftKind[node.Kind][nodeID] = true
 
 		if node.Properties != nil {
 			if h, ok := node.Properties["hash"]; ok && h != "" {
-				hashList, _ := shadow.HashIndex.Get(h)
-				newHashList := make([]string, len(hashList)+1)
-				copy(newHashList, hashList)
-				newHashList[len(newHashList)-1] = nodeID
-				shadow.HashIndex = shadow.HashIndex.Set(h, newHashList)
+				if _, staged := graftHash[h]; !staged {
+					hashList, _ := shadow.HashIndex.Get(h)
+					working := make([]string, len(hashList), len(hashList)+1)
+					copy(working, hashList)
+					graftHash[h] = working
+				}
+				graftHash[h] = append(graftHash[h], nodeID)
 			}
 		}
 
 		normPath := normalizePath(node.FileSpec.Path)
 		if normPath != "" {
-			fileSet, _ := shadow.FileNodeIndex.Get(normPath)
-			newFileSet := make(map[string]bool, len(fileSet))
-			for k, v := range fileSet {
-				newFileSet[k] = v
-			}
-			newFileSet[nodeID] = true
-			shadow.FileNodeIndex = shadow.FileNodeIndex.Set(normPath, newFileSet)
+			if _, staged := graftFile[normPath]; !staged {
+				fileSet, _ := shadow.FileNodeIndex.Get(normPath)
+				working := make(map[string]bool, len(fileSet)+1)
+				for k, v := range fileSet {
+					working[k] = v
+				}
+				graftFile[normPath] = working
 
-			lineNodes, _ := shadow.LineIndex.Get(normPath)
-			newLineNodes := make([]*link.ResolvedNode, len(lineNodes)+1)
-			copy(newLineNodes, lineNodes)
-			newLineNodes[len(newLineNodes)-1] = node
-			shadow.LineIndex = shadow.LineIndex.Set(normPath, newLineNodes)
+				lineNodes, _ := shadow.LineIndex.Get(normPath)
+				lineWorking := make([]*link.ResolvedNode, len(lineNodes), len(lineNodes)+1)
+				copy(lineWorking, lineNodes)
+				graftLine[normPath] = lineWorking
+			}
+			graftFile[normPath][nodeID] = true
+			graftLine[normPath] = append(graftLine[normPath], node)
 			updatedPaths[normPath] = true
 		}
 	}
 
-	for normPath := range updatedPaths {
-		lineNodes, _ := shadow.LineIndex.Get(normPath)
+	// Publish the batched graft indexes.
+	for kind, working := range graftKind {
+		shadow.KindIndex = shadow.KindIndex.Set(kind, working)
+	}
+	for h, working := range graftHash {
+		shadow.HashIndex = shadow.HashIndex.Set(h, working)
+	}
+	for path, working := range graftFile {
+		shadow.FileNodeIndex = shadow.FileNodeIndex.Set(path, working)
+	}
+	for normPath, lineNodes := range graftLine {
 		sort.Slice(lineNodes, func(i, j int) bool {
 			return lineNodes[i].FileSpec.LineStart < lineNodes[j].FileSpec.LineStart
 		})
@@ -580,8 +655,15 @@ func (tm *AKGTransactionManager) writeJSONState(graph *CodePropertyGraph) error 
 	}
 	defer os.Remove(tmp.Name())
 
-	if err := ExportGraphJSON(graph, tmp); err != nil {
+	// Buffer the encoder: json.Encoder issues many small writes, and an
+	// unbuffered *os.File turns each into a syscall.
+	bw := bufio.NewWriterSize(tmp, 1<<20)
+	wantSum, err := ExportGraphJSONVerified(graph, bw)
+	if err != nil {
 		return fmt.Errorf("JSON serialization failed: %w", err)
+	}
+	if err := bw.Flush(); err != nil {
+		return fmt.Errorf("failed to flush temp JSON state file: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
 		return fmt.Errorf("failed to fsync temp JSON state file: %w", err)
@@ -595,66 +677,56 @@ func (tm *AKGTransactionManager) writeJSONState(graph *CodePropertyGraph) error 
 	}
 
 	// Post-write verification BEFORE the atomic rename: if the staged file is
-	// corrupt or lossy, the previous good file is still in place.
-	if err := tm.verifyJSONFile(tmp.Name(), graph); err != nil {
+	// corrupt, the previous good file is still in place.
+	if err := tm.verifyJSONFile(tmp.Name(), graph, wantSum); err != nil {
 		return err
 	}
 
 	if err := os.Rename(tmp.Name(), jsonPath); err != nil {
 		return fmt.Errorf("failed to atomically rename JSON state file into place: %w", err)
 	}
+
+	// Record the digest alongside the state so corruption at rest is
+	// detectable by tooling without re-deriving the graph.
+	_ = os.WriteFile(jsonPath+".sha256", []byte(wantSum+"\n"), 0o644)
+
+	// An atomic rename is not durable until the containing directory is
+	// fsynced; without this a crash can leave the directory entry pointing at
+	// the old file despite a successful write. Best-effort: directory fsync is
+	// not supported on all platforms.
+	if dir, derr := os.Open(tm.storageDir); derr == nil {
+		_ = dir.Sync()
+		_ = dir.Close()
+	}
 	return nil
 }
 
-// verifyJSONFile re-reads a staged GraphJSON file and asserts it is byte-
-// identical to a fresh export of the in-memory graph. ExportGraphJSON is
-// deterministic (sorted nodes/edges, sorted property keys), so byte equality
-// is the strongest possible parity check: any node/edge/property loss,
-// mutation or ordering drift fails the write before the atomic rename. The
-// zero-dangling guard (every persisted edge must reference real nodes) is
-// also enforced here, preserving the write-time invariant that
-// verifyTTLFile held on the legacy Turtle path (AUDIT Issue 5 Phase 5A-1).
-func (tm *AKGTransactionManager) verifyJSONFile(jsonPath string, graph *CodePropertyGraph) error {
-	data, err := os.ReadFile(jsonPath)
+// verifyJSONFile proves the staged file on disk is exactly the byte stream the
+// serializer produced, by streaming it back through SHA-256 and comparing with
+// the digest computed while writing.
+//
+// This used to re-read the file, unmarshal it into a second document,
+// re-serialize the graph into a third, and byte-compare — roughly the cost of
+// the write again, on the hottest stage of an analysis. The invariants that
+// pass was actually protecting are now enforced where they are cheaper and
+// stronger: ExportGraphJSONVerified checks the zero-dangling guard against the
+// document being written, and the digest detects any truncation or corruption
+// between serialization and the atomic rename (which byte-comparing a
+// re-serialization could not distinguish from a deterministic serializer bug).
+func (tm *AKGTransactionManager) verifyJSONFile(jsonPath string, graph *CodePropertyGraph, wantSum string) error {
+	f, err := os.Open(jsonPath)
 	if err != nil {
 		return fmt.Errorf("post-write JSON verification failed: %w", err)
 	}
+	defer f.Close()
 
-	var doc GraphJSON
-	if err := json.Unmarshal(data, &doc); err != nil {
-		return fmt.Errorf("post-write JSON verification failed: file did not parse back cleanly: %w", err)
-	}
-	if doc.SchemaVersion != graph.SchemaVersion || doc.Version != graph.Version || doc.CommitHash != graph.CommitHash {
-		return fmt.Errorf("post-write JSON verification failed: metadata mismatch (file={schema %d, ver %d, %q} graph={schema %d, ver %d, %q})",
-			doc.SchemaVersion, doc.Version, doc.CommitHash, graph.SchemaVersion, graph.Version, graph.CommitHash)
-	}
-
-	var buf bytes.Buffer
-	if err := ExportGraphJSON(graph, &buf); err != nil {
+	h := sha256.New()
+	if _, err := io.Copy(h, bufio.NewReaderSize(f, 1<<20)); err != nil {
 		return fmt.Errorf("post-write JSON verification failed: %w", err)
 	}
-	if !bytes.Equal(data, buf.Bytes()) {
-		return fmt.Errorf("post-write JSON verification failed: serialized output does not match the in-memory graph; the write was rejected and the previous good file was kept")
-	}
-
-	// Zero-dangling guard: every persisted edge must reference real nodes.
-	// The merged graph is verified as a whole (base + delta), so a dangling
-	// edge is a hard integrity failure, never a tolerated warning.
-	nodeSet := make(map[string]struct{}, len(doc.Nodes))
-	for _, n := range doc.Nodes {
-		nodeSet[n.ID] = struct{}{}
-	}
-	dangling := 0
-	for _, e := range doc.Edges {
-		if _, ok := nodeSet[e.SourceID]; !ok {
-			dangling++
-		}
-		if _, ok := nodeSet[e.TargetID]; !ok {
-			dangling++
-		}
-	}
-	if dangling > 0 {
-		return fmt.Errorf("post-write JSON verification failed: %d dangling edge(s) (edges referencing missing nodes); the write was rejected and the previous good file was kept. Remove .glassmarble/akg.json, then re-run `gmb analyze --full` to rebuild from scratch", dangling)
+	gotSum := hex.EncodeToString(h.Sum(nil))
+	if gotSum != wantSum {
+		return fmt.Errorf("post-write JSON verification failed: staged file digest %s does not match the serialized graph digest %s; the write was rejected and the previous good file was kept", gotSum, wantSum)
 	}
 
 	graph.Verified = true
@@ -1084,6 +1156,42 @@ const staleLockAge = 60 * time.Second
 // lockTimeout bounds how long AcquireLock waits before failing.
 const lockTimeout = 60 * time.Second
 
+// heartbeatInterval is how often the lock holder refreshes db.lock while it
+// works. Staleness is judged from the file's mtime, so without a refresh any
+// transaction running longer than staleLockAge would have its lock stolen out
+// from under it and a second writer would proceed in parallel. Refreshing at
+// a fraction of staleLockAge keeps a live holder unambiguously live.
+const heartbeatInterval = staleLockAge / 4
+
+// lockFileContents is the db.lock payload: pid, unix mtime and the owner's
+// nonce, one per line. The nonce is the ownership proof; pid and timestamp
+// remain for humans debugging a stuck lock.
+func lockFileContents(nonce string) string {
+	return fmt.Sprintf("%d\n%d\n%s\n", os.Getpid(), time.Now().Unix(), nonce)
+}
+
+// lockNonceOf reads the owner nonce out of a db.lock payload. Locks written
+// before the nonce existed have only two lines and yield "", which no live
+// manager will ever match, so such a lock is only ever reclaimed by the
+// staleness path rather than being freed by the wrong holder.
+func lockNonceOf(data []byte) string {
+	lines := strings.Split(string(data), "\n")
+	if len(lines) < 3 {
+		return ""
+	}
+	return strings.TrimSpace(lines[2])
+}
+
+func newLockNonce() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand failing is not a reason to hand out a lock with a
+		// guessable token; fall back to something still unique per call.
+		return fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
+}
+
 func (tm *AKGTransactionManager) AcquireLock() error {
 	lockPath := filepath.Join(tm.storageDir, "db.lock")
 	start := time.Now()
@@ -1092,9 +1200,24 @@ func (tm *AKGTransactionManager) AcquireLock() error {
 	for {
 		file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0666)
 		if err == nil {
-			pid := os.Getpid()
-			fmt.Fprintf(file, "%d\n%d\n", pid, time.Now().Unix())
-			file.Close()
+			nonce := newLockNonce()
+			_, werr := io.WriteString(file, lockFileContents(nonce))
+			cerr := file.Close()
+			if werr != nil || cerr != nil {
+				// A lock nobody can prove ownership of is worse than none:
+				// drop it rather than leave a token we did not write.
+				_ = os.Remove(lockPath)
+				if werr != nil {
+					return fmt.Errorf("akg: write db.lock: %w", werr)
+				}
+				return fmt.Errorf("akg: close db.lock: %w", cerr)
+			}
+			tm.lockMu.Lock()
+			tm.lockNonce = nonce
+			tm.lockStop = make(chan struct{})
+			stop := tm.lockStop
+			tm.lockMu.Unlock()
+			go tm.heartbeatLock(lockPath, nonce, stop)
 			return nil
 		}
 
@@ -1104,7 +1227,14 @@ func (tm *AKGTransactionManager) AcquireLock() error {
 		// §4.5); file age is deterministic. A crashed holder's lock is
 		// reclaimed once it is stale.
 		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > staleLockAge {
-			_ = os.Remove(lockPath)
+			// Re-read before stealing. Between the Stat above and this point
+			// the holder may have released and a third manager acquired a
+			// fresh lock; removing on the strength of the earlier mtime alone
+			// would delete that new owner's lock. Only remove the exact stale
+			// file we judged, identified by its nonce.
+			if stale, readErr := os.ReadFile(lockPath); readErr == nil {
+				tm.removeLockIfNonce(lockPath, lockNonceOf(stale))
+			}
 			continue
 		}
 
@@ -1119,9 +1249,60 @@ func (tm *AKGTransactionManager) AcquireLock() error {
 	}
 }
 
-func (tm *AKGTransactionManager) ReleaseLock() {
-	lockPath := filepath.Join(tm.storageDir, "db.lock")
+// heartbeatLock refreshes db.lock's mtime while this manager holds it, and
+// stops the moment the on-disk nonce stops being ours.
+func (tm *AKGTransactionManager) heartbeatLock(lockPath, nonce string, stop <-chan struct{}) {
+	ticker := time.NewTicker(heartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			data, err := os.ReadFile(lockPath)
+			if err != nil || lockNonceOf(data) != nonce {
+				// Someone else owns it now (we were judged stale, or the file
+				// was removed). Refreshing would corrupt their claim.
+				return
+			}
+			_ = os.WriteFile(lockPath, []byte(lockFileContents(nonce)), 0666)
+		}
+	}
+}
+
+// removeLockIfNonce removes db.lock only when it still carries want, so a
+// stale-lock steal cannot delete a lock that was re-acquired in the meantime.
+func (tm *AKGTransactionManager) removeLockIfNonce(lockPath, want string) {
+	data, err := os.ReadFile(lockPath)
+	if err != nil {
+		return
+	}
+	if lockNonceOf(data) != want {
+		return
+	}
 	_ = os.Remove(lockPath)
+}
+
+// ReleaseLock frees db.lock if and only if this manager is the holder.
+// Releasing a lock this manager does not own is a no-op: it used to be an
+// unconditional os.Remove, so any manager pointed at the directory -- one
+// that had never acquired anything -- silently unlocked the database and let
+// a second writer in alongside the real holder.
+func (tm *AKGTransactionManager) ReleaseLock() {
+	tm.lockMu.Lock()
+	nonce := tm.lockNonce
+	stop := tm.lockStop
+	tm.lockNonce = ""
+	tm.lockStop = nil
+	tm.lockMu.Unlock()
+
+	if nonce == "" {
+		return
+	}
+	if stop != nil {
+		close(stop)
+	}
+	tm.removeLockIfNonce(filepath.Join(tm.storageDir, "db.lock"), nonce)
 }
 
 func normalizePath(path string) string {

@@ -98,7 +98,11 @@ func RunWatch(opts Options, register RegisterFn, relevant EventRelevantFn, finge
 	}
 
 	m := newModel(opts, fingerprint, runAnalysis)
-	p := tea.NewProgram(m, tea.WithOutput(out), tea.WithInput(in), tea.WithMouseCellMotion())
+	// Alt-screen keeps the watch loop's frames out of the scrollback, and is a
+	// precondition for mouse tracking: enabling WithMouseCellMotion on the
+	// normal screen breaks the terminal's own text selection for as long as
+	// the watch runs.
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithOutput(out), tea.WithInput(in), tea.WithMouseCellMotion())
 	m.p = p
 
 	go func() {

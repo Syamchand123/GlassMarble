@@ -119,9 +119,18 @@ func (r *Reasoner) ReasonCommit(ctx context.Context, in ReasonInput) ([]archmode
 	base.Forbidden = r.forbiddenPairs
 	changes := ClassifyChange(*base)
 
+	// The snapshot this run diffed against. Structural changes are derived
+	// from that diff, so when analysis has not run for several commits the
+	// events describe the whole span rather than meta.Hash alone; recording
+	// the baseline is what lets a reader tell the two apart.
+	var baseCommit string
+	if in.BaseSnap != nil {
+		baseCommit = in.BaseSnap.CommitHash
+	}
+
 	events := make([]archmodel.ArchEvent, 0, len(changes))
 	for _, c := range changes {
-		events = append(events, r.buildEvent(meta, c, intent, impact))
+		events = append(events, r.buildEvent(meta, c, intent, impact, baseCommit))
 	}
 	return events, nil
 }
@@ -149,7 +158,7 @@ func (r *Reasoner) ReasonCommitRange(ctx context.Context, repoDir, from, to stri
 			HeadSnap:  nil,
 		}
 		for _, c := range ClassifyChange(in) {
-			events = append(events, r.buildEvent(meta, c, intent, nil))
+			events = append(events, r.buildEvent(meta, c, intent, nil, ""))
 		}
 	}
 	return events, nil
@@ -158,7 +167,7 @@ func (r *Reasoner) ReasonCommitRange(ctx context.Context, repoDir, from, to stri
 // buildEvent assembles one ArchEvent from a classified change. The ID comes
 // from the shared EventID contract, the evidence bundle mixes git facts,
 // code facts and the intent claim, and the title is human-readable.
-func (r *Reasoner) buildEvent(meta *git.CommitMeta, c ClassifiedChange, intent IntentResult, impact []string) archmodel.ArchEvent {
+func (r *Reasoner) buildEvent(meta *git.CommitMeta, c ClassifiedChange, intent IntentResult, impact []string, baseCommit string) archmodel.ArchEvent {
 	b := evidence.Bundle{}
 	if meta != nil && meta.Hash != "" {
 		b.Add(evidence.EvidenceItem{
@@ -172,33 +181,51 @@ func (r *Reasoner) buildEvent(meta *git.CommitMeta, c ClassifiedChange, intent I
 	for _, it := range c.Evidence.Items {
 		b.Add(it)
 	}
-	b.Add(evidence.EvidenceItem{
-		Source:     intent.Source,
-		Reference:  intentRef(meta),
-		Excerpt:    intent.Excerpt,
-		Confidence: intent.Confidence,
-		Timestamp:  meta.Timestamp,
-	})
+	// The intent claim is a separate assertion ("this change happened
+	// BECAUSE X"), not corroborating evidence for the structural change
+	// itself, so a keyword guess about motive does not belong in the bundle
+	// that says the change occurred.
+	//
+	// This also used to be load-bearing for a different reason: Aggregate was
+	// a weighted MINIMUM, so folding a weak guess in here capped every
+	// enriched event at that guess's weight and the best-supported events
+	// ranked last. Aggregate now takes the strongest item, so a weak intent
+	// item would no longer drag the score down -- but it would still be a
+	// category error to file motive as proof of structure, which is why the
+	// distinction stands on its own.
+	//
+	// Only intents backed by more than a message keyword join the bundle;
+	// the intent and its source are recorded on the event either way.
+	if intent.Intent != IntentUnknown && intent.Level != IntentLevelKeyword {
+		b.Add(evidence.EvidenceItem{
+			Source:     intent.Source,
+			Reference:  intentRef(meta),
+			Excerpt:    intent.Excerpt,
+			Confidence: intent.Confidence,
+			Timestamp:  meta.Timestamp,
+		})
+	}
 	components := c.Names
 	if len(components) == 0 {
 		components = impact
 	}
 	ev := archmodel.ArchEvent{
-		ID:            arch_intelligence.EventID(meta.Hash, c.Kind, c.AffectedIDs),
-		Kind:          c.Kind,
-		CommitHash:    meta.Hash,
-		Timestamp:     meta.Timestamp,
-		Title:         titleFor(c),
-		Description:   c.Summary,
-		AffectedIDs:   c.AffectedIDs,
-		Components:    dedupeSorted(components),
-		Evidence:      b,
-		Intent:        string(intent.Intent),
-		IntentSrc:     intent.Source,
-		Tags:          dedupeSorted(c.Tags),
-		RelatedPRs:    meta.RelatedPRs,
-		RelatedIssues: meta.RelatedIssues,
-		ValidFrom:     meta.Timestamp,
+		ID:             arch_intelligence.EventID(meta.Hash, c.Kind, c.AffectedIDs),
+		Kind:           c.Kind,
+		CommitHash:     meta.Hash,
+		BaseCommitHash: baseCommit,
+		Timestamp:      meta.Timestamp,
+		Title:          titleFor(c),
+		Description:    c.Summary,
+		AffectedIDs:    c.AffectedIDs,
+		Components:     dedupeSorted(components),
+		Evidence:       b,
+		Intent:         string(intent.Intent),
+		IntentSrc:      intent.Source,
+		Tags:           dedupeSorted(c.Tags),
+		RelatedPRs:     meta.RelatedPRs,
+		RelatedIssues:  meta.RelatedIssues,
+		ValidFrom:      meta.Timestamp,
 	}
 	return ev
 }

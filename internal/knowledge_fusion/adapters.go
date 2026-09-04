@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/commit_reasoning"
@@ -67,6 +68,15 @@ type LocalGitAdapter struct {
 	MaxCommits int
 	// Warnf receives non-fatal per-commit read failures (nil disables).
 	Warnf func(format string, args ...any)
+
+	// scanOnce memoises the commit walk. FetchRelatedPRs and
+	// FetchRelatedIssues each used to call scanCommits independently, and
+	// scanCommits spawns one `git` subprocess per commit on top of the `git
+	// log` itself - so a single fusion run at the default MaxCommits of 500
+	// forked roughly a thousand processes to read the same history twice.
+	scanOnce sync.Once
+	scanned  []*git.CommitMeta
+	scanErr  error
 }
 
 func (a *LocalGitAdapter) Name() string { return "LocalGitAdapter" }
@@ -164,6 +174,13 @@ func (a *LocalGitAdapter) FetchRelatedIssues(ctx context.Context, refs []string)
 // the scan continues and the failure is reported through Warnf, because a
 // single unreadable commit must not silently discard the rest of history.
 func (a *LocalGitAdapter) scanCommits(ctx context.Context) ([]*git.CommitMeta, error) {
+	a.scanOnce.Do(func() {
+		a.scanned, a.scanErr = a.scanCommitsUncached(ctx)
+	})
+	return a.scanned, a.scanErr
+}
+
+func (a *LocalGitAdapter) scanCommitsUncached(ctx context.Context) ([]*git.CommitMeta, error) {
 	max := a.MaxCommits
 	if max <= 0 {
 		max = 500

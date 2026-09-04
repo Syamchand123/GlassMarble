@@ -19,7 +19,7 @@ func RenderAIDoctor(rep *ai_engine.DoctorReport, maskedKey string) string {
 		tui.KV("Base URL", defaultOrCustom(rep.BaseURL)),
 		tui.KV("API Key", maskedKey+tui.StyleMuted.Render("  ("+rep.KeySource+")")),
 		"",
-		"  " + tui.Divider("Checks", 56),
+		"  " + tui.Divider("Checks", maxCardLine()),
 	}
 
 	if rep.ConfigValid {
@@ -54,7 +54,7 @@ func RenderAIDoctor(rep *ai_engine.DoctorReport, maskedKey string) string {
 			// context deadline) is never hidden behind an ellipsis. Only the
 			// first wrapped line carries the bullet; continuations are
 			// indented under it.
-			wrapped := wrapText(p, maxCardLine-10)
+			wrapped := wrapText(p, maxCardLine()-10)
 			for i, line := range wrapped {
 				if i == 0 {
 					rows = append(rows, "    - "+tui.StyleError.Render(line))

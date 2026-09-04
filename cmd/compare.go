@@ -9,6 +9,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/ingest"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
@@ -58,11 +59,11 @@ against the current working tree.`,
 
 		if asJSON {
 			out, _ := json.MarshalIndent(diff, "", "  ")
-			fmt.Println(string(out))
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			return nil
 		}
 
-		fmt.Println(views.RenderCompare(diff))
+		tui.Fprintln(cmd.OutOrStdout(), views.RenderCompare(diff))
 		return nil
 	},
 }

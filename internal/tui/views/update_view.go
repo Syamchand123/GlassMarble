@@ -65,7 +65,7 @@ func RenderUpdateSuccess(d UpdateData) string {
 	}
 
 	if strings.TrimSpace(d.ReleaseNotes) != "" {
-		rows = append(rows, "", "  "+tui.Divider("Release Highlights", 56))
+		rows = append(rows, "", "  "+tui.Divider("Release Highlights", maxCardLine()))
 		for _, line := range wrapText(d.ReleaseNotes, 70) {
 			rows = append(rows, "  "+line)
 		}

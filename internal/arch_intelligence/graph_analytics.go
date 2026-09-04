@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
@@ -38,6 +39,14 @@ type GraphSnapshot struct {
 	Inbound     map[string][]link.ResolvedEdge
 	Entrypoints []string
 	EdgeCount   int
+
+	// structural caches the structural-edge subset of Outbound. Every
+	// analytics pass -- SCC, PageRank's 20 iterations, reachability, layer
+	// checks, pattern and smell detection -- walks it once per node, and it
+	// was recomputed and reallocated on each of those visits. The snapshot is
+	// immutable, so the filtered result cannot go stale; build it once.
+	structOnce sync.Once
+	structural map[string][]link.ResolvedEdge
 }
 
 // NewGraphSnapshot captures the current CPG state into a GraphSnapshot.
@@ -107,17 +116,36 @@ func (s *GraphSnapshot) Len() int {
 
 // structuralOutbound filters the outbound edges of id to structural edges
 // whose target exists in the snapshot (dangling edges are ignored).
+// The returned slice is owned by the snapshot and shared between callers:
+// read it, never mutate it. Ordering matches Outbound, so the determinism the
+// SCC and PageRank passes rely on is preserved.
 func (s *GraphSnapshot) structuralOutbound(id string) []link.ResolvedEdge {
-	edges := s.Outbound[id]
-	out := make([]link.ResolvedEdge, 0, len(edges))
-	for _, e := range edges {
-		if isStructuralEdge(e.Type) {
-			if _, ok := s.Nodes[e.TargetID]; ok {
-				out = append(out, e)
+	s.structOnce.Do(s.buildStructural)
+	return s.structural[id]
+}
+
+// buildStructural filters every node's outbound edges down to structural
+// edges pointing at nodes that exist in this snapshot.
+func (s *GraphSnapshot) buildStructural() {
+	s.structural = make(map[string][]link.ResolvedEdge, len(s.Outbound))
+	for id, edges := range s.Outbound {
+		var out []link.ResolvedEdge
+		for _, e := range edges {
+			if !isStructuralEdge(e.Type) {
+				continue
 			}
+			if _, ok := s.Nodes[e.TargetID]; !ok {
+				continue
+			}
+			if out == nil {
+				out = make([]link.ResolvedEdge, 0, len(edges))
+			}
+			out = append(out, e)
+		}
+		if out != nil {
+			s.structural[id] = out
 		}
 	}
-	return out
 }
 
 // SCC finds all strongly connected components over structural edges using an
@@ -496,8 +524,36 @@ func DeadCodeNodes(graph *akg.CodePropertyGraph) []string {
 
 // DeadCodeNodesSnapshot is the snapshot-based dead code analysis.
 func DeadCodeNodesSnapshot(snap *GraphSnapshot) []string {
-	if snap == nil || len(snap.Entrypoints) == 0 {
-		return nil
+	return DeadCodeStatsSnapshot(snap).Dead
+}
+
+// ReachabilityStats is the outcome of one dead-code sweep, including the
+// population it was measured over. Callers deriving a ratio need Candidates,
+// not the total node count: Dead only ever contains code units outside
+// excluded paths, so dividing it by every node in the graph (variables,
+// files, packages included) understates deadness by whatever the ratio of
+// code units to other nodes happens to be.
+type ReachabilityStats struct {
+	// Dead lists unreachable code units that are not library API surface.
+	Dead []string
+	// Candidates counts the nodes deadness was actually decided for.
+	Candidates int
+	// Entrypoints counts entrypoints that exist in this graph. Zero means
+	// reachability is undefined, not that everything is reachable.
+	Entrypoints int
+}
+
+// DeadCodeStatsSnapshot runs the dead-code sweep and reports the population
+// it measured. With no entrypoints the result is empty and Entrypoints is 0,
+// because there is no evidence of deadness -- callers must not read that as
+// a clean bill of health.
+func DeadCodeStatsSnapshot(snap *GraphSnapshot) ReachabilityStats {
+	if snap == nil {
+		return ReachabilityStats{}
+	}
+	var stats ReachabilityStats
+	if len(snap.Entrypoints) == 0 {
+		return stats
 	}
 	reachable := make(map[string]bool, snap.Len())
 	var queue []string
@@ -505,7 +561,13 @@ func DeadCodeNodesSnapshot(snap *GraphSnapshot) []string {
 		if _, ok := snap.Nodes[ep]; ok && !reachable[ep] {
 			reachable[ep] = true
 			queue = append(queue, ep)
+			stats.Entrypoints++
 		}
+	}
+	// Entrypoints were declared but none of them survive in this graph, so
+	// the traversal has no roots and proves nothing.
+	if stats.Entrypoints == 0 {
+		return stats
 	}
 	for len(queue) > 0 {
 		cur := queue[0]
@@ -518,23 +580,27 @@ func DeadCodeNodesSnapshot(snap *GraphSnapshot) []string {
 		}
 	}
 
-	var dead []string
 	for _, id := range snap.NodeIDs {
-		if reachable[id] {
-			continue
-		}
 		node := snap.Nodes[id]
 		if node == nil || isExcludedPath(node.FileSpec.Path) {
 			continue
 		}
 		switch node.Kind {
 		case "FUNCTION", "METHOD", "STRUCT", "CLASS", "INTERFACE", "MODULE":
-			if !isAPISurface(snap, id) {
-				dead = append(dead, id)
-			}
+		default:
+			continue
+		}
+		// Counted before the reachability test: the denominator is every
+		// code unit deadness was decided for, reachable ones included.
+		stats.Candidates++
+		if reachable[id] {
+			continue
+		}
+		if !isAPISurface(snap, id) {
+			stats.Dead = append(stats.Dead, id)
 		}
 	}
-	return dead
+	return stats
 }
 
 // CyclomaticComplexity approximates McCabe complexity per function node.

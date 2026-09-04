@@ -655,7 +655,7 @@ func TestQueryArchitectureMemoryTool(t *testing.T) {
 	env := newTestEnv(t)
 
 	// Seed real developer memory data
-	memStore := developer_memory.NewMemoryStore(env.RootDir)
+	memStore := developer_memory.NewStoreForRepo(env.RootDir)
 	mem := &developer_memory.DeveloperMemory{
 		ProjectID: "test-proj",
 	}
@@ -700,7 +700,7 @@ func TestGetArchitectureTimelineTool(t *testing.T) {
 	env := newTestEnv(t)
 
 	// Seed timeline entries
-	memStore := developer_memory.NewMemoryStore(env.RootDir)
+	memStore := developer_memory.NewStoreForRepo(env.RootDir)
 	mem := &developer_memory.DeveloperMemory{
 		ProjectID: "test-proj",
 	}

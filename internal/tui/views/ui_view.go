@@ -18,7 +18,7 @@ func RenderUIServerStart(host string, port int, nodeCount, edgeCount int) string
 		"  Server URL:     " + tui.StyleAccent.Render(url),
 		fmt.Sprintf("  Loaded Graph:   %d nodes, %d edges", nodeCount, edgeCount),
 		"",
-		"  " + tui.Divider("Interactive Features", 52),
+		"  " + tui.Divider("Interactive Features", maxCardLine()),
 		"  • " + tui.StyleCode.Render("2D/3D Force Graph") + "  Zoom, pan, and drag code components",
 		"  • " + tui.StyleCode.Render("Node Inspection") + "   View callers, dependencies, & source coordinates",
 		"  • " + tui.StyleCode.Render("Blast Radius") + "     Simulate refactoring impact in real time",

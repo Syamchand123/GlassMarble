@@ -82,10 +82,10 @@ func TestTimelineCLI_TextAndFull(t *testing.T) {
 	seedTimelineMemory(t, root, timelineSeedEvents(t))
 
 	for _, tc := range []struct {
-		name   string
-		args   []string
-		want   []string
-		not    []string
+		name string
+		args []string
+		want []string
+		not  []string
 	}{
 		{"text", []string{"timeline", "--dir", root}, []string{"billing service added", "auth smell resolved"}, nil},
 		{"full", []string{"timeline", "--dir", root, "--full"}, []string{"billing service added", "commit: ce1", "kind:   SERVICE_ADDED", "components: billing"}, nil},

@@ -11,48 +11,48 @@
 //
 // HOW IT WORKS:
 //
-//	- scorer.go      — FreshnessScore: a PURE function of the claim and
-//	                   the clock. Exponential decay with a half-life that
-//	                   depends on how the claim was established (code 365d,
-//	                   docs 270d, git 180d, LLM 90d). 0.0 for REMOVED or
-//	                   past-ValidUntil claims.
-//	- detector.go    — DetectStaleEntities: memory entities absent from the
-//	                   current architecture snapshot, and
-//	                   MissingEntityClaims: claims whose subject/object
-//	                   entity vanished from the snapshot (reuses
-//	                   archmodel.StaleEntity).
-//	- transitions.go — the deterministic state-transition rules. Presence
-//	                   in the graph drives transitions; a configurable
-//	                   stale-grace period guards against transient absence
-//	                   (plan §9.3's "two consecutive snapshots", expressed
-//	                   in time); a deprecated component that reappears in
-//	                   the graph is restored to CURRENT. Freshness only
-//	                   decays claim ranking. Every decision names its rule
-//	                   and its concrete evidence.
-//	- aging.go       — Ager: orchestrates one aging pass and persists it.
-//	                   State transitions are appended to events.jsonl as
-//	                   STATE_CHANGE events (with SourceRule evidence), so
-//	                   a rebuild of memory from the WAL reproduces aging
-//	                   states exactly. The persisted aggregate carries the
-//	                   WAL-derived states plus a freshness stamp; the
-//	                   temporal-state projection of claims is applied at
-//	                   read time (FreshenMemory / FreshenMemoryWithSnapshot).
+//   - scorer.go      — FreshnessScore: a PURE function of the claim and
+//     the clock. Exponential decay with a half-life that
+//     depends on how the claim was established (code 365d,
+//     docs 270d, git 180d, LLM 90d). 0.0 for REMOVED or
+//     past-ValidUntil claims.
+//   - detector.go    — DetectStaleEntities: memory entities absent from the
+//     current architecture snapshot, and
+//     MissingEntityClaims: claims whose subject/object
+//     entity vanished from the snapshot (reuses
+//     archmodel.StaleEntity).
+//   - transitions.go — the deterministic state-transition rules. Presence
+//     in the graph drives transitions; a configurable
+//     stale-grace period guards against transient absence
+//     (plan §9.3's "two consecutive snapshots", expressed
+//     in time); a deprecated component that reappears in
+//     the graph is restored to CURRENT. Freshness only
+//     decays claim ranking. Every decision names its rule
+//     and its concrete evidence.
+//   - aging.go       — Ager: orchestrates one aging pass and persists it.
+//     State transitions are appended to events.jsonl as
+//     STATE_CHANGE events (with SourceRule evidence), so
+//     a rebuild of memory from the WAL reproduces aging
+//     states exactly. The persisted aggregate carries the
+//     WAL-derived states plus a freshness stamp; the
+//     temporal-state projection of claims is applied at
+//     read time (FreshenMemory / FreshenMemoryWithSnapshot).
 //
 // DESIGN RULES:
 //
-//	- Never destroy knowledge: transitions only move states; nothing is
-//	  deleted. REMOVED / HISTORICAL are terminal for aging — restoring a
-//	  component is a user correction (convention learning) or a new SERVICE_ADDED
-//	  event (developer memory), never a silent revert.
-//	- Deterministic first: every rule is a pure function of the snapshot,
-//	  the memory and the clock. No LLM anywhere in this package.
-//	- Corrections win (convention learning integration): components whose state the
-//	  developer pinned via a STATE correction are exempt from aging
-//	  transitions (WithPinnedStates) — the user's state is authoritative
-//	  until a compensating correction.
-//	- Freshness is derived, never stored as truth: the pure scorer is the
-//	  source; the persisted aggregate keeps a stamp of it for JSON
-//	  consumers, and queries recompute it live via FreshenMemory.
+//   - Never destroy knowledge: transitions only move states; nothing is
+//     deleted. REMOVED / HISTORICAL are terminal for aging — restoring a
+//     component is a user correction (convention learning) or a new SERVICE_ADDED
+//     event (developer memory), never a silent revert.
+//   - Deterministic first: every rule is a pure function of the snapshot,
+//     the memory and the clock. No LLM anywhere in this package.
+//   - Corrections win (convention learning integration): components whose state the
+//     developer pinned via a STATE correction are exempt from aging
+//     transitions (WithPinnedStates) — the user's state is authoritative
+//     until a compensating correction.
+//   - Freshness is derived, never stored as truth: the pure scorer is the
+//     source; the persisted aggregate keeps a stamp of it for JSON
+//     consumers, and queries recompute it live via FreshenMemory.
 //
 // DEPENDENCY DIRECTION (strict, cycle-free):
 //
@@ -279,16 +279,23 @@ func (a *Ager) Age(snap *archmodel.ArchSnapshot, now time.Time) ([]TransitionRes
 }
 
 // transitionEvent builds the STATE_CHANGE event that records one state
-// transition. The ID is deterministic (component + old state + new state +
-// timestamp), the new state is carried in the well-known "state=<STATE>"
-// tag, and the evidence names the rule that decided it.
+// transition. The ID is deterministic in component, old state, new state and
+// the UTC *day* of the transition; the new state is carried in the well-known
+// "state=<STATE>" tag, and the evidence names the rule that decided it.
+//
+// The day, not the instant: the ID previously hashed RFC3339Nano, so two runs
+// of the same transition produced different IDs and the caller's have[ev.ID]
+// dedup could never fire - a component flapping between states appended a new
+// WAL record on every single aging pass, forever, while the doc claimed the ID
+// was deterministic. Day granularity keeps re-runs idempotent while still
+// letting a genuine later transition record itself.
 func (a *Ager) transitionEvent(comp string, old developer_memory.KnowledgeState, dec transitionDecision, now time.Time) archmodel.ArchEvent {
-	sum := sha256.Sum256([]byte(comp + "\x00" + string(old) + "\x00" + string(dec.newState) + "\x00" + now.Format(time.RFC3339Nano)))
+	sum := sha256.Sum256([]byte(comp + "\x00" + string(old) + "\x00" + string(dec.newState) + "\x00" + now.UTC().Format("2006-01-02")))
 	ev := archmodel.ArchEvent{
-		ID:        "aging_" + hex.EncodeToString(sum[:8]),
-		Kind:      archmodel.EventStateChanged,
-		Timestamp: now,
-		Title:     fmt.Sprintf("State change: %s → %s", comp, dec.newState),
+		ID:          "aging_" + hex.EncodeToString(sum[:8]),
+		Kind:        archmodel.EventStateChanged,
+		Timestamp:   now,
+		Title:       fmt.Sprintf("State change: %s → %s", comp, dec.newState),
 		Description: dec.reason,
 		Components:  []string{comp},
 		Tags:        []string{"aging", archmodel.StateTag(string(dec.newState))},

@@ -24,7 +24,7 @@ func RenderDrift(rep *drift.Report) string {
 	}
 	rows = append(rows, cycleLine)
 
-	rows = append(rows, "", "  "+tui.Divider("Violations", 56))
+	rows = append(rows, "", "  "+tui.Divider("Violations", maxCardLine()))
 	if len(rep.Violations) == 0 {
 		rows = append(rows, tui.StyleMuted.Render("  (none)"))
 	}

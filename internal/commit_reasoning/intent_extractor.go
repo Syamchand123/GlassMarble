@@ -132,6 +132,64 @@ var structuralFileRules = []struct {
 		regexp.MustCompile(`(?i)^.*(\.github/workflows/|\.gitlab-ci\.yml|Jenkinsfile|Dockerfile|docker-compose(\.yml|\.yaml)?|Makefile|\.goreleaser\.yml|\.terraform/|terraform\.tf|k8s/|helm/|infra/|\.github/actions/)`),
 		IntentInfrastructure,
 	},
+	// Documentation. Without this rule a docs-only commit could never be
+	// classified structurally and fell through to loose keyword matching,
+	// where a word like "performance" in the summary of the docs being
+	// written won over the docs signal itself.
+	{
+		regexp.MustCompile(`(?i)(^|/)(docs?/|adr/|\.md$|\.mdx$|\.rst$|\.adoc$|\.txt$|CHANGELOG|README|CONTRIBUTING|LICENSE|NOTICE|AUTHORS|CODEOWNERS)`),
+		IntentDocs,
+	},
+}
+
+// conventionalCommitRe matches the Conventional Commits prefix
+// (https://www.conventionalcommits.org): `type(optional scope)!: subject`.
+// When an author states the type explicitly it is a far stronger signal than
+// scanning the prose for topic words, so it is consulted before keywords.
+var conventionalCommitRe = regexp.MustCompile(`^\s*([a-zA-Z]+)(?:\(([^)]*)\))?(!)?:\s`)
+
+// conventionalTypes maps a Conventional Commits type to an intent.
+var conventionalTypes = map[string]Intent{
+	"docs":     IntentDocs,
+	"test":     IntentTest,
+	"tests":    IntentTest,
+	"fix":      IntentFixBug,
+	"bugfix":   IntentFixBug,
+	"hotfix":   IntentFixBug,
+	"feat":     IntentAddFeature,
+	"feature":  IntentAddFeature,
+	"perf":     IntentPerformance,
+	"refactor": IntentRefactor,
+	"style":    IntentRefactor,
+	"security": IntentSecurity,
+	"sec":      IntentSecurity,
+	"build":    IntentInfrastructure,
+	"ci":       IntentInfrastructure,
+	"infra":    IntentInfrastructure,
+	"chore":    IntentInfrastructure,
+	"deps":     IntentDependencyUpdate,
+	"dep":      IntentDependencyUpdate,
+}
+
+// matchConventionalCommit classifies a commit from its Conventional Commits
+// type prefix. Reported at the structural level: the author declared the type,
+// it was not inferred from prose.
+func matchConventionalCommit(subject string) (IntentResult, bool) {
+	m := conventionalCommitRe.FindStringSubmatch(subject)
+	if m == nil {
+		return IntentResult{}, false
+	}
+	intent, ok := conventionalTypes[strings.ToLower(m[1])]
+	if !ok {
+		return IntentResult{}, false
+	}
+	return IntentResult{
+		Intent:     intent,
+		Level:      IntentLevelStructural,
+		Source:     evidence.SourceGit,
+		Confidence: levelConfidence[IntentLevelStructural],
+		Excerpt:    strings.TrimSpace(subject),
+	}, true
 }
 
 // keywordRules are the deterministic Level-2 intent keywords, ordered by
@@ -173,6 +231,14 @@ func (e *IntentExtractor) Extract(ctx context.Context, meta *git.CommitMeta, prD
 	}
 	if meta != nil {
 		if r, ok := e.extractStructural(meta); ok {
+			return r
+		}
+	}
+	// An explicit Conventional Commits type beats prose keyword matching:
+	// "docs: record correctness, performance and CLI work" is a docs commit,
+	// not a performance one.
+	if meta != nil {
+		if r, ok := matchConventionalCommit(meta.Subject); ok {
 			return r
 		}
 	}

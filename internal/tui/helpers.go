@@ -45,6 +45,9 @@ func IsInteractive(in io.Reader, out io.Writer) bool {
 // Columns lays out two styled blocks side by side. leftWidth controls the
 // left column width; the right column gets the remaining space.
 func Columns(left, right string, leftWidth int) string {
+	if leftWidth > 0 {
+		left = lipgloss.NewStyle().Width(leftWidth).Render(left)
+	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 }
 
@@ -52,18 +55,23 @@ func Columns(left, right string, leftWidth int) string {
 //
 //	─── Label ────────────────────────────────────
 func Divider(label string, width int) string {
+	// width is the TOTAL rendered width. It previously counted only the
+	// trailing dashes, so every caller passing a terminal-derived width
+	// produced a line ~7 cells wider than requested and cards overflowed.
 	if width <= 0 {
 		width = 60
 	}
-	label = " " + strings.TrimSpace(label) + " "
-	prefix := StyleDivider.Render("───")
-	mid := StyleDivider.Render(strings.Repeat("─", width))
-	if label != "  " {
-		mid = StyleDivider.Render(strings.Repeat("─", 2)) + " " +
-			StyleH2.Render(strings.TrimSpace(label)) + " " +
-			StyleDivider.Render(strings.Repeat("─", width))
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return StyleDivider.Render(strings.Repeat("─", width))
 	}
-	return prefix + mid
+	head := "── " + label + " "
+	tail := width - lipgloss.Width(head)
+	if tail < 0 {
+		tail = 0
+	}
+	return StyleDivider.Render("── ") + StyleH2.Render(label) + " " +
+		StyleDivider.Render(strings.Repeat("─", tail))
 }
 
 // KV renders a key-value row: key in ColorTextSecondary, value in
@@ -96,8 +104,11 @@ func KeyValueCard(rows []string) string {
 }
 
 func padRight(s string, width int) string {
-	if len(s) >= width {
+	// Display cells, not bytes: a non-ASCII identifier or a CJK path would
+	// otherwise over-count and misalign every column in the row.
+	w := lipgloss.Width(s)
+	if w >= width {
 		return s
 	}
-	return s + strings.Repeat(" ", width-len(s))
+	return s + strings.Repeat(" ", width-w)
 }

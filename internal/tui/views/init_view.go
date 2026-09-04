@@ -22,7 +22,7 @@ func RenderInitSuccess(gmDir string, gitignoreUpdated bool) string {
 	}
 	rows = append(rows,
 		"",
-		"  "+tui.Divider("Next Steps", 48),
+		"  "+tui.Divider("Next Steps", maxCardLine()),
 		"  " + tui.StyleAccent.Render("1. ") + tui.StyleCode.Render("gmb doctor") + tui.StyleMuted.Render("         — Verify environment & parsers"),
 		"  " + tui.StyleAccent.Render("2. ") + tui.StyleCode.Render("gmb analyze") + tui.StyleMuted.Render("        — Ingest & construct knowledge graph"),
 		"  " + tui.StyleAccent.Render("3. ") + tui.StyleCode.Render("gmb visualize list") + tui.StyleMuted.Render(" — Explore available diagram types"),

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
@@ -63,10 +64,10 @@ schema version, commit hash, analysis freshness, and overall graph health.`,
 		if _, err := os.Stat(jsonPath); os.IsNotExist(err) {
 			if asJSON {
 				out, _ := json.MarshalIndent(statusJSON{Initialized: false, Error: "no active AKG database", GeneratedAt: time.Now()}, "", "  ")
-				fmt.Println(string(out))
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
 				return nil
 			}
-			fmt.Println(views.RenderStatusUninitialized(jsonPath))
+			tui.Fprintln(cmd.OutOrStdout(), views.RenderStatusUninitialized(jsonPath))
 			return nil
 		}
 
@@ -161,11 +162,11 @@ schema version, commit hash, analysis freshness, and overall graph health.`,
 				GeneratedAt:    time.Now(),
 			}
 			out, _ := json.MarshalIndent(sj, "", "  ")
-			fmt.Println(string(out))
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			return nil
 		}
 
-		fmt.Println(views.RenderStatus(sd))
+		tui.Fprintln(cmd.OutOrStdout(), views.RenderStatus(sd))
 		return nil
 	},
 }
@@ -189,7 +190,9 @@ func snapshotUsage(storageDir string) (count int, bytes int64) {
 	}
 	// Count snapshots via index if available for accuracy
 	if idxData, err := os.ReadFile(filepath.Join(snapDir, "index.json")); err == nil {
-		var idx []struct{ SnapshotFile string `json:"snapshot_file"` }
+		var idx []struct {
+			SnapshotFile string `json:"snapshot_file"`
+		}
 		if json.Unmarshal(idxData, &idx) == nil {
 			count = len(idx)
 		}

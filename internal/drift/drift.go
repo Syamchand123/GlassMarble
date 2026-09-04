@@ -45,11 +45,6 @@ type Report struct {
 	ForbiddenEdges int         `json:"forbidden_dependencies"`
 }
 
-// LayerIndex assigns nodes to layers by path glob.
-type layerIndex struct {
-	layers []config.DriftLayer
-}
-
 // LayerIndex assigns nodes to layers by path glob. It is exported so Architecture Intelligence
 // (architectural intelligence) can reuse the same layering rules.
 type LayerIndex struct {

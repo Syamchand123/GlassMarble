@@ -8,6 +8,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/impact_analyzer"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
@@ -69,32 +70,32 @@ and exposed test suites before refactoring or deleting a symbol.`,
 
 		if impactVisualizeFlag {
 			diagram := impact_analyzer.RenderMermaidImpact(rep)
-			fmt.Println(diagram)
+			tui.Fprintln(cmd.OutOrStdout(), diagram)
 			return nil
 		}
 
 		if impactTestsOnlyFlag {
 			if len(rep.ImpactedTestFiles) == 0 {
-				fmt.Printf("No test suites directly or transitively depend on %q\n", targetQuery)
+				tui.Fprintf(cmd.OutOrStdout(), "No test suites directly or transitively depend on %q\n", targetQuery)
 			} else {
-				fmt.Println(strings.Join(rep.ImpactedTestFiles, "\n"))
+				tui.Fprintln(cmd.OutOrStdout(), strings.Join(rep.ImpactedTestFiles, "\n"))
 			}
 			return nil
 		}
 
 		if impactJSONFlag {
 			out, _ := json.MarshalIndent(rep, "", "  ")
-			fmt.Println(string(out))
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			if impactThresholdFlag > 0 && rep.RiskScore > impactThresholdFlag {
-				return producterrs.Tagged(fmt.Sprintf("risk score %d exceeds threshold %d", rep.RiskScore, impactThresholdFlag), producterrs.ErrValidation)
+				return producterrs.Tagged(fmt.Sprintf("risk score %d exceeds threshold %d", rep.RiskScore, impactThresholdFlag), producterrs.ErrPolicyViolation)
 			}
 			return nil
 		}
 
-		fmt.Println(views.RenderImpactReport(rep))
+		tui.Fprintln(cmd.OutOrStdout(), views.RenderImpactReport(rep))
 
 		if impactThresholdFlag > 0 && rep.RiskScore > impactThresholdFlag {
-			return producterrs.Tagged(fmt.Sprintf("risk score %d exceeds configured threshold of %d", rep.RiskScore, impactThresholdFlag), producterrs.ErrValidation)
+			return producterrs.Tagged(fmt.Sprintf("risk score %d exceeds configured threshold of %d", rep.RiskScore, impactThresholdFlag), producterrs.ErrPolicyViolation)
 		}
 
 		return nil

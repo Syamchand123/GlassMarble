@@ -86,7 +86,7 @@ var inspectCmd = &cobra.Command{
 		if _, err := os.Stat(filepath.Join(storageDir, "akg.json")); os.IsNotExist(err) {
 			if asJSON {
 				out, _ := json.MarshalIndent(map[string]string{"error": "no active AKG database"}, "", "  ")
-				fmt.Println(string(out))
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
 				return nil
 			}
 			return producterrs.Tagged("AKG database is empty — try 'gmb analyze' first", producterrs.ErrEmptySubgraph)
@@ -124,7 +124,7 @@ var inspectCmd = &cobra.Command{
 					Out:        cmd.OutOrStdout(),
 				})
 			}
-			return streamNodeList(storageDir, asJSON)
+			return streamNodeList(cmd, storageDir, asJSON)
 		}
 
 		if inspectSearch != "" {
@@ -141,14 +141,14 @@ var inspectCmd = &cobra.Command{
 					Out:        cmd.OutOrStdout(),
 				})
 			}
-			return streamNodeSearch(storageDir, asJSON)
+			return streamNodeSearch(cmd, storageDir, asJSON)
 		}
 
 		if len(args) > 0 {
 			if interactive {
 				return inspectprog.RenderDetail(cmd.OutOrStdout(), storageDir, args[0])
 			}
-			return showNodeDetails(storageDir, args[0], asJSON)
+			return showNodeDetails(cmd, storageDir, args[0], asJSON)
 		}
 
 		return cmd.Help()
@@ -181,7 +181,7 @@ func findNodeAtLine(storageDir, filePath string, line int) (string, error) {
 	return bestID, nil
 }
 
-func streamNodeList(storageDir string, asJSON bool) error {
+func streamNodeList(cmd *cobra.Command, storageDir string, asJSON bool) error {
 	var collected []inspectNodeRowJSON
 	err := akg.StreamNodes(storageDir, func(n *link.ResolvedNode) bool {
 		if n.Kind == "FUNCTION" || n.Kind == "METHOD" {
@@ -212,24 +212,25 @@ func streamNodeList(storageDir string, asJSON bool) error {
 			Count: len(collected),
 			Nodes: collected,
 		}, "", "  ")
-		fmt.Println(string(out))
+		fmt.Fprintln(cmd.OutOrStdout(), string(out))
 		return nil
 	}
 
-	fmt.Println("=== Entry Points & Callable Symbols ===")
+	w := cmd.OutOrStdout()
+	tui.Fprintln(w, "=== Entry Points & Callable Symbols ===")
 	count := 0
 	for _, n := range collected {
-		fmt.Printf("  - [%s] %s (%s:L%d)\n", n.Kind, n.ID, n.File, n.Line)
+		tui.Fprintf(w, "  - [%s] %s (%s:L%d)\n", n.Kind, n.ID, n.File, n.Line)
 		count++
 		if count >= 30 {
-			fmt.Println("  ... (showing first 30 entry points)")
+			tui.Fprintln(w, "  ... (showing first 30 entry points)")
 			break
 		}
 	}
 	return nil
 }
 
-func streamNodeSearch(storageDir string, asJSON bool) error {
+func streamNodeSearch(cmd *cobra.Command, storageDir string, asJSON bool) error {
 	var collected []inspectNodeRowJSON
 	lowerSearch := strings.ToLower(inspectSearch)
 	err := akg.StreamNodes(storageDir, func(n *link.ResolvedNode) bool {
@@ -262,17 +263,18 @@ func streamNodeSearch(storageDir string, asJSON bool) error {
 			Count: len(collected),
 			Nodes: collected,
 		}, "", "  ")
-		fmt.Println(string(out))
+		fmt.Fprintln(cmd.OutOrStdout(), string(out))
 		return nil
 	}
 
-	fmt.Printf("=== Search Results for '%s' ===\n", inspectSearch)
+	w := cmd.OutOrStdout()
+	tui.Fprintf(w, "=== Search Results for '%s' ===\n", inspectSearch)
 	count := 0
 	for _, n := range collected {
-		fmt.Printf("  ID: %s\n  Kind: %s | File: %s:L%d\n  Primitive: %s\n\n", n.ID, n.Kind, n.File, n.Line, n.Primitive)
+		tui.Fprintf(w, "  ID: %s\n  Kind: %s | File: %s:L%d\n  Primitive: %s\n\n", n.ID, n.Kind, n.File, n.Line, n.Primitive)
 		count++
 		if count >= 20 {
-			fmt.Println("... (truncated to top 20 matches)")
+			tui.Fprintln(w, "... (truncated to top 20 matches)")
 			break
 		}
 	}
@@ -322,7 +324,7 @@ func collectNodeRows(storageDir string, search bool, query string) ([]inspectpro
 	return rows, nil
 }
 
-func showNodeDetails(storageDir, targetID string, asJSON bool) error {
+func showNodeDetails(cmd *cobra.Command, storageDir, targetID string, asJSON bool) error {
 	node, outEdges, inEdges, err := akg.QueryNode(storageDir, targetID)
 	if err != nil {
 		return fmt.Errorf("failed to open AKG database: %w — try 'gmb analyze'", err)
@@ -356,34 +358,35 @@ func showNodeDetails(storageDir, targetID string, asJSON bool) error {
 			Inbound:    inb,
 		}
 		out, _ := json.MarshalIndent(dj, "", "  ")
-		fmt.Println(string(out))
+		fmt.Fprintln(cmd.OutOrStdout(), string(out))
 		return nil
 	}
 
-	fmt.Printf("=== Node Details: %s ===\n", node.ID)
-	fmt.Printf("  Name:      %s\n", node.Name)
-	fmt.Printf("  Kind:      %s\n", node.Kind)
-	fmt.Printf("  Primitive: %s\n", node.Primitive)
-	fmt.Printf("  File Path: %s (L%d - L%d)\n", node.FileSpec.Path, node.FileSpec.LineStart, node.FileSpec.LineEnd)
+	w := cmd.OutOrStdout()
+	tui.Fprintf(w, "=== Node Details: %s ===\n", node.ID)
+	tui.Fprintf(w, "  Name:      %s\n", node.Name)
+	tui.Fprintf(w, "  Kind:      %s\n", node.Kind)
+	tui.Fprintf(w, "  Primitive: %s\n", node.Primitive)
+	tui.Fprintf(w, "  File Path: %s (L%d - L%d)\n", node.FileSpec.Path, node.FileSpec.LineStart, node.FileSpec.LineEnd)
 
 	if len(node.Properties) > 0 {
-		fmt.Println("  Properties:")
+		tui.Fprintln(w, "  Properties:")
 		for k, v := range node.Properties {
-			fmt.Printf("    %s: %s\n", k, v)
+			tui.Fprintf(w, "    %s: %s\n", k, v)
 		}
 	}
 
 	if len(outEdges) > 0 {
-		fmt.Printf("  Outbound Edges (%d):\n", len(outEdges))
+		tui.Fprintf(w, "  Outbound Edges (%d):\n", len(outEdges))
 		for _, e := range outEdges {
-			fmt.Printf("    -> %s [%s] (L%d)\n", e.TargetID, e.Type, e.LineNumber)
+			tui.Fprintf(w, "    -> %s [%s] (L%d)\n", e.TargetID, e.Type, e.LineNumber)
 		}
 	}
 
 	if len(inEdges) > 0 {
-		fmt.Printf("  Inbound Edges (%d):\n", len(inEdges))
+		tui.Fprintf(w, "  Inbound Edges (%d):\n", len(inEdges))
 		for _, e := range inEdges {
-			fmt.Printf("    <- %s [%s] (L%d)\n", e.SourceID, e.Type, e.LineNumber)
+			tui.Fprintf(w, "    <- %s [%s] (L%d)\n", e.SourceID, e.Type, e.LineNumber)
 		}
 	}
 
@@ -421,17 +424,17 @@ func printLanguagesReport(cmd *cobra.Command, asJSON bool) error {
 
 	if asJSON {
 		out, _ := json.MarshalIndent(specs, "", "  ")
-		fmt.Println(string(out))
+		fmt.Fprintln(cmd.OutOrStdout(), string(out))
 		return nil
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintln(out, "GlassMarble 14-Language Support Matrix (Phase 6) — coverage values are static estimates:")
-	fmt.Fprintln(out, "")
-	fmt.Fprintln(out, "Language    Grammar     Tier    Extensions")
-	fmt.Fprintln(out, "--------------------------------------------------------")
+	tui.Fprintln(out, "GlassMarble 14-Language Support Matrix (Phase 6) — coverage values are static estimates:")
+	tui.Fprintln(out, "")
+	tui.Fprintln(out, "Language    Grammar     Tier    Extensions")
+	tui.Fprintln(out, strings.Repeat("-", fitWidth(56)))
 	for _, s := range specs {
-		fmt.Fprintf(out, "%-12s%-12s%-8s%s\n", s.Language, s.Grammar, s.Tier, strings.Join(s.Extensions, ", "))
+		tui.Fprintf(out, "%-12s%-12s%-8s%s\n", s.Language, s.Grammar, s.Tier, strings.Join(s.Extensions, ", "))
 	}
 	return nil
 }

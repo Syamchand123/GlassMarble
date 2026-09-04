@@ -18,7 +18,7 @@ func RenderSessions(list []session.Summary) string {
 		tui.StyleH2.Render(fmt.Sprintf("  AI Chat Sessions — %d session(s)", len(list))),
 		"",
 		"  " + tui.StyleLabel.Render(pad("ID", 20)+pad("UPDATED", 20)+pad("PROVIDER/MODEL", 28)+pad("MSGS", 7)+pad("TURNS", 8)+pad("TOKENS", 10)+pad("COST", 9)+pad("TOOLS", 7)),
-		"  " + tui.Divider("", 96),
+		"  " + tui.Divider("", maxCardLine()),
 	}
 	for _, s := range list {
 		rows = append(rows, fmt.Sprintf("  %s %s %s %5d %6d %8d %9s %7d",

@@ -8,6 +8,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
@@ -50,7 +51,7 @@ var hotspotCmd = &cobra.Command{
 		if snapshot == nil || snapshot.Nodes.Len() == 0 {
 			if asJSON {
 				out, _ := json.MarshalIndent(map[string]any{"top": 0, "hotspots": []nodeDegree{}}, "", "  ")
-				fmt.Println(string(out))
+				fmt.Fprintln(cmd.OutOrStdout(), string(out))
 				return nil
 			}
 			return producterrs.Tagged("AKG database is empty — try 'gmb analyze' first", producterrs.ErrEmptySubgraph)
@@ -96,7 +97,7 @@ var hotspotCmd = &cobra.Command{
 				"top":      limit,
 				"hotspots": top,
 			}, "", "  ")
-			fmt.Println(string(out))
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
 			return nil
 		}
 
@@ -112,7 +113,7 @@ var hotspotCmd = &cobra.Command{
 				Primitive: d.Primitive,
 			})
 		}
-		fmt.Println(views.RenderHotspot(requestedTop, viewRows))
+		tui.Fprintln(cmd.OutOrStdout(), views.RenderHotspot(requestedTop, viewRows))
 
 		return nil
 	},

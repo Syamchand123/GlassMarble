@@ -2,13 +2,16 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	producterrs "github.com/Syamchand123/GlassMarble/internal/product/errors"
+	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/Syamchand123/GlassMarble/internal/visualizer"
 	"github.com/spf13/cobra"
@@ -19,7 +22,26 @@ var (
 	uiHostFlag   string
 	uiOpenFlag   bool
 	uiNoOpenFlag bool
+	uiJSONFlag   bool
 )
+
+// uiJSON is the startup document emitted by `gmb ui --json`. The server is a
+// long-running process with no natural result, so the machine-readable answer
+// is "where did it bind and what is it serving": one complete document written
+// once the listener is up, after which the process keeps serving as usual.
+type uiJSON struct {
+	Status     string    `json:"status"`
+	URL        string    `json:"url"`
+	Host       string    `json:"host"`
+	Port       int       `json:"port"`
+	PID        int       `json:"pid"`
+	RootDir    string    `json:"root_dir"`
+	StorageDir string    `json:"storage_dir"`
+	Nodes      int       `json:"nodes"`
+	Edges      int       `json:"edges"`
+	AutoOpen   bool      `json:"auto_open"`
+	StartedAt  time.Time `json:"started_at"`
+}
 
 var uiCmd = &cobra.Command{
 	Use:     "ui",
@@ -28,7 +50,12 @@ var uiCmd = &cobra.Command{
 	Short:   "Launch local interactive architecture visualizer web server",
 	Long: `Starts a lightweight, zero-dependency local web server serving an interactive
 2D/3D force-directed architecture graph with real-time node inspection, search,
-and blast-radius simulation.`,
+and blast-radius simulation.
+
+With --json the bound address and graph size are written to stdout as a single
+JSON document as soon as the listener is up; the server then keeps running, so
+a supervising script can read the document, learn the URL, and leave the
+process serving.`,
 	Example: `  # Launch interactive visualizer and open default browser
   gmb ui
 
@@ -36,7 +63,10 @@ and blast-radius simulation.`,
   gmb ui --port 3000 --no-open
 
   # Equivalent alias
-  gmb serve -p 8080`,
+  gmb serve -p 8080
+
+  # Discover the bound URL from a script (auto-assigned port)
+  gmb ui --port 0 --no-open --json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		rootDir := resolveDir(cmd)
 
@@ -50,7 +80,9 @@ and blast-radius simulation.`,
 			return producterrs.Tagged("no analyzed Architecture Knowledge Graph found — try 'gmb analyze' first", producterrs.ErrEmptySubgraph)
 		}
 
-		autoOpen := uiOpenFlag && !uiNoOpenFlag
+		// A browser popping open is human-facing behaviour; a JSON consumer
+		// gets the URL from the document instead.
+		autoOpen := uiOpenFlag && !uiNoOpenFlag && !uiJSONFlag
 
 		server := visualizer.NewServer(graph, visualizer.ServerOptions{
 			Host:     uiHostFlag,
@@ -73,10 +105,32 @@ and blast-radius simulation.`,
 			edgeCount = graph.OutboundEdges.Len()
 		}
 
-		fmt.Println(views.RenderUIServerStart(uiHostFlag, port, nodeCount, edgeCount))
+		if uiJSONFlag {
+			out, _ := json.MarshalIndent(uiJSON{
+				Status:     "listening",
+				URL:        fmt.Sprintf("http://%s:%d", uiHostFlag, port),
+				Host:       uiHostFlag,
+				Port:       port,
+				PID:        os.Getpid(),
+				RootDir:    rootDir,
+				StorageDir: storageDir,
+				Nodes:      nodeCount,
+				Edges:      edgeCount,
+				AutoOpen:   autoOpen,
+				StartedAt:  time.Now(),
+			}, "", "  ")
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
+		} else {
+			tui.Fprintln(cmd.OutOrStdout(), views.RenderUIServerStart(uiHostFlag, port, nodeCount, edgeCount))
+		}
 
 		<-ctx.Done()
-		fmt.Println("\nShutting down visualizer server...")
+		if uiJSONFlag {
+			// stdout is spoken for by the startup document.
+			fmt.Fprintln(cmd.ErrOrStderr(), "Shutting down visualizer server...")
+		} else {
+			tui.Fprintln(cmd.ErrOrStderr(), "\nShutting down visualizer server...")
+		}
 		return server.Stop()
 	},
 }
@@ -86,6 +140,7 @@ func init() {
 	uiCmd.Flags().StringVar(&uiHostFlag, "host", "127.0.0.1", "Host address to bind to")
 	uiCmd.Flags().BoolVarP(&uiOpenFlag, "open", "o", true, "Automatically open default web browser")
 	uiCmd.Flags().BoolVar(&uiNoOpenFlag, "no-open", false, "Do not open web browser automatically")
+	uiCmd.Flags().BoolVar(&uiJSONFlag, "json", false, "Emit a machine-readable JSON startup document, then keep serving")
 
 	rootCmd.AddCommand(uiCmd)
 }

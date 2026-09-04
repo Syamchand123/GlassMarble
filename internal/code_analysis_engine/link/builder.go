@@ -4,10 +4,11 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"maps"
+	"sort"
 	"strings"
 
-	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/normalize"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/aggregate"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/normalize"
 )
 
 // BuildUniversalID creates a globally unique node ID formatted as `path::Symbol` or `path::Receiver::Method`.
@@ -102,9 +103,42 @@ func BuildInitialNodes(aggregateOut *aggregate.AggregateOutput, modifiedFiles []
 		builder.traverseDirectory(aggregateOut.RootNode)
 	}
 
-	for _, v := range aggregateOut.EntrypointRegistry {
-		output.EntrypointRegistry = append(output.EntrypointRegistry, v)
+	// The aggregate registry holds fully-qualified dotted names ("cmd.ai.init"),
+	// but every consumer of EntrypointRegistry looks the entry up as a graph
+	// node ID ("cmd/ai.go::init"): reachability seeds its BFS from it, the
+	// visualizer derives IsEntrypoint from it, and the transaction manager
+	// prunes it against deleted node IDs. None of those ever matched, so
+	// dead-code analysis walked from an empty root set and reported every
+	// eligible code unit dead, while entrypoints for deleted nodes were never
+	// pruned. Resolve to node IDs here, where the built nodes are in hand.
+	//
+	// IndexEntrypoints already stamps is_entrypoint on the GAST node itself
+	// and BuildInitialNodes deep-copies Properties, so the marker arrives on
+	// the resolved node with its real ID attached.
+	seen := make(map[string]bool, len(aggregateOut.EntrypointRegistry))
+	for id, node := range output.GraphNodes {
+		if node == nil || node.Properties == nil {
+			continue
+		}
+		if node.Properties["is_entrypoint"] == "true" && !seen[id] {
+			seen[id] = true
+			output.EntrypointRegistry = append(output.EntrypointRegistry, id)
+		}
 	}
+	// Carry over any aggregate entry that is already a node ID. Nothing in
+	// tree-sitter analysis produces these today, but fixtures and other
+	// producers may register IDs directly, and dropping them would silently
+	// narrow the root set.
+	for _, v := range aggregateOut.EntrypointRegistry {
+		if seen[v] {
+			continue
+		}
+		if _, ok := output.GraphNodes[v]; ok {
+			seen[v] = true
+			output.EntrypointRegistry = append(output.EntrypointRegistry, v)
+		}
+	}
+	sort.Strings(output.EntrypointRegistry)
 	output.ModifiedFiles = modSet
 
 	return output
