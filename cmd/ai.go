@@ -273,9 +273,12 @@ status (system_*).`,
 			return nil
 		}
 
-		fmt.Fprintf(cmd.ErrOrStderr(), "Consulting %s (%s)...\n", engine.Config.Model, engine.Config.Provider)
+		// Progress for a request that regularly takes tens of seconds. Gated:
+		// --quiet asked for silence, and this is commentary on the work rather
+		// than the answer, which is why it is on stderr to begin with.
+		tui.Fprintf(cmd.ErrOrStderr(), "Consulting %s (%s)...\n", engine.Config.Model, engine.Config.Provider)
 		res, err := engine.AskAgent(cmd.Context(), args[0], opts)
-		fmt.Fprintf(cmd.ErrOrStderr(), "Done in %.1fs\n", time.Since(start).Seconds())
+		tui.Fprintf(cmd.ErrOrStderr(), "Done in %.1fs\n", time.Since(start).Seconds())
 		if err != nil {
 			return fmt.Errorf("AI request failed: %w", err)
 		}
