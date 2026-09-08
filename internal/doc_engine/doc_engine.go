@@ -25,7 +25,10 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Syamchand123/GlassMarble/internal/akg"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/catalog"
 	docconfig "github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/invalidator"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/storage"
 )
 
@@ -58,6 +61,12 @@ type RunOptions struct {
 	// "main-only" (default), "any", "tag-only"
 	BranchPolicy string
 
+	// HeadGraph is the active CodePropertyGraph. If nil, graph is loaded if needed.
+	HeadGraph *akg.CodePropertyGraph
+
+	// BaseGraph is the previous commit's CodePropertyGraph for diffing.
+	BaseGraph *akg.CodePropertyGraph
+
 	// Out is the writer for human-readable progress output. Defaults to os.Stderr.
 	Out io.Writer
 }
@@ -75,6 +84,9 @@ type RunResult struct {
 
 	// SectionsUpdated is the count of sections that were actually re-rendered.
 	SectionsUpdated int
+
+	// DirtySections contains the prioritized dirty sections identified during invalidation.
+	DirtySections []docconfig.DirtySectionRef
 
 	// TokensUsed is the total LLM token count for this run.
 	TokensUsed int
@@ -239,25 +251,47 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 		return result
 	}
 
-	if opts.Verbose || !isQuiet(out) {
-		fmt.Fprintf(out, "doc_engine: processing %d document(s) for commit %s\n",
-			len(docs), shortHash(opts.CommitHash))
+	// ── Phase 1: Catalog & Invalidation Engine ────────────────────────────
+	cat := catalog.New(docs)
+
+	// Stage 1: Fast-bail evaluator (< 15ms latency target)
+	bail, changedFiles, bailReason, _ := invalidator.FastBail(repoRoot, opts.CommitHash, cat, state, opts.Force)
+	if bail {
+		if opts.Verbose {
+			fmt.Fprintf(out, "doc_engine: fast-bail: %s (< 15ms exit)\n", bailReason)
+		}
+		result.Duration = time.Since(start)
+		return result
 	}
 
-	// ── Stages 2-8 are stubs for Phase 0 ──────────────────────────────────
-	// Phase 1: catalog + invalidation engine
-	// Phase 2: grounding engine
-	// Phase 3: patcher + merger + quality firewall
-	// Phase 4: renderer (deterministic + LLM actuator)
-	// Phase 5: full pipeline integration
-	// ──────────────────────────────────────────────────────────────────────
-	//
-	// For Phase 0, we verify the plumbing is correct end-to-end:
-	// - docs.yaml loads without error
-	// - state round-trips correctly
-	// - the facade compiles and integrates into cmd/analyze.go
-	//
-	// The actual section processing is implemented in Phase 1-4.
+	if opts.Verbose || !isQuiet(out) {
+		fmt.Fprintf(out, "doc_engine: processing %d document(s) for commit %s (%d files changed)\n",
+			len(docs), shortHash(opts.CommitHash), len(changedFiles))
+	}
+
+	// Stage 2: Build GlobalCommitDossier
+	dossier, err := invalidator.BuildDossier(repoRoot, opts.CommitHash, opts.BaseGraph, opts.HeadGraph)
+	if err != nil && opts.Verbose {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("could not build commit dossier: %v", err))
+	}
+
+	// Stage 3: Invalidation & Dirty Section Discovery
+	inv := invalidator.New(cat)
+	dirtySections, err := inv.FindDirtySections(dossier, state, opts.HeadGraph, &cfg.Constraints)
+	if err != nil && opts.Verbose {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("invalidation error: %v", err))
+	}
+
+	result.DirtySections = dirtySections
+	result.SectionsProcessed = countTotalSections(docs)
+	result.SectionsUpdated = len(dirtySections)
+
+	if opts.Verbose || !isQuiet(out) {
+		fmt.Fprintf(out, "doc_engine: found %d dirty section(s) across %d document(s)\n",
+			len(dirtySections), len(docs))
+	}
+
+	// ── Stages 4-8: Grounding, Render, Firewall, Write (Phases 2-4) ───────
 
 	// Update state with this commit hash so we know we've seen it.
 	state.LastCommit = opts.CommitHash
@@ -267,6 +301,18 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 
 	result.Duration = time.Since(start)
 	return result
+}
+
+func countTotalSections(docs []docconfig.DocSpec) int {
+	total := 0
+	for _, d := range docs {
+		if len(d.Sections) == 0 {
+			total++
+		} else {
+			total += len(d.Sections)
+		}
+	}
+	return total
 }
 
 // Check performs a non-modifying freshness and drift audit of all managed
