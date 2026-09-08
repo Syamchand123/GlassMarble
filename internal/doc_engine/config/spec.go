@@ -342,6 +342,33 @@ type GroundTruthPayload struct {
 
 	// ModifiedSentinels lists sentinel errors whose value or doc comment changed.
 	ModifiedSentinels []SentinelDelta `json:"modified_sentinels,omitempty"`
+
+	// Symbols is the active set of symbols in scope for this section.
+	Symbols []SymbolFact `json:"symbols,omitempty"`
+
+	// Schemas lists database/model schema facts extracted from the AKG.
+	Schemas []SchemaFact `json:"schemas,omitempty"`
+
+	// ArchEvents lists architectural milestone events and ontology facts.
+	ArchEvents []string `json:"arch_events,omitempty"`
+
+	// Diagrams lists all rendered living diagrams for this document.
+	Diagrams []DiagramFact `json:"diagrams,omitempty"`
+}
+
+// DiagramFact captures a rendered living diagram (Mermaid block) for a document.
+type DiagramFact struct {
+	Type    string `json:"type"`
+	Content string `json:"content"`
+}
+
+// SchemaFact describes a database table/model or schema definition.
+type SchemaFact struct {
+	Name       string `json:"name"`
+	Table      string `json:"table,omitempty"`
+	File       string `json:"file"`
+	Line       int    `json:"line"`
+	Definition string `json:"definition"`
 }
 
 // SymbolFact is the AKG-extracted description of a single code symbol.
@@ -400,7 +427,10 @@ type ConfigVarFact struct {
 	// Required indicates whether the code panics/errors if the value is missing.
 	Required bool `json:"required"`
 
-	// DefaultValue is the fallback value if not set (empty string if none).
+	// Default is the fallback value if not set (empty string if none).
+	Default string `json:"default,omitempty"`
+
+	// DefaultValue is an alias for Default.
 	DefaultValue string `json:"default_value,omitempty"`
 
 	// Doc is the doc comment associated with the read site.
