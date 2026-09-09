@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/archfeatures"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/storage"
 )
@@ -169,3 +170,165 @@ func TestOperations_Release(t *testing.T) {
 		t.Errorf("unexpected migration guide content:\n%s", guide)
 	}
 }
+
+func TestOperations_Snapshot(t *testing.T) {
+	tempDir := setupTestRepoWithDoc(t)
+
+	snap, err := Snapshot(tempDir, "v1.2.0")
+	if err != nil {
+		t.Fatalf("Snapshot returned error: %v", err)
+	}
+	if snap.FilesCount != 1 {
+		t.Errorf("expected 1 file in snapshot, got %d", snap.FilesCount)
+	}
+}
+
+func TestOperations_ArchFeatures(t *testing.T) {
+	tempDir := setupTestRepoWithDoc(t)
+
+	// 1. ADR
+	adrPath, err := GenerateADR(tempDir, archfeatures.ADREvent{
+		Type:     "COMPONENT_SPLIT",
+		Title:    "Decouple Architecture Features",
+		Decision: "Extracted Phase 6 into subpackages",
+	})
+	if err != nil {
+		t.Fatalf("GenerateADR failed: %v", err)
+	}
+	if !strings.Contains(adrPath, "0001-decouple-architecture-features.md") {
+		t.Errorf("unexpected adr path: %s", adrPath)
+	}
+
+	// 2. Evolution
+	evo, err := GenerateEvolutionChapter(tempDir, "", "")
+	if err != nil {
+		t.Fatalf("GenerateEvolutionChapter failed: %v", err)
+	}
+	if !strings.Contains(evo, "System Evolution & Architectural History") {
+		t.Errorf("unexpected evolution chapter content:\n%s", evo)
+	}
+
+	// 3. Glossary
+	glossary, err := GenerateDomainGlossary(tempDir)
+	if err != nil {
+		t.Fatalf("GenerateDomainGlossary failed: %v", err)
+	}
+	if !strings.Contains(glossary, "Ubiquitous Language & Domain Glossary") {
+		t.Errorf("unexpected glossary content:\n%s", glossary)
+	}
+}
+
+func TestOperations_SRE(t *testing.T) {
+	tempDir := setupTestRepoWithDoc(t)
+
+	// Subsystem health
+	health := ComputeSubsystemHealth(tempDir, "docs")
+	_ = health
+
+	// Error catalog
+	errCat, err := GenerateErrorCatalog(tempDir)
+	if err != nil {
+		t.Fatalf("GenerateErrorCatalog failed: %v", err)
+	}
+	if !strings.Contains(errCat, "Living Error Code Catalog") {
+		t.Errorf("unexpected error catalog:\n%s", errCat)
+	}
+
+	// Concurrency
+	conc, err := GenerateConcurrencyContracts(tempDir)
+	if err != nil {
+		t.Fatalf("GenerateConcurrencyContracts failed: %v", err)
+	}
+	if !strings.Contains(conc, "Concurrency, Threading & Lock Contention Reference") {
+		t.Errorf("unexpected concurrency contracts:\n%s", conc)
+	}
+
+	// Test topology
+	topo, err := GenerateTestTopology(tempDir)
+	if err != nil {
+		t.Fatalf("GenerateTestTopology failed: %v", err)
+	}
+	if !strings.Contains(topo, "Test Topology & Verification Coverage Matrix") {
+		t.Errorf("unexpected test topology:\n%s", topo)
+	}
+}
+
+func TestOperations_Compliance(t *testing.T) {
+	tempDir := setupTestRepoWithDoc(t)
+
+	// Threat model
+	threat, err := GenerateThreatModel(tempDir)
+	if err != nil {
+		t.Fatalf("GenerateThreatModel failed: %v", err)
+	}
+	if !strings.Contains(threat, "System Threat Model & Security Architecture") {
+		t.Errorf("unexpected threat model:\n%s", threat)
+	}
+
+	// Config dict
+	configDict, err := GenerateConfigDictionary(tempDir)
+	if err != nil {
+		t.Fatalf("GenerateConfigDictionary failed: %v", err)
+	}
+	if !strings.Contains(configDict, "Runtime Configuration & Environment Variable Dictionary") {
+		t.Errorf("unexpected config dictionary:\n%s", configDict)
+	}
+
+	// SBOM
+	goMod := "module example.com/app\ngo 1.22\nrequire github.com/spf13/cobra v1.8.0\n"
+	_ = os.WriteFile(filepath.Join(tempDir, "go.mod"), []byte(goMod), 0644)
+	sbom, err := GenerateSBOM(tempDir)
+	if err != nil {
+		t.Fatalf("GenerateSBOM failed: %v", err)
+	}
+	if !strings.Contains(sbom, "Software Bill of Materials") {
+		t.Errorf("unexpected SBOM:\n%s", sbom)
+	}
+
+	// API surface
+	boundaries, err := CheckAPISurfaceBoundaries(tempDir)
+	if err != nil {
+		t.Fatalf("CheckAPISurfaceBoundaries failed: %v", err)
+	}
+	_ = boundaries
+}
+
+func TestOperations_DevExAndPublishing(t *testing.T) {
+	tempDir := setupTestRepoWithDoc(t)
+
+	// Snippet verification
+	docWithSnippet := "# Doc\n<!-- gmb:snippet:example -->\n```go\npackage main\nfunc main() {}\n```\n"
+	errs, err := VerifyCodeSnippets(docWithSnippet, nil)
+	if err != nil {
+		t.Fatalf("VerifyCodeSnippets failed: %v", err)
+	}
+	if len(errs) != 0 {
+		t.Errorf("expected 0 snippet errors, got %d", len(errs))
+	}
+
+	// Platform formatting
+	rawDoc := "> [!NOTE]\n> Notice message\n"
+	vp := FormatForPlatform(rawDoc, "vitepress")
+	if !strings.Contains(vp, "::: info") {
+		t.Errorf("expected vitepress admonition, got:\n%s", vp)
+	}
+
+	// Federation manifest
+	manifest, err := ExportFederationManifest(tempDir)
+	if err != nil {
+		t.Fatalf("ExportFederationManifest failed: %v", err)
+	}
+	if _, err := os.Stat(manifest); os.IsNotExist(err) {
+		t.Errorf("manifest file missing at: %s", manifest)
+	}
+
+	// i18n inventory
+	i18nDoc, err := GenerateI18nInventory(tempDir)
+	if err != nil {
+		t.Fatalf("GenerateI18nInventory failed: %v", err)
+	}
+	if !strings.Contains(i18nDoc, "Internationalization (i18n) & Localization Inventory") {
+		t.Errorf("unexpected i18n inventory:\n%s", i18nDoc)
+	}
+}
+

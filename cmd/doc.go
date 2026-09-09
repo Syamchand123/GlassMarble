@@ -262,6 +262,29 @@ Exit codes:
 		if len(result.Failures) > 0 {
 			return fmt.Errorf("documentation drift detected: %d document(s) below fail threshold", len(result.Failures))
 		}
+
+		verifySnippets, _ := cmd.Flags().GetBool("verify-snippets")
+		if verifySnippets {
+			snippetErrors := 0
+			cfg, _ := docconfig.LoadDocsConfig(absDir)
+			if cfg != nil {
+				for _, doc := range cfg.Documents {
+					absPath := filepath.Join(absDir, doc.TargetPath)
+					data, err := os.ReadFile(absPath)
+					if err != nil {
+						continue
+					}
+					errs, _ := doc_engine.VerifyCodeSnippets(string(data), nil)
+					for _, se := range errs {
+						snippetErrors++
+						docPrintf(cmd, "  SNIPPET ERROR [%s: line %d]: %s\n", doc.TargetPath, se.LineNumber, se.ErrorMessage)
+					}
+				}
+			}
+			if snippetErrors > 0 {
+				return fmt.Errorf("snippet verification failed: %d broken code snippet(s)", snippetErrors)
+			}
+		}
 		return nil
 	},
 }
@@ -560,6 +583,15 @@ The output includes:
 		} else {
 			fmt.Fprintln(cmd.OutOrStdout(), guide)
 		}
+
+		snapshot, _ := cmd.Flags().GetBool("snapshot")
+		if snapshot {
+			snapRes, err := doc_engine.Snapshot(absDir, parts[1])
+			if err != nil {
+				return fmt.Errorf("doc release snapshot: %w", err)
+			}
+			docPrintf(cmd, "doc release: snapshot %s created with %d file(s) in %s\n", snapRes.VersionTag, snapRes.FilesCount, snapRes.TargetDir)
+		}
 		return nil
 	},
 }
@@ -751,6 +783,7 @@ func init() {
 	docCheckCmd.Flags().String("doc", "", "Only check the document with this ID")
 	docCheckCmd.Flags().String("tag", "", "Only check documents with this tag")
 	docCheckCmd.Flags().Bool("json", false, "Emit machine-readable JSON output")
+	docCheckCmd.Flags().Bool("verify-snippets", false, "Verify executable code snippets in managed docs")
 
 	// ── gmb doc diff flags ────────────────────────────────────────────────
 	docDiffCmd.Flags().String("doc", "", "Only diff the document with this ID")

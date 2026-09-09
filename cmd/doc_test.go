@@ -192,3 +192,45 @@ func TestDocRelease(t *testing.T) {
 	}
 }
 
+func TestDocRelease_Snapshot(t *testing.T) {
+	tempDir := t.TempDir()
+	// Init a doc first
+	_, _ = runGmbCommand(t, "doc", "init", "docs/test.md",
+		"--dir", tempDir,
+		"--scope", "cmd/**",
+		"--archetype", "module",
+	)
+
+	out, err := runGmbCommand(t, "doc", "release", "v1.0.0..v1.1.0", "--snapshot", "--dir", tempDir)
+	if err != nil {
+		t.Fatalf("doc release --snapshot failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "snapshot v1.1.0 created") {
+		t.Errorf("doc release --snapshot missing confirmation output:\n%s", out)
+	}
+}
+
+func TestDocCheck_VerifySnippets(t *testing.T) {
+	tempDir := t.TempDir()
+	out, err := runGmbCommand(t, "doc", "check", "--verify-snippets", "--dir", tempDir)
+	if err != nil {
+		t.Fatalf("doc check --verify-snippets failed: %v\n%s", err, out)
+	}
+
+	// Broken snippet
+	gmDir := filepath.Join(tempDir, ".glassmarble")
+	_ = os.MkdirAll(gmDir, 0755)
+	docsDir := filepath.Join(tempDir, "docs")
+	_ = os.MkdirAll(docsDir, 0755)
+	brokenFile := filepath.Join(docsDir, "broken.md")
+	_ = os.WriteFile(brokenFile, []byte("# Broken\n<!-- gmb:snippet:example -->\n```go\nfunc broken( {\n```\n"), 0644)
+	docsYAML := "version: 1\ndocs_dir: docs\ndocuments:\n  - id: broken\n    target: docs/broken.md\n"
+	_ = os.WriteFile(filepath.Join(gmDir, "docs.yaml"), []byte(docsYAML), 0644)
+
+	out, err = runGmbCommand(t, "doc", "check", "--verify-snippets", "--dir", tempDir)
+	if err == nil {
+		t.Fatalf("expected failure for broken snippet, got success:\n%s", out)
+	}
+}
+
+
