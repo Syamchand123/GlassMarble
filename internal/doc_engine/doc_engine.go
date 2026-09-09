@@ -19,16 +19,21 @@
 package doc_engine
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/Syamchand123/GlassMarble/internal/ai_engine"
+	"github.com/Syamchand123/GlassMarble/internal/ai_engine/aiconfig"
+	"github.com/Syamchand123/GlassMarble/internal/ai_engine/provider"
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/catalog"
 	docconfig "github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/invalidator"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/renderer"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/storage"
 )
 
@@ -47,6 +52,12 @@ type RunOptions struct {
 	// NoLLM forces the deterministic renderer (Track B) for all sections.
 	// Useful for offline / air-gapped environments.
 	NoLLM bool
+
+	// Provider is the optional LLM provider for Track A prose rendering.
+	Provider provider.Provider
+
+	// Model is the model name for Track A. If empty, falls back to AI config.
+	Model string
 
 	// Force bypasses the fast-bail check and reprocesses all documents.
 	Force bool
@@ -292,6 +303,63 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 	}
 
 	// ── Stages 4-8: Grounding, Render, Firewall, Write (Phases 2-4) ───────
+	// Resolve AI provider if not forced to deterministic mode
+	if opts.Provider == nil && !opts.NoLLM {
+		if aiCfg, aiErr := aiconfig.LoadForDir(repoRoot, aiconfig.Config{}); aiErr == nil && aiCfg != nil {
+			if eng, eErr := ai_engine.New(aiCfg, repoRoot); eErr == nil && eng != nil {
+				opts.Provider = eng.Provider
+				if opts.Model == "" {
+					opts.Model = aiCfg.Model
+				}
+			}
+		}
+	}
+
+	orch := renderer.NewOrchestrator(renderer.OrchestratorOptions{
+		NoLLM:    opts.NoLLM,
+		Model:    opts.Model,
+		Provider: opts.Provider,
+		Verbose:  opts.Verbose,
+		Out:      out,
+	})
+
+	// Index dirty sections by document ID
+	dirtyByDoc := make(map[string][]string)
+	for _, ds := range dirtySections {
+		dirtyByDoc[ds.DocID] = append(dirtyByDoc[ds.DocID], ds.SectionID)
+	}
+
+	ctx := context.Background()
+	docsUpdatedCount := 0
+	totalTokens := 0
+
+	for i := range docs {
+		d := &docs[i]
+		secIDs := dirtyByDoc[d.ID]
+		if opts.Force || len(secIDs) > 0 {
+			changed, tokens, docWarns, pErr := orch.ProcessDocument(
+				ctx,
+				repoRoot,
+				d,
+				secIDs,
+				opts.HeadGraph,
+				dossier,
+				sm,
+				opts.CommitHash,
+			)
+			if pErr != nil && opts.Verbose {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("doc %s error: %v", d.ID, pErr))
+			}
+			result.Warnings = append(result.Warnings, docWarns...)
+			totalTokens += tokens
+			if changed {
+				docsUpdatedCount++
+			}
+		}
+	}
+
+	result.DocsUpdated = docsUpdatedCount
+	result.TokensUsed = totalTokens
 
 	// Update state with this commit hash so we know we've seen it.
 	state.LastCommit = opts.CommitHash
