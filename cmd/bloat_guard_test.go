@@ -86,13 +86,12 @@ func TestBloatRegressionGuard(t *testing.T) {
 	}
 	edges := len(seen)
 
-	// Recalibrated at the v1.0.0 Packaging & TUI sign-off (2026-08-24):
-	// the Charm design system, help overlay, roff man generators, shell
-	// completions, and packaging infrastructure raised the healthy deduplicated
-	// baseline. Budgets calibrated with standard 15% headroom to guard against noisy passes.
+	// Recalibrated at Documentation Intelligence Engine sign-off:
+	// internal/doc_engine/ packages across phases 0 to 5 raised the
+	// healthy deduplicated baseline. Budgets calibrated with standard 15% headroom to guard against noisy passes.
 	const (
-		nodeBudget = 16000
-		edgeBudget = 36000
+		nodeBudget = 19500
+		edgeBudget = 42000
 	)
 	if nodes < 1000 {
 		t.Errorf("sanity: expected the pipeline to produce a substantial graph, got %d nodes (pipeline may be broken)", nodes)

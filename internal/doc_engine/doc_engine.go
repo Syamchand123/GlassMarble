@@ -473,26 +473,6 @@ func Check(repoRoot string, opts CheckOptions) (CheckResult, error) {
 	return result, nil
 }
 
-// Init scaffolds a new managed document: writes the target .md file and
-// adds the DocSpec to .glassmarble/docs.yaml.
-// Phase 5 wires this to the interactive Charm Huh questionnaire.
-func Init(repoRoot string, opts InitOptions) error {
-	out := opts.Out
-	if out == nil {
-		out = os.Stdout
-	}
-
-	// Ensure docs.yaml exists.
-	if err := docconfig.WriteDefaultDocsConfig(repoRoot); err != nil {
-		return fmt.Errorf("doc_engine: init: %w", err)
-	}
-
-	// Phase 5 will add: interactive questionnaire, AKG entry-point detection,
-	// archetype pre-population, and docs.yaml update.
-	fmt.Fprintf(out, "doc_engine: scaffold stub for %s (full implementation in Phase 5)\n", opts.TargetPath)
-	return nil
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // Internal helpers
 // ────────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,40 @@
+name: GlassMarble Documentation Intelligence Gate
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  docs-check:
+    name: Check Living Documentation Drift
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Build GlassMarble CLI
+        run: go build -o bin/gmb .
+
+      - name: Run Documentation Intelligence Freshness Gate
+        run: |
+          ./bin/gmb doc check --json > doc_check_report.json
+          cat doc_check_report.json
+        env:
+          GLASSMARBLE_QUIET: "true"
+
+      - name: Upload Drift Audit Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gmb-doc-report
+          path: doc_check_report.json

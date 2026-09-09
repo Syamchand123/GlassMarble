@@ -87,6 +87,7 @@ See also: 'gmb status', 'gmb watch', 'gmb doctor'`,
 			intelligence = false
 		}
 		includeDocs, _ := cmd.Flags().GetBool("include-docs")
+		runDocs, _ := cmd.Flags().GetBool("docs")
 		snapNoGraph, _ := cmd.Flags().GetBool("snapshot-no-graph")
 		snapKeep, _ := cmd.Flags().GetInt("snapshot-keep")
 		opts := runAnalysisOptions{
@@ -104,6 +105,7 @@ See also: 'gmb status', 'gmb watch', 'gmb doctor'`,
 			bench:           isBench,
 			intelligence:    intelligence,
 			includeDocs:     includeDocs,
+			runDocs:         runDocs,
 			snapshotNoGraph: snapNoGraph,
 			snapshotKeep:    snapKeep,
 			out:             cmd.OutOrStdout(),
@@ -191,6 +193,7 @@ type runAnalysisOptions struct {
 	// claims) runs after the graph is committed. Opt-in by design — doc
 	// scanning and git-history walks are not free on large repositories.
 	includeDocs     bool
+	runDocs         bool
 	snapshotNoGraph bool
 	snapshotKeep    int
 	// out is the writer for human-readable output. When nil, os.Stdout or
@@ -559,6 +562,11 @@ func runAnalysis(cmd *cobra.Command, opts runAnalysisOptions) error {
 	// and the correction log. Corrections themselves are applied at query
 	// time (gmb memory), not here. Non-fatal by design (§15.6).
 	runLearning(storageDir, tm, verbose)
+	// Documentation Intelligence Engine: update living markdown documents
+	// grounded in the AKG. Non-fatal by design.
+	if opts.runDocs {
+		runDocEngine(storageDir, tm, commitHash, verbose)
+	}
 	// knowledge aging: freshness decay on every claim plus
 	// deterministic state transitions, persisted as replayable
 	// STATE_CHANGE events in the memory WAL (master plan §13.1 — aging
@@ -723,6 +731,7 @@ func init() {
 	analyzeCmd.Flags().Bool("intelligence", true, "Run architectural intelligence checks (smells and pattern discovery)")
 	analyzeCmd.Flags().Bool("no-intelligence", false, "Disable architectural intelligence checks (equivalent to --intelligence=false)")
 	analyzeCmd.Flags().Bool("include-docs", false, "Run knowledge fusion: fuse ADR/README/PR claims into developer memory")
+	analyzeCmd.Flags().Bool("docs", false, "Run documentation intelligence engine after graph commit")
 	analyzeCmd.Flags().Bool("snapshot-no-graph", false, "Omit embedded graph from snapshots (smaller files; disables snapshot --replay)")
 	analyzeCmd.Flags().Int("snapshot-keep", 0, "Max snapshots to retain (0 = config default 30)")
 

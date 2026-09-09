@@ -108,3 +108,87 @@ func TestDocDiffNoConfig(t *testing.T) {
 		t.Errorf("unexpected doc diff output:\n%s", out)
 	}
 }
+
+func TestDocInitCLI(t *testing.T) {
+	tempDir := t.TempDir()
+	out, err := runGmbCommand(t, "doc", "init", "docs/auth.md",
+		"--dir", tempDir,
+		"--scope", "internal/auth/**",
+		"--archetype", "architecture",
+		"--title", "Auth Specs",
+	)
+	if err != nil {
+		t.Fatalf("doc init failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Scaffolded docs/auth.md") {
+		t.Errorf("doc init output missing success message:\n%s", out)
+	}
+
+	target := filepath.Join(tempDir, "docs", "auth.md")
+	if _, err := os.Stat(target); os.IsNotExist(err) {
+		t.Errorf("doc init did not create target file at %s", target)
+	}
+}
+
+func TestDocGapsJSON(t *testing.T) {
+	tempDir := t.TempDir()
+	out, err := runGmbCommand(t, "doc", "gaps", "--dir", tempDir, "--json")
+	if err != nil {
+		t.Fatalf("doc gaps --json failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, `"gaps"`) {
+		t.Errorf("doc gaps --json output missing 'gaps':\n%s", out)
+	}
+}
+
+func TestDocSuggestJSON(t *testing.T) {
+	tempDir := t.TempDir()
+	out, err := runGmbCommand(t, "doc", "suggest", "--dir", tempDir, "--json")
+	if err != nil {
+		t.Fatalf("doc suggest --json failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "[") {
+		t.Errorf("doc suggest --json expected json array:\n%s", out)
+	}
+}
+
+func TestDocReportJSON(t *testing.T) {
+	tempDir := t.TempDir()
+	out, err := runGmbCommand(t, "doc", "report", "--dir", tempDir, "--json")
+	if err != nil {
+		t.Fatalf("doc report --json failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, `"total_documents"`) {
+		t.Errorf("doc report --json output missing 'total_documents':\n%s", out)
+	}
+}
+
+func TestDocExportJSON(t *testing.T) {
+	tempDir := t.TempDir()
+	// First init a doc so export has content
+	_, _ = runGmbCommand(t, "doc", "init", "docs/test.md",
+		"--dir", tempDir,
+		"--scope", "cmd/**",
+		"--archetype", "module",
+	)
+
+	out, err := runGmbCommand(t, "doc", "export", "--dir", tempDir, "--json")
+	if err != nil {
+		t.Fatalf("doc export --json failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, `"chunks_count"`) {
+		t.Errorf("doc export --json output missing 'chunks_count':\n%s", out)
+	}
+}
+
+func TestDocRelease(t *testing.T) {
+	tempDir := t.TempDir()
+	out, err := runGmbCommand(t, "doc", "release", "v1.0.0..v1.1.0", "--dir", tempDir)
+	if err != nil {
+		t.Fatalf("doc release failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "# Migration Guide: v1.0.0 → v1.1.0") {
+		t.Errorf("doc release missing migration header:\n%s", out)
+	}
+}
+

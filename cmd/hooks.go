@@ -65,7 +65,7 @@ var hooksCmd = &cobra.Command{
 				return fmt.Errorf("failed to resolve binary path for hook: %w", err)
 			}
 			receipt.Binary = binary
-			script := fmt.Sprintf("#!/bin/sh\n# GlassMarble auto-analysis post-commit hook\n%q analyze --dir %q\n", binary, absDir)
+			script := fmt.Sprintf("#!/bin/sh\n# GlassMarble auto-analysis post-commit hook\n%q analyze --dir %q\n%q doc --dir %q --bg\n", binary, absDir, binary, absDir)
 			if existing, err := os.ReadFile(hookPath); err == nil {
 				if strings.Contains(string(existing), "# GlassMarble") {
 					// Already managed by GlassMarble — overwrite in place.
