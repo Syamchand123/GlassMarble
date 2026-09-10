@@ -71,7 +71,7 @@ func (a *LLMActuator) Render(ctx context.Context, fs *config.FactSheet) (*Render
 		return nil, fmt.Errorf("doc_engine/llm_actuator: no AI provider configured")
 	}
 
-	systemPrompt := BuildSystemPrompt(&fs.Style, 0)
+	systemPrompt := BuildSystemPrompt(&fs.Style, fs.MaxWords)
 	userPrompt, err := BuildUserPrompt(fs)
 	if err != nil {
 		return nil, err
@@ -96,7 +96,7 @@ func (a *LLMActuator) Repair(ctx context.Context, fs *config.FactSheet, prevOutp
 		return nil, fmt.Errorf("doc_engine/llm_actuator: no AI provider configured")
 	}
 
-	systemPrompt := BuildSystemPrompt(&fs.Style, 0)
+	systemPrompt := BuildSystemPrompt(&fs.Style, fs.MaxWords)
 	userPrompt, err := BuildUserPrompt(fs)
 	if err != nil {
 		return nil, err

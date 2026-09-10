@@ -46,7 +46,6 @@ documents:
         ground_with: [signatures, callgraph, comments]
       - id: "contributors-guide"
         title: "Contributors Guide"
-        instruction: "Human-written contributor notes"
         managed: false
 
   - id: "ai-engine"
@@ -100,7 +99,6 @@ documents:
         ground_with: [exported_symbols, signatures, comments]
       - id: "examples"
         title: "Usage Examples"
-        instruction: "Human-curated end-to-end CLI workflows"
         managed: false
 
   - id: "ops-runbook"
@@ -128,5 +126,4 @@ documents:
         ground_with: [sentinels, error_returns, callers]
       - id: "known-issues"
         title: "Known Issues"
-        instruction: "Human-maintained list of known production issues"
         managed: false

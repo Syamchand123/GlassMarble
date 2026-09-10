@@ -7,39 +7,6 @@ import (
 	"testing"
 )
 
-func TestComputeHealthProfile(t *testing.T) {
-	tempDir := t.TempDir()
-	subPkg := filepath.Join(tempDir, "pkg")
-	_ = os.MkdirAll(subPkg, 0755)
-
-	code := `package pkg
-func ComplexLogic(a, b int) int {
-	if a > 0 {
-		for i := 0; i < b; i++ {
-			if i % 2 == 0 {
-				return i
-			}
-		}
-	}
-	return a + b
-}
-`
-	_ = os.WriteFile(filepath.Join(subPkg, "logic.go"), []byte(code), 0644)
-
-	profile := ComputeHealthProfile(tempDir, "pkg")
-	if profile.TotalFiles != 1 {
-		t.Errorf("expected 1 file, got %d", profile.TotalFiles)
-	}
-	if profile.MaxComplexity < 3 {
-		t.Errorf("expected cyclomatic complexity >= 3, got %d", profile.MaxComplexity)
-	}
-
-	md := FormatHealthMarkdown(profile)
-	if !strings.Contains(md, "Subsystem Health & Complexity Profile") {
-		t.Errorf("expected health card header in markdown:\n%s", md)
-	}
-}
-
 func TestGenerateErrorCatalog(t *testing.T) {
 	tempDir := t.TempDir()
 	pkgDir := filepath.Join(tempDir, "errors")
@@ -74,68 +41,65 @@ var ErrNotFound = errors.New("resource not found")
 	}
 }
 
-func TestGenerateConcurrencyContracts(t *testing.T) {
+func TestGenerateErrorCatalogCallers(t *testing.T) {
 	tempDir := t.TempDir()
-	pkgDir := filepath.Join(tempDir, "concurrent")
+	pkgDir := filepath.Join(tempDir, "svc")
 	_ = os.MkdirAll(pkgDir, 0755)
 
-	code := `package concurrent
-import "sync"
+	decl := `package svc
+import "errors"
 
-type ThreadSafeStore struct {
-	mu sync.RWMutex
-	items map[string]string
-	events chan string
+// ErrUnavailable is returned when downstream is down.
+var ErrUnavailable = errors.New("downstream unavailable")
+`
+	caller := `package svc
+import "fmt"
+
+func Poll() error {
+	if true {
+		fmt.Println(ErrUnavailable)
+		return ErrUnavailable
+	}
+	return nil
 }
 `
-	_ = os.WriteFile(filepath.Join(pkgDir, "store.go"), []byte(code), 0644)
-
-	contracts, err := GenerateConcurrencyContracts(tempDir)
-	if err != nil {
-		t.Fatalf("GenerateConcurrencyContracts failed: %v", err)
-	}
-
-	if !strings.Contains(contracts, "ThreadSafeStore") {
-		t.Errorf("missing ThreadSafeStore in concurrency contracts:\n%s", contracts)
-	}
-	if !strings.Contains(contracts, "sync.RWMutex") {
-		t.Errorf("missing sync.RWMutex in concurrency contracts:\n%s", contracts)
-	}
-
-	dest := filepath.Join(tempDir, "docs", "concurrency.md")
-	if _, err := os.Stat(dest); os.IsNotExist(err) {
-		t.Errorf("docs/concurrency.md file not created")
-	}
-}
-
-func TestGenerateTestTopology(t *testing.T) {
-	tempDir := t.TempDir()
-	pkgDir := filepath.Join(tempDir, "suite")
-	_ = os.MkdirAll(pkgDir, 0755)
-
-	code := `package suite_test
-import "testing"
-
-func TestEngine_Success(t *testing.T) {}
-func TestEngine_ConcurrentFailure(t *testing.T) {}
-func BenchmarkEngine_FastPath(b *testing.B) {}
+	other := `package svc
+func Nop() {}
 `
-	_ = os.WriteFile(filepath.Join(pkgDir, "suite_test.go"), []byte(code), 0644)
+	_ = os.WriteFile(filepath.Join(pkgDir, "sentinels.go"), []byte(decl), 0644)
+	_ = os.WriteFile(filepath.Join(pkgDir, "caller.go"), []byte(caller), 0644)
+	_ = os.WriteFile(filepath.Join(pkgDir, "other.go"), []byte(other), 0644)
 
-	topology, err := GenerateTestTopology(tempDir)
+	facts, err := scanSentinelErrors(tempDir)
 	if err != nil {
-		t.Fatalf("GenerateTestTopology failed: %v", err)
+		t.Fatalf("scanSentinelErrors failed: %v", err)
+	}
+	if len(facts) != 1 {
+		t.Fatalf("expected 1 sentinel, got %d", len(facts))
+	}
+	if len(facts[0].Callers) == 0 {
+		t.Fatalf("expected callers for ErrUnavailable, got none")
+	}
+	for _, c := range facts[0].Callers {
+		if strings.Contains(c, "sentinels.go") {
+			t.Errorf("caller list must exclude the declaration file, got %q", c)
+		}
+		if !strings.Contains(c, "caller.go#") {
+			t.Errorf("expected caller.go#line entry, got %q", c)
+		}
+	}
+	if len(facts[0].Callers) > 5 {
+		t.Errorf("expected at most 5 callers, got %d", len(facts[0].Callers))
 	}
 
-	if !strings.Contains(topology, "Test Topology & Verification Coverage Matrix") {
-		t.Errorf("missing title in test topology:\n%s", topology)
+	catalog, err := GenerateErrorCatalog(tempDir)
+	if err != nil {
+		t.Fatalf("GenerateErrorCatalog failed: %v", err)
 	}
-	if !strings.Contains(topology, "TestEngine_ConcurrentFailure") {
-		t.Errorf("missing edge case in test topology:\n%s", topology)
+	if !strings.Contains(catalog, "Callers") {
+		t.Errorf("expected Callers column in catalog:\n%s", catalog)
 	}
-
-	dest := filepath.Join(tempDir, "docs", "test_topology.md")
-	if _, err := os.Stat(dest); os.IsNotExist(err) {
-		t.Errorf("docs/test_topology.md file not created")
+	if !strings.Contains(catalog, "caller.go#") {
+		t.Errorf("expected caller reference in catalog:\n%s", catalog)
 	}
 }

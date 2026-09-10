@@ -3,11 +3,22 @@ name: GlassMarble Docs Intelligence Check
 on:
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      auto_update:
+        description: 'Mode B: run `gmb doc --write` and push the synced docs'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   doc-check:
     name: Check Living Documentation Drift
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -25,13 +36,35 @@ jobs:
 
       - name: Run GlassMarble doc check
         id: doccheck
-        run: ./bin/gmb doc check --json > doc_check_report.json; echo "exit=$?" >> "$GITHUB_OUTPUT"; cat doc_check_report.json
+        run: |
+          set +e
+          ./bin/gmb doc check --json > doc_check_report.json
+          code=$?
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
+          cat doc_check_report.json
+          # Mode C strict gate: drift (exit 1) or hard error (exit 2) fails the job.
+          exit $code
         env:
           GLASSMARBLE_QUIET: "true"
           GLASSMARBLE_ANTHROPIC_API_KEY: ${{ secrets.GLASSMARBLE_API_KEY }}
 
-      - name: Post doc status comment
-        if: failure()
+      - name: Run GlassMarble doc diff preview
+        id: docdiff
+        if: always()
+        run: |
+          set +e
+          ./bin/gmb doc diff > diff_preview.txt
+          code=$?
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
+          cat diff_preview.txt
+          # The preview must never fail the job; the check step above is the gate.
+          exit 0
+        env:
+          GLASSMARBLE_QUIET: "true"
+          GLASSMARBLE_ANTHROPIC_API_KEY: ${{ secrets.GLASSMARBLE_API_KEY }}
+
+      - name: Post doc status comment (Mode A)
+        if: failure() && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
@@ -40,6 +73,13 @@ jobs:
             try {
               const raw = fs.readFileSync('doc_check_report.json', 'utf8');
               body = 'GlassMarble doc drift report:\n\n```json\n' + raw.slice(0, 60000) + '\n```\n\nFix: run `gmb doc` to sync, then re-push.';
+            } catch (e) {}
+            // Embed the truncated `gmb doc diff` preview when available.
+            try {
+              const diff = fs.readFileSync('diff_preview.txt', 'utf8');
+              if (diff.trim().length > 0) {
+                body += '\n\n<details><summary>Diff preview (<code>gmb doc diff</code>, truncated)</summary>\n\n```diff\n' + diff.slice(0, 20000) + '\n```\n</details>';
+              }
             } catch (e) {}
             github.rest.issues.createComment({
               owner: context.repo.owner,
@@ -54,3 +94,50 @@ jobs:
         with:
           name: gmb-doc-report
           path: doc_check_report.json
+
+      - name: Upload Diff Preview
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gmb-doc-diff-preview
+          path: diff_preview.txt
+          if-no-files-found: warn
+
+  doc-auto-update:
+    name: Auto-sync Living Documentation (Mode B)
+    if: github.event_name == 'workflow_dispatch' && inputs.auto_update
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Build GlassMarble CLI
+        run: go build -o bin/gmb .
+
+      - name: Sync living documentation
+        run: ./bin/gmb doc --write
+        env:
+          GLASSMARBLE_QUIET: "true"
+          GLASSMARBLE_ANTHROPIC_API_KEY: ${{ secrets.GLASSMARBLE_API_KEY }}
+
+      - name: Commit and push synced docs (Mode B)
+        run: |
+          git config user.name "glassmarble-docs[bot]"
+          git config user.email "glassmarble-docs[bot]@users.noreply.github.com"
+          git add docs/
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(docs): sync living documentation"
+            git push
+          else
+            echo "docs already in sync; nothing to commit"
+          fi

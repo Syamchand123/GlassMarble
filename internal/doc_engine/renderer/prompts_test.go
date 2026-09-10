@@ -30,6 +30,29 @@ func TestBuildSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestBuildSystemPrompt_SequentialNumbering(t *testing.T) {
+	// Rules must be gap-free in both modes: 1-7 with a word cap, 1-6 without.
+	withCap := BuildSystemPrompt(nil, 250)
+	for _, n := range []string{"1.", "2.", "3.", "4.", "5.", "6.", "7."} {
+		if !strings.Contains(withCap, "\n"+n+" ") {
+			t.Errorf("expected rule %s in capped prompt:\n%s", n, withCap)
+		}
+	}
+
+	withoutCap := BuildSystemPrompt(nil, 0)
+	for _, n := range []string{"1.", "2.", "3.", "4.", "5.", "6."} {
+		if !strings.Contains(withoutCap, "\n"+n+" ") {
+			t.Errorf("expected rule %s in uncapped prompt:\n%s", n, withoutCap)
+		}
+	}
+	if strings.Contains(withoutCap, "\n7. ") {
+		t.Errorf("uncapped prompt must not contain a rule 7 (gap 5→7 regression):\n%s", withoutCap)
+	}
+	if strings.Contains(withoutCap, "Keep this section under") {
+		t.Errorf("uncapped prompt must not contain a word-cap rule")
+	}
+}
+
 func TestBuildUserPrompt(t *testing.T) {
 	fs := &config.FactSheet{
 		DocID:                "docs/ai.md",

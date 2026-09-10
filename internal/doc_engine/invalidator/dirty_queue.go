@@ -10,6 +10,7 @@ package invalidator
 import (
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/catalog"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
@@ -28,29 +29,115 @@ func NewDirtyQueue(refs []config.DirtySectionRef) *DirtyQueue {
 	return &DirtyQueue{items: items}
 }
 
-// AssignPriorities applies Stage 3 priority ordering:
-// 1=security, 2=arch-event, 3=API surface, 4=internal, 5=config.
-func (q *DirtyQueue) AssignPriorities() {
+// AssignPriorities applies Stage 3 priority ordering using real dossier
+// signals and section specs (see PriorityForSection):
+// 1=sentinel-affected, 2=arch-event, 3=API surface, 4=internal, 5=config-only.
+//
+// specs maps SpecKey(ref.DocID, ref.SectionID) to the section's SectionSpec.
+// A nil dossier or missing spec degrades gracefully to the default priority.
+func (q *DirtyQueue) AssignPriorities(dossier *config.GlobalCommitDossier, specs map[string]*config.SectionSpec) {
 	for i := range q.items {
-		q.items[i].Priority = PriorityForSection(q.items[i])
+		q.items[i].Priority = PriorityForSection(q.items[i], dossier, specs[SpecKey(q.items[i].DocID, q.items[i].SectionID)])
 	}
 }
 
-// PriorityForSection computes the Stage 3 priority for a single ref.
-func PriorityForSection(ref config.DirtySectionRef) int {
-	id := strings.ToLower(ref.DocID + " " + ref.SectionID)
-	switch {
-	case strings.Contains(id, "secur") || strings.Contains(id, "threat") || strings.Contains(id, "auth"):
-		return 1
-	case strings.Contains(id, "architect") || strings.Contains(id, "evolution") || strings.Contains(id, "adr"):
-		return 2
-	case strings.Contains(id, "interface") || strings.Contains(id, "api") || strings.Contains(id, "export"):
-		return 3
-	case strings.Contains(id, "config") || strings.Contains(id, "env"):
+// SpecKey builds the lookup key for the specs map used by AssignPriorities.
+func SpecKey(docID, sectionID string) string {
+	return docID + "\x00" + sectionID
+}
+
+// PriorityForSection computes the Stage 3 priority for a single ref from real
+// signals — the dossier's changed symbols/sentinels/arch-events and the
+// section's ground_with directives — instead of name substrings.
+func PriorityForSection(ref config.DirtySectionRef, dossier *config.GlobalCommitDossier, sectionSpec *config.SectionSpec) int {
+	// 5: config-only sections (ground_with is exactly [config_vars]) are
+	// always lowest priority, regardless of dossier signals.
+	if sectionSpec != nil && isConfigOnlySection(sectionSpec) {
 		return 5
-	default:
-		return 4
 	}
+	if dossier != nil {
+		// 1: section grounds on sentinels/error_returns AND the dossier
+		// carries sentinel changes.
+		if groundsOnSentinels(sectionSpec) &&
+			len(dossier.AddedSentinels)+len(dossier.ModifiedSentinels) > 0 {
+			return 1
+		}
+		// 2: architectural events affect aggregate-level sections.
+		if len(dossier.ArchEvents) > 0 {
+			return 2
+		}
+		// 3: exported API surface changed.
+		if hasExportedSymbolChanges(dossier) {
+			return 3
+		}
+	}
+	// 4: internal implementation default.
+	return 4
+}
+
+// isConfigOnlySection reports whether the section grounds exclusively on
+// config_vars.
+func isConfigOnlySection(sec *config.SectionSpec) bool {
+	if sec == nil || len(sec.GroundWith) == 0 {
+		return false
+	}
+	for _, d := range sec.GroundWith {
+		if strings.ToLower(strings.TrimSpace(d)) != "config_vars" {
+			return false
+		}
+	}
+	return true
+}
+
+// groundsOnSentinels reports whether the section pulls sentinel/error facts.
+// A nil spec is treated as generic grounding (not sentinel-specific).
+func groundsOnSentinels(sec *config.SectionSpec) bool {
+	if sec == nil {
+		return false
+	}
+	for _, d := range sec.GroundWith {
+		switch strings.ToLower(strings.TrimSpace(d)) {
+		case "sentinels", "error_returns":
+			return true
+		}
+	}
+	return false
+}
+
+// hasExportedSymbolChanges reports whether the dossier added or modified any
+// exported (public API surface) symbol.
+func hasExportedSymbolChanges(dossier *config.GlobalCommitDossier) bool {
+	for _, s := range dossier.AddedSymbols {
+		if isExportedFQN(s.FQN) {
+			return true
+		}
+	}
+	for _, s := range dossier.ModifiedSymbols {
+		if isExportedFQN(s.FQN) {
+			return true
+		}
+	}
+	return false
+}
+
+// isExportedFQN reports whether an FQN's short symbol name is exported
+// (starts with an uppercase letter). Handles "path::Name", "pkg.Name",
+// and bare "Name" forms.
+func isExportedFQN(fqn string) bool {
+	name := fqn
+	if idx := strings.LastIndex(name, "::"); idx >= 0 {
+		name = name[idx+2:]
+	}
+	if idx := strings.LastIndex(name, "."); idx >= 0 {
+		name = name[idx+1:]
+	}
+	if idx := strings.LastIndex(name, "/"); idx >= 0 {
+		name = name[idx+1:]
+	}
+	if name == "" {
+		return false
+	}
+	return unicode.IsUpper([]rune(name)[0])
 }
 
 // Sort orders items by priority (stable, then by doc/section ID).

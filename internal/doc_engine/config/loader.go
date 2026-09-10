@@ -60,6 +60,12 @@ func LoadDocsConfig(repoRoot string) (*DocsConfig, error) {
 	// Apply defaults.
 	applyDefaults(&cfg)
 
+	// Non-fatal completeness warnings (Pillar 2 / plan §7.1): surface missing
+	// high-signal fields to stderr without failing the load (P5).
+	for _, w := range ValidateSpecCompleteness(&cfg) {
+		fmt.Fprintf(os.Stderr, "doc_engine: config warning: %s\n", w.Error())
+	}
+
 	return &cfg, nil
 }
 

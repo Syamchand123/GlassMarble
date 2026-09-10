@@ -4,12 +4,20 @@ package grounding
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
+	docconfig "github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/patcher"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/storage"
 )
 
 // CodeLocation represents the current physical file coordinate of a symbol.
@@ -121,4 +129,203 @@ func UpdatePermalinksInMarkdown(markdown string, graph *akg.CodePropertyGraph) s
 		_ = oldEnd
 		return match
 	})
+}
+
+// HealAllManagedDocs recomputes every file#L permalink in each managed
+// section of every doc in docs against a best-effort symbol table built by
+// scanning the repo's Go AST once (exported idents → current line).
+// Files are rewritten ONLY when healing changed something (atomic write via
+// storage.AtomicWriteFile). It returns the total healed-link count.
+func HealAllManagedDocs(repoRoot string, docs []docconfig.DocSpec) (int, error) {
+	graph, err := buildASTSymbolGraph(repoRoot)
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	for _, doc := range docs {
+		if doc.TargetPath == "" {
+			continue
+		}
+		abs := filepath.Join(repoRoot, doc.TargetPath)
+		data, readErr := os.ReadFile(abs)
+		if readErr != nil {
+			// Doc file does not exist yet — nothing to heal.
+			continue
+		}
+		managed := managedSectionIDs(doc)
+		parsed := patcher.ParseMarkdown(string(data))
+		changed := false
+		zones := make([]patcher.Zone, len(parsed.Zones))
+		copy(zones, parsed.Zones)
+		for i := range zones {
+			z := &zones[i]
+			if z.SectionID == "" || z.Kind != patcher.ZoneManaged {
+				continue
+			}
+			if managed != nil {
+				if _, ok := managed[z.SectionID]; !ok {
+					continue
+				}
+			}
+			healed, n := healMarkdownWithCount(z.Content, graph)
+			if n > 0 {
+				z.Content = healed
+				total += n
+				changed = true
+			}
+		}
+		if !changed {
+			continue
+		}
+		if _, wErr := storage.AtomicWriteFile(abs, []byte(patcher.Reconstruct(zones))); wErr != nil {
+			return total, wErr
+		}
+	}
+	return total, nil
+}
+
+// managedSectionIDs returns the set of managed, non-frozen section IDs for a
+// doc, or nil when the doc declares no sections (heal every managed zone).
+func managedSectionIDs(doc docconfig.DocSpec) map[string]bool {
+	if len(doc.Sections) == 0 {
+		return nil
+	}
+	out := make(map[string]bool)
+	for _, sec := range doc.Sections {
+		if sec.Managed && !sec.Freeze {
+			out[sec.ID] = true
+		}
+	}
+	return out
+}
+
+// healMarkdownWithCount rewrites file#L permalink links via ResolvePermalink
+// against graph, returning the healed markdown and the healed-link count.
+func healMarkdownWithCount(markdown string, graph *akg.CodePropertyGraph) (string, int) {
+	if graph == nil || graph.Nodes == nil || markdown == "" {
+		return markdown, 0
+	}
+	count := 0
+	healed := markdownPermalinkRegex.ReplaceAllStringFunc(markdown, func(match string) string {
+		submatches := markdownPermalinkRegex.FindStringSubmatch(match)
+		if len(submatches) < 4 {
+			return match
+		}
+		text := submatches[1]
+		file := submatches[2]
+		// Prefer the file-scoped FQN, fall back to the bare symbol name.
+		candidates := []string{file + "::" + text, text}
+		for _, fqn := range candidates {
+			if f, start, end, found := ResolvePermalink(fqn, graph); found && start > 0 && f == file {
+				newLink := FormatPermalink(file, start, end)
+				fixed := fmt.Sprintf("[%s](%s)", text, newLink)
+				if fixed != match {
+					count++
+				}
+				return fixed
+			}
+		}
+		return match
+	})
+	return healed, count
+}
+
+// buildASTSymbolGraph scans repoRoot's Go sources once and builds a
+// best-effort symbol table (exported idents → current line) as an AKG graph
+// so ResolvePermalink can locate current file#line coordinates.
+func buildASTSymbolGraph(repoRoot string) (*akg.CodePropertyGraph, error) {
+	graph := akg.NewCodePropertyGraph("heal-scan")
+	if repoRoot == "" {
+		return graph, nil
+	}
+	fset := token.NewFileSet()
+	walkErr := filepath.WalkDir(repoRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil // best-effort: skip unreadable entries
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == ".git" || name == "vendor" || name == "node_modules" || name == ".glassmarble" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(strings.ToLower(d.Name()), ".go") {
+			return nil
+		}
+		rel, relErr := filepath.Rel(repoRoot, path)
+		if relErr != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		f, parseErr := parser.ParseFile(fset, path, nil, 0)
+		if parseErr != nil || f == nil {
+			return nil
+		}
+		record := func(name string, pos token.Pos, kind string) {
+			if !ast.IsExported(name) {
+				return
+			}
+			line := fset.Position(pos).Line
+			if line <= 0 {
+				return
+			}
+			id := rel + "::" + name
+			if _, exists := graph.Nodes.Get(id); exists {
+				return
+			}
+			graph.Nodes = graph.Nodes.Set(id, &link.ResolvedNode{
+				ID:   id,
+				Name: name,
+				Kind: kind,
+				FileSpec: link.LocationMeta{
+					Path:      rel,
+					LineStart: line,
+					LineEnd:   line,
+				},
+			})
+		}
+		for _, decl := range f.Decls {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				if d.Name != nil {
+					kind := "FUNCTION"
+					if d.Recv != nil {
+						kind = "METHOD"
+					}
+					record(d.Name.Name, d.Name.Pos(), kind)
+				}
+			case *ast.GenDecl:
+				kind := "CONSTANT"
+				if d.Tok == token.VAR {
+					kind = "VARIABLE"
+				} else if d.Tok == token.TYPE {
+					kind = "TYPE"
+				}
+				for _, spec := range d.Specs {
+					switch s := spec.(type) {
+					case *ast.TypeSpec:
+						if s.Name != nil {
+							k := kind
+							if k == "TYPE" {
+								k = "STRUCT"
+							}
+							record(s.Name.Name, s.Name.Pos(), k)
+						}
+					case *ast.ValueSpec:
+						for _, name := range s.Names {
+							if name != nil {
+								record(name.Name, name.Pos(), kind)
+							}
+						}
+					}
+				}
+			}
+		}
+		return nil
+	})
+	if walkErr != nil {
+		return graph, walkErr
+	}
+	return graph, nil
 }

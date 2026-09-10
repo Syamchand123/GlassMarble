@@ -169,6 +169,10 @@ func ScanArchEvents(commitLogs []string) []ADREvent {
 			evType = "AUTH_ARCHITECTURE"
 			title = "Authentication Architecture Change"
 			decision = "Centralized auth decisions behind a single session/token boundary with auditable flows."
+		} else if (strings.Contains(lower, "new subsystem") || strings.Contains(lower, "new package") || strings.Contains(lower, "new module") || strings.Contains(lower, "new layer")) {
+			evType = "NEW_SUBSYSTEM"
+			title = "New Subsystem / Package Introduced"
+			decision = "Scoped the new subsystem with explicit package boundaries and ownership."
 		}
 
 		if evType != "" {
@@ -182,5 +186,51 @@ func ScanArchEvents(commitLogs []string) []ADREvent {
 			})
 		}
 	}
+	// Guarantee non-empty defaults: every returned event carries generic
+	// Context/Decision/Consequence prose even if a branch above left one blank.
+	for i := range events {
+		if strings.TrimSpace(events[i].Context) == "" {
+			events[i].Context = fmt.Sprintf("Architectural change (%s) detected in the commit history.", events[i].Type)
+		}
+		if strings.TrimSpace(events[i].Decision) == "" {
+			events[i].Decision = "Recorded the architectural decision implied by the change with explicit ownership."
+		}
+		if strings.TrimSpace(events[i].Consequence) == "" {
+			events[i].Consequence = "Reduces coupling, clarifies module boundaries, and improves testability."
+		}
+		if strings.TrimSpace(events[i].Title) == "" {
+			events[i].Title = strings.ToLower(strings.ReplaceAll(events[i].Type, "_", " "))
+		}
+	}
 	return events
+}
+
+// AutoGenerateADRs runs ScanArchEvents on []string{commitMsg} and calls
+// GenerateADR for each detected event (filling Context/Decision/Consequence
+// defaults when empty). It returns the created repo-relative paths in order.
+// A sibling agent calls this exact contract: do not change the signature.
+func AutoGenerateADRs(repoRoot, commitHash, commitMsg string) ([]string, error) {
+	events := ScanArchEvents([]string{commitMsg})
+	var paths []string
+	for _, ev := range events {
+		if strings.TrimSpace(ev.Context) == "" {
+			ev.Context = fmt.Sprintf("Architectural change (%s) detected at commit %s: %s", ev.Type, commitHash, commitMsg)
+		}
+		if strings.TrimSpace(ev.Decision) == "" {
+			ev.Decision = "Recorded the architectural decision implied by the change with explicit ownership."
+		}
+		if strings.TrimSpace(ev.Consequence) == "" {
+			ev.Consequence = "Reduces coupling, clarifies module boundaries, and improves testability."
+		}
+		ev.CommitHash = commitHash
+		if ev.Timestamp.IsZero() {
+			ev.Timestamp = time.Now()
+		}
+		rel, err := GenerateADR(repoRoot, ev)
+		if err != nil {
+			return paths, err
+		}
+		paths = append(paths, rel)
+	}
+	return paths, nil
 }

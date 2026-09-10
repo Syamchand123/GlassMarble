@@ -1,8 +1,9 @@
 // Package grounding — collector.go
-// Dispatches AKG queries for all 14 ground_with directives.
+// Dispatches AKG queries for all 13 ground_with directives.
 package grounding
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"unicode"
@@ -23,11 +24,49 @@ func NewCollector(graph *akg.CodePropertyGraph) *Collector {
 	return &Collector{graph: graph}
 }
 
+// groundWithAliases maps true synonym spellings to their canonical
+// ground_with directive. Aliases are resolved BEFORE the dispatch switch.
+var groundWithAliases = map[string]string{
+	"callers":             "callgraph",
+	"components":          "signatures",
+	"symbols":             "signatures",
+	"exported_interfaces": "exported_symbols",
+	"timeline":            "arch_events",
+	"timelines":           "arch_events",
+	"commit_reasoning":    "arch_events",
+}
+
+// groundWithSkipped lists directive spellings that are intentionally not
+// collected here: diagrams come from DocSpec.Diagrams (rendered in facts.go),
+// and db_schemas is a descoped pillar (P22) that must not fail.
+var groundWithSkipped = map[string]bool{
+	"diagrams":   true,
+	"diagram":    true,
+	"db_schemas": true,
+	"db_schema":  true,
+}
+
+// resolveGroundWith normalizes a raw ground_with value: lowercase, trim,
+// then alias-map to the canonical directive. The second return value reports
+// whether the value is a skip directive (diagrams / descoped db_schemas).
+func resolveGroundWith(raw string) (canonical string, skip bool) {
+	norm := strings.ToLower(strings.TrimSpace(raw))
+	if groundWithSkipped[norm] {
+		return norm, true
+	}
+	if canonical, ok := groundWithAliases[norm]; ok {
+		return canonical, false
+	}
+	return norm, false
+}
+
 // CollectSectionFacts collects all facts required for a section under the given scope.
-func (c *Collector) CollectSectionFacts(sec *config.SectionSpec, scope *config.ScopeRule) *config.GroundTruthPayload {
+// Unknown ground_with values produce a descriptive error; alias spellings are
+// resolved to their canonical directive before dispatch.
+func (c *Collector) CollectSectionFacts(sec *config.SectionSpec, scope *config.ScopeRule) (*config.GroundTruthPayload, error) {
 	payload := &config.GroundTruthPayload{}
 	if c.graph == nil || c.graph.Nodes == nil {
-		return payload
+		return payload, nil
 	}
 
 	directives := []string{"signatures", "exported_symbols"} // Default grounding
@@ -38,7 +77,11 @@ func (c *Collector) CollectSectionFacts(sec *config.SectionSpec, scope *config.S
 	seenSymbols := make(map[string]bool)
 
 	for _, d := range directives {
-		switch strings.ToLower(strings.TrimSpace(d)) {
+		canonical, skip := resolveGroundWith(d)
+		if skip {
+			continue
+		}
+		switch canonical {
 		case "signatures":
 			c.collectSignatures(scope, false, seenSymbols, payload)
 		case "exported_symbols":
@@ -53,8 +96,6 @@ func (c *Collector) CollectSectionFacts(sec *config.SectionSpec, scope *config.S
 			c.collectConcurrency(scope, payload)
 		case "config_vars":
 			c.collectConfigVars(scope, payload)
-		case "db_schemas":
-			c.collectDBSchemas(scope, payload)
 		case "http_handlers":
 			c.collectHTTPHandlers(scope, payload)
 		case "callgraph":
@@ -67,6 +108,8 @@ func (c *Collector) CollectSectionFacts(sec *config.SectionSpec, scope *config.S
 			c.collectIngressPoints(scope, payload)
 		case "dependencies":
 			c.collectDependencies(scope, payload)
+		default:
+			return payload, fmt.Errorf("unknown ground_with %q", d)
 		}
 	}
 
@@ -81,7 +124,7 @@ func (c *Collector) CollectSectionFacts(sec *config.SectionSpec, scope *config.S
 		return payload.ConfigVars[i].Name < payload.ConfigVars[j].Name
 	})
 
-	return payload
+	return payload, nil
 }
 
 // 1 & 2: Signatures and Exported Symbols
@@ -103,6 +146,7 @@ func (c *Collector) collectSignatures(scope *config.ScopeRule, exportedOnly bool
 			Kind:      string(n.Kind),
 			File:      n.FileSpec.Path,
 			Line:      n.FileSpec.LineStart,
+			Permalink: FormatPermalink(n.FileSpec.Path, n.FileSpec.LineStart, n.FileSpec.LineEnd),
 			Signature: extractSignature(n),
 			Doc:       extractDoc(n),
 		})
@@ -132,6 +176,7 @@ func (c *Collector) collectDocComments(scope *config.ScopeRule, p *config.Ground
 					Kind:      string(n.Kind),
 					File:      n.FileSpec.Path,
 					Line:      n.FileSpec.LineStart,
+					Permalink: FormatPermalink(n.FileSpec.Path, n.FileSpec.LineStart, n.FileSpec.LineEnd),
 					Signature: extractSignature(n),
 					Doc:       doc,
 				})
@@ -193,6 +238,7 @@ func (c *Collector) collectConcurrency(scope *config.ScopeRule, p *config.Ground
 				Kind:      "concurrency",
 				File:      n.FileSpec.Path,
 				Line:      n.FileSpec.LineStart,
+				Permalink: FormatPermalink(n.FileSpec.Path, n.FileSpec.LineStart, n.FileSpec.LineEnd),
 				Signature: sig,
 				Doc:       "Concurrency primitive: " + extractDoc(n),
 			})
@@ -222,28 +268,7 @@ func (c *Collector) collectConfigVars(scope *config.ScopeRule, p *config.GroundT
 	})
 }
 
-// 8: DB Schemas
-func (c *Collector) collectDBSchemas(scope *config.ScopeRule, p *config.GroundTruthPayload) {
-	c.graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
-		if n == nil {
-			return
-		}
-		path := strings.ToLower(n.FileSpec.Path)
-		if strings.Contains(path, "db") || strings.Contains(path, "model") || strings.Contains(path, "schema") || strings.Contains(path, "migration") {
-			if n.Kind == "STRUCT" || n.Kind == "TABLE" {
-				p.Schemas = append(p.Schemas, config.SchemaFact{
-					Name:       n.Name,
-					Table:      n.Name,
-					File:       n.FileSpec.Path,
-					Line:       n.FileSpec.LineStart,
-					Definition: extractSignature(n),
-				})
-			}
-		}
-	})
-}
-
-// 9: HTTP Handlers
+// 8: HTTP Handlers
 func (c *Collector) collectHTTPHandlers(scope *config.ScopeRule, p *config.GroundTruthPayload) {
 	c.graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
 		if n == nil || !catalog.MatchesScope(scope, n.FileSpec.Path) {
@@ -256,6 +281,7 @@ func (c *Collector) collectHTTPHandlers(scope *config.ScopeRule, p *config.Groun
 				Kind:      "http_handler",
 				File:      n.FileSpec.Path,
 				Line:      n.FileSpec.LineStart,
+				Permalink: FormatPermalink(n.FileSpec.Path, n.FileSpec.LineStart, n.FileSpec.LineEnd),
 				Signature: sig,
 				Doc:       extractDoc(n),
 			})
@@ -263,7 +289,7 @@ func (c *Collector) collectHTTPHandlers(scope *config.ScopeRule, p *config.Groun
 	})
 }
 
-// 10: Callgraph Facts
+// 9: Callgraph Facts
 func (c *Collector) collectCallgraphFacts(scope *config.ScopeRule, p *config.GroundTruthPayload) {
 	if c.graph == nil || c.graph.OutboundEdges == nil || scope == nil {
 		return
@@ -271,17 +297,23 @@ func (c *Collector) collectCallgraphFacts(scope *config.ScopeRule, p *config.Gro
 	for _, ep := range scope.EntryPoints {
 		for _, edge := range c.graph.GetOutboundEdges(ep) {
 			if edge.Type == link.EdgeCalls {
-				p.Symbols = append(p.Symbols, config.SymbolFact{
+				fact := config.SymbolFact{
 					FQN:       edge.TargetID,
 					Kind:      "callee",
 					Signature: "Called by " + cleanSymbolName(ep),
-				})
+				}
+				if node, ok := c.graph.Nodes.Get(edge.TargetID); ok && node != nil {
+					fact.File = node.FileSpec.Path
+					fact.Line = node.FileSpec.LineStart
+					fact.Permalink = FormatPermalink(node.FileSpec.Path, node.FileSpec.LineStart, node.FileSpec.LineEnd)
+				}
+				p.Symbols = append(p.Symbols, fact)
 			}
 		}
 	}
 }
 
-// 11: Arch Intelligence (components & patterns)
+// 10: Arch Intelligence (components & patterns)
 func (c *Collector) collectArchIntelligence(p *config.GroundTruthPayload) {
 	// Surface high-level architectural component facts from graph structure
 	if c.graph.Nodes != nil {
@@ -289,7 +321,7 @@ func (c *Collector) collectArchIntelligence(p *config.GroundTruthPayload) {
 	}
 }
 
-// 12: Arch Events
+// 11: Arch Events
 func (c *Collector) collectArchEvents(p *config.GroundTruthPayload) {
 	// Appends active graph commit hash context
 	if c.graph != nil && c.graph.CommitHash != "" {
@@ -297,20 +329,28 @@ func (c *Collector) collectArchEvents(p *config.GroundTruthPayload) {
 	}
 }
 
-// 13: Ingress Points
+// 12: Ingress Points
 func (c *Collector) collectIngressPoints(scope *config.ScopeRule, p *config.GroundTruthPayload) {
 	if scope != nil {
 		for _, ep := range scope.EntryPoints {
-			p.Symbols = append(p.Symbols, config.SymbolFact{
+			fact := config.SymbolFact{
 				FQN:  ep,
 				Kind: "ingress",
 				Doc:  "Public entry point",
-			})
+			}
+			if c.graph != nil && c.graph.Nodes != nil {
+				if node, ok := c.graph.Nodes.Get(ep); ok && node != nil {
+					fact.File = node.FileSpec.Path
+					fact.Line = node.FileSpec.LineStart
+					fact.Permalink = FormatPermalink(node.FileSpec.Path, node.FileSpec.LineStart, node.FileSpec.LineEnd)
+				}
+			}
+			p.Symbols = append(p.Symbols, fact)
 		}
 	}
 }
 
-// 14: Dependencies
+// 13: Dependencies
 func (c *Collector) collectDependencies(scope *config.ScopeRule, p *config.GroundTruthPayload) {
 	if c.graph == nil || c.graph.OutboundEdges == nil {
 		return

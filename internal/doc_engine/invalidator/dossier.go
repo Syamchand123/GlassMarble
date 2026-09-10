@@ -35,6 +35,12 @@ func BuildDossier(repoDir string, commitHash string, baseGraph, headGraph *akg.C
 			extractor := commit_reasoning.NewIntentExtractor()
 			res := extractor.Extract(context.Background(), meta, meta.Body)
 			dossier.CommitIntent = string(res.Intent)
+
+			// Derive architectural events from commit message keywords.
+			// (internal/arch_timeline only exposes snapshot-diff APIs with no
+			// clean per-commit event lookup, so keyword derivation is the
+			// deterministic fallback here.)
+			dossier.ArchEvents = deriveArchEvents(meta.Subject + "\n" + meta.Body)
 		}
 	}
 
@@ -104,11 +110,29 @@ func BuildDossier(repoDir string, commitHash string, baseGraph, headGraph *akg.C
 							DocBefore: baseDoc,
 							DocAfter:  headDoc,
 						})
+
+						// Sentinel vars whose message changed get a dedicated delta
+						// so Stage 3 can prioritize error-catalog sections.
+						if isSentinelError(id) {
+							before, after := baseSig, headSig
+							if baseDoc != headDoc {
+								before, after = baseDoc, headDoc
+							}
+							dossier.ModifiedSentinels = append(dossier.ModifiedSentinels, config.SentinelDelta{
+								FQN:    id,
+								Before: before,
+								After:  after,
+							})
+						}
 					}
 				})
 			}
 		}
 	}
+
+	// NOTE: DirtySections is intentionally left empty here. It is populated
+	// later by the invalidation engine (Invalidator.FindDirtySections +
+	// DirtyQueue) once per-section hashes and priorities are computed.
 
 	return dossier, nil
 }
@@ -164,4 +188,32 @@ func isSentinelError(fqn string) bool {
 		name = parts[len(parts)-1]
 	}
 	return strings.HasPrefix(name, "Err")
+}
+
+// archEventKeywords maps commit-message keywords to architectural event kinds.
+// Checked in fixed order for deterministic output.
+var archEventKeywords = []struct {
+	keyword string
+	event   string
+}{
+	{"split", "COMPONENT_SPLIT"},
+	{"cycle", "CYCLE_INTRODUCED"},
+	{"database", "NEW_DATABASE_LAYER"},
+	{"layer", "LAYER_VIOLATION"},
+	{"service", "SERVICE_ADDED"},
+	{"interface", "INTERFACE_CHANGED"},
+	{"auth", "SECURITY_BOUNDARY_CHANGED"},
+}
+
+// deriveArchEvents scans commit text for architectural keywords and returns
+// the corresponding event kinds in deterministic order.
+func deriveArchEvents(commitText string) []string {
+	lower := strings.ToLower(commitText)
+	var events []string
+	for _, kw := range archEventKeywords {
+		if strings.Contains(lower, kw.keyword) {
+			events = append(events, kw.event)
+		}
+	}
+	return events
 }

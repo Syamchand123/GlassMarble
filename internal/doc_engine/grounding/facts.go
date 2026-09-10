@@ -23,7 +23,9 @@ func AssembleFactSheet(
 	}
 
 	collector := NewCollector(graph)
-	payload := collector.CollectSectionFacts(sec, &doc.Scope)
+	// Best-effort: unknown ground_with values surface as a collection error
+	// for direct callers; the render pipeline proceeds with partial facts.
+	payload, _ := collector.CollectSectionFacts(sec, &doc.Scope)
 
 	// Filter dossier changes for this document's scope
 	if dossier != nil {
@@ -72,15 +74,18 @@ func AssembleFactSheet(
 
 	sectionID := ""
 	instruction := ""
+	maxWords := 0
 	if sec != nil {
 		sectionID = sec.ID
 		instruction = sec.Instruction
+		maxWords = sec.MaxWords
 	}
 
 	sheet := &config.FactSheet{
 		DocID:                doc.ID,
 		SectionID:            sectionID,
 		SectionInstruction:   instruction,
+		MaxWords:             maxWords,
 		GroundTruth:          *payload,
 		PriorSectionMarkdown: updatedPrior,
 	}

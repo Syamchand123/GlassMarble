@@ -13,7 +13,7 @@ func TestDocCommandHelp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("doc --help failed: %v\n%s", err, out)
 	}
-	for _, want := range []string{"Documentation Intelligence Engine", "check", "diff", "init", "status", "gaps", "release", "report", "export", "view"} {
+	for _, want := range []string{"Documentation Intelligence Engine", "check", "diff", "init", "status", "release", "export", "view"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("doc --help output missing %q:\n%s", want, out)
 		}
@@ -130,39 +130,6 @@ func TestDocInitCLI(t *testing.T) {
 	}
 }
 
-func TestDocGapsJSON(t *testing.T) {
-	tempDir := t.TempDir()
-	out, err := runGmbCommand(t, "doc", "gaps", "--dir", tempDir, "--json")
-	if err != nil {
-		t.Fatalf("doc gaps --json failed: %v\n%s", err, out)
-	}
-	if !strings.Contains(out, `"gaps"`) {
-		t.Errorf("doc gaps --json output missing 'gaps':\n%s", out)
-	}
-}
-
-func TestDocSuggestJSON(t *testing.T) {
-	tempDir := t.TempDir()
-	out, err := runGmbCommand(t, "doc", "suggest", "--dir", tempDir, "--json")
-	if err != nil {
-		t.Fatalf("doc suggest --json failed: %v\n%s", err, out)
-	}
-	if !strings.Contains(out, "[") {
-		t.Errorf("doc suggest --json expected json array:\n%s", out)
-	}
-}
-
-func TestDocReportJSON(t *testing.T) {
-	tempDir := t.TempDir()
-	out, err := runGmbCommand(t, "doc", "report", "--dir", tempDir, "--json")
-	if err != nil {
-		t.Fatalf("doc report --json failed: %v\n%s", err, out)
-	}
-	if !strings.Contains(out, `"total_documents"`) {
-		t.Errorf("doc report --json output missing 'total_documents':\n%s", out)
-	}
-}
-
 func TestDocExportJSON(t *testing.T) {
 	tempDir := t.TempDir()
 	// First init a doc so export has content
@@ -192,24 +159,6 @@ func TestDocRelease(t *testing.T) {
 	}
 }
 
-func TestDocRelease_Snapshot(t *testing.T) {
-	tempDir := t.TempDir()
-	// Init a doc first
-	_, _ = runGmbCommand(t, "doc", "init", "docs/test.md",
-		"--dir", tempDir,
-		"--scope", "cmd/**",
-		"--archetype", "module",
-	)
-
-	out, err := runGmbCommand(t, "doc", "release", "v1.0.0..v1.1.0", "--snapshot", "--dir", tempDir)
-	if err != nil {
-		t.Fatalf("doc release --snapshot failed: %v\n%s", err, out)
-	}
-	if !strings.Contains(out, "snapshot v1.1.0 created") {
-		t.Errorf("doc release --snapshot missing confirmation output:\n%s", out)
-	}
-}
-
 func TestDocCheck_VerifySnippets(t *testing.T) {
 	tempDir := t.TempDir()
 	out, err := runGmbCommand(t, "doc", "check", "--verify-snippets", "--dir", tempDir)
@@ -224,7 +173,7 @@ func TestDocCheck_VerifySnippets(t *testing.T) {
 	_ = os.MkdirAll(docsDir, 0755)
 	brokenFile := filepath.Join(docsDir, "broken.md")
 	_ = os.WriteFile(brokenFile, []byte("# Broken\n<!-- gmb:snippet:example -->\n```go\nfunc broken( {\n```\n"), 0644)
-	docsYAML := "version: 1\ndocs_dir: docs\ndocuments:\n  - id: broken\n    target: docs/broken.md\n"
+	docsYAML := "version: 1\ndocs_dir: docs\ndocuments:\n  - id: broken\n    target: docs/broken.md\n    title: Broken doc\n    scope:\n      paths:\n        - \"docs/**\"\n    sections:\n      - id: main\n        title: Main\n        instruction: Document the state.\n"
 	_ = os.WriteFile(filepath.Join(gmDir, "docs.yaml"), []byte(docsYAML), 0644)
 
 	out, err = runGmbCommand(t, "doc", "check", "--verify-snippets", "--dir", tempDir)

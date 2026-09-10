@@ -52,6 +52,10 @@ type DocumentState struct {
 	// 100 means fully in sync with HEAD.
 	FreshnessScore int `json:"freshness_score"`
 
+	// CommitsBehind is the number of in-scope commits since LastUpdatedCommit
+	// (master-plan Appendix B). Updated by Run() and reported live by Check().
+	CommitsBehind int `json:"commits_behind,omitempty"`
+
 	// Sections maps SectionSpec.ID to per-section state.
 	Sections map[string]*SectionState `json:"sections"`
 }
@@ -79,6 +83,11 @@ type SectionState struct {
 
 	// LastUpdatedAt is when this section was last regenerated.
 	LastUpdatedAt time.Time `json:"last_updated_at,omitempty"`
+
+	// LastRenderedBody is the merged managed-zone body written by the last
+	// successful render. It serves as BASE for the next run's Stage 8
+	// 3-way merge (BASE vs human-edited OURS vs fresh machine THEIRS).
+	LastRenderedBody string `json:"last_rendered_body,omitempty"`
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -214,6 +223,27 @@ func GetOrCreateSectionState(ds *DocumentState, sectionID string) *SectionState 
 	ss := &SectionState{}
 	ds.Sections[sectionID] = ss
 	return ss
+}
+
+// SetLastRenderedBody persists the merged section body written by a
+// successful render so the next run can use it as the 3-way merge BASE.
+// A nil StateManager is a no-op. State save failures are returned to the
+// caller (non-fatal per P5: callers should treat them as warnings).
+func SetLastRenderedBody(sm *StateManager, targetPath, sectionID, body string) error {
+	if sm == nil {
+		return nil
+	}
+	state, err := sm.Load()
+	if err != nil {
+		return fmt.Errorf("doc_engine: loading state: %w", err)
+	}
+	ds := GetOrCreateDocState(state, targetPath)
+	ss := GetOrCreateSectionState(ds, sectionID)
+	ss.LastRenderedBody = body
+	if err := sm.Save(state); err != nil {
+		return fmt.Errorf("doc_engine: saving section body: %w", err)
+	}
+	return nil
 }
 
 // ────────────────────────────────────────────────────────────────────────────

@@ -12,6 +12,8 @@ import (
 )
 
 // BuildSystemPrompt constructs the immutable system prompt for the LLM actuator.
+// Rules are numbered programmatically so the sequence is always gap-free
+// (1-6 when maxWords==0, 1-7 otherwise).
 func BuildSystemPrompt(style *config.StyleSpec, maxWords int) string {
 	voice := "active, second-person, present tense"
 	jargon := "simply, just, leverage, obviously, utilize"
@@ -25,22 +27,28 @@ func BuildSystemPrompt(style *config.StyleSpec, maxWords int) string {
 		}
 	}
 
-	maxWordsClause := ""
+	rules := []string{
+		"Every function, type, error, or identifier you mention in backticks MUST appear in the fact_sheet.ground_truth. Do not reference any code entity not listed there.",
+		"Do not rewrite or rephrase sentences from prior_section_markdown that are still factually accurate. Only add, modify, or remove sentences that directly reflect the changes in ground_truth.",
+		"Output ONLY the markdown for the specified section. No preamble, no \"Here is the updated section\", no meta-commentary.",
+		fmt.Sprintf("Follow the style: %s.", voice),
+		fmt.Sprintf("Avoid these words/phrases: %s.", jargon),
+	}
 	if maxWords > 0 {
-		maxWordsClause = fmt.Sprintf("\n6. Keep this section under %d words.", maxWords)
+		rules = append(rules, fmt.Sprintf("Keep this section under %d words.", maxWords))
+	}
+	rules = append(rules, "Embed the diagram verbatim if fact_sheet.ground_truth.diagram_mermaid is non-empty.")
+
+	var numbered strings.Builder
+	for i, r := range rules {
+		fmt.Fprintf(&numbered, "%d. %s\n", i+1, r)
 	}
 
 	return fmt.Sprintf(`You are a technical documentation writer embedded in GlassMarble, an architecture intelligence tool.
 Your ONLY job is to convert the provided JSON fact sheet into accurate, concise markdown prose for the specified section.
 
 HARD RULES — these are absolute and non-negotiable:
-1. Every function, type, error, or identifier you mention in backticks MUST appear in the fact_sheet.ground_truth. Do not reference any code entity not listed there.
-2. Do not rewrite or rephrase sentences from prior_section_markdown that are still factually accurate. Only add, modify, or remove sentences that directly reflect the changes in ground_truth.
-3. Output ONLY the markdown for the specified section. No preamble, no "Here is the updated section", no meta-commentary.
-4. Follow the style: %s.
-5. Avoid these words/phrases: %s.%s
-7. Embed the diagram verbatim if fact_sheet.ground_truth.diagram_mermaid is non-empty.`,
-		voice, jargon, maxWordsClause)
+%s`, strings.TrimRight(numbered.String(), "\n"))
 }
 
 // BuildUserPrompt constructs the user prompt containing the serialized FactSheet.

@@ -7,44 +7,6 @@ import (
 	"testing"
 )
 
-func TestGenerateThreatModel(t *testing.T) {
-	tempDir := t.TempDir()
-	apiPkg := filepath.Join(tempDir, "api")
-	_ = os.MkdirAll(apiPkg, 0755)
-
-	code := `package api
-import (
-	"net/http"
-	"crypto/sha256"
-	"os"
-)
-
-func Register() {
-	http.HandleFunc("/login", nil)
-	key := os.Getenv("API_SECRET_KEY")
-	_ = sha256.Sum256([]byte(key))
-}
-`
-	_ = os.WriteFile(filepath.Join(apiPkg, "routes.go"), []byte(code), 0644)
-
-	threatModel, err := GenerateThreatModel(tempDir)
-	if err != nil {
-		t.Fatalf("GenerateThreatModel failed: %v", err)
-	}
-
-	if !strings.Contains(threatModel, "System Threat Model & Security Architecture") {
-		t.Errorf("missing title in threat model:\n%s", threatModel)
-	}
-	if !strings.Contains(threatModel, "API_SECRET_KEY") {
-		t.Errorf("missing API_SECRET_KEY in threat model:\n%s", threatModel)
-	}
-
-	dest := filepath.Join(tempDir, "docs", "security", "threat_model.md")
-	if _, err := os.Stat(dest); os.IsNotExist(err) {
-		t.Errorf("docs/security/threat_model.md not created")
-	}
-}
-
 func TestGenerateConfigDictionary(t *testing.T) {
 	tempDir := t.TempDir()
 	pkgDir := filepath.Join(tempDir, "cfg")
@@ -78,61 +40,114 @@ func Init() {
 	}
 }
 
-func TestGenerateSBOM(t *testing.T) {
+func TestGenerateConfigDictionaryExtendedSources(t *testing.T) {
 	tempDir := t.TempDir()
+	pkgDir := filepath.Join(tempDir, "cfg")
+	_ = os.MkdirAll(pkgDir, 0755)
 
-	goModContent := `module example.com/testapp
+	code := `package cfg
 
-go 1.22
+import (
+	"flag"
+	"os"
 
-require (
-	github.com/spf13/cobra v1.8.0
-	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	"github.com/spf13/viper"
 )
-`
-	_ = os.WriteFile(filepath.Join(tempDir, "go.mod"), []byte(goModContent), 0644)
 
-	sbom, err := GenerateSBOM(tempDir)
-	if err != nil {
-		t.Fatalf("GenerateSBOM failed: %v", err)
-	}
+var port = flag.String("port", "8080", "server port")
+var _ = flag.Bool("debug", false, "debug mode")
 
-	if !strings.Contains(sbom, "github.com/spf13/cobra") {
-		t.Errorf("missing cobra in SBOM:\n%s", sbom)
-	}
-	if !strings.Contains(sbom, "Direct") {
-		t.Errorf("missing Direct classification in SBOM:\n%s", sbom)
-	}
-
-	dest := filepath.Join(tempDir, "docs", "compliance", "dependencies.md")
-	if _, err := os.Stat(dest); os.IsNotExist(err) {
-		t.Errorf("docs/compliance/dependencies.md not created")
-	}
+type ServerConfig struct {
+	// Host is the bind address.
+	Host string ` + "`mapstructure:\"server_host\" yaml:\"host\" default:\"localhost\"`" + `
+	// Token authenticates upstream.
+	Token string ` + "`mapstructure:\"server_token\" required:\"true\"`" + `
+	Ignored string
 }
 
-func TestCheckAPISurfaceBoundaries(t *testing.T) {
-	tempDir := t.TempDir()
-	cmdDir := filepath.Join(tempDir, "cmd")
-	_ = os.MkdirAll(cmdDir, 0755)
-
-	code := `package cmd
-type internalHelper struct{}
-
-func PublicEndpoint() internalHelper {
-	return internalHelper{}
+func Init() {
+	_ = os.Getenv("PORT")
+	_ = viper.GetString("SERVER_NAME")
+	viper.SetDefault("SERVER_NAME", "glassmarble")
+	_ = viper.GetInt("MAX_WORKERS")
+	_ = *port
 }
 `
-	_ = os.WriteFile(filepath.Join(cmdDir, "root.go"), []byte(code), 0644)
+	_ = os.WriteFile(filepath.Join(pkgDir, "env.go"), []byte(code), 0644)
 
-	report, err := CheckAPISurfaceBoundaries(tempDir)
+	vars, err := scanConfigVariables(tempDir)
 	if err != nil {
-		t.Fatalf("CheckAPISurfaceBoundaries failed: %v", err)
+		t.Fatalf("scanConfigVariables failed: %v", err)
+	}
+	byName := map[string]ConfigVarRecord{}
+	for _, v := range vars {
+		byName[v.Name] = v
 	}
 
-	if report.PublicEdgeCount != 1 {
-		t.Errorf("expected 1 public edge func, got %d", report.PublicEdgeCount)
+	// viper capture with SetDefault default applied.
+	vn, ok := byName["SERVER_NAME"]
+	if !ok {
+		t.Fatalf("missing viper key SERVER_NAME in %v", byName)
 	}
-	if len(report.Violations) == 0 {
-		t.Errorf("expected violation for leaked unexported type internalHelper")
+	if vn.Type != "string" {
+		t.Errorf("SERVER_NAME type = %q, want string", vn.Type)
+	}
+	if vn.Default != "glassmarble" {
+		t.Errorf("SERVER_NAME default = %q, want glassmarble", vn.Default)
+	}
+	if vn.Required {
+		t.Errorf("SERVER_NAME with default must not be required")
+	}
+	// viper without default is required by heuristic.
+	mw, ok := byName["MAX_WORKERS"]
+	if !ok {
+		t.Fatalf("missing viper key MAX_WORKERS")
+	}
+	if mw.Type != "int" {
+		t.Errorf("MAX_WORKERS type = %q, want int", mw.Type)
+	}
+	if !mw.Required {
+		t.Errorf("MAX_WORKERS without default should be required by heuristic")
+	}
+
+	// flag capture with real type + default.
+	pf, ok := byName["port"]
+	if !ok {
+		t.Fatalf("missing flag port")
+	}
+	if pf.Type != "string" || pf.Default != "8080" {
+		t.Errorf("flag port = type %q default %q, want string/8080", pf.Type, pf.Default)
+	}
+	db, ok := byName["debug"]
+	if !ok {
+		t.Fatalf("missing flag debug")
+	}
+	if db.Type != "bool" || db.Default != "false" {
+		t.Errorf("flag debug = type %q default %q, want bool/false", db.Type, db.Default)
+	}
+
+	// struct-tag capture.
+	sh, ok := byName["server_host"]
+	if !ok {
+		t.Fatalf("missing struct tag server_host")
+	}
+	if sh.Type != "string" || sh.Default != "localhost" {
+		t.Errorf("server_host = type %q default %q, want string/localhost", sh.Type, sh.Default)
+	}
+	st, ok := byName["server_token"]
+	if !ok {
+		t.Fatalf("missing struct tag server_token")
+	}
+	if !st.Required {
+		t.Errorf("server_token with required:true tag should be required")
+	}
+
+	// Table renders real Type/Default columns.
+	dict, err := GenerateConfigDictionary(tempDir)
+	if err != nil {
+		t.Fatalf("GenerateConfigDictionary failed: %v", err)
+	}
+	if !strings.Contains(dict, "SERVER_NAME") || !strings.Contains(dict, "glassmarble") {
+		t.Errorf("expected viper default in table:\n%s", dict)
 	}
 }

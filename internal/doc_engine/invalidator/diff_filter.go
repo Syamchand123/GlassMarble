@@ -3,7 +3,9 @@
 package invalidator
 
 import (
+	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
@@ -47,9 +49,28 @@ func FastBail(repoDir string, commitHash string, cat *catalog.Catalog, state *st
 		return false, changedFiles, "", nil
 	}
 
-	// 3. Check if any file matches any doc scope
+	// 3. Fast path: commit only touched tests and/or docs → bail.
+	// Pure string checks, no network, early returns (<15ms path).
+	allTestOrDocs := true
+	for _, f := range changedFiles {
+		lf := strings.ToLower(f)
+		if !(strings.HasSuffix(lf, "_test.go") || strings.HasSuffix(lf, ".md")) {
+			allTestOrDocs = false
+			break
+		}
+	}
+	if allTestOrDocs && !force {
+		return true, changedFiles, "commit only modified tests and/or documentation files", nil
+	}
+
+	// 4. Check if any NON-TEST file matches any doc scope.
+	// _test.go files never count as scope matches on their own: a test-only
+	// change inside a scope must bail unless a real scope file also changed.
 	hasScopeMatch := false
 	for _, file := range changedFiles {
+		if strings.HasSuffix(strings.ToLower(file), "_test.go") {
+			continue
+		}
 		for _, doc := range cat.Docs() {
 			if cat.MatchesPath(doc.ID, file) {
 				hasScopeMatch = true
@@ -65,7 +86,7 @@ func FastBail(repoDir string, commitHash string, cat *catalog.Catalog, state *st
 		return true, changedFiles, "no files in any document's scope were touched", nil
 	}
 
-	// 4. Check if diff only contains documentation files (.md)
+	// 5. Check if diff only contains documentation files (.md)
 	allDocs := true
 	for _, f := range changedFiles {
 		if !strings.HasSuffix(strings.ToLower(f), ".md") {
@@ -162,6 +183,15 @@ func (inv *Invalidator) FindDirtySections(
 			}
 		}
 
+		// DocLevelRoot gate (mirrors the aggregate check): root docs
+		// (README.md, docs/index.md) invalidate ONLY on public-surface
+		// changes. Leaf behavior is unchanged.
+		if level == catalog.DocLevelRoot && dossier != nil {
+			if !isPublicSurfaceChange(dossier) {
+				continue
+			}
+		}
+
 		// Find SectionSpec
 		var secSpec *config.SectionSpec
 		for i := range doc.Sections {
@@ -191,7 +221,9 @@ func (inv *Invalidator) FindDirtySections(
 		}
 
 		// Hash differs or not yet tracked -> dirty!
-		cand.Reason = "AST subgraph hash modified"
+		// The Reason carries intent + change-kind context so the dossier
+		// equivalent (DirtySections list) stays complete downstream.
+		cand.Reason = dossierReason(dossier, cand)
 		confirmedDirty = append(confirmedDirty, cand)
 	}
 
@@ -201,6 +233,89 @@ func (inv *Invalidator) FindDirtySections(
 		maxUpdates = constraints.MaxDocUpdatesPerCommit
 	}
 	return catalog.EnforceBudget(confirmedDirty, maxUpdates), nil
+}
+
+// isPublicSurfaceChange reports whether the dossier carries a public-surface
+// change: an added/removed EXPORTED symbol under cmd/ paths, or any
+// architectural events.
+func isPublicSurfaceChange(dossier *config.GlobalCommitDossier) bool {
+	if dossier == nil {
+		return false
+	}
+	if len(dossier.ArchEvents) > 0 {
+		return true
+	}
+	for _, s := range dossier.AddedSymbols {
+		if isExportedShortName(s.FQN) && isCmdPath(s.File) {
+			return true
+		}
+		if s.File == "" && isExportedShortName(s.FQN) && isCmdPath(fqnFilePart(s.FQN)) {
+			return true
+		}
+	}
+	for _, fqn := range dossier.RemovedSymbols {
+		if isExportedShortName(fqn) && isCmdPath(fqnFilePart(fqn)) {
+			return true
+		}
+	}
+	return false
+}
+
+// dossierReason builds the rich per-section Reason string carrying the commit
+// intent and the change kind breakdown from the dossier.
+func dossierReason(dossier *config.GlobalCommitDossier, cand config.DirtySectionRef) string {
+	if dossier == nil {
+		return fmt.Sprintf("AST subgraph hash modified for section %q (no dossier context)", cand.SectionID)
+	}
+	intent := dossier.CommitIntent
+	if intent == "" {
+		intent = "unknown"
+	}
+	return fmt.Sprintf("AST subgraph hash modified (intent=%s; +%d added/~%d modified/-%d removed symbols; +%d/±%d sentinels; %d arch events; section %s in %s)",
+		intent,
+		len(dossier.AddedSymbols),
+		len(dossier.ModifiedSymbols),
+		len(dossier.RemovedSymbols),
+		len(dossier.AddedSentinels),
+		len(dossier.ModifiedSentinels),
+		len(dossier.ArchEvents),
+		cand.SectionID,
+		cand.DocPath,
+	)
+}
+
+// isExportedShortName reports whether an FQN's short symbol name is exported
+// (starts with an uppercase letter).
+func isExportedShortName(fqn string) bool {
+	name := fqn
+	if idx := strings.LastIndex(name, "::"); idx >= 0 {
+		name = name[idx+2:]
+	}
+	if idx := strings.LastIndex(name, "."); idx >= 0 {
+		name = name[idx+1:]
+	}
+	if idx := strings.LastIndex(name, "/"); idx >= 0 {
+		name = name[idx+1:]
+	}
+	if name == "" {
+		return false
+	}
+	return unicode.IsUpper([]rune(name)[0])
+}
+
+// isCmdPath reports whether a repo-relative path lives under cmd/.
+func isCmdPath(p string) bool {
+	norm := strings.ReplaceAll(strings.TrimSpace(p), "\\", "/")
+	norm = strings.TrimPrefix(norm, "./")
+	return norm == "cmd" || strings.HasPrefix(norm, "cmd/") || strings.Contains(norm, "/cmd/")
+}
+
+// fqnFilePart extracts the file portion of an FQN ("path::Name" → "path").
+func fqnFilePart(fqn string) string {
+	if idx := strings.Index(fqn, "::"); idx >= 0 {
+		return fqn[:idx]
+	}
+	return fqn
 }
 
 // collectSymbolsForScope filters nodes in headGraph that fall within scope.Paths.

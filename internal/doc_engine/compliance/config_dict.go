@@ -6,8 +6,11 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/storage"
@@ -83,6 +86,19 @@ func scanConfigVariables(repoRoot string) ([]ConfigVarRecord, error) {
 	seen := make(map[string]bool)
 	fset := token.NewFileSet()
 
+	// viperDefaults collects viper.SetDefault("KEY", value) calls across the
+	// repo so viper.Get* records can report a real Default value.
+	viperDefaults := make(map[string]string)
+
+	// commentByPos maps "relPath#line" of a call to its preceding doc comment
+	// for deprecated-comment detection. Populated during the first walk.
+	type fileData struct {
+		relPath string
+		node    *ast.File
+		src     []byte
+	}
+	var files []fileData
+
 	err := filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -101,45 +117,382 @@ func scanConfigVariables(repoRoot string) ([]ConfigVarRecord, error) {
 		relPath, _ := filepath.Rel(repoRoot, path)
 		relPath = filepath.ToSlash(relPath)
 
-		node, parseErr := parser.ParseFile(fset, path, nil, 0)
+		src, readErr := readFileBytes(path)
+		if readErr != nil {
+			return nil
+		}
+		node, parseErr := parser.ParseFile(fset, path, src, parser.ParseComments)
 		if parseErr != nil {
 			return nil
 		}
+		files = append(files, fileData{relPath: relPath, node: node, src: src})
 
+		// First pass: harvest viper.SetDefault(key, value) pairs.
 		ast.Inspect(node, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			fnStr := exprToString(call.Fun)
+			base := fnStr
+			if idx := strings.LastIndex(base, "."); idx >= 0 {
+				base = base[idx+1:]
+			}
+			if base == "SetDefault" && len(call.Args) >= 2 {
+				if lit, ok := call.Args[0].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+					key := strings.Trim(lit.Value, `"`)
+					if key != "" {
+						viperDefaults[key] = literalString(call.Args[1])
+					}
+				}
+			}
+			return true
+		})
+
+		return nil
+	})
+	if err != nil {
+		return records, err
+	}
+
+	addRecord := func(rec ConfigVarRecord) {
+		if rec.Name == "" || seen[rec.Name] {
+			return
+		}
+		seen[rec.Name] = true
+		records = append(records, rec)
+	}
+
+	for _, fd := range files {
+		ast.Inspect(fd.node, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
 				return true
 			}
 
 			fnStr := exprToString(call.Fun)
+			base := fnStr
+			if idx := strings.LastIndex(base, "."); idx >= 0 {
+				base = base[idx+1:]
+			}
+			pos := fset.Position(call.Pos())
+			comment := commentAbove(fd.src, pos.Line)
+
+			// ── os.Getenv / os.LookupEnv ──
 			if fnStr == "os.Getenv" || fnStr == "os.LookupEnv" {
 				if len(call.Args) > 0 {
 					if lit, ok := call.Args[0].(*ast.BasicLit); ok {
 						val := strings.Trim(lit.Value, `"`)
-						if val != "" && !seen[val] {
-							seen[val] = true
-							pos := fset.Position(call.Pos())
-							records = append(records, ConfigVarRecord{
+						if val != "" {
+							addRecord(ConfigVarRecord{
 								Name:        val,
 								Type:        "string",
 								Default:     "",
 								Required:    false,
-								Deprecated:  strings.Contains(strings.ToLower(val), "legacy") || strings.Contains(strings.ToLower(val), "old"),
+								Deprecated:  isDeprecatedVar(val, comment),
 								Description: fmt.Sprintf("Environment variable read via %s", fnStr),
-								SourcePath:  relPath,
+								SourcePath:  fd.relPath,
 								Line:        pos.Line,
 							})
 						}
 					}
 				}
+				return true
+			}
+
+			// ── viper.Get* (any receiver: viper.GetString, cfg.GetInt, ...) ──
+			if viperGetType, ok := viperGetTypes[base]; ok {
+				if len(call.Args) > 0 {
+					if lit, ok := call.Args[0].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+						key := strings.Trim(lit.Value, `"`)
+						if key != "" {
+							def := viperDefaults[key]
+							addRecord(ConfigVarRecord{
+								Name:        key,
+								Type:        viperGetType,
+								Default:     def,
+								Required:    def == "",
+								Deprecated:  isDeprecatedVar(key, comment),
+								Description: fmt.Sprintf("Viper config key read via %s", fnStr),
+								SourcePath:  fd.relPath,
+								Line:        pos.Line,
+							})
+						}
+					}
+				}
+				return true
+			}
+
+			// ── flag.String/Int/Bool/... (+ Var forms) ──
+			if strings.HasPrefix(fnStr, "flag.") {
+				if name, def, typ, ok := parseFlagCall(base, call.Args); ok {
+					addRecord(ConfigVarRecord{
+						Name:        name,
+						Type:        typ,
+						Default:     def,
+						Required:    false,
+						Deprecated:  isDeprecatedVar(name, comment),
+						Description: fmt.Sprintf("CLI flag defined via %s", fnStr),
+						SourcePath:  fd.relPath,
+						Line:        pos.Line,
+					})
+				}
+				return true
 			}
 
 			return true
 		})
 
-		return nil
-	})
+		// ── config struct fields with mapstructure/yaml/json tags ──
+		for _, decl := range fd.node.Decls {
+			genDecl, ok := decl.(*ast.GenDecl)
+			if !ok || genDecl.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range genDecl.Specs {
+				typeSpec, ok := spec.(*ast.TypeSpec)
+				if !ok {
+					continue
+				}
+				structType, ok := typeSpec.Type.(*ast.StructType)
+				if !ok || structType.Fields == nil {
+					continue
+				}
+				structName := typeSpec.Name.Name
+				for _, field := range structType.Fields.List {
+					if field.Tag == nil {
+						continue
+					}
+					rawTag, unquoteErr := strconv.Unquote(field.Tag.Value)
+					if unquoteErr != nil {
+						continue
+					}
+					tag := reflect.StructTag(rawTag)
+					key := firstTagKey(tag.Get("mapstructure"), tag.Get("yaml"), tag.Get("json"))
+					if key == "" {
+						continue
+					}
+					fieldType := exprToString(field.Type)
+					if fieldType == "" {
+						fieldType = "string"
+					}
+					def := tag.Get("default")
+					required := tag.Get("required") == "true"
+					desc := fmt.Sprintf("Config struct field %s.%s", structName, fieldName(field))
+					if field.Doc != nil {
+						if text := strings.TrimSpace(field.Doc.Text()); text != "" {
+							desc = strings.ReplaceAll(text, "\n", " ")
+						}
+					} else if field.Comment != nil {
+						if text := strings.TrimSpace(field.Comment.Text()); text != "" {
+							desc = strings.ReplaceAll(text, "\n", " ")
+						}
+					}
+					fpos := fset.Position(field.Pos())
+					comment := ""
+					if field.Doc != nil {
+						comment = field.Doc.Text()
+					}
+					addRecord(ConfigVarRecord{
+						Name:        key,
+						Type:        fieldType,
+						Default:     def,
+						Required:    required,
+						Deprecated:  isDeprecatedVar(key, comment),
+						Description: desc,
+						SourcePath:  fd.relPath,
+						Line:        fpos.Line,
+					})
+				}
+			}
+		}
+	}
 
 	return records, err
+}
+
+// Required-heuristic (documented):
+//
+// There is no repo-wide "required" declaration for env vars, so Required is a
+// conservative, documented heuristic:
+//   - os.Getenv / os.LookupEnv: always Required=false (a missing var only
+//     yields "" at runtime; treating it as required would flood the table
+//     with false positives).
+//   - flag.*: always Required=false (every flag declares a default, so none
+//     is strictly required by construction).
+//   - viper.Get*: Required=true when no viper.SetDefault default is known
+//     for the key (viper returns the zero value without a fallback, so the
+//     caller must supply the key to get useful behavior); false otherwise.
+//   - config struct fields: Required=true only with an explicit
+//     `required:"true"` tag; false otherwise (an absent `default=` tag alone
+//     does not prove requiredness).
+//
+// Deprecated-heuristic: a var is marked deprecated when its name contains
+// "legacy", "old", or "deprecat" (case-insensitive) OR its immediately
+// preceding comment mentions "deprecat".
+func isDeprecatedVar(name, comment string) bool {
+	lower := strings.ToLower(name)
+	if strings.Contains(lower, "legacy") || strings.Contains(lower, "old") || strings.Contains(lower, "deprecat") {
+		return true
+	}
+	return strings.Contains(strings.ToLower(comment), "deprecat")
+}
+
+// viperGetTypes maps viper getter method names to config value types.
+var viperGetTypes = map[string]string{
+	"Get":                    "string",
+	"GetString":              "string",
+	"GetBool":                "bool",
+	"GetInt":                 "int",
+	"GetInt32":               "int32",
+	"GetInt64":               "int64",
+	"GetUint":                "uint",
+	"GetFloat64":             "float64",
+	"GetDuration":            "duration",
+	"GetTime":                "time",
+	"GetStringSlice":         "[]string",
+	"GetIntSlice":            "[]int",
+	"GetStringMap":           "map[string]interface{}",
+	"GetStringMapString":     "map[string]string",
+	"GetStringMapStringSlice": "map[string][]string",
+	"GetSizeInBytes":         "size",
+}
+
+// parseFlagCall extracts (name, default, type) from flag.* call args.
+// Supports flag.String/Int/Bool/Float64/Duration(name, def, usage) and the
+// Var forms flag.StringVar/IntVar/BoolVar/...(ptr, name, def, usage), plus
+// flag.Var(ptr, name, usage) which has no default.
+func parseFlagCall(base string, args []ast.Expr) (name, def, typ string, ok bool) {
+	varType := map[string]string{
+		"String": "string", "Int": "int", "Int64": "int64", "Uint": "uint",
+		"Uint64": "uint64", "Bool": "bool", "Float64": "float64", "Duration": "duration",
+	}
+	if strings.HasSuffix(base, "Var") && base != "Var" {
+		kind := strings.TrimSuffix(base, "Var")
+		t, known := varType[kind]
+		if !known {
+			return "", "", "", false
+		}
+		if len(args) < 3 {
+			return "", "", "", false
+		}
+		nameLit, ok := args[1].(*ast.BasicLit)
+		if !ok || nameLit.Kind != token.STRING {
+			return "", "", "", false
+		}
+		return strings.Trim(nameLit.Value, `"`), literalString(args[2]), t, true
+	}
+	if t, known := varType[base]; known {
+		if len(args) < 2 {
+			return "", "", "", false
+		}
+		nameLit, ok := args[0].(*ast.BasicLit)
+		if !ok || nameLit.Kind != token.STRING {
+			return "", "", "", false
+		}
+		return strings.Trim(nameLit.Value, `"`), literalString(args[1]), t, true
+	}
+	if base == "Var" {
+		if len(args) < 2 {
+			return "", "", "", false
+		}
+		nameLit, ok := args[1].(*ast.BasicLit)
+		if !ok || nameLit.Kind != token.STRING {
+			return "", "", "", false
+		}
+		return strings.Trim(nameLit.Value, `"`), "", "var", true
+	}
+	return "", "", "", false
+}
+
+// literalString renders a default-value AST expression as source text:
+// quoted strings stay quoted-trimmed, numeric/bool literals raw, anything
+// else (identifiers, calls like time.Second*5) falls back to a short
+// expression rendering.
+func literalString(e ast.Expr) string {
+	switch t := e.(type) {
+	case *ast.BasicLit:
+		if t.Kind == token.STRING {
+			if unq, err := strconv.Unquote(t.Value); err == nil {
+				return unq
+			}
+			return strings.Trim(t.Value, `"`)
+		}
+		return t.Value
+	case *ast.Ident:
+		if t.Name == "true" || t.Name == "false" {
+			return t.Name
+		}
+		return ""
+	default:
+		return exprToString(e)
+	}
+}
+
+// firstTagKey picks the config key from struct tags, preferring
+// mapstructure > yaml > json. Each value is split on "," (omitempty etc.)
+// and "-" / "" mean "no key".
+func firstTagKey(candidates ...string) string {
+	for _, c := range candidates {
+		if c == "" || c == "-" {
+			continue
+		}
+		key := strings.Split(c, ",")[0]
+		key = strings.TrimSpace(key)
+		if key != "" && key != "-" {
+			return key
+		}
+	}
+	return ""
+}
+
+func fieldName(f *ast.Field) string {
+	if len(f.Names) > 0 {
+		return f.Names[0].Name
+	}
+	return exprToString(f.Type)
+}
+
+// commentAbove returns up to 3 source lines immediately above lineNo for
+// deprecated-comment detection.
+func commentAbove(src []byte, lineNo int) string {
+	lines := strings.Split(string(src), "\n")
+	var sb strings.Builder
+	for i := lineNo - 4; i < lineNo-1; i++ {
+		if i >= 0 && i < len(lines) {
+			sb.WriteString(lines[i] + "\n")
+		}
+	}
+	return sb.String()
+}
+
+// readFileBytes reads a file's raw bytes for comment inspection.
+func readFileBytes(path string) ([]byte, error) {
+	return os.ReadFile(path)
+}
+
+func exprToString(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.SelectorExpr:
+		return exprToString(t.X) + "." + t.Sel.Name
+	case *ast.StarExpr:
+		return "*" + exprToString(t.X)
+	case *ast.ArrayType:
+		if t.Len == nil {
+			return "[]" + exprToString(t.Elt)
+		}
+		return "[...]" + exprToString(t.Elt)
+	case *ast.MapType:
+		return "map[" + exprToString(t.Key) + "]" + exprToString(t.Value)
+	case *ast.Ellipsis:
+		return "..." + exprToString(t.Elt)
+	case *ast.InterfaceType:
+		return "interface{}"
+	case *ast.FuncType:
+		return "func(...)"
+	default:
+		return ""
+	}
 }

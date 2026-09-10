@@ -1,11 +1,10 @@
 // Package doc_engine — operations.go
-// Implements Diff, Gaps, Suggest, Release, Report, and Export operations
+// Implements Diff, Release, and Export operations
 // for the CLI surface (subcommands of `gmb doc`).
 package doc_engine
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,7 +14,6 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/compliance"
 	docconfig "github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/devex"
-	"github.com/Syamchand123/GlassMarble/internal/doc_engine/federation"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/patcher"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/renderer"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/sre"
@@ -124,138 +122,17 @@ func Diff(repoRoot string, opts RunOptions) (DiffResult, error) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Gaps — documentation gap discovery
-// ────────────────────────────────────────────────────────────────────────────
-
-// DocGap represents an undocumented subsystem or frequent query topic.
-type DocGap struct {
-	Topic       string `json:"topic"`
-	Package     string `json:"package"`
-	QueryCount  int    `json:"query_count"`
-	SuggestedID string `json:"suggested_id"`
-	Description string `json:"description"`
-}
-
-// GapsResult contains discovered documentation gaps.
-type GapsResult struct {
-	Gaps []DocGap `json:"gaps"`
-}
-
-// Gaps discovers documentation gaps by inspecting query history and AKG symbols.
-func Gaps(repoRoot string) (GapsResult, error) {
-	gapsPath := filepath.Join(repoRoot, ".glassmarble", "docs_gaps.json")
-	var result GapsResult
-
-	if data, err := os.ReadFile(gapsPath); err == nil {
-		_ = json.Unmarshal(data, &result)
-	}
-
-	// Also load query gaps recorded by devex
-	queryGaps, _ := devex.LoadQueryGaps(repoRoot)
-	for _, qg := range queryGaps {
-		result.Gaps = append(result.Gaps, DocGap{
-			Topic:       qg.Topic,
-			Package:     qg.Query,
-			QueryCount:  qg.Count,
-			SuggestedID: qg.Topic + "-reference",
-			Description: fmt.Sprintf("Missing documentation for query %q in %s", qg.Query, qg.MissingFrom),
-		})
-	}
-
-	if len(result.Gaps) > 0 {
-		return result, nil
-	}
-
-	// Fallback: discover packages that don't have a matching doc spec
-	cfg, err := docconfig.LoadDocsConfig(repoRoot)
-	if err == nil {
-		knownPaths := make(map[string]bool)
-		for _, d := range cfg.Documents {
-			for _, p := range d.Scope.Paths {
-				knownPaths[p] = true
-			}
-		}
-
-		// Inspect internal packages
-		internalDir := filepath.Join(repoRoot, "internal")
-		entries, _ := os.ReadDir(internalDir)
-		for _, e := range entries {
-			if e.IsDir() {
-				pkgPath := fmt.Sprintf("internal/%s/**", e.Name())
-				if !knownPaths[pkgPath] {
-					result.Gaps = append(result.Gaps, DocGap{
-						Topic:       e.Name(),
-						Package:     "internal/" + e.Name(),
-						QueryCount:  1,
-						SuggestedID: e.Name() + "-reference",
-						Description: fmt.Sprintf("No managed documentation tracking %s", pkgPath),
-					})
-				}
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Suggest — draft section / doc suggestions for gaps
-// ────────────────────────────────────────────────────────────────────────────
-
-// SuggestedDoc provides a ready-to-use DocSpec recommendation for a gap.
-type SuggestedDoc struct {
-	ID         string   `json:"id"`
-	TargetPath string   `json:"target_path"`
-	Archetype  string   `json:"archetype"`
-	Title      string   `json:"title"`
-	ScopePaths []string `json:"scope_paths"`
-	Sections   []string `json:"sections"`
-}
-
-// Suggest generates recommended document specifications for unmanaged code areas.
-func Suggest(repoRoot string) ([]SuggestedDoc, error) {
-	gaps, err := Gaps(repoRoot)
-	if err != nil {
-		return nil, err
-	}
-
-	var suggestions []SuggestedDoc
-	for _, g := range gaps.Gaps {
-		arch := "module"
-		if strings.Contains(g.Topic, "arch") {
-			arch = "architecture"
-		}
-		docSpec, _ := renderer.GetArchetype(arch)
-
-		var secTitles []string
-		for _, s := range docSpec.Sections {
-			secTitles = append(secTitles, s.Title)
-		}
-
-		suggestions = append(suggestions, SuggestedDoc{
-			ID:         g.SuggestedID,
-			TargetPath: fmt.Sprintf("docs/%s.md", g.Topic),
-			Archetype:  arch,
-			Title:      strings.Title(strings.ReplaceAll(g.Topic, "_", " ")) + " Reference",
-			ScopePaths: []string{g.Package + "/**"},
-			Sections:   secTitles,
-		})
-	}
-	return suggestions, nil
-}
-
-// ────────────────────────────────────────────────────────────────────────────
 // Status — dashboard of all managed docs with freshness scores
 // ────────────────────────────────────────────────────────────────────────────
 
 // DocStatus is a single row of the `gmb doc status` dashboard.
 type DocStatus struct {
-	ID          string `json:"id"`
-	TargetPath  string `json:"target_path"`
-	Freshness   int    `json:"freshness"`
-	Mode        string `json:"mode"`
-	LastSync    string `json:"last_sync"`
-	Status      string `json:"status"`
+	ID         string `json:"id"`
+	TargetPath string `json:"target_path"`
+	Freshness  int    `json:"freshness"`
+	Mode       string `json:"mode"`
+	LastSync   string `json:"last_sync"`
+	Status     string `json:"status"`
 }
 
 // StatusResult is the outcome of a `gmb doc status` dashboard query.
@@ -294,70 +171,6 @@ func Release(repoRoot, ref1, ref2, outFile string) (string, error) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Snapshot — versioned documentation freeze
-// ────────────────────────────────────────────────────────────────────────────
-
-// Snapshot creates a frozen documentation matrix snapshot under docs/versions/<versionTag>.
-func Snapshot(repoRoot, versionTag string) (federation.SnapshotResult, error) {
-	return federation.SnapshotDocSuite(repoRoot, versionTag)
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Report — documentation debt analytics
-// ────────────────────────────────────────────────────────────────────────────
-
-// ReportResult contains health and ROI metrics for the repository docs.
-type ReportResult struct {
-	TotalDocuments      int      `json:"total_documents"`
-	TotalSections       int      `json:"total_sections"`
-	GlobalFreshness     int      `json:"global_freshness"`
-	CoverageRatio       float64  `json:"coverage_ratio"`
-	TotalTokensUsed     int      `json:"total_tokens_used"`
-	DriftedDocuments    []string `json:"drifted_documents,omitempty"`
-	RottingAreas        []string `json:"rotting_areas,omitempty"`
-	EstimatedHoursSaved float64  `json:"estimated_hours_saved,omitempty"`
-}
-
-// Report computes overall documentation health, coverage, and debt metrics.
-func Report(repoRoot string) (ReportResult, error) {
-	dr, err := federation.GenerateDebtReport(repoRoot)
-	if err != nil {
-		checkRes, cErr := Check(repoRoot, CheckOptions{Verbose: false})
-		if cErr != nil {
-			return ReportResult{}, err
-		}
-		var drifted []string
-		for _, d := range checkRes.Documents {
-			if d.Status != "fresh" {
-				drifted = append(drifted, fmt.Sprintf("%s (%d%%)", d.TargetPath, d.Freshness))
-			}
-		}
-		return ReportResult{
-			TotalDocuments:   len(checkRes.Documents),
-			GlobalFreshness:  checkRes.GlobalFreshness,
-			CoverageRatio:    float64(len(checkRes.Documents)) * 25.0,
-			DriftedDocuments: drifted,
-		}, nil
-	}
-
-	var rottingStrs []string
-	for _, ra := range dr.RottingAreas {
-		rottingStrs = append(rottingStrs, fmt.Sprintf("%s (freshness: %d%%, velocity: %d commits, risk: %d)", ra.Path, ra.Freshness, ra.Velocity, ra.RiskScore))
-	}
-
-	return ReportResult{
-		TotalDocuments:      dr.TotalDocuments,
-		TotalSections:       dr.TotalSections,
-		GlobalFreshness:     dr.GlobalFreshness,
-		CoverageRatio:       dr.CoverageRatio,
-		TotalTokensUsed:     dr.TotalTokensUsed,
-		DriftedDocuments:    dr.DriftedDocuments,
-		RottingAreas:        rottingStrs,
-		EstimatedHoursSaved: dr.EstimatedHoursSaved,
-	}, nil
-}
-
-// ────────────────────────────────────────────────────────────────────────────
 // Export — RAG chunked knowledge base
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -385,7 +198,7 @@ func Export(repoRoot, format, outDir string) (ExportResult, error) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Phase 6 Architectural, SRE, Compliance & Publishing Operations
+// Kept Architectural, SRE & Compliance Operations
 // ────────────────────────────────────────────────────────────────────────────
 
 // GenerateADR scaffolds an Architecture Decision Record (ADR) file under docs/adr/.
@@ -393,39 +206,9 @@ func GenerateADR(repoRoot string, event archfeatures.ADREvent) (string, error) {
 	return archfeatures.GenerateADR(repoRoot, event)
 }
 
-// GenerateEvolutionChapter generates an architecture time-machine evolution chapter.
-func GenerateEvolutionChapter(repoRoot, fromRef, toRef string) (string, error) {
-	return archfeatures.GenerateEvolutionChapter(repoRoot, fromRef, toRef)
-}
-
-// GenerateDomainGlossary generates the DDD ubiquitous language and domain glossary.
-func GenerateDomainGlossary(repoRoot string) (string, error) {
-	return archfeatures.GenerateDomainGlossary(repoRoot)
-}
-
-// ComputeSubsystemHealth computes cyclomatic complexity, hotspot rank and instability for a package.
-func ComputeSubsystemHealth(repoRoot, pkgRel string) sre.HealthProfile {
-	return sre.ComputeHealthProfile(repoRoot, pkgRel)
-}
-
 // GenerateErrorCatalog extracts sentinel errors and builds the operational triage playbook.
 func GenerateErrorCatalog(repoRoot string) (string, error) {
 	return sre.GenerateErrorCatalog(repoRoot)
-}
-
-// GenerateConcurrencyContracts catalogs mutexes, channels, and thread-safety contracts.
-func GenerateConcurrencyContracts(repoRoot string) (string, error) {
-	return sre.GenerateConcurrencyContracts(repoRoot)
-}
-
-// GenerateTestTopology maps package test suites, test categories, and verification guarantees.
-func GenerateTestTopology(repoRoot string) (string, error) {
-	return sre.GenerateTestTopology(repoRoot)
-}
-
-// GenerateThreatModel generates the security threat model, cryptographic primitives, and egress map.
-func GenerateThreatModel(repoRoot string) (string, error) {
-	return compliance.GenerateThreatModel(repoRoot)
 }
 
 // GenerateConfigDictionary generates the environment variable and runtime configuration reference.
@@ -433,39 +216,9 @@ func GenerateConfigDictionary(repoRoot string) (string, error) {
 	return compliance.GenerateConfigDictionary(repoRoot)
 }
 
-// GenerateSBOM extracts dependencies from go.mod and classifies licenses (SPDX).
-func GenerateSBOM(repoRoot string) (string, error) {
-	return compliance.GenerateSBOM(repoRoot)
-}
-
-// CheckAPISurfaceBoundaries audits public, internal, and private architectural boundaries.
-func CheckAPISurfaceBoundaries(repoRoot string) (compliance.BoundaryReport, error) {
-	return compliance.CheckAPISurfaceBoundaries(repoRoot)
-}
-
 // VerifyCodeSnippets checks code snippets in markdown for syntax validity and symbol drift.
 func VerifyCodeSnippets(markdown string, knownSymbols map[string]bool) ([]devex.SnippetError, error) {
 	return devex.VerifyCodeSnippets(markdown, knownSymbols)
-}
-
-// ExportFederationManifest exports the microservice documentation manifest (.glassmarble/manifest.json).
-func ExportFederationManifest(repoRoot string) (string, error) {
-	return federation.ExportFederationManifest(repoRoot)
-}
-
-// ImportFederationManifest imports a remote service manifest into docs/federation/<service>.md.
-func ImportFederationManifest(repoRoot, serviceName, manifestPath string) (string, error) {
-	return federation.ImportFederationManifest(repoRoot, serviceName, manifestPath)
-}
-
-// GenerateI18nInventory inventories internationalization string keys across packages.
-func GenerateI18nInventory(repoRoot string) (string, error) {
-	return federation.GenerateI18nInventory(repoRoot)
-}
-
-// FormatForPlatform converts admonition blocks between documentation site generators.
-func FormatForPlatform(markdown, platform string) string {
-	return federation.FormatForPlatform(markdown, platform)
 }
 
 func truncateLine(s string, maxLen int) string {

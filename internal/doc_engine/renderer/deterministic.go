@@ -112,24 +112,7 @@ func (r *DeterministicRenderer) RenderSection(fs *config.FactSheet) (string, err
 		sb.WriteString("\n")
 	}
 
-	// 5. Database Schemas / Models
-	if len(fs.GroundTruth.Schemas) > 0 {
-		sb.WriteString("### Data Schemas\n\n")
-		sb.WriteString("| Schema | Table | Definition | File |\n")
-		sb.WriteString("| --- | --- | --- | --- |\n")
-		for _, sc := range fs.GroundTruth.Schemas {
-			tbl := sc.Table
-			if tbl == "" {
-				tbl = "-"
-			}
-			def := cleanTableString(sc.Definition)
-			fileLink := formatFileLink(sc.File, sc.Line, "")
-			sb.WriteString(fmt.Sprintf("| `%s` | %s | %s | %s |\n", sc.Name, tbl, def, fileLink))
-		}
-		sb.WriteString("\n")
-	}
-
-	// 6. Error Sentinels
+	// 5. Error Sentinels
 	sentinels := fs.GroundTruth.Sentinels
 	if len(sentinels) == 0 {
 		sentinels = fs.GroundTruth.AddedSentinels

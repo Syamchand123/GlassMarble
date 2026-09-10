@@ -3,6 +3,8 @@ package devex
 import (
 	"fmt"
 	"os/exec"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -22,6 +24,13 @@ type APIDelta struct {
 		NewName string `json:"new_name"`
 		Struct  string `json:"struct"`
 	} `json:"renamed_fields"`
+	// RenamedConfigVars pairs env vars that disappeared with similar new ones.
+	RenamedConfigVars []struct {
+		OldName string `json:"old_name"`
+		NewName string `json:"new_name"`
+	} `json:"renamed_config_vars"`
+	// RemovedConfigVars lists env vars deleted with no similar replacement.
+	RemovedConfigVars []string `json:"removed_config_vars"`
 }
 
 // GenerateMigrationGuide analyzes symbol and commit differences between two git refs
@@ -77,6 +86,43 @@ func GenerateMigrationGuide(repoRoot, ref1, ref2, outFile string) (string, error
 
 	if len(delta.DeletedFunctions) == 0 && len(delta.ModifiedSignatures) == 0 && len(delta.RenamedFields) == 0 {
 		sb.WriteString("✅ No breaking interface changes or deleted symbols detected in public surfaces.\n\n")
+	}
+
+	// Section 1b: Configuration variable renames (Pillar 24).
+	if len(delta.RenamedConfigVars) > 0 {
+		sb.WriteString("### 🔧 Renamed Configuration Variables\n\n")
+		sb.WriteString("| Old Variable | New Variable |\n")
+		sb.WriteString("| :--- | :--- |\n")
+		for _, r := range delta.RenamedConfigVars {
+			sb.WriteString(fmt.Sprintf("| `~~%s~~` | `**%s**` |\n", r.OldName, r.NewName))
+		}
+		sb.WriteString("\n")
+	}
+	if len(delta.RemovedConfigVars) > 0 {
+		sb.WriteString("### 🗑️ Removed Configuration Variables\n\n")
+		sb.WriteString("The following environment variables were removed with no replacement:\n\n")
+		for _, v := range delta.RemovedConfigVars {
+			sb.WriteString(fmt.Sprintf("- ❌ `%s`\n", v))
+		}
+		sb.WriteString("\n")
+	}
+
+	// Section 1c: Migration code examples — Before/After call sites per modified signature.
+	if len(delta.ModifiedSignatures) > 0 {
+		sb.WriteString("## Migration Code Examples\n\n")
+		for _, sig := range delta.ModifiedSignatures {
+			short := displayNameOf(sig.Name)
+			sb.WriteString(fmt.Sprintf("### `%s`\n\n", short))
+			sb.WriteString("Update call sites from:\n\n")
+			sb.WriteString("```go\n")
+			sb.WriteString(fmt.Sprintf("// before: %s\nout := %s(/* update args */)\n", sig.Before, short))
+			sb.WriteString("```\n\n")
+			sb.WriteString("to:\n\n")
+			sb.WriteString("```go\n")
+			sb.WriteString(fmt.Sprintf("// after: %s\nout := %s(/* update args */)\n", sig.After, short))
+			sb.WriteString("```\n\n")
+			sb.WriteString(fmt.Sprintf("> Rewrite note: update arguments at call sites of `%s` to match the new signature `%s`.\n\n", short, sig.After))
+		}
 	}
 
 	// Section 2: Commit History
@@ -172,6 +218,13 @@ func computeRevisionDiff(repoRoot, ref1, ref2 string) (APIDelta, []string, error
 	if len(before) == 0 && len(after) == 0 {
 		delta = diffFallbackDelta(repoRoot, ref1, ref2)
 	}
+
+	// Config-var renames: diff env-var sets observed in the unified diff
+	// between the two refs (Pillar 24). Runs regardless of the symbol-diff
+	// path above since it only needs `git diff` output.
+	renamed, removedVars := diffConfigVarRenames(repoRoot, ref1, ref2)
+	delta.RenamedConfigVars = renamed
+	delta.RemovedConfigVars = removedVars
 
 	return delta, lines, nil
 }
@@ -327,6 +380,169 @@ func diffFallbackDelta(repoRoot, ref1, ref2 string) APIDelta {
 		}
 	}
 	return delta
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Config-var rename detection (Pillar 24)
+//
+// Env-var names are extracted from added/removed lines of
+// `git diff ref1 ref2 -U0 -- *.go` by parsing +lines/-lines for
+// os.Getenv("X") / os.LookupEnv("X"). The removed-minus-added set and the
+// added-minus-removed set are diffed: removed+added pairs with similarity
+// (same prefix before the first '_' or levenshtein distance <= 3) are
+// reported as renames; unpaired removed vars are pure deletions.
+// ────────────────────────────────────────────────────────────────────────────
+
+var getenvRe = regexp.MustCompile(`(?:Getenv|LookupEnv)\(\s*"([A-Z_][A-Z0-9_]*)"\s*[,)]`)
+
+// diffConfigVarRenames returns (renamed pairs, pure removals) between two refs.
+func diffConfigVarRenames(repoRoot, ref1, ref2 string) ([]struct {
+	OldName string `json:"old_name"`
+	NewName string `json:"new_name"`
+}, []string) {
+	cmd := exec.Command("git", "diff", ref1, ref2, "-U0", "--", "*.go")
+	cmd.Dir = repoRoot
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, nil
+	}
+	removedSet := make(map[string]bool)
+	addedSet := make(map[string]bool)
+	for _, line := range strings.Split(string(out), "\n") {
+		if len(line) < 2 {
+			continue
+		}
+		marker := line[0]
+		if marker != '+' && marker != '-' {
+			continue
+		}
+		if strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---") {
+			continue
+		}
+		for _, m := range getenvRe.FindAllStringSubmatch(line[1:], -1) {
+			if len(m) < 2 {
+				continue
+			}
+			if marker == '-' {
+				removedSet[m[1]] = true
+			} else {
+				addedSet[m[1]] = true
+			}
+		}
+	}
+	var removed, added []string
+	for v := range removedSet {
+		if !addedSet[v] {
+			removed = append(removed, v)
+		}
+	}
+	for v := range addedSet {
+		if !removedSet[v] {
+			added = append(added, v)
+		}
+	}
+	sort.Strings(removed)
+	sort.Strings(added)
+
+	type rename struct {
+		OldName string `json:"old_name"`
+		NewName string `json:"new_name"`
+	}
+	var renamedPairs []rename
+	used := make(map[string]bool)
+	var pureRemoved []string
+	for _, old := range removed {
+		best := ""
+		bestDist := -1
+		for _, nw := range added {
+			if used[nw] {
+				continue
+			}
+			if !similarEnvName(old, nw) {
+				continue
+			}
+			d := levenshtein(old, nw)
+			if best == "" || d < bestDist {
+				best = nw
+				bestDist = d
+			}
+		}
+		if best != "" {
+			renamedPairs = append(renamedPairs, rename{OldName: old, NewName: best})
+			used[best] = true
+		} else {
+			pureRemoved = append(pureRemoved, old)
+		}
+	}
+	sort.Strings(pureRemoved)
+	// Convert to the APIDelta anonymous struct type (identical fields+tags).
+	renamed := make([]struct {
+		OldName string `json:"old_name"`
+		NewName string `json:"new_name"`
+	}, 0, len(renamedPairs))
+	for _, r := range renamedPairs {
+		renamed = append(renamed, struct {
+			OldName string `json:"old_name"`
+			NewName string `json:"new_name"`
+		}{OldName: r.OldName, NewName: r.NewName})
+	}
+	return renamed, pureRemoved
+}
+
+// similarEnvName reports whether two env-var names look like a rename:
+// same prefix before the first '_' (e.g. OAUTH_* → OAUTH_*) or
+// levenshtein distance <= 3 (e.g. PORT → PORTS, DB_HOST → DB_HOSTS).
+func similarEnvName(a, b string) bool {
+	if prefixBeforeUnderscore(a) == prefixBeforeUnderscore(b) && prefixBeforeUnderscore(a) != "" {
+		return true
+	}
+	return levenshtein(a, b) <= 3
+}
+
+func prefixBeforeUnderscore(s string) string {
+	if idx := strings.Index(s, "_"); idx > 0 {
+		return s[:idx]
+	}
+	return s
+}
+
+// levenshtein returns the edit distance between two strings (small,
+// allocation-light implementation for short env-var names).
+func levenshtein(a, b string) int {
+	ar, br := []rune(a), []rune(b)
+	if len(ar) == 0 {
+		return len(br)
+	}
+	if len(br) == 0 {
+		return len(ar)
+	}
+	prev := make([]int, len(br)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ar); i++ {
+		cur := make([]int, len(br)+1)
+		cur[0] = i
+		for j := 1; j <= len(br); j++ {
+			cost := 0
+			if ar[i-1] != br[j-1] {
+				cost = 1
+			}
+			cur[j] = min3(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(br)]
+}
+
+func min3(a, b, c int) int {
+	if a > b {
+		a = b
+	}
+	if a > c {
+		a = c
+	}
+	return a
 }
 
 func exportedFuncName(sigLine string) string {

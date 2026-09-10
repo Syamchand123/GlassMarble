@@ -9,7 +9,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/provider"
 	"github.com/Syamchand123/GlassMarble/internal/akg"
@@ -28,6 +30,9 @@ type OrchestratorOptions struct {
 	Provider provider.Provider
 	Verbose  bool
 	Out      io.Writer
+	// GlobalStyle is the DocsConfig.Style fallback merged under the
+	// per-document style: per-doc Voice/JargonBlacklist win when non-empty.
+	GlobalStyle config.StyleSpec
 }
 
 // Orchestrator coordinates dual-track rendering, quality gates, and MVCC writes.
@@ -256,9 +261,21 @@ func (o *Orchestrator) ProcessDocument(
 		fs.CommitHash = commitHash
 		fs.DocPurpose = doc.Purpose
 		fs.DocAudience = doc.Audience
+		// Global style is the fallback; per-doc style wins on non-empty fields.
+		fs.Style = o.opts.GlobalStyle
 		if doc.Style != nil {
-			fs.Style = *doc.Style
+			if doc.Style.Standard != "" {
+				fs.Style.Standard = doc.Style.Standard
+			}
+			if doc.Style.Voice != "" {
+				fs.Style.Voice = doc.Style.Voice
+			}
+			if len(doc.Style.JargonBlacklist) > 0 {
+				fs.Style.JargonBlacklist = doc.Style.JargonBlacklist
+			}
 		}
+		// Thread the section's MaxWords cap through to the system prompt.
+		fs.MaxWords = sec.MaxWords
 		if dossier != nil {
 			fs.CommitIntent = dossier.CommitIntent
 			fs.CommitReason = dossier.CommitReason
@@ -280,8 +297,48 @@ func (o *Orchestrator) ProcessDocument(
 			warnings = append(warnings, outcome.Warning)
 		}
 
-		// Stage 8: 3-way merge
-		mergeRes := patcher.MergeSection(priorBody, priorBody, outcome.Content)
+		// P9: living diagram directive — best-effort. After a managed
+		// section renders, if the zone directives contain `diagram`
+		// (parsed via patcher.ProcessDirectives), generate the diagram
+		// markdown via the grounding diagram path and inject it into the
+		// section body before merge. On error, warning only.
+		if zone != nil && len(zone.Directives) > 0 {
+			pd := patcher.ProcessDirectives(zone.Directives)
+			if pd.DiagramType != "" {
+				ref := config.DiagramRef{Type: pd.DiagramType, Scope: pd.DiagramScope}
+				if (strings.EqualFold(ref.Type, "callgraph") || strings.EqualFold(ref.Type, "sequence")) && ref.Entry == "" && len(doc.Scope.EntryPoints) > 0 {
+					ref.Entry = doc.Scope.EntryPoints[0]
+				}
+				if diag, dErr := grounding.GenerateDiagram(ref, graph); dErr != nil {
+					warnings = append(warnings, fmt.Sprintf("diagram directive %q for section %s/%s failed: %v", pd.DiagramType, doc.ID, sec.ID, dErr))
+				} else if strings.TrimSpace(diag) != "" {
+					outcome.Content = strings.TrimRight(outcome.Content, "\n") + "\n\n" + strings.TrimSpace(diag) + "\n"
+				}
+			}
+		}
+
+		// P9: todo population — best-effort. When the managed zone contains
+		// a `gmb:todo:` marker, append a deterministic draft line derived
+		// from grounding via patcher.PopulateTodos.
+		if zone != nil && strings.Contains(zone.Content, "gmb:todo:") {
+			outcome.Content = patcher.PopulateTodos(outcome.Content, exportedShortNames(fs))
+		}
+
+		// Stage 8: 3-way merge. BASE is the last rendered body from state
+		// (not priorBody): it records what the machine wrote last run, while
+		// priorBody (OURS) holds current human edits. Falls back to priorBody
+		// when no stored base exists (first run).
+		base := priorBody
+		if sm != nil {
+			if st, lErr := sm.Load(); lErr == nil && st != nil {
+				if ds, ok := st.Documents[doc.TargetPath]; ok && ds != nil {
+					if ss, ok := ds.Sections[sec.ID]; ok && ss != nil && ss.LastRenderedBody != "" {
+						base = ss.LastRenderedBody
+					}
+				}
+			}
+		}
+		mergeRes := patcher.MergeSection(base, priorBody, outcome.Content)
 		if mergeRes.Conflicted {
 			patcher.WarnConflict(o.opts.Out, doc.TargetPath, sec.ID)
 		}
@@ -294,6 +351,8 @@ func (o *Orchestrator) ProcessDocument(
 		// Update section hash in state manager
 		if sm != nil {
 			_ = storage.WriteSectionHash(sm, doc.TargetPath, sec.ID, "", outcome.RenderMode, commitHash, outcome.TokensUsed, outcome.DurationMs)
+			// Persist the merged body as the BASE for the next run's 3-way merge.
+			_ = storage.SetLastRenderedBody(sm, doc.TargetPath, sec.ID, mergeRes.Content)
 		}
 	}
 
@@ -356,6 +415,41 @@ func (m *memorySymbolIndex) HasSymbol(id string) bool {
 	return false
 }
 
+// exportedShortNames returns the sorted, deduplicated short names of exported
+// symbols known to the FactSheet (used for P9 todo population).
+func exportedShortNames(fs *config.FactSheet) []string {
+	if fs == nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var names []string
+	add := func(fqn string) {
+		short := fqn
+		if idx := strings.LastIndex(short, "::"); idx >= 0 {
+			short = short[idx+2:]
+		} else if idx := strings.LastIndex(short, "."); idx >= 0 {
+			short = short[idx+1:]
+		}
+		short = strings.TrimSpace(short)
+		if short == "" || seen[short] {
+			return
+		}
+		if r := []rune(short); len(r) == 0 || !unicode.IsUpper(r[0]) {
+			return
+		}
+		seen[short] = true
+		names = append(names, short)
+	}
+	for _, s := range fs.GroundTruth.Symbols {
+		add(s.FQN)
+	}
+	for _, s := range fs.GroundTruth.AddedSymbols {
+		add(s.FQN)
+	}
+	sort.Strings(names)
+	return names
+}
+
 func buildSymbolIndex(fs *config.FactSheet, graph *akg.CodePropertyGraph) verifier.AKGSymbolIndex {
 	m := make(map[string]bool)
 
@@ -396,12 +490,6 @@ func buildSymbolIndex(fs *config.FactSheet, graph *akg.CodePropertyGraph) verifi
 		}
 		for _, s := range fs.GroundTruth.ConfigVars {
 			addSym(s.Name)
-		}
-		for _, s := range fs.GroundTruth.Schemas {
-			addSym(s.Name)
-			if s.Table != "" {
-				addSym(s.Table)
-			}
 		}
 		for _, cf := range fs.GroundTruth.CallFlow {
 			addSym(cf)

@@ -116,7 +116,7 @@ type SectionSpec struct {
 	// GroundWith lists which AKG data sources to pull for this section.
 	// Valid values: signatures | exported_symbols | callgraph | comments |
 	// sentinels | error_returns | concurrency_primitives | config_vars |
-	// arch_intelligence | arch_events | db_schemas | http_handlers
+	// arch_intelligence | arch_events | http_handlers
 	GroundWith []string `yaml:"ground_with,omitempty" json:"ground_with,omitempty"`
 
 	// Managed controls whether the engine may update this section.
@@ -279,6 +279,10 @@ type FactSheet struct {
 	// SectionInstruction is the SectionSpec.Instruction field.
 	SectionInstruction string `json:"section_instruction"`
 
+	// MaxWords caps LLM output length for this section (from SectionSpec.MaxWords).
+	// 0 means no limit.
+	MaxWords int `json:"max_words,omitempty"`
+
 	// PriorSectionMarkdown is the current content of the managed zone.
 	// The LLM updates this rather than writing from scratch.
 	PriorSectionMarkdown string `json:"prior_section_markdown"`
@@ -346,9 +350,6 @@ type GroundTruthPayload struct {
 	// Symbols is the active set of symbols in scope for this section.
 	Symbols []SymbolFact `json:"symbols,omitempty"`
 
-	// Schemas lists database/model schema facts extracted from the AKG.
-	Schemas []SchemaFact `json:"schemas,omitempty"`
-
 	// ArchEvents lists architectural milestone events and ontology facts.
 	ArchEvents []string `json:"arch_events,omitempty"`
 
@@ -360,15 +361,6 @@ type GroundTruthPayload struct {
 type DiagramFact struct {
 	Type    string `json:"type"`
 	Content string `json:"content"`
-}
-
-// SchemaFact describes a database table/model or schema definition.
-type SchemaFact struct {
-	Name       string `json:"name"`
-	Table      string `json:"table,omitempty"`
-	File       string `json:"file"`
-	Line       int    `json:"line"`
-	Definition string `json:"definition"`
 }
 
 // SymbolFact is the AKG-extracted description of a single code symbol.

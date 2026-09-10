@@ -4,8 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"strings"
+	"syscall"
 
 	doc_engine "github.com/Syamchand123/GlassMarble/internal/doc_engine"
 	docconfig "github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
@@ -14,6 +18,11 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
 	"github.com/spf13/cobra"
 )
+
+// docExit exits the process with the given code. It is a variable (not a
+// direct os.Exit call) so the Section 11 exit-code contract is unit
+// testable: internal tests stub it to capture the code instead of exiting.
+var docExit = os.Exit
 
 // ────────────────────────────────────────────────────────────────────────────
 // gmb doc — root command
@@ -47,18 +56,13 @@ produces zero git diff.`,
   # Dashboard of all managed docs with freshness scores
   gmb doc status
 
-  # Identify documentation gaps from gmb ai query history
-  gmb doc gaps
-
   # Generate migration guide between two git refs
   gmb doc release v1.1.0..v1.2.0
-
-  # Documentation debt and ROI analytics
-  gmb doc report
 
   # Export RAG-ready chunked knowledge base
   gmb doc export --format rag`,
 	// doc without a subcommand runs the update pipeline.
+	Args: cobra.NoArgs,
 	RunE: runDocUpdate,
 }
 
@@ -67,6 +71,16 @@ produces zero git diff.`,
 // ────────────────────────────────────────────────────────────────────────────
 
 func runDocUpdate(cmd *cobra.Command, args []string) error {
+	// F4: real background mode — re-execute detached without --bg.
+	bg, _ := cmd.Flags().GetBool("bg")
+	if bg {
+		if spawnErr := spawnDocBackground(cmd); spawnErr != nil {
+			docWarnf(cmd, "doc: warning: background spawn failed (%v); continuing in foreground\n", spawnErr)
+		} else {
+			return nil
+		}
+	}
+
 	targetDir := resolveDir(cmd)
 	absDir, err := filepath.Abs(targetDir)
 	if err != nil {
@@ -81,6 +95,7 @@ func runDocUpdate(cmd *cobra.Command, args []string) error {
 	tag, _ := cmd.Flags().GetString("tag")
 	asJSON, _ := cmd.Flags().GetBool("json")
 	branchPolicy, _ := cmd.Flags().GetString("branch-policy")
+	forceWrite, _ := cmd.Flags().GetBool("write")
 
 	opts := doc_engine.RunOptions{
 		CommitHash:   commitHash,
@@ -90,6 +105,7 @@ func runDocUpdate(cmd *cobra.Command, args []string) error {
 		DocID:        docID,
 		Tag:          tag,
 		BranchPolicy: branchPolicy,
+		ForceWrite:   forceWrite,
 		Out:          cmd.ErrOrStderr(),
 	}
 
@@ -148,6 +164,70 @@ func docWarnf(cmd *cobra.Command, format string, a ...any) {
 		return
 	}
 	fmt.Fprintf(cmd.ErrOrStderr(), format, a...)
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// F4: real background execution (`gmb doc --bg`)
+// ────────────────────────────────────────────────────────────────────────────
+
+// spawnDocBackground re-executes the current binary with the same arguments
+// minus --bg as a detached background process and reports its pid.
+// It returns nil after starting the child (the caller must return without
+// waiting). On any error it returns non-nil so the caller can fall back to
+// synchronous execution (non-fatal).
+func spawnDocBackground(cmd *cobra.Command) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolving executable: %w", err)
+	}
+	lowered := strings.ToLower(exe)
+	if strings.Contains(lowered, "go-build") || strings.HasSuffix(lowered, ".exe.tmp") || strings.HasSuffix(lowered, ".tmp") {
+		docWarnf(cmd, "doc: warning: --bg under `go run` uses a temporary executable that the toolchain may clean up; build the binary first for a persistent background worker\n")
+	}
+
+	// Drop every --bg form so the child runs in the foreground exactly once.
+	var childArgs []string
+	for _, a := range os.Args[1:] {
+		if a == "--bg" || strings.HasPrefix(a, "--bg=") {
+			continue
+		}
+		childArgs = append(childArgs, a)
+	}
+
+	child := exec.Command(exe, childArgs...)
+	child.Env = os.Environ()
+	child.Stdout = os.Stdout
+	child.Stderr = os.Stderr
+	child.SysProcAttr = detachSysProcAttr()
+	if err := child.Start(); err != nil {
+		return fmt.Errorf("starting detached process: %w", err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "doc engine running in background (pid %d)\n", child.Process.Pid)
+	return nil
+}
+
+// detachSysProcAttr returns process attributes that detach the child:
+// on Windows the window is hidden and the process is created detached
+// (HideWindow + DETACHED_PROCESS 0x00000008); on unix the child becomes a
+// session leader (Setsid). The fields are set via reflection because
+// syscall.SysProcAttr is OS-specific and this file must compile on every
+// GOOS; the branch is selected at runtime via runtime.GOOS.
+func detachSysProcAttr() *syscall.SysProcAttr {
+	attr := &syscall.SysProcAttr{}
+	v := reflect.ValueOf(attr).Elem()
+	if runtime.GOOS == "windows" {
+		if f := v.FieldByName("HideWindow"); f.IsValid() && f.CanSet() && f.Kind() == reflect.Bool {
+			f.SetBool(true)
+		}
+		if f := v.FieldByName("CreationFlags"); f.IsValid() && f.CanSet() {
+			f.SetUint(0x00000008) // DETACHED_PROCESS
+		}
+	} else {
+		if f := v.FieldByName("Setsid"); f.IsValid() && f.CanSet() && f.Kind() == reflect.Bool {
+			f.SetBool(true)
+		}
+	}
+	return attr
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -214,10 +294,10 @@ var docCheckCmd = &cobra.Command{
 	Short: "Check documentation freshness and drift (CI gate)",
 	Long: `Audits all managed documents for drift and freshness without modifying any files.
 
-Exit codes:
-  0  All documents are fresh (at or above their freshness thresholds)
-  1  One or more documents are drifted (below MinFreshnessThreshold)
-  2  One or more documents are stale (below MinFreshnessFail)`,
+Exit codes (plan Section 11):
+  0  All documents are fresh (warnings allowed)
+  1  Drift detected (one or more failures, including doc-lint asserts)
+  2  Hard error (config or state could not be loaded)`,
 	Example: `  # Check all docs
   gmb doc check
 
@@ -248,7 +328,10 @@ Exit codes:
 
 		result, err := doc_engine.Check(absDir, opts)
 		if err != nil {
-			return err
+			// Exit-code contract (plan Section 11): hard errors
+			// (config/state load) are exit 2.
+			fmt.Fprintf(cmd.ErrOrStderr(), "doc check: %v\n", err)
+			docExit(2)
 		}
 
 		if asJSON {
@@ -368,10 +451,14 @@ Exit codes:
 		if asJSON {
 			data, _ := json.MarshalIndent(diffRes, "", "  ")
 			fmt.Fprintln(cmd.OutOrStdout(), string(data))
-			return nil
+		// Exit-code contract (plan Section 11): pending changes are exit 1.
+		if diffRes.HasChanges {
+			docExit(1)
 		}
+		return nil
+	}
 
-		if !diffRes.HasChanges {
+	if !diffRes.HasChanges {
 			docPrintf(cmd, "doc diff: all documents are up-to-date (no changes pending)\n")
 			return nil
 		}
@@ -382,8 +469,10 @@ Exit codes:
 				docPrintf(cmd, "--- %s [%s] ---\n%s\n\n", sec.TargetPath, sec.SectionID, sec.DiffPreview)
 			}
 		}
-		return nil
-	},
+	// Exit-code contract (plan Section 11): pending changes are exit 1.
+	docExit(1)
+	return nil
+},
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -443,106 +532,6 @@ Freshness colour coding:
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// gmb doc gaps — documentation gap discovery
-// ────────────────────────────────────────────────────────────────────────────
-
-var docGapsCmd = &cobra.Command{
-	Use:   "gaps",
-	Short: "List documentation gaps discovered from gmb ai query history",
-	Long: `When gmb ai answers a question by querying the AKG directly (rather than
-from a managed document), it records a documentation gap.
-
-This command lists all recorded gaps, sorted by query frequency.
-Use 'gmb doc suggest' to draft sections for the top gaps.`,
-	Example: `  gmb doc gaps
-  gmb doc gaps --json`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		targetDir := resolveDir(cmd)
-		absDir, err := filepath.Abs(targetDir)
-		if err != nil {
-			return fmt.Errorf("doc gaps: %w", err)
-		}
-
-		asJSON, _ := cmd.Flags().GetBool("json")
-		gapsRes, err := doc_engine.Gaps(absDir)
-		if err != nil {
-			return err
-		}
-
-		if asJSON {
-			data, _ := json.MarshalIndent(gapsRes, "", "  ")
-			fmt.Fprintln(cmd.OutOrStdout(), string(data))
-			return nil
-		}
-
-		if len(gapsRes.Gaps) == 0 {
-			docPrintf(cmd, "doc gaps: no documentation gaps discovered\n")
-			return nil
-		}
-
-		docPrintf(cmd, "doc gaps: %d documentation gap(s) identified:\n\n", len(gapsRes.Gaps))
-		docPrintf(cmd, "  %-25s %-25s %s\n", "TOPIC", "PACKAGE", "DESCRIPTION")
-		docPrintf(cmd, "  ----------------------------------------------------------------------\n")
-		for _, g := range gapsRes.Gaps {
-			docPrintf(cmd, "  %-25s %-25s %s\n", g.Topic, g.Package, g.Description)
-		}
-		docPrintf(cmd, "\nRun 'gmb doc suggest' to draft specifications for these gaps.\n")
-		return nil
-	},
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// gmb doc suggest — draft doc additions for gaps
-// ────────────────────────────────────────────────────────────────────────────
-
-var docSuggestCmd = &cobra.Command{
-	Use:   "suggest",
-	Short: "Draft document specifications for identified documentation gaps",
-	Long:  `Suggests new document specifications and section layouts based on undocumented code surfaces.`,
-	Example: `  gmb doc suggest
-  gmb doc suggest --json`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		targetDir := resolveDir(cmd)
-		absDir, err := filepath.Abs(targetDir)
-		if err != nil {
-			return fmt.Errorf("doc suggest: %w", err)
-		}
-
-		asJSON, _ := cmd.Flags().GetBool("json")
-		suggestions, err := doc_engine.Suggest(absDir)
-		if err != nil {
-			return err
-		}
-
-		if suggestions == nil {
-			suggestions = []doc_engine.SuggestedDoc{}
-		}
-
-		if asJSON {
-			data, _ := json.MarshalIndent(suggestions, "", "  ")
-			fmt.Fprintln(cmd.OutOrStdout(), string(data))
-			return nil
-		}
-
-		if len(suggestions) == 0 {
-			docPrintf(cmd, "doc suggest: no documentation additions suggested\n")
-			return nil
-		}
-
-		docPrintf(cmd, "doc suggest: %d recommended document addition(s):\n\n", len(suggestions))
-		for _, s := range suggestions {
-			docPrintf(cmd, "  Target:     %s\n", s.TargetPath)
-			docPrintf(cmd, "  Title:      %s\n", s.Title)
-			docPrintf(cmd, "  Archetype:  %s\n", s.Archetype)
-			docPrintf(cmd, "  Scope:      %s\n", strings.Join(s.ScopePaths, ", "))
-			docPrintf(cmd, "  Sections:   %s\n", strings.Join(s.Sections, ", "))
-			docPrintf(cmd, "  Command:    gmb doc init %s --archetype %s\n\n", s.TargetPath, s.Archetype)
-		}
-		return nil
-	},
-}
-
-// ────────────────────────────────────────────────────────────────────────────
 // gmb doc release — migration guide generator
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -582,65 +571,6 @@ The output includes:
 			docPrintf(cmd, "doc release: migration guide written to %s\n", outFile)
 		} else {
 			fmt.Fprintln(cmd.OutOrStdout(), guide)
-		}
-
-		snapshot, _ := cmd.Flags().GetBool("snapshot")
-		if snapshot {
-			snapRes, err := doc_engine.Snapshot(absDir, parts[1])
-			if err != nil {
-				return fmt.Errorf("doc release snapshot: %w", err)
-			}
-			docPrintf(cmd, "doc release: snapshot %s created with %d file(s) in %s\n", snapRes.VersionTag, snapRes.FilesCount, snapRes.TargetDir)
-		}
-		return nil
-	},
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// gmb doc report — documentation debt analytics
-// ────────────────────────────────────────────────────────────────────────────
-
-var docReportCmd = &cobra.Command{
-	Use:   "report",
-	Short: "Generate documentation debt and ROI analytics",
-	Long: `Generates a comprehensive documentation health report including:
-  - Coverage ratio (% of public interfaces documented)
-  - Global freshness score
-  - Top-5 rotting areas (high commit velocity, low freshness)
-  - Drift velocity trend
-  - Token cost summary`,
-	Example: `  gmb doc report
-  gmb doc report --json`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		targetDir := resolveDir(cmd)
-		absDir, err := filepath.Abs(targetDir)
-		if err != nil {
-			return fmt.Errorf("doc report: %w", err)
-		}
-
-		asJSON, _ := cmd.Flags().GetBool("json")
-		rep, err := doc_engine.Report(absDir)
-		if err != nil {
-			return err
-		}
-
-		if asJSON {
-			data, _ := json.MarshalIndent(rep, "", "  ")
-			fmt.Fprintln(cmd.OutOrStdout(), string(data))
-			return nil
-		}
-
-		docPrintf(cmd, "GlassMarble Documentation Health & Debt Report\n\n")
-		docPrintf(cmd, "  Managed Documents:    %d\n", rep.TotalDocuments)
-		docPrintf(cmd, "  Managed Sections:     %d\n", rep.TotalSections)
-		docPrintf(cmd, "  Global Freshness:     %d%%\n", rep.GlobalFreshness)
-		docPrintf(cmd, "  Public Surface Cov:   %.1f%%\n", rep.CoverageRatio)
-		docPrintf(cmd, "  Total Token Spend:    %d tokens\n", rep.TotalTokensUsed)
-		if len(rep.DriftedDocuments) > 0 {
-			docPrintf(cmd, "\n  Drifted Documents:\n")
-			for _, d := range rep.DriftedDocuments {
-				docPrintf(cmd, "    - %s\n", d)
-			}
 		}
 		return nil
 	},
@@ -770,6 +700,7 @@ func init() {
 	docCmd.Flags().Bool("json", false, "Emit machine-readable JSON output")
 	docCmd.Flags().Bool("bg", false, "Run in background (non-blocking post-commit mode)")
 	docCmd.Flags().String("branch-policy", "main-only", "When to write: main-only|any|tag-only")
+	docCmd.Flags().Bool("write", false, "Force writes even on non-main branches (overrides --branch-policy, except draft/wip)")
 
 	// ── gmb doc init flags ────────────────────────────────────────────────
 	docInitCmd.Flags().String("archetype", "", "Built-in document template: architecture|module|runbook|onboarding|migration|adr|api|security|database|config")
@@ -795,18 +726,8 @@ func init() {
 	docStatusCmd.Flags().String("tag", "", "Only check documents with this tag")
 	docStatusCmd.Flags().Bool("json", false, "Emit machine-readable JSON output")
 
-	// ── gmb doc gaps flags ────────────────────────────────────────────────
-	docGapsCmd.Flags().Bool("json", false, "Emit machine-readable JSON output")
-
-	// ── gmb doc suggest flags ─────────────────────────────────────────────
-	docSuggestCmd.Flags().Bool("json", false, "Emit machine-readable JSON output")
-
 	// ── gmb doc release flags ─────────────────────────────────────────────
 	docReleaseCmd.Flags().String("out", "", "Output file path for the migration guide")
-	docReleaseCmd.Flags().Bool("snapshot", false, "Freeze the current doc suite as a versioned snapshot")
-
-	// ── gmb doc report flags ──────────────────────────────────────────────
-	docReportCmd.Flags().Bool("json", false, "Emit machine-readable JSON output")
 
 	// ── gmb doc export flags ──────────────────────────────────────────────
 	docExportCmd.Flags().String("format", "rag", "Export format: rag|jsonl")
@@ -822,10 +743,7 @@ func init() {
 		docCheckCmd,
 		docDiffCmd,
 		docStatusCmd,
-		docGapsCmd,
-		docSuggestCmd,
 		docReleaseCmd,
-		docReportCmd,
 		docExportCmd,
 		docViewCmd,
 	)

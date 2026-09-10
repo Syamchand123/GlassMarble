@@ -83,48 +83,67 @@ func TestScanArchEvents(t *testing.T) {
 	}
 }
 
-func TestGenerateEvolutionChapter(t *testing.T) {
-	tempDir := t.TempDir()
-
-	ch, err := GenerateEvolutionChapter(tempDir, "", "")
-	if err != nil {
-		t.Fatalf("GenerateEvolutionChapter failed: %v", err)
+func TestScanArchEventsDefaultsNonEmpty(t *testing.T) {
+	logs := []string{
+		"feat: split package into submodules to reduce coupling",
+		"feat: introduce cycle between a and b",
+		"fix: layer violation in billing boundary",
+		"feat: add new service for notifications",
+		"BREAKING: rename public API signature",
+		"feat: add oauth login flow",
+		"feat: create new subsystem for search",
+		"feat: add database storage layer",
+		"fix: typo in readme",
 	}
-	if !strings.Contains(ch, "System Evolution & Architectural History") {
-		t.Errorf("missing evolution title in chapter:\n%s", ch)
+	events := ScanArchEvents(logs)
+	if len(events) != 8 {
+		t.Fatalf("expected 8 events (9 types coverable), got %d: %+v", len(events), events)
+	}
+	seen := map[string]bool{}
+	for _, e := range events {
+		seen[e.Type] = true
+		if strings.TrimSpace(e.Context) == "" || strings.TrimSpace(e.Decision) == "" || strings.TrimSpace(e.Consequence) == "" {
+			t.Errorf("event %s has empty defaults: %+v", e.Type, e)
+		}
+	}
+	for _, want := range []string{"COMPONENT_SPLIT", "CYCLE_INTRODUCED", "LAYER_VIOLATION", "SERVICE_ADDED", "INTERFACE_CHANGED", "AUTH_ARCHITECTURE", "NEW_SUBSYSTEM", "NEW_DATABASE_LAYER"} {
+		if !seen[want] {
+			t.Errorf("expected event type %s to be detected", want)
+		}
 	}
 }
 
-func TestGenerateDomainGlossary(t *testing.T) {
+func TestAutoGenerateADRs(t *testing.T) {
 	tempDir := t.TempDir()
 
-	// Create sample bounded contexts with homonym collision
-	authPkg := filepath.Join(tempDir, "internal", "auth")
-	billingPkg := filepath.Join(tempDir, "internal", "billing")
-	_ = os.MkdirAll(authPkg, 0755)
-	_ = os.MkdirAll(billingPkg, 0755)
-
-	authCode := "package auth\n// Account represents a user security identity\ntype Account struct { ID string }\n"
-	billingCode := "package billing\n// Account represents a customer subscription ledger\ntype Account struct { StripeID string }\n"
-
-	_ = os.WriteFile(filepath.Join(authPkg, "account.go"), []byte(authCode), 0644)
-	_ = os.WriteFile(filepath.Join(billingPkg, "account.go"), []byte(billingCode), 0644)
-
-	glossary, err := GenerateDomainGlossary(tempDir)
+	paths, err := AutoGenerateADRs(tempDir, "abc1234", "feat: split package into submodules to reduce coupling")
 	if err != nil {
-		t.Fatalf("GenerateDomainGlossary failed: %v", err)
+		t.Fatalf("AutoGenerateADRs failed: %v", err)
+	}
+	if len(paths) != 1 {
+		t.Fatalf("expected 1 ADR path, got %v", paths)
+	}
+	if !strings.HasPrefix(paths[0], "docs/adr/0001-") {
+		t.Errorf("expected 0001 ADR path, got %q", paths[0])
+	}
+	data, err := os.ReadFile(filepath.Join(tempDir, filepath.FromSlash(paths[0])))
+	if err != nil {
+		t.Fatalf("reading generated ADR: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "abc1234") {
+		t.Errorf("expected commit hash in ADR:\n%s", content)
+	}
+	if !strings.Contains(content, "## Context") || !strings.Contains(content, "## Decision") || !strings.Contains(content, "## Consequences") {
+		t.Errorf("expected Context/Decision/Consequences sections:\n%s", content)
 	}
 
-	if !strings.Contains(glossary, "Cross-Context Terminology Collisions") {
-		t.Errorf("expected cross-context collision section in glossary:\n%s", glossary)
+	// Non-architectural message produces no ADRs and no error.
+	paths, err = AutoGenerateADRs(tempDir, "def5678", "fix: typo in readme")
+	if err != nil {
+		t.Fatalf("AutoGenerateADRs (no-op) failed: %v", err)
 	}
-	if !strings.Contains(glossary, "Account") {
-		t.Errorf("expected Account term in glossary:\n%s", glossary)
-	}
-
-	// Verify docs/glossary.md file exists
-	dest := filepath.Join(tempDir, "docs", "glossary.md")
-	if _, err := os.Stat(dest); os.IsNotExist(err) {
-		t.Errorf("docs/glossary.md was not written to disk")
+	if len(paths) != 0 {
+		t.Errorf("expected 0 ADR paths for non-arch commit, got %v", paths)
 	}
 }

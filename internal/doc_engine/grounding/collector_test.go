@@ -149,7 +149,6 @@ func TestCollector_AllDirectives(t *testing.T) {
 			"error_returns",
 			"concurrency_primitives",
 			"config_vars",
-			"db_schemas",
 			"http_handlers",
 			"callgraph",
 			"arch_intelligence",
@@ -159,7 +158,8 @@ func TestCollector_AllDirectives(t *testing.T) {
 		},
 	}
 
-	payload := c.CollectSectionFacts(sec, scope)
+	payload, err := c.CollectSectionFacts(sec, scope)
+	require.NoError(t, err)
 	require.NotNil(t, payload)
 
 	// 1. Signatures & exported symbols
@@ -197,9 +197,20 @@ func TestCollector_AllDirectives(t *testing.T) {
 	}
 	assert.True(t, hasJWTSecret)
 
-	// 5. DB Schemas
-	assert.NotEmpty(t, payload.Schemas)
-	assert.Equal(t, "UserSession", payload.Schemas[0].Name)
+	// 5. Symbol permalinks populated from AKG node positions
+	for _, s := range payload.Symbols {
+		if s.File == "" {
+			continue
+		}
+		assert.NotEmpty(t, s.Permalink, "symbol %s should carry a permalink", s.FQN)
+		assert.Contains(t, s.Permalink, s.File)
+	}
+	assert.Contains(t, symbolFQNs, "internal/auth/jwt.go::ValidateToken")
+	for _, s := range payload.Symbols {
+		if s.FQN == "internal/auth/jwt.go::ValidateToken" {
+			assert.Equal(t, "internal/auth/jwt.go#L25-L50", s.Permalink)
+		}
+	}
 
 	// 6. HTTP Handlers
 	hasHTTP := false
@@ -218,4 +229,45 @@ func TestCollector_AllDirectives(t *testing.T) {
 		}
 	}
 	assert.True(t, hasCallee)
+}
+
+func TestCollector_DescopedDBSchemasIgnored(t *testing.T) {
+	// P22 (db_schemas) is descoped: requesting it must not fail and must
+	// produce no schema facts.
+	g := buildTestGraph()
+	c := NewCollector(g)
+	scope := &config.ScopeRule{Paths: []string{"internal/auth/**"}}
+	sec := &config.SectionSpec{ID: "db", GroundWith: []string{"db_schemas"}}
+
+	payload, err := c.CollectSectionFacts(sec, scope)
+	require.NoError(t, err)
+	require.NotNil(t, payload)
+	assert.Empty(t, payload.Symbols)
+}
+
+func TestCollector_AliasesResolve(t *testing.T) {
+	g := buildTestGraph()
+	c := NewCollector(g)
+	scope := &config.ScopeRule{Paths: []string{"internal/auth/**"}}
+	sec := &config.SectionSpec{ID: "alias", GroundWith: []string{
+		"callers", "components", "symbols", "exported_interfaces",
+		"timeline", "timelines", "commit_reasoning", "diagrams",
+	}}
+
+	payload, err := c.CollectSectionFacts(sec, scope)
+	require.NoError(t, err)
+	require.NotNil(t, payload)
+	assert.NotEmpty(t, payload.Symbols)
+}
+
+func TestCollector_UnknownGroundWithErrors(t *testing.T) {
+	g := buildTestGraph()
+	c := NewCollector(g)
+	scope := &config.ScopeRule{Paths: []string{"internal/auth/**"}}
+	sec := &config.SectionSpec{ID: "bad", GroundWith: []string{"migration_files"}}
+
+	payload, err := c.CollectSectionFacts(sec, scope)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `unknown ground_with "migration_files"`)
+	require.NotNil(t, payload)
 }
