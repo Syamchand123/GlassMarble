@@ -96,6 +96,38 @@ func TestExportKnowledgeBase(t *testing.T) {
 	}
 }
 
+func TestVerifySnippetsCRLF(t *testing.T) {
+	tempDir := t.TempDir()
+	pkgDir := filepath.Join(tempDir, "greet")
+	_ = os.MkdirAll(pkgDir, 0755)
+	code := "package greet\n\n// Greet greets.\nfunc Greet(name string) string { return name }\n"
+	_ = os.WriteFile(filepath.Join(pkgDir, "greet.go"), []byte(code), 0644)
+
+	// Windows checkout: every line ends with CRLF. Snippet extraction,
+	// verification, and fix application must behave identically to LF.
+	docLF := "# Guide\n<!-- gmb:snippet:example -->\n```go\nGreet()\n```\n"
+	docCRLF := strings.ReplaceAll(docLF, "\n", "\r\n")
+
+	errsLF, err := VerifySnippetsInRepo(tempDir, docLF, nil)
+	if err != nil {
+		t.Fatalf("LF verify failed: %v", err)
+	}
+	errsCRLF, err := VerifySnippetsInRepo(tempDir, docCRLF, nil)
+	if err != nil {
+		t.Fatalf("CRLF verify failed: %v", err)
+	}
+	if len(errsCRLF) == 0 {
+		t.Fatalf("CRLF markdown produced zero snippet errors (extraction silently failed); LF produced %d", len(errsLF))
+	}
+	if len(errsCRLF) != len(errsLF) {
+		t.Errorf("CRLF/LF parity: CRLF=%d errors, LF=%d errors", len(errsCRLF), len(errsLF))
+	}
+	fixed := ApplySnippetFixes(docCRLF, errsCRLF)
+	if !strings.Contains(fixed, "Greet(name string)") {
+		t.Errorf("CRLF fix did not apply signature:\n%s", fixed)
+	}
+}
+
 func TestVerifySnippetsInRepoArity(t *testing.T) {
 	tempDir := t.TempDir()
 	pkgDir := filepath.Join(tempDir, "greet")

@@ -258,7 +258,24 @@ func isPublicSurfaceChange(dossier *config.GlobalCommitDossier) bool {
 			return true
 		}
 	}
+	for _, mod := range dossier.ModifiedSymbols {
+		if isExportedShortName(mod.FQN) && isCmdPath(fqnFilePart(mod.FQN)) {
+			return true
+		}
+	}
 	return false
+}
+
+// SectionHash recomputes the exact Stage-3 hash for one section using the
+// same inputs FindDirtySections compares against (scope symbols + diagram
+// refs). The render pipeline calls this post-render so the persisted hash
+// matches what the next run recomputes — without it every rendered section
+// would read as dirty again and the zero-churn guarantee would collapse.
+func SectionHash(doc *config.DocSpec, sec *config.SectionSpec, graph *akg.CodePropertyGraph) string {
+	if doc == nil || sec == nil {
+		return ""
+	}
+	return HashSection(sec, collectSymbolsForScope(&doc.Scope, graph), doc.Diagrams)
 }
 
 // dossierReason builds the rich per-section Reason string carrying the commit

@@ -14,7 +14,7 @@ func TestWriteDoc_AtomicWrite(t *testing.T) {
 	targetPath := filepath.Join(dir, "docs", "arch.md")
 	content := []byte("# Architecture\n\nGenerated content.\n")
 
-	result, err := WriteDoc(sm, targetPath, content, "doc-arch", "overview", "abc123", "deterministic")
+	result, err := WriteDoc(sm, targetPath, "docs/arch.md", content, "doc-arch", "overview", "abc123", "deterministic")
 	if err != nil {
 		t.Fatalf("WriteDoc failed: %v", err)
 	}
@@ -42,12 +42,12 @@ func TestWriteDoc_NoOpOnIdentical(t *testing.T) {
 	targetPath := filepath.Join(dir, "docs", "same.md")
 	content := []byte("# Same\n")
 
-	if _, err := WriteDoc(sm, targetPath, content, "d", "s", "h1", "deterministic"); err != nil {
+	if _, err := WriteDoc(sm, targetPath, "docs/same.md", content, "d", "s", "h1", "deterministic"); err != nil {
 		t.Fatalf("first write failed: %v", err)
 	}
 
 	// Second write with identical content.
-	result, err := WriteDoc(sm, targetPath, content, "d", "s", "h1", "deterministic")
+	result, err := WriteDoc(sm, targetPath, "docs/same.md", content, "d", "s", "h1", "deterministic")
 	if err != nil {
 		t.Fatalf("second write failed: %v", err)
 	}
@@ -64,13 +64,13 @@ func TestWriteDoc_BackupCreated(t *testing.T) {
 
 	// Write initial content.
 	initial := []byte("# Initial\n")
-	if _, err := WriteDoc(sm, targetPath, initial, "d", "s", "h1", "deterministic"); err != nil {
+	if _, err := WriteDoc(sm, targetPath, "docs/bak.md", initial, "d", "s", "h1", "deterministic"); err != nil {
 		t.Fatalf("initial write: %v", err)
 	}
 
 	// Write updated content — should create .gmb.bak.
 	updated := []byte("# Updated\n")
-	if _, err := WriteDoc(sm, targetPath, updated, "d", "s", "h2", "deterministic"); err != nil {
+	if _, err := WriteDoc(sm, targetPath, "docs/bak.md", updated, "d", "s", "h2", "deterministic"); err != nil {
 		t.Fatalf("update write: %v", err)
 	}
 

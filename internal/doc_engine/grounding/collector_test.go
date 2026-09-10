@@ -264,10 +264,24 @@ func TestCollector_UnknownGroundWithErrors(t *testing.T) {
 	g := buildTestGraph()
 	c := NewCollector(g)
 	scope := &config.ScopeRule{Paths: []string{"internal/auth/**"}}
-	sec := &config.SectionSpec{ID: "bad", GroundWith: []string{"migration_files"}}
+	sec := &config.SectionSpec{ID: "bad", GroundWith: []string{"quantum_entanglement"}}
 
 	payload, err := c.CollectSectionFacts(sec, scope)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), `unknown ground_with "migration_files"`)
+	assert.Contains(t, err.Error(), `unknown ground_with "quantum_entanglement"`)
+	require.NotNil(t, payload)
+}
+
+func TestCollector_ExtendedAliasesResolve(t *testing.T) {
+	g := buildTestGraph()
+	c := NewCollector(g)
+	scope := &config.ScopeRule{Paths: []string{"internal/auth/**"}}
+	sec := &config.SectionSpec{ID: "alias2", GroundWith: []string{
+		"env_getenv", "flag_defs", "symbol_deltas", "config_var_changes",
+		"migration_files", "c4container", "egress_calls", "crypto_primitives",
+	}}
+
+	payload, err := c.CollectSectionFacts(sec, scope)
+	require.NoError(t, err)
 	require.NotNil(t, payload)
 }

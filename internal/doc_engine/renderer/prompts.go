@@ -16,22 +16,33 @@ import (
 // (1-6 when maxWords==0, 1-7 otherwise).
 func BuildSystemPrompt(style *config.StyleSpec, maxWords int) string {
 	voice := "active, second-person, present tense"
+	tone := ""
 	jargon := "simply, just, leverage, obviously, utilize"
 
 	if style != nil {
 		if style.Voice != "" {
 			voice = style.Voice
 		}
+		if style.Tone != "" {
+			tone = style.Tone
+		}
 		if len(style.JargonBlacklist) > 0 {
 			jargon = strings.Join(style.JargonBlacklist, ", ")
 		}
+	}
+
+	// Tone rides on the style rule (not its own number) so the 1-6/1-7
+	// numbering shape never shifts.
+	styleRule := fmt.Sprintf("Follow the style: %s.", voice)
+	if tone != "" {
+		styleRule = fmt.Sprintf("Follow the style: %s. Tone: %s.", voice, tone)
 	}
 
 	rules := []string{
 		"Every function, type, error, or identifier you mention in backticks MUST appear in the fact_sheet.ground_truth. Do not reference any code entity not listed there.",
 		"Do not rewrite or rephrase sentences from prior_section_markdown that are still factually accurate. Only add, modify, or remove sentences that directly reflect the changes in ground_truth.",
 		"Output ONLY the markdown for the specified section. No preamble, no \"Here is the updated section\", no meta-commentary.",
-		fmt.Sprintf("Follow the style: %s.", voice),
+		styleRule,
 		fmt.Sprintf("Avoid these words/phrases: %s.", jargon),
 	}
 	if maxWords > 0 {

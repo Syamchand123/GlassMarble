@@ -56,8 +56,9 @@ func Diff(repoRoot string, opts RunOptions) (DiffResult, error) {
 	result := DiffResult{}
 
 	orch := renderer.NewOrchestrator(renderer.OrchestratorOptions{
-		NoLLM:   true, // Deterministic diff preview
-		Verbose: false,
+		NoLLM:       true, // Deterministic diff preview
+		Verbose:     false,
+		GlobalStyle: cfg.Style,
 	})
 
 	ctx := context.Background()
@@ -219,6 +220,18 @@ func GenerateConfigDictionary(repoRoot string) (string, error) {
 // VerifyCodeSnippets checks code snippets in markdown for syntax validity and symbol drift.
 func VerifyCodeSnippets(markdown string, knownSymbols map[string]bool) ([]devex.SnippetError, error) {
 	return devex.VerifyCodeSnippets(markdown, knownSymbols)
+}
+
+// VerifySnippetsInRepo checks snippets against real repo func signatures
+// (arity verification), not just syntax and name presence.
+func VerifySnippetsInRepo(repoRoot, markdown string, knownSymbols map[string]bool) ([]devex.SnippetError, error) {
+	return devex.VerifySnippetsInRepo(repoRoot, markdown, knownSymbols)
+}
+
+// ApplySnippetFixes deterministically rewrites failing snippet call lines
+// with their SuggestedFix signatures. Explicit --fix only.
+func ApplySnippetFixes(markdown string, errs []devex.SnippetError) string {
+	return devex.ApplySnippetFixes(markdown, errs)
 }
 
 func truncateLine(s string, maxLen int) string {

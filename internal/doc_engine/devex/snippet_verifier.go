@@ -27,9 +27,17 @@ type SnippetError struct {
 
 var snippetTagRe = regexp.MustCompile(`<!--\s*gmb:snippet:example\s*-->\s*` + "```(?:go)?\\n([\\s\\S]*?)```")
 
+// normalizeSnippetNewlines folds Windows CRLF to LF so snippet fences match
+// on every checkout. Without this, snippet extraction silently finds zero
+// blocks on CRLF working trees.
+func normalizeSnippetNewlines(markdown string) string {
+	return strings.ReplaceAll(markdown, "\r\n", "\n")
+}
+
 // VerifyCodeSnippets scans markdown content for executable snippet blocks, parses them,
 // and validates their syntactic validity and symbol contracts against known symbols.
 func VerifyCodeSnippets(markdown string, knownSymbols map[string]bool) ([]SnippetError, error) {
+	markdown = normalizeSnippetNewlines(markdown)
 	var errs []SnippetError
 
 	matches := snippetTagRe.FindAllStringSubmatchIndex(markdown, -1)
@@ -117,6 +125,7 @@ type funcArity struct {
 // VerifySnippetsInRepo verifies snippet syntax/symbols (via VerifyCodeSnippets)
 // plus call arity against real declarations found under repoRoot.
 func VerifySnippetsInRepo(repoRoot, markdown string, knownSymbols map[string]bool) ([]SnippetError, error) {
+	markdown = normalizeSnippetNewlines(markdown)
 	base, err := VerifyCodeSnippets(markdown, knownSymbols)
 	if err != nil {
 		return base, err
@@ -183,6 +192,7 @@ func VerifySnippetsInRepo(repoRoot, markdown string, knownSymbols map[string]boo
 // preserved. Errors without a SuggestedFix or with an out-of-range
 // LineNumber are skipped. The old snippet verifier is untouched.
 func ApplySnippetFixes(markdown string, errs []SnippetError) string {
+	markdown = normalizeSnippetNewlines(markdown)
 	lines := strings.Split(markdown, "\n")
 	for _, e := range errs {
 		if e.SuggestedFix == "" {

@@ -26,24 +26,35 @@ func NewCollector(graph *akg.CodePropertyGraph) *Collector {
 
 // groundWithAliases maps true synonym spellings to their canonical
 // ground_with directive. Aliases are resolved BEFORE the dispatch switch.
+// Deltas (symbol_deltas, config_var_changes, migration_files) resolve to the
+// current-state collectors because the dossier already merges per-commit
+// added/modified/removed facts into every payload in facts.go.
 var groundWithAliases = map[string]string{
-	"callers":             "callgraph",
-	"components":          "signatures",
-	"symbols":             "signatures",
+	"callers":            "callgraph",
+	"components":         "signatures",
+	"symbols":            "signatures",
 	"exported_interfaces": "exported_symbols",
-	"timeline":            "arch_events",
-	"timelines":           "arch_events",
-	"commit_reasoning":    "arch_events",
+	"timeline":           "arch_events",
+	"timelines":          "arch_events",
+	"commit_reasoning":   "arch_events",
+	"env_getenv":         "config_vars",
+	"flag_defs":          "config_vars",
+	"symbol_deltas":      "signatures",
+	"config_var_changes": "config_vars",
+	"migration_files":    "signatures",
 }
 
 // groundWithSkipped lists directive spellings that are intentionally not
 // collected here: diagrams come from DocSpec.Diagrams (rendered in facts.go),
-// and db_schemas is a descoped pillar (P22) that must not fail.
+// c4container/layered are diagram types (not grounding), and db_schemas is
+// a descoped pillar (P22) that must not fail.
 var groundWithSkipped = map[string]bool{
-	"diagrams":   true,
-	"diagram":    true,
-	"db_schemas": true,
-	"db_schema":  true,
+	"diagrams":    true,
+	"diagram":     true,
+	"c4container": true,
+	"layered":     true,
+	"db_schemas":  true,
+	"db_schema":   true,
 }
 
 // resolveGroundWith normalizes a raw ground_with value: lowercase, trim,
@@ -106,6 +117,10 @@ func (c *Collector) CollectSectionFacts(sec *config.SectionSpec, scope *config.S
 			c.collectArchEvents(payload)
 		case "ingress_points":
 			c.collectIngressPoints(scope, payload)
+		case "egress_calls":
+			c.collectEgressCalls(scope, payload)
+		case "crypto_primitives":
+			c.collectCryptoPrimitives(scope, payload)
 		case "dependencies":
 			c.collectDependencies(scope, payload)
 		default:
@@ -351,8 +366,7 @@ func (c *Collector) collectIngressPoints(scope *config.ScopeRule, p *config.Grou
 }
 
 // 13: Dependencies
-func (c *Collector) collectDependencies(scope *config.ScopeRule, p *config.GroundTruthPayload) {
-	if c.graph == nil || c.graph.OutboundEdges == nil {
+func (c *Collector) collectDependencies(scope *config.ScopeRule, p *config.GroundTruthPayload) {	if c.graph == nil || c.graph.OutboundEdges == nil {
 		return
 	}
 	seenDeps := make(map[string]bool)
@@ -367,6 +381,61 @@ func (c *Collector) collectDependencies(scope *config.ScopeRule, p *config.Groun
 					seenDeps[tgtPkg] = true
 					p.ArchEvents = append(p.ArchEvents, "Depends on package: "+tgtPkg)
 				}
+			}
+		}
+	})
+}
+
+// 14: Egress calls — outbound CPG call edges from in-scope symbols to
+// targets outside the scope (third-party APIs, DB drivers, gRPC clients).
+func (c *Collector) collectEgressCalls(scope *config.ScopeRule, p *config.GroundTruthPayload) {
+	if c.graph == nil || c.graph.OutboundEdges == nil {
+		return
+	}
+	seen := make(map[string]bool)
+	c.graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
+		if n == nil || !catalog.MatchesScope(scope, n.FileSpec.Path) {
+			return
+		}
+		for _, e := range c.graph.GetOutboundEdges(id) {
+			if e.Type != link.EdgeCalls || seen[e.TargetID] {
+				continue
+			}
+			seen[e.TargetID] = true
+			if tgt, ok := c.graph.Nodes.Get(e.TargetID); ok && tgt != nil {
+				if catalog.MatchesScope(scope, tgt.FileSpec.Path) {
+					continue // internal call, not egress
+				}
+			}
+			p.Symbols = append(p.Symbols, config.SymbolFact{
+				FQN:       e.TargetID,
+				Kind:      "egress",
+				Signature: "Called from " + cleanSymbolName(id),
+			})
+		}
+	})
+}
+
+// 15: Cryptographic primitives — AKG nodes referencing crypto libraries
+// (crypto/*, sha256, aes, tls, bcrypt, hmac, jwt, rsa/ecdsa).
+func (c *Collector) collectCryptoPrimitives(scope *config.ScopeRule, p *config.GroundTruthPayload) {
+	c.graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
+		if n == nil || !catalog.MatchesScope(scope, n.FileSpec.Path) {
+			return
+		}
+		haystack := strings.ToLower(id + " " + n.Name + " " + extractSignature(n) + " " + n.FileSpec.Path)
+		for _, kw := range []string{"crypto", "sha256", "sha512", "aes", "tls", "bcrypt", "hmac", "jwt", "rsa", "ecdsa", "x509"} {
+			if strings.Contains(haystack, kw) {
+				p.Symbols = append(p.Symbols, config.SymbolFact{
+					FQN:       id,
+					Kind:      "crypto",
+					File:      n.FileSpec.Path,
+					Line:      n.FileSpec.LineStart,
+					Permalink: FormatPermalink(n.FileSpec.Path, n.FileSpec.LineStart, n.FileSpec.LineEnd),
+					Signature: extractSignature(n),
+					Doc:       "Cryptographic primitive: " + extractDoc(n),
+				})
+				return
 			}
 		}
 	})

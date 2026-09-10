@@ -32,8 +32,14 @@ type WriterResult struct {
 // On the first write to a file, a .gmb.bak backup is created.
 // The state manager (sm) is updated atomically after a successful write.
 //
+// targetPath is the filesystem path written to (usually absolute); stateKey
+// is the docs_state.json document key (always the repo-relative DocSpec
+// target, e.g. "docs/architecture.md"). They MUST differ: keying state by
+// an absolute path creates a second document entry that hash lookups (which
+// use the relative target) never find.
+//
 // This function is non-fatal-safe: callers may treat errors as warnings per P5.
-func WriteDoc(sm *StateManager, targetPath string, content []byte,
+func WriteDoc(sm *StateManager, targetPath, stateKey string, content []byte,
 	docID, sectionID, commitHash, renderMode string) (WriterResult, error) {
 
 	// Use the existing AtomicWriteFile from state.go.
@@ -55,7 +61,7 @@ func WriteDoc(sm *StateManager, targetPath string, content []byte,
 		return WriterResult{Changed: true, FileHash: hash}, fmt.Errorf("doc_engine/writer: loading state: %w", err)
 	}
 
-	ds := GetOrCreateDocState(state, targetPath)
+	ds := GetOrCreateDocState(state, stateKey)
 	ds.FileHash = "sha256:" + hash
 	ds.LastUpdatedCommit = commitHash
 	ds.LastUpdatedAt = time.Now().UTC()

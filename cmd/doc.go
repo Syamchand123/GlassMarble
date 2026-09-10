@@ -292,6 +292,7 @@ Runs an interactive 5-step questionnaire to configure:
 var docCheckCmd = &cobra.Command{
 	Use:   "check",
 	Short: "Check documentation freshness and drift (CI gate)",
+	Args:  cobra.NoArgs,
 	Long: `Audits all managed documents for drift and freshness without modifying any files.
 
 Exit codes (plan Section 11):
@@ -349,6 +350,7 @@ Exit codes (plan Section 11):
 		verifySnippets, _ := cmd.Flags().GetBool("verify-snippets")
 		if verifySnippets {
 			snippetErrors := 0
+			fixSnippets, _ := cmd.Flags().GetBool("fix")
 			cfg, _ := docconfig.LoadDocsConfig(absDir)
 			if cfg != nil {
 				for _, doc := range cfg.Documents {
@@ -357,10 +359,24 @@ Exit codes (plan Section 11):
 					if err != nil {
 						continue
 					}
-					errs, _ := doc_engine.VerifyCodeSnippets(string(data), nil)
+					// P14: repo-aware arity verification (func signatures from
+					// the working tree), not just syntax + name presence.
+					errs, _ := doc_engine.VerifySnippetsInRepo(absDir, string(data), nil)
 					for _, se := range errs {
 						snippetErrors++
 						docPrintf(cmd, "  SNIPPET ERROR [%s: line %d]: %s\n", doc.TargetPath, se.LineNumber, se.ErrorMessage)
+					}
+					// P14: deterministic fix application (explicit --fix only;
+					// plain check stays non-modifying per the CI contract).
+					if fixSnippets && len(errs) > 0 {
+						fixed := doc_engine.ApplySnippetFixes(string(data), errs)
+						if fixed != string(data) {
+							if wErr := os.WriteFile(absPath, []byte(fixed), 0644); wErr != nil {
+								return fmt.Errorf("snippet fix failed for %s: %w", doc.TargetPath, wErr)
+							}
+							docPrintf(cmd, "  SNIPPET FIXED [%s]: applied %d deterministic fix(es)\n", doc.TargetPath, len(errs))
+							snippetErrors = 0
+						}
 					}
 				}
 			}
@@ -481,6 +497,7 @@ Exit codes:
 
 var docStatusCmd = &cobra.Command{
 	Use:   "status",
+	Args:  cobra.NoArgs,
 	Short: "Show freshness dashboard for all managed documents",
 	Long: `Displays a table of all managed documents with their freshness scores,
 last sync commit, and render mode.
@@ -582,6 +599,7 @@ The output includes:
 
 var docExportCmd = &cobra.Command{
 	Use:   "export",
+	Args:  cobra.NoArgs,
 	Short: "Export managed docs as a RAG-ready chunked knowledge base",
 	Long: `Generates pre-chunked, AKG-tagged knowledge chunks under .glassmarble/rag/.
 
@@ -715,6 +733,7 @@ func init() {
 	docCheckCmd.Flags().String("tag", "", "Only check documents with this tag")
 	docCheckCmd.Flags().Bool("json", false, "Emit machine-readable JSON output")
 	docCheckCmd.Flags().Bool("verify-snippets", false, "Verify executable code snippets in managed docs")
+	docCheckCmd.Flags().Bool("fix", false, "Deterministically fix failing snippets (modifies files; use without --json in CI gate mode)")
 
 	// ── gmb doc diff flags ────────────────────────────────────────────────
 	docDiffCmd.Flags().String("doc", "", "Only diff the document with this ID")

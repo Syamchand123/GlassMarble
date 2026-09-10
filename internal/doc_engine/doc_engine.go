@@ -21,7 +21,11 @@ package doc_engine
 import (
 	"context"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
+	"io/fs"
 	"math"
 	"os"
 	"os/exec"
@@ -331,6 +335,27 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 	result.SectionsProcessed = countTotalSections(docs)
 	result.SectionsUpdated = len(dirtySections)
 
+	// The dossier is the single shared source: record the prioritized
+	// dirty list on it so downstream stages draw from one dossier.
+	if dossier != nil {
+		dossier.DirtySections = dirtySections
+	}
+
+	// Comment-only / whitespace commits carry zero symbol, config, sentinel,
+	// or architectural changes. The ground truth is empty, so there is
+	// nothing to render — mark processed and exit without LLM calls.
+	if dossier != nil && !opts.Force && dossierChangeCount(dossier) == 0 {
+		if opts.Verbose || !isQuiet(out) {
+			fmt.Fprintln(out, "doc_engine: no code changes in dossier (comments/whitespace only), skipping render")
+		}
+		state.LastCommit = opts.CommitHash
+		if saveErr := sm.Save(state); saveErr != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("could not save docs_state.json: %v", saveErr))
+		}
+		result.Duration = time.Since(start)
+		return result
+	}
+
 	if opts.Verbose || !isQuiet(out) {
 		fmt.Fprintf(out, "doc_engine: found %d dirty section(s) across %d document(s)\n",
 			len(dirtySections), len(docs))
@@ -363,11 +388,12 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 	}
 
 	orch := renderer.NewOrchestrator(renderer.OrchestratorOptions{
-		NoLLM:    opts.NoLLM,
-		Model:    opts.Model,
-		Provider: opts.Provider,
-		Verbose:  opts.Verbose,
-		Out:      out,
+		NoLLM:       opts.NoLLM,
+		Model:       opts.Model,
+		Provider:    opts.Provider,
+		Verbose:     opts.Verbose,
+		Out:         out,
+		GlobalStyle: cfg.Style,
 	})
 
 	// Index dirty sections by document ID
@@ -455,6 +481,19 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 	return result
 }
 
+// dossierChangeCount totals every factual change in the dossier: symbols,
+// config vars, sentinels, and arch events. Zero means the commit carried
+// no code changes (comments/whitespace/docs only).
+func dossierChangeCount(d *docconfig.GlobalCommitDossier) int {
+	if d == nil {
+		return 0
+	}
+	return len(d.AddedSymbols) + len(d.ModifiedSymbols) + len(d.RemovedSymbols) +
+		len(d.AddedConfigVars) + len(d.RemovedConfigVars) +
+		len(d.AddedSentinels) + len(d.ModifiedSentinels) +
+		len(d.ArchEvents)
+}
+
 func countTotalSections(docs []docconfig.DocSpec) int {
 	total := 0
 	for _, d := range docs {
@@ -491,11 +530,10 @@ func Check(repoRoot string, opts CheckOptions) (CheckResult, error) {
 	docs := filterDocuments(cfg.Documents, opts.DocID, opts.Tag)
 	result := CheckResult{AllFresh: true}
 
-	// P9: symbol-exists closure for gmb:assert evaluation. Nil when no AKG
-	// graph is available — in that case asserts are skipped below (never
-	// failed blindly).
-	assertSymbolExists := buildAssertSymbolExists(opts.HeadGraph)
-	assertsSkipped := assertSymbolExists == nil
+	// P9: symbol-exists closure for gmb:assert evaluation. Backed by the AKG
+	// head graph when available, else by a lightweight Go AST scan of the
+	// repo (exported idents). Never nil — asserts always evaluate.
+	assertSymbolExists := buildAssertSymbolExists(opts.HeadGraph, repoRoot)
 
 	// P8: live freshness needs a git work tree; without one (e.g. temp dirs
 	// in tests) fall back to the stored scores.
@@ -560,15 +598,14 @@ func Check(repoRoot string, opts CheckOptions) (CheckResult, error) {
 				docResult.Status = "fresh"
 			}
 
-			// P9: doc-lint asserts from gmb:assert directives. Skipped when
-			// no AKG graph is available (assertSymbolExists == nil).
-			if assertSymbolExists != nil {
-				if content, readErr := os.ReadFile(absPath); readErr == nil {
-					for _, msg := range patcher.EvaluateAsserts(string(content), assertSymbolExists) {
-						result.AllFresh = false
-						result.Failures = append(result.Failures,
-							fmt.Sprintf("%s: %s", doc.TargetPath, msg))
-					}
+			// P9: doc-lint asserts from gmb:assert directives. The closure
+			// is AKG-backed when a graph is available, else repo-scan
+			// backed — asserts always evaluate.
+			if content, readErr := os.ReadFile(absPath); readErr == nil {
+				for _, msg := range patcher.EvaluateAsserts(string(content), assertSymbolExists) {
+					result.AllFresh = false
+					result.Failures = append(result.Failures,
+						fmt.Sprintf("%s: %s", doc.TargetPath, msg))
 				}
 			}
 		}
@@ -585,8 +622,8 @@ func Check(repoRoot string, opts CheckOptions) (CheckResult, error) {
 		result.GlobalFreshness = total / len(result.Documents)
 	}
 
-	if assertsSkipped && opts.Verbose {
-		fmt.Fprintln(out, "doc_engine: assert evaluation skipped (no AKG graph available)")
+	if opts.HeadGraph == nil && opts.Verbose {
+		fmt.Fprintln(out, "doc_engine: assert evaluation uses repo symbol scan (no AKG graph)")
 	}
 
 	if opts.Verbose {
@@ -668,9 +705,14 @@ func resolveWritePermission(repoRoot, policy string, forceWrite bool) (canWrite 
 	}
 
 	if forceWrite {
-		return true, branch, []string{
-			fmt.Sprintf("ForceWrite override (--write): writing on branch %q despite %q policy", displayBranch(branch), normalizeBranchPolicy(policy)),
+		// Warn only when the override actually changes the outcome;
+		// on main/master (or policy "any") --write is a no-op confirmation.
+		if branch != "" && branch != "main" && branch != "master" && branch != "HEAD" && normalizeBranchPolicy(policy) != "any" {
+			return true, branch, []string{
+				fmt.Sprintf("ForceWrite override (--write): writing on branch %q despite %q policy", displayBranch(branch), normalizeBranchPolicy(policy)),
+			}
 		}
+		return true, branch, nil
 	}
 
 	switch normalizeBranchPolicy(policy) {
@@ -911,12 +953,11 @@ func hasDossierArchKeyword(subject string) bool {
 // ────────────────────────────────────────────────────────────────────────────
 
 // buildAssertSymbolExists returns a symbol-exists closure backed by the AKG
-// head graph, or nil when no graph is available (callers must skip assert
-// evaluation in that case to avoid false failures).
-func buildAssertSymbolExists(graph *akg.CodePropertyGraph) func(string) bool {
-	if graph == nil || graph.Nodes == nil {
-		return nil
-	}
+// head graph when available, falling back to a lightweight Go AST scan of
+// repoRoot (exported idents only). The closure is never nil: without any
+// symbol source it reports every symbol as known so asserts never fail
+// blindly on missing infrastructure.
+func buildAssertSymbolExists(graph *akg.CodePropertyGraph, repoRoot string) func(string) bool {
 	known := make(map[string]bool)
 	add := func(s string) {
 		s = strings.TrimSpace(s)
@@ -931,15 +972,70 @@ func buildAssertSymbolExists(graph *akg.CodePropertyGraph) func(string) bool {
 			known[s[idx+1:]] = true
 		}
 	}
-	graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
-		add(id)
-		if n != nil {
-			add(n.Name)
+	if graph != nil && graph.Nodes != nil {
+		graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
+			add(id)
+			if n != nil {
+				add(n.Name)
+			}
+		})
+		return func(sym string) bool {
+			return known[strings.TrimSpace(sym)]
 		}
-	})
+	}
+	for id := range scanRepoExportedIdents(repoRoot) {
+		add(id)
+	}
+	if len(known) == 0 {
+		return func(string) bool { return true }
+	}
 	return func(sym string) bool {
 		return known[strings.TrimSpace(sym)]
 	}
+}
+
+// scanRepoExportedIdents collects exported Go identifiers (funcs, methods as
+// Recv.Name, types, vars) across repoRoot. Best-effort: parse errors skip files.
+func scanRepoExportedIdents(repoRoot string) map[string]bool {
+	out := make(map[string]bool)
+	if repoRoot == "" {
+		return out
+	}
+	_ = filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		fset := token.NewFileSet()
+		node, parseErr := parser.ParseFile(fset, path, nil, 0)
+		if parseErr != nil || node == nil {
+			return nil
+		}
+		for _, decl := range node.Decls {
+			switch t := decl.(type) {
+			case *ast.FuncDecl:
+				if ast.IsExported(t.Name.Name) {
+					out[t.Name.Name] = true
+				}
+			case *ast.GenDecl:
+				for _, spec := range t.Specs {
+					switch s := spec.(type) {
+					case *ast.TypeSpec:
+						if ast.IsExported(s.Name.Name) {
+							out[s.Name.Name] = true
+						}
+					case *ast.ValueSpec:
+						for _, name := range s.Names {
+							if ast.IsExported(name.Name) {
+								out[name.Name] = true
+							}
+						}
+					}
+				}
+			}
+		}
+		return nil
+	})
+	return out
 }
 
 // ────────────────────────────────────────────────────────────────────────────

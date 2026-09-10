@@ -87,6 +87,14 @@ type StyleSpec struct {
 	// "active, second-person, present tense"
 	Voice string `yaml:"voice,omitempty" json:"voice,omitempty"`
 
+	// Tone is an optional explicit tone descriptor (e.g. "terse technical").
+	// Empty means the voice string alone carries tone.
+	Tone string `yaml:"tone,omitempty" json:"tone,omitempty"`
+
+	// CodeBlockFormat controls fenced code block rendering (e.g.
+	// "fenced_with_language"). Informational for renderers.
+	CodeBlockFormat string `yaml:"code_block_format,omitempty" json:"code_block_format,omitempty"`
+
 	// JargonBlacklist lists words/phrases the LLM must never use.
 	// Example: ["simply", "obviously", "leverage", "utilize"]
 	JargonBlacklist []string `yaml:"jargon_blacklist,omitempty" json:"jargon_blacklist,omitempty"`

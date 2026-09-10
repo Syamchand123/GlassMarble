@@ -18,6 +18,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/grounding"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/invalidator"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/patcher"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/storage"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/verifier"
@@ -176,12 +177,51 @@ func (o *Orchestrator) renderTrackB(fs *config.FactSheet, symIndex verifier.AKGS
 		return SectionRenderOutcome{}, fmt.Errorf("deterministic output triggered gate 4 secret scan: %w", gateRes.Error)
 	}
 
-	return SectionRenderOutcome{
+	outcome := SectionRenderOutcome{
 		Content:    content,
 		RenderMode: "deterministic",
 		TokensUsed: 0,
 		DurationMs: 0,
-	}, nil
+	}
+	if !gateRes.Pass {
+		// All 5 gates observe Track B output (plan Stage 7: no exceptions).
+		// Deterministic output is grounded by construction, so a non-secret
+		// gate failure is reported, not fatal: keep prior content when the
+		// failure is churn-only, otherwise ship with a warning.
+		if gateRes.SemanticNoOp && fs.PriorSectionMarkdown != "" {
+			outcome.Content = fs.PriorSectionMarkdown
+		}
+		outcome.Warning = fmt.Sprintf("deterministic output failed gate %d (%v); shipped with warning", gateRes.FailedGate, gateRes.Error)
+	}
+	return outcome, nil
+}
+
+// enforceMaxWords verifies the SectionSpec.MaxWords cap post-render.
+// Prompt text alone is not enforcement: on violation Track A gets one
+// repair retry asking for brevity; otherwise (or on Track B) a warning is
+// recorded and the content ships unchanged — truncation would corrupt
+// markdown structure.
+func (o *Orchestrator) enforceMaxWords(ctx context.Context, fs *config.FactSheet, sec *config.SectionSpec, graph *akg.CodePropertyGraph, outcome SectionRenderOutcome, warnings *[]string) string {
+	if sec == nil || sec.MaxWords <= 0 || wordCount(outcome.Content) <= sec.MaxWords {
+		return outcome.Content
+	}
+	if o.actuator != nil && !outcome.RepairUsed && outcome.RenderMode == "llm" {
+		repairResp, repairErr := o.actuator.Repair(ctx, fs, outcome.Content,
+			fmt.Errorf("section is %d words, exceeding the MaxWords cap of %d: shorten it without losing any factual statements", wordCount(outcome.Content), sec.MaxWords))
+		if repairErr == nil {
+			repairGateRes := verifier.RunGates(fs.PriorSectionMarkdown, repairResp.Text, buildSymbolIndex(fs, graph))
+			if repairGateRes.Pass && wordCount(repairResp.Text) <= sec.MaxWords {
+				*warnings = append(*warnings, fmt.Sprintf("section %s shortened to MaxWords cap (%d words)", sec.ID, sec.MaxWords))
+				return repairResp.Text
+			}
+		}
+	}
+	*warnings = append(*warnings, fmt.Sprintf("section %s exceeds MaxWords cap (%d words > %d max)", sec.ID, wordCount(outcome.Content), sec.MaxWords))
+	return outcome.Content
+}
+
+func wordCount(s string) int {
+	return len(strings.Fields(s))
 }
 
 // ProcessDocument coordinates the full read -> ground -> render -> merge -> write pipeline for a single document.
@@ -270,6 +310,12 @@ func (o *Orchestrator) ProcessDocument(
 			if doc.Style.Voice != "" {
 				fs.Style.Voice = doc.Style.Voice
 			}
+			if doc.Style.Tone != "" {
+				fs.Style.Tone = doc.Style.Tone
+			}
+			if doc.Style.CodeBlockFormat != "" {
+				fs.Style.CodeBlockFormat = doc.Style.CodeBlockFormat
+			}
 			if len(doc.Style.JargonBlacklist) > 0 {
 				fs.Style.JargonBlacklist = doc.Style.JargonBlacklist
 			}
@@ -286,16 +332,26 @@ func (o *Orchestrator) ProcessDocument(
 			}
 		}
 
-		// Stage 6 & 7: Render + Quality Firewall
-		outcome, rErr := o.RenderSection(ctx, fs, graph)
-		if rErr != nil {
-			warnings = append(warnings, fmt.Sprintf("failed rendering section %s/%s: %v", doc.ID, sec.ID, rErr))
-			continue
+	// Stage 6 & 7: Render + Quality Firewall. Default RenderMode from the
+	// orchestrator decision so the contract field is never decorative:
+	// deterministic when no LLM is available, llm otherwise.
+	if fs.RenderMode == "" {
+		if o.actuator != nil && !o.opts.NoLLM {
+			fs.RenderMode = "llm"
+		} else {
+			fs.RenderMode = "deterministic"
 		}
-		tokensUsed += outcome.TokensUsed
-		if outcome.Warning != "" {
-			warnings = append(warnings, outcome.Warning)
-		}
+	}
+	outcome, rErr := o.RenderSection(ctx, fs, graph)
+	if rErr != nil {
+		warnings = append(warnings, fmt.Sprintf("failed rendering section %s/%s: %v", doc.ID, sec.ID, rErr))
+		continue
+	}
+	tokensUsed += outcome.TokensUsed
+	if outcome.Warning != "" {
+		warnings = append(warnings, outcome.Warning)
+	}
+	outcome.Content = o.enforceMaxWords(ctx, fs, sec, graph, outcome, &warnings)
 
 		// P9: living diagram directive — best-effort. After a managed
 		// section renders, if the zone directives contain `diagram`
@@ -348,21 +404,26 @@ func (o *Orchestrator) ProcessDocument(
 		parsedDoc = patcher.ParseMarkdown(newFullText)
 		docModified = true
 
-		// Update section hash in state manager
-		if sm != nil {
-			_ = storage.WriteSectionHash(sm, doc.TargetPath, sec.ID, "", outcome.RenderMode, commitHash, outcome.TokensUsed, outcome.DurationMs)
-			// Persist the merged body as the BASE for the next run's 3-way merge.
-			_ = storage.SetLastRenderedBody(sm, doc.TargetPath, sec.ID, mergeRes.Content)
-		}
+	// Update section hash in state manager. Recompute the exact Stage-3
+	// hash (same inputs FindDirtySections compares) so the next run can
+	// hit "clean → 0 tokens". Persisting "" here would defeat zero-churn.
+	if sm != nil {
+		astHash := invalidator.SectionHash(doc, sec, graph)
+		_ = storage.WriteSectionHash(sm, doc.TargetPath, sec.ID, astHash, outcome.RenderMode, commitHash, outcome.TokensUsed, outcome.DurationMs)
+		// Persist the merged body as the BASE for the next run's 3-way merge.
+		_ = storage.SetLastRenderedBody(sm, doc.TargetPath, sec.ID, mergeRes.Content)
+	}
 	}
 
 	if !docModified {
 		return false, tokensUsed, warnings, nil
 	}
 
-	// Reconstruct and write file
+	// Reconstruct and write file. absTarget is the filesystem path;
+	// doc.TargetPath is the docs_state.json key (relative). They must not
+	// be conflated or state lookups miss under a second document entry.
 	finalMarkdown := patcher.Reconstruct(parsedDoc.Zones)
-	writeRes, wErr := storage.WriteDoc(sm, absTarget, []byte(finalMarkdown), doc.ID, "", commitHash, "managed")
+	writeRes, wErr := storage.WriteDoc(sm, absTarget, doc.TargetPath, []byte(finalMarkdown), doc.ID, "", commitHash, "managed")
 	if wErr != nil {
 		return false, tokensUsed, warnings, fmt.Errorf("writing document %s: %w", doc.TargetPath, wErr)
 	}
