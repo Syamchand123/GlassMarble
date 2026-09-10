@@ -42,6 +42,17 @@ type WriterResult struct {
 func WriteDoc(sm *StateManager, targetPath, stateKey string, content []byte,
 	docID, sectionID, commitHash, renderMode string) (WriterResult, error) {
 
+	// Serialize cross-process writers of this target: the flock covers the
+	// AtomicWriteFile rename below plus the state update that follows, so a
+	// concurrent gmb doc / CI / hook run cannot interleave a torn
+	// file+state pair. Best-effort: on lock timeout the write is refused
+	// rather than risking a lost update.
+	release, err := FlockForFile(targetPath)
+	if err != nil {
+		return WriterResult{}, fmt.Errorf("doc_engine/writer: %w", err)
+	}
+	defer release()
+
 	// Use the existing AtomicWriteFile from state.go.
 	changed, err := AtomicWriteFile(targetPath, content)
 	if err != nil {

@@ -5,12 +5,25 @@
 //   - If BASE == OURS  → no human edits → use THEIRS directly.
 //   - If BASE != OURS  → human edited the managed zone → line-level 3-way merge.
 //     - On conflict: preserve OURS, append THEIRS as a "Doc Update Note" block, warn to stderr.
+//
+// Plan A2 delegation: MergeSection first tries `git merge-file` (battle-tested
+// xdiff backend, 20 years of adversarial exposure) and falls back to the
+// built-in LCS line merge when git is missing or fails. The caller-visible
+// behavior contract (fast path, human-wins, note block, Conflicted flag) is
+// identical on both paths. All inputs are normalized to LF so CRLF can never
+// produce mixed line endings.
 package patcher
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
 	"strings"
+	"time"
 )
 
 // MergeResult is the output of the 3-way merge operation.
@@ -30,35 +43,177 @@ type MergeResult struct {
 //   theirs = the freshly generated content from the renderer
 //
 // The return value is the resolved content to write into the managed zone body.
+//
+// Strategy: normalize to LF, take the BASE==OURS fast path, then try
+// `git merge-file`, then fall back to the built-in LCS merge.
 func MergeSection(base, ours, theirs string) MergeResult {
+	// CRLF guard: normalize everything to LF up front so no path below can
+	// emit mixed endings.
+	baseN := normalizeLF(base)
+	oursN := normalizeLF(ours)
+	theirsN := normalizeLF(theirs)
+
 	// Fast path: no human edits since last machine run.
-	// Compare with trailing whitespace normalized to avoid false conflicts
+	// Compare with trailing newlines normalized to avoid false conflicts
 	// from editor-added trailing newlines.
-	if strings.TrimRight(base, "\r\n") == strings.TrimRight(ours, "\r\n") {
-		return MergeResult{Content: theirs}
+	if strings.TrimRight(baseN, "\n") == strings.TrimRight(oursN, "\n") {
+		return MergeResult{Content: theirsN}
 	}
 
-	// Human edits detected. Try line-level 3-way merge.
-	merged, conflicted := lineMerge3(
-		strings.Split(base, "\n"),
-		strings.Split(ours, "\n"),
-		strings.Split(theirs, "\n"),
+	// Preferred path: delegate to git merge-file.
+	if merged, conflicted, err := mergeViaGitMergeFile(baseN, oursN, theirsN); err == nil {
+		if !conflicted {
+			return MergeResult{Content: merged}
+		}
+		// Conflict: preserve OURS, append THEIRS as informational block.
+		note := buildConflictNote(theirsN)
+		return MergeResult{
+			Content:      oursN + note,
+			Conflicted:   true,
+			ConflictNote: note,
+		}
+	}
+
+	// Fallback path: built-in LCS line merge (offline, no external deps).
+	merged, conflicted := mergeLCS(
+		strings.Split(baseN, "\n"),
+		strings.Split(oursN, "\n"),
+		strings.Split(theirsN, "\n"),
 	)
 	if !conflicted {
 		return MergeResult{Content: strings.Join(merged, "\n")}
 	}
 
 	// Conflict: preserve OURS, append THEIRS as informational block.
+	note := buildConflictNote(theirsN)
+
+	return MergeResult{
+		Content:      oursN + note,
+		Conflicted:   true,
+		ConflictNote: note,
+	}
+}
+
+// normalizeLF converts CRLF and lone CR to LF so merging never produces
+// mixed line endings.
+func normalizeLF(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	return s
+}
+
+// buildConflictNote renders THEIRS as an appended machine-output block.
+func buildConflictNote(theirs string) string {
 	note := "\n\n> **Doc Update Note** (gmb detected a merge conflict in this section):\n>\n"
 	for _, line := range strings.Split(theirs, "\n") {
 		note += "> " + line + "\n"
 	}
+	return note
+}
 
-	return MergeResult{
-		Content:      ours + note,
-		Conflicted:   true,
-		ConflictNote: note,
+// ────────────────────────────────────────────────────────────────────────────
+// git merge-file delegation
+// ────────────────────────────────────────────────────────────────────────────
+
+// gitMergeTimeout bounds the external git call so a hung git can never hang
+// the engine; on timeout the caller falls back to mergeLCS.
+const gitMergeTimeout = 10 * time.Second
+
+// mergeViaGitMergeFile delegates the 3-way merge to
+// `git merge-file -p -L ours -L base -L theirs <ours> <base> <theirs>`.
+//
+// Inputs must already be LF-normalized. Returns:
+//
+//   - (merged, false, nil) on a clean merge (git exit 0): merged is stdout.
+//   - ("", true, nil) on conflict (git exit 1 with conflict markers).
+//   - ("", false, err) when git is missing, times out, or exits >1:
+//     the caller must fall back to mergeLCS.
+func mergeViaGitMergeFile(base, ours, theirs string) (string, bool, error) {
+	if _, err := exec.LookPath("git"); err != nil {
+		return "", false, fmt.Errorf("git not found: %w", err)
 	}
+
+	writeTemp := func(prefix, content string) (string, error) {
+		f, err := os.CreateTemp("", prefix)
+		if err != nil {
+			return "", err
+		}
+		name := f.Name()
+		if _, err := f.WriteString(content); err != nil {
+			_ = f.Close()
+			_ = os.Remove(name)
+			return "", err
+		}
+		if err := f.Close(); err != nil {
+			_ = os.Remove(name)
+			return "", err
+		}
+		return name, nil
+	}
+
+	baseFile, err := writeTemp("gmb-merge-base-*.txt", base)
+	if err != nil {
+		return "", false, err
+	}
+	defer func() { _ = os.Remove(baseFile) }()
+	oursFile, err := writeTemp("gmb-merge-ours-*.txt", ours)
+	if err != nil {
+		return "", false, err
+	}
+	defer func() { _ = os.Remove(oursFile) }()
+	theirsFile, err := writeTemp("gmb-merge-theirs-*.txt", theirs)
+	if err != nil {
+		return "", false, err
+	}
+	defer func() { _ = os.Remove(theirsFile) }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), gitMergeTimeout)
+	defer cancel()
+
+	// Positional contract: file1=ours (current), orig-file=base (ancestor),
+	// file2=theirs (other). Labels are positional: -L ours -L base -L theirs.
+	cmd := exec.CommandContext(ctx, "git", "merge-file", "-p",
+		"-L", "ours", "-L", "base", "-L", "theirs",
+		oursFile, baseFile, theirsFile)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err == nil {
+		// Exit 0: clean merge, stdout is the merged content.
+		return normalizeLF(stdout.String()), false, nil
+	} else {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			switch exitErr.ExitCode() {
+			case 1:
+				// Exit 1: conflicts. Confirm the expected marker
+				// convention, then report conflict so the caller
+				// converts to ours-wins + note block.
+				out := normalizeLF(stdout.String())
+				if isGitConflictOutput(out) {
+					return "", true, nil
+				}
+				// Exit 1 without recognizable markers is still a
+				// conflict signal — never silently return raw output.
+				return "", true, nil
+			default:
+				return "", false, fmt.Errorf("git merge-file exit %d: %s", exitErr.ExitCode(), strings.TrimSpace(stderr.String()))
+			}
+		}
+		if errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded {
+			return "", false, fmt.Errorf("git merge-file timed out: %w", err)
+		}
+		return "", false, err
+	}
+}
+
+// isGitConflictOutput reports whether git's stdout uses the expected
+// `<<<<<<< ours ... ======= ... >>>>>>> theirs` conflict-marker convention.
+func isGitConflictOutput(out string) bool {
+	return strings.Contains(out, "<<<<<<< ours") &&
+		strings.Contains(out, "=======") &&
+		strings.Contains(out, ">>>>>>> theirs")
 }
 
 // ApplyToDoc inserts newBody into the managed zone of doc for sectionID and
@@ -112,13 +267,14 @@ func ExtractBody(zone *Zone) string {
 
 // ────────────────────────────────────────────────────────────────────────────
 // Line-level 3-way merge (LCS-based, no external diff library)
+// Offline fallback behind `git merge-file`.
 // ────────────────────────────────────────────────────────────────────────────
 
-// lineMerge3 merges base→ours and base→theirs at line granularity.
+// mergeLCS merges base→ours and base→theirs at line granularity.
 // Returns (merged lines, hadConflict).
 //
 // ponytail: naive O(n²) LCS. Upgrade to Myers diff if sections exceed ~1000 lines.
-func lineMerge3(base, ours, theirs []string) ([]string, bool) {
+func mergeLCS(base, ours, theirs []string) ([]string, bool) {
 	// Find hunks changed in ours vs base and theirs vs base.
 	oursChanges := diffHunks(base, ours)
 	theirsChanges := diffHunks(base, theirs)

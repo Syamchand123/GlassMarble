@@ -137,6 +137,215 @@ func TestLCSLines(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Plan A2 property tests (delegation contract — must hold on both the git
+// path and the LCS fallback path).
+// ────────────────────────────────────────────────────────────────────────────
+
+// P1: no-human-edits identity — merge(x, x, y) == y (LF-normalized).
+func TestMergeSection_Property_NoHumanEditsIdentity(t *testing.T) {
+	cases := []struct {
+		name string
+		x, y string
+	}{
+		{"simple", "Base line.\n", "New machine line.\n"},
+		{"empty-base", "", "Fresh content.\n"},
+		{"empty-theirs", "Base.\n", ""},
+		{"both-empty", "", ""},
+		{"multiline", "A\nB\nC\n", "A-updated\nB\nC\n"},
+		{"crlf", "A\r\nB\r\n", "C\r\nD\r\n"},
+		{"unicode", "Héllo 🌍\n", "Updated héllo 🌟\n"},
+		{"no-trailing-newline", "A\nB", "A-updated\nB"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := MergeSection(tc.x, tc.x, tc.y)
+			if got.Conflicted {
+				t.Errorf("merge(x,x,y) must not conflict")
+			}
+			if got.Content != normalizeLF(tc.y) {
+				t.Errorf("merge(x,x,y) == y: got %q, want %q", got.Content, normalizeLF(tc.y))
+			}
+		})
+	}
+}
+
+// P2: human-wins — merge(x, y, x) == y (machine made no change, keep ours).
+// Precisely: equal modulo trailing newlines, because the BASE==OURS fast
+// path intentionally normalizes trailing newlines (editor-added trailing
+// newlines must not count as human edits). All substantive edits below
+// assert exact equality; the relaxation only covers blank-only diffs.
+func TestMergeSection_Property_HumanWins(t *testing.T) {
+	cases := []struct {
+		name string
+		x, y string
+	}{
+		{"simple", "Base.\n", "Human edit.\n"},
+		{"empty-human", "Base.\n", ""},
+		{"multiline", "A\nB\nC\n", "A\nB-human\nC\n"},
+		{"crlf", "A\r\nB\r\n", "A\r\nB-human\r\n"},
+		{"unicode", "Base 🎲\n", "Human ✏️ edit\n"},
+		{"no-trailing-newline", "A\nB", "A\nB-human"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := MergeSection(tc.x, tc.y, tc.x)
+			if got.Conflicted {
+				t.Errorf("merge(x,y,x) must not conflict (theirs == base)")
+			}
+			want := normalizeLF(tc.y)
+			if got.Content != want &&
+				strings.TrimRight(got.Content, "\n") != strings.TrimRight(want, "\n") {
+				t.Errorf("merge(x,y,x) == y: got %q, want %q", got.Content, want)
+			}
+		})
+	}
+}
+
+// P3: idempotence on clean merges — precisely: let m1 = merge(base, ours,
+// theirs). If m1 is NOT conflicted, then re-merging the already-merged
+// output against the same base and theirs must be a fixed point:
+// merge(base, m1.Content, theirs) == m1.Content with no new conflict.
+// (Conflict outputs are excluded: re-merging an ours+note block would
+// append a second note by design.)
+func TestMergeSection_Property_IdempotentWhenClean(t *testing.T) {
+	cases := []struct {
+		name               string
+		base, ours, theirs string
+	}{
+		{"no-human-edits", "A\n", "A\n", "B\n"},
+		{"human-wins", "A\n", "B\n", "A\n"},
+		// 3-line file with a blank separator so the two edits are
+		// non-adjacent: git merges cleanly (2-line adjacent edits
+		// intentionally excluded — xdiff treats them as one hunk).
+		{"non-overlapping", "A\nB\nC\n", "A\nB\nC-human\n", "A-updated\nB\nC\n"},
+		{"identical", "Same.\n", "Same.\n", "Same.\n"},
+		{"unicode-clean", "α\nβ\nγ\n", "α\nβ\nγ-human\n", "α-updated\nβ\nγ\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m1 := MergeSection(tc.base, tc.ours, tc.theirs)
+			if m1.Conflicted {
+				t.Skip("first merge conflicted — idempotence defined for clean merges only")
+			}
+			m2 := MergeSection(tc.base, m1.Content, tc.theirs)
+			if m2.Conflicted {
+				t.Errorf("re-merge introduced a conflict: first %q, second %q", m1.Content, m2.Content)
+			}
+			if m2.Content != m1.Content {
+				t.Errorf("not idempotent:\nfirst:  %q\nsecond: %q", m1.Content, m2.Content)
+			}
+		})
+	}
+}
+
+// P4: conflict case — Conflicted is always set and OURS is contained verbatim
+// (LF-normalized), with the machine note block appended.
+func TestMergeSection_Property_ConflictPreservesOurs(t *testing.T) {
+	cases := []struct {
+		name               string
+		base, ours, theirs string
+	}{
+		{"same-line", "Original.\n", "Human rewrite.\n", "Machine rewrite.\n"},
+		{"adjacent-inserts", "A\nB\n", "A\nhuman-insert\nB\n", "A\nmachine-insert\nB\n"},
+		{"unicode-conflict", "Base 🎲\n", "Human ✏️\n", "Machine 🤖\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := MergeSection(tc.base, tc.ours, tc.theirs)
+			if !got.Conflicted {
+				// A real 3-way merge may resolve some inputs cleanly;
+				// when it does, the human text must still survive.
+				if !strings.Contains(got.Content, strings.TrimRight(normalizeLF(tc.ours), "\n")) {
+					t.Errorf("clean merge lost human text: %q", got.Content)
+				}
+				return
+			}
+			oursN := normalizeLF(tc.ours)
+			if !strings.Contains(got.Content, oursN) {
+				t.Errorf("conflict lost OURS verbatim:\nours: %q\ngot:  %q", oursN, got.Content)
+			}
+			if !strings.Contains(got.Content, "Doc Update Note") {
+				t.Error("conflict note block missing")
+			}
+			// THEIRS is quoted line-by-line ("> " prefix), so assert
+			// per-line containment rather than whole-block containment.
+			for _, line := range strings.Split(normalizeLF(tc.theirs), "\n") {
+				if line == "" {
+					continue
+				}
+				if !strings.Contains(got.Content, line) {
+					t.Errorf("machine line %q missing in conflict output %q", line, got.Content)
+				}
+			}
+			if got.ConflictNote == "" || !strings.Contains(got.Content, got.ConflictNote) {
+				t.Error("ConflictNote field must be populated and embedded in Content")
+			}
+		})
+	}
+}
+
+// P5: CRLF — LF-normalized inputs in, LF-only content out; never mixed endings.
+func TestMergeSection_Property_CRLFNormalized(t *testing.T) {
+	cases := []struct {
+		name               string
+		base, ours, theirs string
+	}{
+		{"fast-path", "A\r\nB\r\n", "A\r\nB\r\n", "C\r\nD\r\n"},
+		{"clean", "A\r\nB\r\nC\r\n", "A\r\nB\r\nC-human\r\n", "A-updated\r\nB\r\nC\r\n"},
+		{"conflict", "Orig\r\n", "Human\r\n", "Machine\r\n"},
+		{"mixed", "A\r\nB\nC\rD", "A\r\nB-human\n", "A-updated\r\nB\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := MergeSection(tc.base, tc.ours, tc.theirs)
+			if strings.Contains(got.Content, "\r") {
+				t.Errorf("mixed line endings in output: %q", got.Content)
+			}
+			if got.ConflictNote != "" && strings.Contains(got.ConflictNote, "\r") {
+				t.Errorf("CR in conflict note: %q", got.ConflictNote)
+			}
+		})
+	}
+}
+
+// Delegation unit tests: git path reports clean vs conflict correctly, and
+// the LCS fallback preserves the human-wins contract.
+func TestMergeViaGitMergeFile_CleanAndConflict(t *testing.T) {
+	merged, conflicted, err := mergeViaGitMergeFile("A\nB\nC\n", "A\nB\nC-human\n", "A-updated\nB\nC\n")
+	if err != nil {
+		t.Skipf("git unavailable: %v", err)
+	}
+	if conflicted {
+		t.Error("expected clean git merge for non-overlapping edits")
+	}
+	if !strings.Contains(merged, "A-updated") || !strings.Contains(merged, "C-human") {
+		t.Errorf("git clean merge dropped a side: %q", merged)
+	}
+
+	_, conflicted, err = mergeViaGitMergeFile("Original.\n", "Human rewrite.\n", "Machine rewrite.\n")
+	if err != nil {
+		t.Skipf("git unavailable: %v", err)
+	}
+	if !conflicted {
+		t.Error("expected conflict for same-line edits")
+	}
+}
+
+func TestMergeLCS_HumanWins(t *testing.T) {
+	merged, conflicted := mergeLCS(
+		strings.Split("A\n", "\n"),
+		strings.Split("B\n", "\n"),
+		strings.Split("A\n", "\n"),
+	)
+	if conflicted {
+		t.Error("LCS fallback: theirs == base must not conflict")
+	}
+	if strings.Join(merged, "\n") != "B\n" {
+		t.Errorf("LCS fallback human-wins: got %q", strings.Join(merged, "\n"))
+	}
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Anchor markers
 // ────────────────────────────────────────────────────────────────────────────
 

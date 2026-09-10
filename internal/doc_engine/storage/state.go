@@ -94,26 +94,45 @@ type SectionState struct {
 // StateManager — atomic read/write of docs_state.json
 // ────────────────────────────────────────────────────────────────────────────
 
-// StateManager provides safe read and write access to docs_state.json.
-// All writes are atomic (tmp → fsync → rename) and include a SHA256
-// integrity check. A file-level advisory lock prevents concurrent writes.
+// StateManager provides safe read and write access to the doc-engine state.
+// The default backend is docs_state.json (atomic tmp → fsync → rename with a
+// SHA256 integrity check and a best-effort O_EXCL advisory lock file). When
+// UsingSQLite reports true (docs_state.db exists, or GMB_DOC_STATE=sqlite),
+// the SQLite WAL backend in store_sqlite.go is used transparently instead.
+// Callers use Load/Save identically on either backend.
 type StateManager struct {
-	path    string
+	path     string
 	lockPath string
+	// dir is the storage directory (.glassmarble/).
+	dir string
+	// dbPath is the SQLite state file (storage dir + sqliteFileName).
+	dbPath string
 }
 
 // NewStateManager creates a StateManager for the given storage directory
 // (.glassmarble/).
 func NewStateManager(storageDir string) *StateManager {
 	return &StateManager{
-		path:    filepath.Join(storageDir, "docs_state.json"),
+		path:     filepath.Join(storageDir, "docs_state.json"),
 		lockPath: filepath.Join(storageDir, "docs_state.lock"),
+		dir:      storageDir,
+		dbPath:   filepath.Join(storageDir, sqliteFileName),
 	}
 }
 
-// Load reads docs_state.json and returns the current state.
-// If the file does not exist, an empty state is returned (not an error).
+// Load reads the current state from whichever backend is active (SQLite when
+// UsingSQLite is true, else docs_state.json).
+// If no state exists yet, an empty state is returned (not an error).
 func (sm *StateManager) Load() (*DocEngineState, error) {
+	if sm.useSQLite() {
+		return sm.loadFromSQLite()
+	}
+	return sm.loadJSON()
+}
+
+// loadJSON reads docs_state.json and returns the current state.
+// If the file does not exist, an empty state is returned (not an error).
+func (sm *StateManager) loadJSON() (*DocEngineState, error) {
 	data, err := os.ReadFile(sm.path)
 	if os.IsNotExist(err) {
 		return sm.emptyState(), nil
@@ -132,10 +151,22 @@ func (sm *StateManager) Load() (*DocEngineState, error) {
 	return &state, nil
 }
 
-// Save writes state to docs_state.json atomically.
+// Save writes state atomically to whichever backend is active (SQLite when
+// UsingSQLite is true, else docs_state.json via tmp → fsync → rename with a
+// SHA256 verify).
 // Pattern: write to tmp file → fsync → rename → verify SHA256.
 // An advisory lock file prevents concurrent writes.
 func (sm *StateManager) Save(state *DocEngineState) error {
+	if sm.useSQLite() {
+		return sm.saveToSQLite(state)
+	}
+	return sm.saveJSON(state)
+}
+
+// saveJSON writes state to docs_state.json atomically.
+// Pattern: write to tmp file → fsync → rename → verify SHA256.
+// An advisory lock file prevents concurrent writes.
+func (sm *StateManager) saveJSON(state *DocEngineState) error {
 	// Acquire advisory lock.
 	lockFile, err := acquireLock(sm.lockPath)
 	if err != nil {
@@ -305,6 +336,26 @@ func AtomicWriteFile(targetPath string, content []byte) (bool, error) {
 	}
 
 	return true, nil
+}
+
+// RestoreFromBackup restores targetPath from its .gmb.bak backup (created by
+// AtomicWriteFile on first write). The restore itself goes through
+// AtomicWriteFile, so a crash mid-restore still leaves either the pre-restore
+// or the fully restored bytes on disk — never torn output. The backup file is
+// kept so restores are repeatable. Returns an error when no backup exists.
+func RestoreFromBackup(targetPath string) error {
+	backupPath := targetPath + ".gmb.bak"
+	backup, err := os.ReadFile(backupPath)
+	if os.IsNotExist(err) {
+		return fmt.Errorf("doc_engine: no backup %s to restore %s", backupPath, targetPath)
+	}
+	if err != nil {
+		return fmt.Errorf("doc_engine: reading backup %s: %w", backupPath, err)
+	}
+	if _, err := AtomicWriteFile(targetPath, backup); err != nil {
+		return fmt.Errorf("doc_engine: restoring %s from backup: %w", targetPath, err)
+	}
+	return nil
 }
 
 // FileHash computes and returns the SHA256 hex digest of a file's current content.

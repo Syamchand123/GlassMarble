@@ -3,8 +3,11 @@
 package storage
 
 import (
+	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -206,4 +209,185 @@ func TestSha256sum_Deterministic(t *testing.T) {
 	h2 := sha256sum(data)
 	assert.Equal(t, h1, h2)
 	assert.Len(t, h1, 64)
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// SQLite WAL backend (A3): dual-backend default, round-trip, migration, export
+// ────────────────────────────────────────────────────────────────────────────
+
+func TestStateManager_DefaultIsJSON(t *testing.T) {
+	t.Setenv("GMB_DOC_STATE", "")
+	dir := t.TempDir()
+	sm := NewStateManager(dir)
+	assert.False(t, sm.UsingSQLite(), "default backend must stay JSON for one release")
+
+	state := &DocEngineState{SchemaVersion: 1, Documents: map[string]*DocumentState{}}
+	require.NoError(t, sm.Save(state))
+	assert.FileExists(t, filepath.Join(dir, "docs_state.json"))
+	assert.NoFileExists(t, filepath.Join(dir, "docs_state.db"))
+}
+
+func TestStateManager_SQLiteRoundTrip(t *testing.T) {
+	t.Setenv("GMB_DOC_STATE", "sqlite")
+	dir := t.TempDir()
+	sm := NewStateManager(dir)
+	require.True(t, sm.UsingSQLite())
+
+	fixedDoc := time.Date(2026, 5, 1, 12, 0, 0, 123456789, time.UTC)
+	fixedSec := time.Date(2026, 5, 2, 8, 30, 0, 987654321, time.UTC)
+	state := &DocEngineState{
+		SchemaVersion: 1,
+		LastCommit:    "abc123",
+		Documents: map[string]*DocumentState{
+			"docs/auth.md": {
+				FileHash:          "sha256:deadbeef",
+				LastUpdatedCommit: "abc123",
+				LastUpdatedAt:     fixedDoc,
+				FreshnessScore:    87,
+				CommitsBehind:     2,
+				Sections: map[string]*SectionState{
+					"interface": {
+						ASTSubgraphHash:  "sha256:cafebabe",
+						RenderMode:       "llm",
+						Provider:         "anthropic/claude-3-5-sonnet",
+						LastTokenCost:    187,
+						LastRenderMs:     1240,
+						LastUpdatedAt:    fixedSec,
+						LastRenderedBody: "# Interface\n\nBody.\n",
+					},
+					"untouched": {RenderMode: "deterministic"},
+				},
+			},
+		},
+	}
+	require.NoError(t, sm.Save(state))
+
+	dbPath := filepath.Join(dir, "docs_state.db")
+	assert.FileExists(t, dbPath)
+
+	// WAL mode must actually be on.
+	db, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	defer db.Close()
+	var mode string
+	require.NoError(t, db.QueryRow(`PRAGMA journal_mode;`).Scan(&mode))
+	assert.Equal(t, "wal", strings.ToLower(mode))
+
+	loaded, err := sm.Load()
+	require.NoError(t, err)
+	assert.Equal(t, 1, loaded.SchemaVersion)
+	assert.Equal(t, "abc123", loaded.LastCommit)
+	require.Contains(t, loaded.Documents, "docs/auth.md")
+	doc := loaded.Documents["docs/auth.md"]
+	assert.Equal(t, "sha256:deadbeef", doc.FileHash)
+	assert.Equal(t, 87, doc.FreshnessScore)
+	assert.Equal(t, 2, doc.CommitsBehind)
+	assert.True(t, fixedDoc.Equal(doc.LastUpdatedAt))
+	require.Contains(t, doc.Sections, "interface")
+	sec := doc.Sections["interface"]
+	assert.Equal(t, "sha256:cafebabe", sec.ASTSubgraphHash)
+	assert.Equal(t, "llm", sec.RenderMode)
+	assert.Equal(t, "anthropic/claude-3-5-sonnet", sec.Provider)
+	assert.Equal(t, 187, sec.LastTokenCost)
+	assert.Equal(t, int64(1240), sec.LastRenderMs)
+	assert.True(t, fixedSec.Equal(sec.LastUpdatedAt))
+	assert.Equal(t, "# Interface\n\nBody.\n", sec.LastRenderedBody)
+	// Zero-time section round-trips as zero time.
+	assert.True(t, doc.Sections["untouched"].LastUpdatedAt.IsZero())
+}
+
+func TestStateManager_SQLiteMigratesFromJSON(t *testing.T) {
+	t.Setenv("GMB_DOC_STATE", "")
+	dir := t.TempDir()
+
+	legacy := &DocEngineState{
+		SchemaVersion: 1,
+		LastCommit:    "mig123",
+		Documents: map[string]*DocumentState{
+			"docs/m.md": {
+				FileHash:          "sha256:legacy",
+				LastUpdatedCommit: "mig123",
+				FreshnessScore:    100,
+				Sections: map[string]*SectionState{
+					"s": {ASTSubgraphHash: "h", RenderMode: "llm", LastRenderedBody: "body\n"},
+				},
+			},
+		},
+	}
+	require.NoError(t, NewStateManager(dir).Save(legacy))
+
+	// First SQLite open migrates JSON→SQLite.
+	t.Setenv("GMB_DOC_STATE", "sqlite")
+	sm := NewStateManager(dir)
+	loaded, err := sm.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "mig123", loaded.LastCommit)
+	require.Contains(t, loaded.Documents, "docs/m.md")
+	assert.Equal(t, "sha256:legacy", loaded.Documents["docs/m.md"].FileHash)
+	assert.Equal(t, "body\n", loaded.Documents["docs/m.md"].Sections["s"].LastRenderedBody)
+
+	// A post-migration SQLite write keeps migrated rows (no clobber).
+	ds := GetOrCreateDocState(loaded, "docs/new.md")
+	ds.FileHash = "sha256:new"
+	require.NoError(t, sm.Save(loaded))
+	reloaded, err := sm.Load()
+	require.NoError(t, err)
+	assert.Contains(t, reloaded.Documents, "docs/m.md")
+	assert.Contains(t, reloaded.Documents, "docs/new.md")
+}
+
+func TestStateManager_SQLiteUsedWhenDBExists(t *testing.T) {
+	t.Setenv("GMB_DOC_STATE", "sqlite")
+	dir := t.TempDir()
+	sm := NewStateManager(dir)
+	require.NoError(t, sm.Save(&DocEngineState{
+		SchemaVersion: 1,
+		LastCommit:    "db1",
+		Documents:     map[string]*DocumentState{},
+	}))
+
+	// Without the env force, the existing db still selects SQLite.
+	t.Setenv("GMB_DOC_STATE", "")
+	sm2 := NewStateManager(dir)
+	assert.True(t, sm2.UsingSQLite())
+	loaded, err := sm2.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "db1", loaded.LastCommit)
+}
+
+func TestExportStateJSON(t *testing.T) {
+	require.Error(t, func() error { _, err := ExportStateJSON(nil); return err }())
+
+	// JSON backend export.
+	t.Setenv("GMB_DOC_STATE", "")
+	dir := t.TempDir()
+	sm := NewStateManager(dir)
+	require.NoError(t, sm.Save(&DocEngineState{
+		SchemaVersion: 1,
+		LastCommit:    "exp1",
+		Documents: map[string]*DocumentState{
+			"docs/a.md": {FileHash: "sha256:a", Sections: map[string]*SectionState{}},
+		},
+	}))
+	data, err := ExportStateJSON(sm)
+	require.NoError(t, err)
+	var decoded DocEngineState
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	assert.Equal(t, "exp1", decoded.LastCommit)
+	assert.Contains(t, decoded.Documents, "docs/a.md")
+
+	// SQLite backend export has the identical shape.
+	t.Setenv("GMB_DOC_STATE", "sqlite")
+	dir2 := t.TempDir()
+	sm2 := NewStateManager(dir2)
+	require.NoError(t, sm2.Save(&DocEngineState{
+		SchemaVersion: 1,
+		LastCommit:    "exp2",
+		Documents:     map[string]*DocumentState{},
+	}))
+	data2, err := ExportStateJSON(sm2)
+	require.NoError(t, err)
+	var decoded2 DocEngineState
+	require.NoError(t, json.Unmarshal(data2, &decoded2))
+	assert.Equal(t, "exp2", decoded2.LastCommit)
 }
