@@ -50,7 +50,7 @@ func GenerateMigrationGuide(repoRoot, ref1, ref2, outFile string) (string, error
 		sb.WriteString("### ⚠️ Deleted Public Functions & Methods\n\n")
 		sb.WriteString("The following exported symbols were removed and are no longer available:\n\n")
 		for _, fn := range delta.DeletedFunctions {
-			sb.WriteString(fmt.Sprintf("- ❌ `func %s`\n", fn))
+			sb.WriteString(fmt.Sprintf("- ❌ `func %s`\n", displayNameOf(fn)))
 		}
 		sb.WriteString("\n")
 	}
@@ -60,7 +60,7 @@ func GenerateMigrationGuide(repoRoot, ref1, ref2, outFile string) (string, error
 		sb.WriteString("| Function | Previous Signature | New Signature |\n")
 		sb.WriteString("| :--- | :--- | :--- |\n")
 		for _, sig := range delta.ModifiedSignatures {
-			sb.WriteString(fmt.Sprintf("| **`%s`** | `%s` | `%s` |\n", sig.Name, sig.Before, sig.After))
+			sb.WriteString(fmt.Sprintf("| **`%s`** | `%s` | `%s` |\n", displayNameOf(sig.Name), sig.Before, sig.After))
 		}
 		sb.WriteString("\n")
 	}
@@ -115,5 +115,293 @@ func computeRevisionDiff(repoRoot, ref1, ref2 string) (APIDelta, []string, error
 	}
 
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+
+	// AKG symbol diffing per Pillar 24: extract exported symbols at each ref
+	// via `git show <ref>:<go-file>` so renames/deletions/signature changes
+	// are detected deterministically without checking out the old tree.
+	before := extractExportedSymbolsAtRef(repoRoot, ref1)
+	after := extractExportedSymbolsAtRef(repoRoot, ref2)
+
+	for fn, beforeSig := range before {
+		afterSig, ok := after[fn]
+		if !ok {
+			delta.DeletedFunctions = append(delta.DeletedFunctions, fn)
+			continue
+		}
+		if normalizeSig(beforeSig) != normalizeSig(afterSig) {
+			delta.ModifiedSignatures = append(delta.ModifiedSignatures, struct {
+				Name   string `json:"name"`
+				Before string `json:"before"`
+				After  string `json:"after"`
+			}{Name: fn, Before: beforeSig, After: afterSig})
+		}
+	}
+
+	// Struct field renames: heuristic — a field deleted from a struct at
+	// ref1 that has a same-typed new field at ref2 is reported as renamed.
+	beforeFields := extractStructFieldsAtRef(repoRoot, ref1)
+	afterFields := extractStructFieldsAtRef(repoRoot, ref2)
+	for st, bf := range beforeFields {
+		af, ok := afterFields[st]
+		if !ok {
+			continue
+		}
+		for oldName, oldType := range bf {
+			if _, stillThere := af[oldName]; stillThere {
+				continue
+			}
+			for newName, newType := range af {
+				if _, wasThere := bf[newName]; wasThere {
+					continue
+				}
+				if newType == oldType {
+					delta.RenamedFields = append(delta.RenamedFields, struct {
+						OldName string `json:"old_name"`
+						NewName string `json:"new_name"`
+						Struct  string `json:"struct"`
+					}{OldName: oldName, NewName: newName, Struct: st})
+					break
+				}
+			}
+		}
+	}
+
+	// Fallback: if neither ref resolves (shallow clone, missing ref), fall
+	// back to parsing the unified diff for deleted exported funcs so the
+	// guide still reports breaking changes instead of "no changes".
+	if len(before) == 0 && len(after) == 0 {
+		delta = diffFallbackDelta(repoRoot, ref1, ref2)
+	}
+
 	return delta, lines, nil
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Symbol extraction at a git ref (deterministic, no checkout required)
+// ────────────────────────────────────────────────────────────────────────────
+
+// listGoFilesAtRef returns repo-relative .go paths visible at the given ref.
+func listGoFilesAtRef(repoRoot, ref string) []string {
+	cmd := exec.Command("git", "ls-tree", "-r", "--name-only", ref)
+	cmd.Dir = repoRoot
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var files []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasSuffix(line, ".go") && !strings.HasSuffix(line, "_test.go") {
+			files = append(files, line)
+		}
+	}
+	return files
+}
+
+// showFileAtRef returns the content of path as it existed at ref.
+func showFileAtRef(repoRoot, ref, path string) (string, bool) {
+	cmd := exec.Command("git", "show", ref+":"+path)
+	cmd.Dir = repoRoot
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	return string(out), true
+}
+
+// extractExportedSymbolsAtRef maps exported func/method name → signature line.
+// Keys are file-qualified (path::Recv.Name) so same-named symbols in
+// different packages never collide; display names strip the file prefix.
+func extractExportedSymbolsAtRef(repoRoot, ref string) map[string]string {
+	result := make(map[string]string)
+	for _, f := range listGoFilesAtRef(repoRoot, ref) {
+		content, ok := showFileAtRef(repoRoot, ref, f)
+		if !ok {
+			continue
+		}
+		for _, line := range strings.Split(content, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if !strings.HasPrefix(trimmed, "func ") {
+				continue
+			}
+			name := exportedFuncName(trimmed)
+			if name == "" {
+				continue
+			}
+			key := f + "::" + name
+			if _, exists := result[key]; !exists {
+				result[key] = trimmed
+			}
+		}
+	}
+	return result
+}
+
+// extractStructFieldsAtRef maps struct name → field name → field type.
+// Keys are file-qualified (path::Struct) for the same reason as above.
+func extractStructFieldsAtRef(repoRoot, ref string) map[string]map[string]string {
+	result := make(map[string]map[string]string)
+	for _, f := range listGoFilesAtRef(repoRoot, ref) {
+		content, ok := showFileAtRef(repoRoot, ref, f)
+		if !ok {
+			continue
+		}
+		lines := strings.Split(content, "\n")
+		var curStruct string
+		inStruct := false
+		braceDepth := 0
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if !inStruct {
+				if st, ok := parseTypeStructLine(trimmed); ok && isExportedGoIdent(st) {
+					curStruct = st
+					inStruct = true
+					braceDepth = strings.Count(line, "{") - strings.Count(line, "}")
+					if _, exists := result[curStruct]; !exists {
+						result[curStruct] = make(map[string]string)
+					}
+					continue
+				}
+				continue
+			}
+			braceDepth += strings.Count(line, "{") - strings.Count(line, "}")
+			if braceDepth <= 0 {
+				inStruct = false
+				curStruct = ""
+				continue
+			}
+			if trimmed == "" || strings.HasPrefix(trimmed, "//") {
+				continue
+			}
+			fields := strings.Fields(trimmed)
+			if len(fields) >= 2 && isExportedGoIdent(fields[0]) {
+				result[curStruct][fields[0]] = fields[1]
+			}
+		}
+	}
+	return result
+}
+
+// diffFallbackDelta parses the unified diff when ref content is unavailable.
+func diffFallbackDelta(repoRoot, ref1, ref2 string) APIDelta {
+	delta := APIDelta{}
+	cmd := exec.Command("git", "diff", ref1, ref2, "--", "*.go")
+	cmd.Dir = repoRoot
+	out, err := cmd.Output()
+	if err != nil {
+		return delta
+	}
+	removed := make(map[string]string)
+	added := make(map[string]string)
+	for _, line := range strings.Split(string(out), "\n") {
+		if len(line) < 2 {
+			continue
+		}
+		marker, body := line[0], strings.TrimSpace(line[1:])
+		if !strings.HasPrefix(body, "func ") {
+			continue
+		}
+		name := exportedFuncName(body)
+		if name == "" {
+			continue
+		}
+		switch marker {
+		case '-':
+			removed[name] = body
+		case '+':
+			added[name] = body
+		}
+	}
+	for name, before := range removed {
+		after, ok := added[name]
+		if !ok {
+			delta.DeletedFunctions = append(delta.DeletedFunctions, name)
+			continue
+		}
+		if normalizeSig(before) != normalizeSig(after) {
+			delta.ModifiedSignatures = append(delta.ModifiedSignatures, struct {
+				Name   string `json:"name"`
+				Before string `json:"before"`
+				After  string `json:"after"`
+			}{Name: name, Before: before, After: after})
+		}
+	}
+	return delta
+}
+
+func exportedFuncName(sigLine string) string {
+	// Forms: "func Name(...", "func (r Recv) Name(...".
+	// Key includes the receiver so methods on different types never
+	// collide (e.g. (*A).Render vs (*B).Render are distinct symbols).
+	rest := strings.TrimPrefix(sigLine, "func ")
+	rest = strings.TrimSpace(rest)
+	receiver := ""
+	if strings.HasPrefix(rest, "(") {
+		if idx := strings.Index(rest, ")"); idx >= 0 {
+			receiver = strings.TrimSpace(rest[:idx+1])
+			rest = strings.TrimSpace(rest[idx+1:])
+		}
+	}
+	fields := strings.Fields(rest)
+	if len(fields) == 0 {
+		return ""
+	}
+	name := strings.Split(fields[0], "(")[0]
+	if !isExportedGoIdent(name) {
+		return ""
+	}
+	if receiver != "" {
+		recvType := receiver
+		recvType = strings.TrimPrefix(recvType, "(")
+		recvType = strings.TrimSuffix(recvType, ")")
+		recvFields := strings.Fields(recvType)
+		if len(recvFields) == 2 {
+			recvType = recvFields[1]
+		} else if len(recvFields) == 1 {
+			recvType = recvFields[0]
+		}
+		recvType = strings.TrimPrefix(recvType, "*")
+		return recvType + "." + name
+	}
+	return name
+}
+
+func parseTypeStructLine(line string) (string, bool) {
+	// "type Name struct {" with optional spacing.
+	if !strings.HasPrefix(line, "type ") || !strings.Contains(line, "struct") {
+		return "", false
+	}
+	fields := strings.Fields(strings.TrimPrefix(line, "type "))
+	if len(fields) == 0 {
+		return "", false
+	}
+	return fields[0], true
+}
+
+func isExportedGoIdent(name string) bool {
+	if name == "" {
+		return false
+	}
+	c := name[0]
+	return c >= 'A' && c <= 'Z'
+}
+
+func normalizeSig(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	replacer := strings.NewReplacer("( ", "(", " )", ")", " ,", ",")
+	prev := ""
+	for s != prev {
+		prev = s
+		s = replacer.Replace(s)
+	}
+	return s
+}
+
+// displayNameOf strips the file-qualification prefix (path::Name → Name)
+// for human-readable rendering.
+func displayNameOf(key string) string {
+	if idx := strings.LastIndex(key, "::"); idx >= 0 {
+		return key[idx+2:]
+	}
+	return key
 }

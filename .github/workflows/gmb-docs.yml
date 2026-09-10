@@ -1,13 +1,11 @@
-name: GlassMarble Documentation Intelligence Gate
+name: GlassMarble Docs Intelligence Check
 
 on:
-  push:
-    branches: [ main ]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
-  docs-check:
+  doc-check:
     name: Check Living Documentation Drift
     runs-on: ubuntu-latest
     steps:
@@ -25,12 +23,30 @@ jobs:
       - name: Build GlassMarble CLI
         run: go build -o bin/gmb .
 
-      - name: Run Documentation Intelligence Freshness Gate
-        run: |
-          ./bin/gmb doc check --json > doc_check_report.json
-          cat doc_check_report.json
+      - name: Run GlassMarble doc check
+        id: doccheck
+        run: ./bin/gmb doc check --json > doc_check_report.json; echo "exit=$?" >> "$GITHUB_OUTPUT"; cat doc_check_report.json
         env:
           GLASSMARBLE_QUIET: "true"
+          GLASSMARBLE_ANTHROPIC_API_KEY: ${{ secrets.GLASSMARBLE_API_KEY }}
+
+      - name: Post doc status comment
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let body = 'GlassMarble doc check failed: documentation drift detected. Run `gmb doc` locally to sync.';
+            try {
+              const raw = fs.readFileSync('doc_check_report.json', 'utf8');
+              body = 'GlassMarble doc drift report:\n\n```json\n' + raw.slice(0, 60000) + '\n```\n\nFix: run `gmb doc` to sync, then re-push.';
+            } catch (e) {}
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
 
       - name: Upload Drift Audit Report
         if: always()

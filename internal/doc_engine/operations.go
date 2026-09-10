@@ -245,6 +245,46 @@ func Suggest(repoRoot string) ([]SuggestedDoc, error) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Status — dashboard of all managed docs with freshness scores
+// ────────────────────────────────────────────────────────────────────────────
+
+// DocStatus is a single row of the `gmb doc status` dashboard.
+type DocStatus struct {
+	ID          string `json:"id"`
+	TargetPath  string `json:"target_path"`
+	Freshness   int    `json:"freshness"`
+	Mode        string `json:"mode"`
+	LastSync    string `json:"last_sync"`
+	Status      string `json:"status"`
+}
+
+// StatusResult is the outcome of a `gmb doc status` dashboard query.
+type StatusResult struct {
+	Documents       []DocStatus `json:"documents"`
+	GlobalFreshness int         `json:"global_freshness"`
+}
+
+// Status returns per-document freshness rows by running a non-modifying Check
+// and projecting it into dashboard shape (plan §11.2 `gmb doc status` table).
+func Status(repoRoot string, opts CheckOptions) (StatusResult, error) {
+	check, err := Check(repoRoot, opts)
+	if err != nil {
+		return StatusResult{}, err
+	}
+	result := StatusResult{GlobalFreshness: check.GlobalFreshness}
+	for _, d := range check.Documents {
+		result.Documents = append(result.Documents, DocStatus{
+			ID:         d.ID,
+			TargetPath: d.TargetPath,
+			Freshness:  d.Freshness,
+			LastSync:   d.LastUpdated,
+			Status:     d.Status,
+		})
+	}
+	return result, nil
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Release — migration guide generator between Git refs
 // ────────────────────────────────────────────────────────────────────────────
 

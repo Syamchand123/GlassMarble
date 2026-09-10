@@ -85,6 +85,41 @@ func GenerateI18nInventory(repoRoot string) (string, error) {
 		sb.WriteString("\n")
 	}
 
+	// Orphaned keys: present in bundles but no longer referenced in code.
+	orphaned := orphanedKeys(codeKeys, localeBundles)
+	if len(orphaned) > 0 {
+		sb.WriteString("## Orphaned Keys (in bundles, unused in code)\n\n")
+		sb.WriteString("These keys can be pruned from locale bundles:\n\n")
+		for _, k := range orphaned {
+			sb.WriteString(fmt.Sprintf("- `%s`\n", k))
+		}
+		sb.WriteString("\n")
+	}
+
+	// Missing keys detail per locale.
+	hasMissing := false
+	for _, loc := range summary.SupportedLocales {
+		if len(summary.MissingKeys[loc]) > 0 {
+			hasMissing = true
+			break
+		}
+	}
+	if hasMissing {
+		sb.WriteString("## Missing Keys by Locale\n\n")
+		for _, loc := range summary.SupportedLocales {
+			missing := summary.MissingKeys[loc]
+			if len(missing) == 0 {
+				continue
+			}
+			sort.Strings(missing)
+			sb.WriteString(fmt.Sprintf("### `%s` — %d missing\n\n", loc, len(missing)))
+			for _, k := range missing {
+				sb.WriteString(fmt.Sprintf("- `%s`\n", k))
+			}
+			sb.WriteString("\n")
+		}
+	}
+
 	outPath := filepath.Join(repoRoot, "docs", "i18n.md")
 	result := sb.String()
 	_, err = storage.AtomicWriteFile(outPath, []byte(result))
@@ -112,14 +147,18 @@ func scanCodeTranslationKeys(repoRoot string) (map[string]bool, error) {
 			}
 
 			fnStr := ""
+			qualifier := ""
 			switch t := call.Fun.(type) {
 			case *ast.Ident:
 				fnStr = t.Name
 			case *ast.SelectorExpr:
 				fnStr = t.Sel.Name
+				if ident, ok := t.X.(*ast.Ident); ok {
+					qualifier = ident.Name
+				}
 			}
 
-			if fnStr == "T" || fnStr == "Translate" || fnStr == "Localize" {
+			if isTranslationCall(fnStr, qualifier) {
 				if len(call.Args) > 0 {
 					if lit, ok := call.Args[0].(*ast.BasicLit); ok {
 						val := strings.Trim(lit.Value, `"`)
@@ -135,31 +174,84 @@ func scanCodeTranslationKeys(repoRoot string) (map[string]bool, error) {
 	return keys, err
 }
 
-func loadLocaleBundles(repoRoot string) map[string]map[string]bool {
-	bundles := make(map[string]map[string]bool)
-	locDir := filepath.Join(repoRoot, "locales")
-
-	entries, err := os.ReadDir(locDir)
-	if err != nil {
-		return bundles
-	}
-
-	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".json") {
-			locName := strings.TrimSuffix(e.Name(), ".json")
-			filePath := filepath.Join(locDir, e.Name())
-			data, err := os.ReadFile(filePath)
-			if err == nil {
-				var raw map[string]interface{}
-				if err := json.Unmarshal(data, &raw); err == nil {
-					set := make(map[string]bool)
-					for k := range raw {
-						set[k] = true
-					}
-					bundles[locName] = set
-				}
+// orphanedKeys returns bundle keys not referenced anywhere in code.
+func orphanedKeys(codeKeys map[string]bool, bundles map[string]map[string]bool) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, bundleKeys := range bundles {
+		for k := range bundleKeys {
+			if !codeKeys[k] && !seen[k] {
+				seen[k] = true
+				out = append(out, k)
 			}
 		}
 	}
+	sort.Strings(out)
+	return out
+}
+
+// isTranslationCall reports whether a call is a localization lookup.
+// Covers go-i18n, nicksnyder, message.Printer, gettext, and common wrappers.
+func isTranslationCall(fn, qualifier string) bool {
+	switch fn {
+	case "T", "Translate", "Localize", "Gettext", "Ngettext", "MustLocalize", "LocalizeWithPlural":
+		return true
+	}
+	// message.NewPrinter(lang).Printf/Sprintf/Fprintf — qualifier is the printer var.
+	if qualifier == "printer" || qualifier == "p" || strings.Contains(strings.ToLower(qualifier), "printer") || strings.Contains(strings.ToLower(qualifier), "localizer") || strings.Contains(strings.ToLower(qualifier), "bundle") {
+		if fn == "Printf" || fn == "Sprintf" || fn == "Fprintf" || fn == "Print" {
+			return true
+		}
+	}
+	if qualifier == "i18n" || qualifier == "trans" || qualifier == "locale" {
+		return true
+	}
+	return false
+}
+
+func loadLocaleBundles(repoRoot string) map[string]map[string]bool {
+	bundles := make(map[string]map[string]bool)
+	for _, locDir := range []string{"locales", "lang", "translations", "i18n", filepath.Join("assets", "locales")} {
+		loadBundleDir(filepath.Join(repoRoot, locDir), bundles)
+	}
 	return bundles
+}
+
+func loadBundleDir(locDir string, bundles map[string]map[string]bool) {
+	entries, err := os.ReadDir(locDir)
+	if err != nil {
+		return
+	}
+
+	for _, e := range entries {
+		name := e.Name()
+		var locName string
+		switch {
+		case strings.HasSuffix(name, ".json"):
+			locName = strings.TrimSuffix(name, ".json")
+		case strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml"):
+			locName = strings.TrimSuffix(strings.TrimSuffix(name, ".yaml"), ".yml")
+		case strings.HasSuffix(name, ".toml"):
+			locName = strings.TrimSuffix(name, ".toml")
+		default:
+			continue
+		}
+		filePath := filepath.Join(locDir, name)
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			continue
+		}
+		var raw map[string]interface{}
+		if err := json.Unmarshal(data, &raw); err != nil {
+			continue
+		}
+		set := bundles[locName]
+		if set == nil {
+			set = make(map[string]bool)
+			bundles[locName] = set
+		}
+		for k := range raw {
+			set[k] = true
+		}
+	}
 }

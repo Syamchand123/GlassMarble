@@ -141,14 +141,34 @@ func ScanArchEvents(commitLogs []string) []ADREvent {
 			evType = "COMPONENT_SPLIT"
 			title = "Subsystem Decoupling & Component Split"
 			decision = "Separated concerns into autonomous domain subpackages to eliminate architectural coupling."
-		} else if strings.Contains(lower, "database") || strings.Contains(lower, "storage") || strings.Contains(lower, "schema") {
+		} else if strings.Contains(lower, "database") || strings.Contains(lower, "storage") || strings.Contains(lower, "schema") || strings.Contains(lower, "persistence") || strings.Contains(lower, "migration") {
 			evType = "NEW_DATABASE_LAYER"
 			title = "Introduction of Storage & Persistence Layer"
 			decision = "Adopted standardized persistence patterns with MVCC file locking and atomic writes."
-		} else if strings.Contains(lower, "cycle") && (strings.Contains(lower, "break") || strings.Contains(lower, "resolve")) {
+		} else if strings.Contains(lower, "cycle") && (strings.Contains(lower, "break") || strings.Contains(lower, "resolve") || strings.Contains(lower, "remove") || strings.Contains(lower, "fix")) {
 			evType = "CYCLE_RESOLVED"
 			title = "Resolution of Dependency Cycle"
 			decision = "Inverted dependency relationships to establish an acyclic package hierarchy."
+		} else if strings.Contains(lower, "cycle") && (strings.Contains(lower, "introduc") || strings.Contains(lower, "detect") || strings.Contains(lower, "add")) {
+			evType = "CYCLE_INTRODUCED"
+			title = "Dependency Cycle Introduced — Remediation Required"
+			decision = "Flagged the new import cycle for inversion; depend on abstractions, not concretions."
+		} else if (strings.Contains(lower, "layer") && strings.Contains(lower, "violat")) || strings.Contains(lower, "layer violation") || strings.Contains(lower, "boundary violation") {
+			evType = "LAYER_VIOLATION"
+			title = "Layer Boundary Violation Detected"
+			decision = "Restored strict layering: upper layers may depend downward only, never sideways."
+		} else if strings.Contains(lower, "new service") || strings.Contains(lower, "new microservice") || strings.Contains(lower, "service added") || strings.Contains(lower, "new component") {
+			evType = "SERVICE_ADDED"
+			title = "New Service / Component Introduced"
+			decision = "Registered the new service boundary with explicit ownership and interface contracts."
+		} else if (strings.Contains(lower, "interface") || strings.Contains(lower, "api") || strings.Contains(lower, "signature")) && (strings.Contains(lower, "chang") || strings.Contains(lower, "break") || strings.Contains(lower, "remov") || strings.Contains(lower, "renam")) {
+			evType = "INTERFACE_CHANGED"
+			title = "Public Interface Change"
+			decision = "Versioned the public surface change with a migration path for existing callers."
+		} else if strings.Contains(lower, "auth") && (strings.Contains(lower, "add") || strings.Contains(lower, "migrat") || strings.Contains(lower, "oauth") || strings.Contains(lower, "jwt")) {
+			evType = "AUTH_ARCHITECTURE"
+			title = "Authentication Architecture Change"
+			decision = "Centralized auth decisions behind a single session/token boundary with auditable flows."
 		}
 
 		if evType != "" {

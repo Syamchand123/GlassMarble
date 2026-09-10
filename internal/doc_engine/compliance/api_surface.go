@@ -22,10 +22,10 @@ type BoundaryViolation struct {
 
 // BoundaryReport summarizes public, internal mesh, and private API surface tiers.
 type BoundaryReport struct {
-	PublicEdgeCount  int                 `json:"public_edge_count"`
-	InternalMeshCount int                `json:"internal_mesh_count"`
-	PrivateCount     int                 `json:"private_count"`
-	Violations       []BoundaryViolation `json:"violations"`
+	PublicEdgeCount   int                 `json:"public_edge_count"`
+	InternalMeshCount int                 `json:"internal_mesh_count"`
+	PrivateCount      int                 `json:"private_count"`
+	Violations        []BoundaryViolation `json:"violations"`
 }
 
 // CheckAPISurfaceBoundaries audits all packages to ensure private primitives do not leak
@@ -77,10 +77,27 @@ func CheckAPISurfaceBoundaries(repoRoot string) (BoundaryReport, error) {
 				report.InternalMeshCount++
 			}
 
-			// Check for unexported return types or parameters
+			// Check for unexported return types AND parameters (Pillar 34:
+			// CI must flag a private type returned by OR accepted by a public endpoint).
 			if isPublicEdge && fn.Type.Results != nil {
 				for _, res := range fn.Type.Results.List {
 					typeStr := exprToString(res.Type)
+					if typeStr != "" && !isExportedTypeName(typeStr) {
+						pos := fset.Position(fn.Pos())
+						report.Violations = append(report.Violations, BoundaryViolation{
+							PublicFunction: fn.Name.Name,
+							LeakedType:     typeStr,
+							Package:        node.Name.Name,
+							SourcePath:     relPath,
+							Line:           pos.Line,
+							Severity:       "WARN",
+						})
+					}
+				}
+			}
+			if isPublicEdge && fn.Type.Params != nil {
+				for _, param := range fn.Type.Params.List {
+					typeStr := exprToString(param.Type)
 					if typeStr != "" && !isExportedTypeName(typeStr) {
 						pos := fset.Position(fn.Pos())
 						report.Violations = append(report.Violations, BoundaryViolation{

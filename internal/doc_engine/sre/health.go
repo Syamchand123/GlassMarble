@@ -12,6 +12,7 @@ import (
 	"go/token"
 	"io/fs"
 	"math"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -35,8 +36,8 @@ func ComputeHealthProfile(repoRoot, subDir string) HealthProfile {
 	fileCount := 0
 	maxComp := 1
 	riskFn := "None"
-	inboundRefs := 0
 	outboundImports := 0
+	subPkgs := packageNamesInDir(absDir)
 
 	_ = filepath.WalkDir(absDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
@@ -44,14 +45,18 @@ func ComputeHealthProfile(repoRoot, subDir string) HealthProfile {
 		}
 		fileCount++
 
-		node, parseErr := parser.ParseFile(fset, path, nil, 0)
+		node, parseErr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
 		if parseErr != nil {
 			return nil
 		}
 
 		outboundImports += len(node.Imports)
 
-		for _, decl := range node.Decls {
+		full, fullErr := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if fullErr != nil {
+			return nil
+		}
+		for _, decl := range full.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok {
 				continue
@@ -65,6 +70,10 @@ func ComputeHealthProfile(repoRoot, subDir string) HealthProfile {
 		}
 		return nil
 	})
+
+	// Inbound references: count Go files OUTSIDE subDir that import this
+	// subsystem's packages (Ce/(Ca+Ce) instability per Martin metrics).
+	inboundRefs := countInboundImports(repoRoot, subDir, subPkgs)
 
 	totalCoupling := inboundRefs + outboundImports
 	instability := 0.5
@@ -81,11 +90,15 @@ func ComputeHealthProfile(repoRoot, subDir string) HealthProfile {
 	}
 
 	rank := 1
-	if fileCount > 10 {
+	churn := gitChurnCount(repoRoot, subDir)
+	switch {
+	case churn >= 50 || fileCount > 25:
+		rank = 1
+	case churn >= 20 || fileCount > 10:
 		rank = 3
-	} else if fileCount > 5 {
+	case churn >= 5 || fileCount > 5:
 		rank = 5
-	} else {
+	default:
 		rank = 10
 	}
 
@@ -119,6 +132,82 @@ func FormatHealthMarkdown(p HealthProfile) string {
 	}
 	sb.WriteString("\n")
 	return sb.String()
+}
+
+// packageNamesInDir collects declared package names under absDir so inbound
+// importers can be matched without full type resolution.
+func packageNamesInDir(absDir string) map[string]bool {
+	names := make(map[string]bool)
+	_ = filepath.WalkDir(absDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		fset := token.NewFileSet()
+		node, parseErr := parser.ParseFile(fset, path, nil, parser.PackageClauseOnly)
+		if parseErr != nil {
+			return nil
+		}
+		names[node.Name.Name] = true
+		return nil
+	})
+	return names
+}
+
+// countInboundImports scans Go files outside subDir for imports of the
+// subsystem's own packages (matched by trailing path or package name).
+func countInboundImports(repoRoot, subDir string, subPkgs map[string]bool) int {
+	count := 0
+	_ = filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == ".git" || name == ".glassmarble" || name == "vendor" || name == "node_modules" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		rel, _ := filepath.Rel(repoRoot, path)
+		if rel == "." || strings.HasPrefix(filepath.ToSlash(rel), filepath.ToSlash(subDir)+"/") || filepath.ToSlash(rel) == filepath.ToSlash(subDir) {
+			return nil
+		}
+		fset := token.NewFileSet()
+		node, parseErr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+		if parseErr != nil {
+			return nil
+		}
+		for _, imp := range node.Imports {
+			impPath := strings.Trim(imp.Path.Value, `"`)
+			for pkg := range subPkgs {
+				if strings.HasSuffix(impPath, "/"+pkg) || strings.HasSuffix(impPath, "/"+filepath.ToSlash(subDir)) || strings.Contains(impPath, filepath.ToSlash(subDir)) {
+					count++
+					break
+				}
+			}
+		}
+		return nil
+	})
+	return count
+}
+
+// gitChurnCount returns the number of commits touching subDir (hotspot signal).
+// Returns 0 when git is unavailable — callers fall back to file-count ranking.
+func gitChurnCount(repoRoot, subDir string) int {
+	cmd := exec.Command("git", "log", "--oneline", "--", subDir)
+	cmd.Dir = repoRoot
+	out, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" {
+		return 0
+	}
+	return len(strings.Split(trimmed, "\n"))
 }
 
 func estimateCyclomaticComplexity(fn *ast.FuncDecl) int {

@@ -2,6 +2,7 @@ package compliance
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,13 +21,15 @@ type DependencyRecord struct {
 	RiskLevel   string `json:"risk_level"` // Low, Medium, High (Copyleft)
 }
 
-// GenerateSBOM parses manifest files (go.mod) to build a software bill of materials
-// and license compliance audit at docs/compliance/dependencies.md.
+// GenerateSBOM parses manifest files (go.mod, package.json, Cargo.toml) to build
+// a software bill of materials and license compliance audit at docs/compliance/dependencies.md.
 func GenerateSBOM(repoRoot string) (string, error) {
 	deps, err := parseGoModDependencies(repoRoot)
 	if err != nil {
 		return "", err
 	}
+	deps = append(deps, parsePackageJSONDependencies(repoRoot)...)
+	deps = append(deps, parseCargoDependencies(repoRoot)...)
 
 	sort.Slice(deps, func(i, j int) bool {
 		if deps[i].Indirect == deps[j].Indirect {
@@ -115,17 +118,7 @@ func parseGoModDependencies(repoRoot string) ([]DependencyRecord, error) {
 				ver := parts[1]
 				indirect := strings.Contains(line, "// indirect")
 
-				spdx := "MIT"
-				risk := "Low"
-				lower := strings.ToLower(mod)
-				if strings.Contains(lower, "gpl") || strings.Contains(lower, "agpl") {
-					spdx = "GPL-3.0"
-					risk = "High"
-				} else if strings.Contains(lower, "apache") {
-					spdx = "Apache-2.0"
-				} else if strings.Contains(lower, "bsd") {
-					spdx = "BSD-3-Clause"
-				}
+				spdx, risk := classifyLicense(mod)
 
 				deps = append(deps, DependencyRecord{
 					Module:      mod,
@@ -139,4 +132,110 @@ func parseGoModDependencies(repoRoot string) ([]DependencyRecord, error) {
 	}
 
 	return deps, scanner.Err()
+}
+
+// knownLicenses maps well-known modules to their published SPDX identifiers.
+// This avoids the dangerous "default MIT" heuristic for unrecognized modules.
+var knownLicenses = map[string]string{
+	"github.com/spf13/cobra":             "Apache-2.0",
+	"github.com/spf13/pflag":             "BSD-3-Clause",
+	"github.com/spf13/viper":             "MIT",
+	"github.com/stretchr/testify":        "MIT",
+	"gopkg.in/yaml.v3":                   "MIT",
+	"gopkg.in/yaml.v2":                   "Apache-2.0",
+	"github.com/charmbracelet/bubbletea": "MIT",
+	"github.com/charmbracelet/lipgloss":  "MIT",
+	"github.com/charmbracelet/bubbles":   "MIT",
+	"golang.org/x/sync":                  "BSD-3-Clause",
+	"golang.org/x/mod":                   "BSD-3-Clause",
+	"golang.org/x/tools":                 "BSD-3-Clause",
+	"github.com/google/go-cmp":           "BSD-3-Clause",
+	"github.com/google/uuid":             "BSD-3-Clause",
+	"go.uber.org/zap":                    "MIT",
+	"github.com/sirupsen/logrus":         "MIT",
+	"github.com/mattn/go-sqlite3":        "MIT",
+	"github.com/lib/pq":                  "MIT",
+}
+
+// classifyLicense returns the SPDX identifier and risk level for a module.
+// Unknown modules return "Unknown" / "Medium" so they surface for manual
+// review instead of being silently marked permissive.
+func classifyLicense(mod string) (spdx, risk string) {
+	lower := strings.ToLower(mod)
+	switch {
+	case strings.Contains(lower, "agpl"):
+		return "AGPL-3.0", "High"
+	case strings.Contains(lower, "gpl"):
+		return "GPL-3.0", "High"
+	case strings.Contains(lower, "lgpl"):
+		return "LGPL-3.0", "High"
+	case strings.Contains(lower, "mpl"):
+		return "MPL-2.0", "Medium"
+	case strings.Contains(lower, "epl"):
+		return "EPL-2.0", "Medium"
+	case strings.Contains(lower, "apache"):
+		return "Apache-2.0", "Low"
+	case strings.Contains(lower, "bsd"):
+		return "BSD-3-Clause", "Low"
+	case strings.Contains(lower, "mit"):
+		return "MIT", "Low"
+	}
+	if spdx, ok := knownLicenses[mod]; ok {
+		return spdx, "Low"
+	}
+	return "Unknown (manual review)", "Medium"
+}
+
+// parsePackageJSONDependencies extracts npm dependencies (Pillar 25 polyglot).
+func parsePackageJSONDependencies(repoRoot string) []DependencyRecord {
+	data, err := os.ReadFile(filepath.Join(repoRoot, "package.json"))
+	if err != nil {
+		return nil
+	}
+	var pkg struct {
+		Dependencies    map[string]string `json:"dependencies"`
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return nil
+	}
+	var deps []DependencyRecord
+	for mod, ver := range pkg.Dependencies {
+		spdx, risk := classifyLicense(mod)
+		deps = append(deps, DependencyRecord{Module: "npm:" + mod, Version: ver, LicenseSPDX: spdx, RiskLevel: risk})
+	}
+	for mod, ver := range pkg.DevDependencies {
+		spdx, risk := classifyLicense(mod)
+		deps = append(deps, DependencyRecord{Module: "npm:" + mod + " (dev)", Version: ver, LicenseSPDX: spdx, RiskLevel: risk})
+	}
+	return deps
+}
+
+// parseCargoDependencies extracts Rust crate dependencies (Pillar 25 polyglot).
+func parseCargoDependencies(repoRoot string) []DependencyRecord {
+	file, err := os.Open(filepath.Join(repoRoot, "Cargo.toml"))
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+	var deps []DependencyRecord
+	inDeps := false
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "[") {
+			inDeps = strings.HasPrefix(line, "[dependencies")
+			continue
+		}
+		if inDeps && strings.Contains(line, "=") {
+			parts := strings.SplitN(line, "=", 2)
+			mod := strings.TrimSpace(parts[0])
+			ver := strings.Trim(strings.TrimSpace(parts[1]), `"`)
+			if mod != "" {
+				spdx, risk := classifyLicense(mod)
+				deps = append(deps, DependencyRecord{Module: "crate:" + mod, Version: ver, LicenseSPDX: spdx, RiskLevel: risk})
+			}
+		}
+	}
+	return deps
 }

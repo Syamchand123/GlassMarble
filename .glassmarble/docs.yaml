@@ -1,0 +1,132 @@
+version: 1
+docs_dir: "docs"
+
+style:
+  standard: "developer_guide"
+  voice: "active, second-person, present tense"
+  jargon_blacklist:
+    - "simply"
+    - "obviously"
+    - "leverage"
+    - "utilize"
+  code_block_format: "fenced_with_language"
+
+constraints:
+  max_doc_updates_per_commit: 5
+  max_tokens_per_run: 50000
+  min_freshness_threshold: 80
+  min_freshness_fail: 60
+
+target_platform: "github_flat"
+
+documents:
+  - id: "system-architecture"
+    target: "docs/architecture.md"
+    title: "System Architecture & Data Flow"
+    purpose: "Complete guide to GlassMarble's internal architecture for contributors"
+    audience: "Senior contributors and maintainers"
+    mode: "managed_sections"
+    scope:
+      paths:
+        - "internal/**"
+        - "cmd/**"
+    diagrams:
+      - type: c4container
+      - type: layered
+      - type: dependency
+        scope: "global"
+    sections:
+      - id: "overview"
+        title: "System Overview"
+        instruction: "Describe the high-level pipeline: Ingest → Normalize → Aggregate → Link → Commit"
+        ground_with: [arch_intelligence, components]
+      - id: "storage"
+        title: "Storage & Transaction Model"
+        instruction: "Explain the MVCC contract, atomic writes, and docs_state tracking"
+        ground_with: [signatures, callgraph, comments]
+      - id: "contributors-guide"
+        title: "Contributors Guide"
+        instruction: "Human-written contributor notes"
+        managed: false
+
+  - id: "ai-engine"
+    target: "docs/components/ai_engine.md"
+    title: "AI Engine Architecture & Provider System"
+    purpose: "Module reference for the AI engine and BYOK provider system"
+    audience: "Contributors adding new AI providers"
+    mode: "full_owned"
+    scope:
+      paths:
+        - "internal/ai_engine/**"
+      entry_points:
+        - "internal/ai_engine/engine.go::Engine.Complete"
+    diagrams:
+      - type: callgraph
+        entry: "internal/ai_engine/engine.go::Engine.Complete"
+      - type: dependency
+        scope: "folder:internal/ai_engine"
+    sections:
+      - id: "interface"
+        title: "Exported Interface & Providers"
+        instruction: "Table of exported types, interfaces, and all provider implementations"
+        ground_with: [exported_symbols, comments, callgraph]
+      - id: "concurrency"
+        title: "Concurrency & Thread Safety"
+        instruction: "Document all mutex locks, goroutine lifecycles, and concurrency contracts"
+        ground_with: [concurrency_primitives, signatures]
+      - id: "errors"
+        title: "Error Catalog & Sentinel Errors"
+        instruction: "Table of sentinel errors with trigger conditions and caller context"
+        ground_with: [error_returns, sentinels]
+
+  - id: "cli-reference"
+    target: "docs/cli.md"
+    title: "CLI Command Reference"
+    purpose: "Authoritative reference for every gmb command, flag, and exit code"
+    audience: "All GlassMarble CLI users and integrators"
+    mode: "managed_sections"
+    scope:
+      paths:
+        - "cmd/**"
+      entry_points:
+        - "cmd/root.go::Execute"
+    diagrams:
+      - type: dependency
+        scope: "folder:cmd"
+    sections:
+      - id: "commands"
+        title: "Commands & Flags"
+        instruction: "List all CLI commands with exact flags, defaults, and exit codes"
+        ground_with: [exported_symbols, signatures, comments]
+      - id: "examples"
+        title: "Usage Examples"
+        instruction: "Human-curated end-to-end CLI workflows"
+        managed: false
+
+  - id: "ops-runbook"
+    target: "docs/runbook.md"
+    title: "Production Operations Runbook"
+    purpose: "On-call guide for diagnosing and resolving GlassMarble issues in production"
+    audience: "On-call SRE engineers at 2 AM"
+    mode: "managed_sections"
+    scope:
+      paths:
+        - "cmd/**"
+        - "internal/akg/**"
+        - "internal/ai_engine/**"
+    diagrams:
+      - type: dependency
+        scope: "global"
+    sections:
+      - id: "health-checks"
+        title: "Health Check Commands"
+        instruction: "List all CLI health commands with exact flags and expected output"
+        ground_with: [exported_symbols, signatures]
+      - id: "error-triage"
+        title: "Error Triage Reference"
+        instruction: "For each sentinel error: trigger condition, root cause, remediation steps"
+        ground_with: [sentinels, error_returns, callers]
+      - id: "known-issues"
+        title: "Known Issues"
+        instruction: "Human-maintained list of known production issues"
+        managed: false
