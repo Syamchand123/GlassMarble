@@ -133,7 +133,8 @@ func VerifySnippetsInRepo(repoRoot, markdown string, knownSymbols map[string]boo
 
 	arity, err := buildDeclArityMap(repoRoot)
 	if err != nil || len(arity) == 0 {
-		return base, err
+		// C3: exec-tagged blocks are independent of the arity map.
+		return append(base, verifyExecSnippets(markdown)...), err
 	}
 
 	matches := snippetTagRe.FindAllStringSubmatchIndex(markdown, -1)
@@ -182,6 +183,11 @@ func VerifySnippetsInRepo(repoRoot, markdown string, knownSymbols map[string]boo
 			return true
 		})
 	}
+
+	// C3: after the existing syntax/symbol/arity checks, compile and run
+	// exec-tagged blocks (gmb:snippet:exec, gmb:snippet:exec:no_run).
+	// Plain gmb:snippet:example blocks never execute.
+	base = append(base, verifyExecSnippets(markdown)...)
 
 	return base, nil
 }

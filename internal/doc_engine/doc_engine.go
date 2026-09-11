@@ -48,6 +48,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/patcher"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/renderer"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/storage"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/verifier"
 	"github.com/Syamchand123/GlassMarble/internal/git"
 )
 
@@ -611,6 +612,27 @@ func Check(repoRoot string, opts CheckOptions) (CheckResult, error) {
 					result.AllFresh = false
 					result.Failures = append(result.Failures,
 						fmt.Sprintf("%s: %s", doc.TargetPath, msg))
+				}
+			}
+
+			// Gate 7: reference integrity at check time (plan C2). Unlike
+			// generation (warnings only), CI fails on broken references:
+			// missing files, bad anchors, out-of-range permalink lines.
+			// Frontmatter and TOC issues are warnings (advisory).
+			if content, readErr := os.ReadFile(absPath); readErr == nil {
+				refRep := verifier.CheckReferences(repoRoot, doc.TargetPath, string(content), assertSymbolExists, false)
+				for _, br := range refRep.Broken {
+					result.AllFresh = false
+					result.Failures = append(result.Failures,
+						fmt.Sprintf("%s: broken reference (line %d): %s — %s", doc.TargetPath, br.Line, br.Target, br.Reason))
+				}
+				for _, msg := range verifier.ValidateFrontmatter(string(content), cfg.TargetPlatform) {
+					result.Warnings = append(result.Warnings,
+						fmt.Sprintf("%s: frontmatter: %s", doc.TargetPath, msg))
+				}
+				for _, msg := range verifier.CheckTOC(string(content)) {
+					result.Warnings = append(result.Warnings,
+						fmt.Sprintf("%s: toc: %s", doc.TargetPath, msg))
 				}
 			}
 		}

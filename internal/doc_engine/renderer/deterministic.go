@@ -228,14 +228,35 @@ func filterSymbols(symbols []config.SymbolFact, kinds []string) []config.SymbolF
 	var filtered []config.SymbolFact
 	kindSet := make(map[string]bool)
 	for _, k := range kinds {
-		kindSet[k] = true
+		kindSet[normalizeKind(k)] = true
 	}
 	for _, s := range symbols {
-		if kindSet[s.Kind] {
+		if kindSet[normalizeKind(s.Kind)] {
 			filtered = append(filtered, s)
 		}
 	}
 	return filtered
+}
+
+// normalizeKind case-folds AKG node kinds and maps common aliases so
+// deterministic tables render regardless of the graph's kind vocabulary
+// ("FUNCTION" vs "func", "CLASS" vs "struct", ...). Without this, real
+// graphs silently produced empty tables.
+func normalizeKind(k string) string {
+	switch strings.ToLower(strings.TrimSpace(k)) {
+	case "function", "functions", "func", "def", "subroutine":
+		return "func"
+	case "method", "methods":
+		return "method"
+	case "class", "classes", "struct", "structs", "record":
+		return "struct"
+	case "interface", "interfaces", "protocol", "trait":
+		return "interface"
+	case "type", "types", "typedef", "alias":
+		return "type"
+	default:
+		return strings.ToLower(strings.TrimSpace(k))
+	}
 }
 
 func symbolShortName(fqn string) string {

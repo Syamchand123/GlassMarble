@@ -380,6 +380,63 @@ func (o *Orchestrator) ProcessDocument(
 			outcome.Content = patcher.PopulateTodos(outcome.Content, exportedShortNames(fs))
 		}
 
+		// Gate 6: prose quality (plan C1, both tracks). Strict mode fails;
+		// non-strict only reports. On strict LLM failure: one repair retry,
+		// then deterministic fallback (mirrors the Stage 7 recovery ladder).
+		// On strict deterministic failure: warn + ship (tables cannot be
+		// re-voiced; failing would discard grounded facts).
+		prosePass, proseFailures := verifier.CheckProseGate(outcome.Content, fs.Style, fs.Style.StrictProse)
+		if !prosePass {
+			proseErr := fmt.Errorf("prose quality gate failed: %s", strings.Join(proseFailures, "; "))
+			if outcome.RenderMode == "llm" && o.actuator != nil && !outcome.RepairUsed {
+				repairResp, repairErr := o.actuator.Repair(ctx, fs, outcome.Content, proseErr)
+				if repairErr == nil {
+					symIndex := buildSymbolIndex(fs, graph)
+					if rg := verifier.RunGates(fs.PriorSectionMarkdown, repairResp.Text, symIndex); rg.Pass {
+						if rp, rf := verifier.CheckProseGate(repairResp.Text, fs.Style, true); rp {
+							outcome.Content = repairResp.Text
+							outcome.RepairUsed = true
+							outcome.TokensUsed += repairResp.TotalTokens
+							tokensUsed += repairResp.TotalTokens
+							warnings = append(warnings, fmt.Sprintf("section %s/%s prose repaired to strict style", doc.ID, sec.ID))
+							goto gate7
+						} else {
+							_ = rf
+						}
+					}
+				}
+				detOutcome, detErr := o.renderTrackB(fs, buildSymbolIndex(fs, graph))
+				if detErr != nil {
+					warnings = append(warnings, fmt.Sprintf("section %s/%s strict prose failed (%v); skipping update", doc.ID, sec.ID, proseErr))
+					continue
+				}
+				detOutcome.FallbackUsed = true
+				detOutcome.Warning = fmt.Sprintf("strict prose failed on LLM output; deterministic fallback used (%v)", proseErr)
+				outcome = detOutcome
+				tokensUsed += outcome.TokensUsed
+			} else {
+				warnings = append(warnings, fmt.Sprintf("section %s/%s prose quality: %s", doc.ID, sec.ID, strings.Join(proseFailures, "; ")))
+			}
+		} else if len(proseFailures) > 0 {
+			warnings = append(warnings, fmt.Sprintf("section %s/%s prose suggestions: %s", doc.ID, sec.ID, strings.Join(proseFailures, "; ")))
+		}
+
+	gate7:
+		// Gate 7: reference integrity (plan C2). Engine-side it reports
+		// warnings only — hard failures belong to `doc check` (CI), where
+		// missing files and bad anchors fail the gate without blocking
+		// generation here.
+		{
+			var symFn func(string) bool
+			if symIndex := buildSymbolIndex(fs, graph); symIndex != nil {
+				symFn = func(s string) bool { return symIndex.HasSymbol(s) }
+			}
+			refRep := verifier.CheckReferences(repoRoot, doc.TargetPath, outcome.Content, symFn, false)
+			for _, br := range refRep.Broken {
+				warnings = append(warnings, fmt.Sprintf("section %s/%s reference integrity: %s (line %d: %s)", doc.ID, sec.ID, br.Reason, br.Line, br.Target))
+			}
+		}
+
 		// Stage 8: 3-way merge. BASE is the last rendered body from state
 		// (not priorBody): it records what the machine wrote last run, while
 		// priorBody (OURS) holds current human edits. Falls back to priorBody

@@ -98,6 +98,10 @@ type StyleSpec struct {
 	// JargonBlacklist lists words/phrases the LLM must never use.
 	// Example: ["simply", "obviously", "leverage", "utilize"]
 	JargonBlacklist []string `yaml:"jargon_blacklist,omitempty" json:"jargon_blacklist,omitempty"`
+
+	// StrictProse makes Gate 6 (prose quality) fail on error-severity
+	// violations. When false (default), Gate 6 warns only and never fails.
+	StrictProse bool `yaml:"strict_prose,omitempty" json:"strict_prose,omitempty"`
 }
 
 // ────────────────────────────────────────────────────────────────────────────
