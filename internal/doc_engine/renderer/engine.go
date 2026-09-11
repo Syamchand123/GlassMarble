@@ -294,7 +294,7 @@ func (o *Orchestrator) ProcessDocument(
 		}
 
 		// Stage 4: Grounding
-		fs := grounding.AssembleFactSheet(doc, sec, graph, dossier, priorBody)
+		fs := grounding.AssembleFactSheet(doc, sec, graph, dossier, priorBody, repoRoot)
 		if fs == nil {
 			continue
 		}

@@ -304,26 +304,72 @@ func (c *Collector) collectHTTPHandlers(scope *config.ScopeRule, p *config.Groun
 	})
 }
 
-// 9: Callgraph Facts
+// 9: Callgraph Facts — outbound callees plus inbound callers.
+//
+// Outbound: each entry point's CALLS targets become kind "callee" facts.
+// Inbound (B3): GetInboundEdges (verified on CodePropertyGraph) resolves
+// callers for each entry point AND, one hop further, the inbound callers of
+// every callee found above. Caller facts (kind "caller") are deduped against
+// each other and against symbols already present in the payload.
 func (c *Collector) collectCallgraphFacts(scope *config.ScopeRule, p *config.GroundTruthPayload) {
-	if c.graph == nil || c.graph.OutboundEdges == nil || scope == nil {
+	if c.graph == nil || scope == nil {
 		return
 	}
-	for _, ep := range scope.EntryPoints {
-		for _, edge := range c.graph.GetOutboundEdges(ep) {
-			if edge.Type == link.EdgeCalls {
-				fact := config.SymbolFact{
-					FQN:       edge.TargetID,
-					Kind:      "callee",
-					Signature: "Called by " + cleanSymbolName(ep),
+	seen := make(map[string]bool)
+	// NOTE: dedupe covers facts added by this collector only; a callee
+	// that is also an in-scope signature keeps its historical duplicate
+	// "callee" fact (pre-B3 behavior relied on by callers).
+	appendFact := func(fqn, kind, signature string) {
+		if fqn == "" || seen[fqn] {
+			return
+		}
+		seen[fqn] = true
+		fact := config.SymbolFact{
+			FQN:       fqn,
+			Kind:      kind,
+			Signature: signature,
+		}
+		if node, ok := c.graph.Nodes.Get(fqn); ok && node != nil {
+			fact.File = node.FileSpec.Path
+			fact.Line = node.FileSpec.LineStart
+			fact.Permalink = FormatPermalink(node.FileSpec.Path, node.FileSpec.LineStart, node.FileSpec.LineEnd)
+		}
+		p.Symbols = append(p.Symbols, fact)
+	}
+
+	// Outbound pass: entry points → callees.
+	var callees []string
+	calleeSeen := make(map[string]bool)
+	if c.graph.OutboundEdges != nil {
+		for _, ep := range scope.EntryPoints {
+			for _, edge := range c.graph.GetOutboundEdges(ep) {
+				if edge.Type != link.EdgeCalls {
+					continue
 				}
-				if node, ok := c.graph.Nodes.Get(edge.TargetID); ok && node != nil {
-					fact.File = node.FileSpec.Path
-					fact.Line = node.FileSpec.LineStart
-					fact.Permalink = FormatPermalink(node.FileSpec.Path, node.FileSpec.LineStart, node.FileSpec.LineEnd)
+				appendFact(edge.TargetID, "callee", "Called by "+cleanSymbolName(ep))
+				if edge.TargetID != "" && !calleeSeen[edge.TargetID] {
+					calleeSeen[edge.TargetID] = true
+					callees = append(callees, edge.TargetID)
 				}
-				p.Symbols = append(p.Symbols, fact)
 			}
+		}
+	}
+
+	// Inbound pass: callers of entry points + one-hop callers of callees.
+	if c.graph.InboundEdges == nil {
+		return
+	}
+	targets := append([]string(nil), scope.EntryPoints...)
+	targets = append(targets, callees...)
+	for _, target := range targets {
+		if target == "" {
+			continue
+		}
+		for _, edge := range c.graph.GetInboundEdges(target) {
+			if edge.Type != link.EdgeCalls {
+				continue
+			}
+			appendFact(edge.SourceID, "caller", "Calls "+cleanSymbolName(target))
 		}
 	}
 }

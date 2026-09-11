@@ -5,6 +5,7 @@ package invalidator
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
@@ -23,6 +24,11 @@ func BuildDossier(repoDir string, commitHash string, baseGraph, headGraph *akg.C
 		CommitIntent: string(commit_reasoning.IntentUnknown),
 	}
 
+	// Keyword-derived events. These are the fallback when no CPG snapshots
+	// are available (both graphs nil → structural detection yields nothing
+	// and the merge below degrades to this list alone).
+	var keywordEvents []string
+
 	// 1. Read git commit metadata if available
 	if repoDir != "" && commitHash != "" {
 		meta, err := git.ReadCommit(repoDir, commitHash)
@@ -39,8 +45,9 @@ func BuildDossier(repoDir string, commitHash string, baseGraph, headGraph *akg.C
 			// Derive architectural events from commit message keywords.
 			// (internal/arch_timeline only exposes snapshot-diff APIs with no
 			// clean per-commit event lookup, so keyword derivation is the
-			// deterministic fallback here.)
-			dossier.ArchEvents = deriveArchEvents(meta.Subject + "\n" + meta.Body)
+			// deterministic fallback here. Structural events computed below
+			// from the CPG snapshots take precedence and are merged first.)
+			keywordEvents = deriveArchEvents(meta.Subject + "\n" + meta.Body)
 		}
 	}
 
@@ -130,6 +137,11 @@ func BuildDossier(repoDir string, commitHash string, baseGraph, headGraph *akg.C
 		}
 	}
 
+	// 3. Structural arch events from the CPG snapshots (B3: message-
+	// independent signals). Merged structural-first over the keyword
+	// fallback; when both graphs are nil this degrades to keywords alone.
+	dossier.ArchEvents = mergeArchEvents(deriveStructuralEvents(baseGraph, headGraph), keywordEvents)
+
 	// NOTE: DirtySections is intentionally left empty here. It is populated
 	// later by the invalidation engine (Invalidator.FindDirtySections +
 	// DirtyQueue) once per-section hashes and priorities are computed.
@@ -216,4 +228,425 @@ func deriveArchEvents(commitText string) []string {
 		}
 	}
 	return events
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// B3 structural arch events (retire the keyword proxies)
+// ────────────────────────────────────────────────────────────────────────────
+//
+// deriveStructuralEvents computes message-independent architectural events
+// from the base/head CPG snapshots in fixed order:
+//
+//  1. COMPONENT_ADDED / COMPONENT_REMOVED — package/directory set diff over
+//     node file paths.
+//  2. CYCLE_INTRODUCED / CYCLE_RESOLVED — Tarjan SCC over the module graph
+//     (CPG CALLS + DEPENDS_ON edges), comparing base vs head.
+//  3. LAYER_VIOLATION — a NEW call/depends edge crossing layer boundaries in
+//     the forbidden (upward) direction.
+//  4. PUBLIC_SURFACE_CHANGED — added/removed symbols, or modified symbols
+//     whose short name is exported.
+//
+// A nil head graph yields no events. A nil base graph is treated as empty
+// (every head package/edge/symbol is new).
+func deriveStructuralEvents(baseGraph, headGraph *akg.CodePropertyGraph) []string {
+	if headGraph == nil {
+		return nil
+	}
+	var events []string
+
+	// 1. Component (package directory) set diff.
+	basePkgs := packageDirSet(baseGraph)
+	headPkgs := packageDirSet(headGraph)
+	for p := range headPkgs {
+		if !basePkgs[p] {
+			events = append(events, "COMPONENT_ADDED")
+			break
+		}
+	}
+	for p := range basePkgs {
+		if !headPkgs[p] {
+			events = append(events, "COMPONENT_REMOVED")
+			break
+		}
+	}
+
+	// 2. Dependency cycle delta via Tarjan SCC on the module graph.
+	baseCycle := graphHasCycle(baseGraph)
+	headCycle := graphHasCycle(headGraph)
+	switch {
+	case !baseCycle && headCycle:
+		events = append(events, "CYCLE_INTRODUCED")
+	case baseCycle && !headCycle:
+		events = append(events, "CYCLE_RESOLVED")
+	}
+
+	// 3. New cross-layer edge in the forbidden direction.
+	if hasNewLayerViolation(baseGraph, headGraph) {
+		events = append(events, "LAYER_VIOLATION")
+	}
+
+	// 4. Public-surface delta.
+	if hasPublicSurfaceDelta(baseGraph, headGraph) {
+		events = append(events, "PUBLIC_SURFACE_CHANGED")
+	}
+
+	return events
+}
+
+// mergeArchEvents concatenates structural events first, then keyword events,
+// deduped by exact name for deterministic output.
+func mergeArchEvents(structural, keywords []string) []string {
+	seen := make(map[string]bool, len(structural)+len(keywords))
+	var out []string
+	for _, e := range structural {
+		if e != "" && !seen[e] {
+			seen[e] = true
+			out = append(out, e)
+		}
+	}
+	for _, e := range keywords {
+		if e != "" && !seen[e] {
+			seen[e] = true
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// packageDirSet collects the set of package directories holding CPG nodes.
+// The directory of a node file path (e.g. "internal/auth" for
+// "internal/auth/jwt.go") is the component identity; repo-root files carry
+// no directory and are skipped.
+func packageDirSet(g *akg.CodePropertyGraph) map[string]bool {
+	out := make(map[string]bool)
+	if g == nil || g.Nodes == nil {
+		return out
+	}
+	g.Nodes.Iterate(func(_ string, n *link.ResolvedNode) {
+		if n == nil {
+			return
+		}
+		if d := nodeDir(n.FileSpec.Path); d != "" {
+			out[d] = true
+		}
+	})
+	return out
+}
+
+// nodeDir returns the slash-normalized directory of a repo-relative path.
+func nodeDir(p string) string {
+	norm := strings.ReplaceAll(strings.TrimSpace(p), "\\", "/")
+	norm = strings.TrimPrefix(norm, "./")
+	if norm == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(norm, "/"); idx > 0 {
+		return norm[:idx]
+	}
+	return ""
+}
+
+// maxCycleNodes caps the Tarjan SCC pass for safety on huge snapshots;
+// oversized graphs skip cycle detection (report no cycle either way).
+const maxCycleNodes = 2000
+
+// moduleAdjacency builds the module graph: vertices are CPG node IDs (plus
+// any edge endpoints), directed edges are CALLS and DEPENDS_ON relations.
+// Neighbor lists are sorted and deduped for deterministic traversal.
+func moduleAdjacency(g *akg.CodePropertyGraph) (map[string][]string, int) {
+	adj := make(map[string][]string)
+	if g == nil {
+		return adj, 0
+	}
+	ensure := func(id string) {
+		if id == "" {
+			return
+		}
+		if _, ok := adj[id]; !ok {
+			adj[id] = nil
+		}
+	}
+	if g.Nodes != nil {
+		g.Nodes.Iterate(func(id string, _ *link.ResolvedNode) { ensure(id) })
+	}
+	if g.OutboundEdges != nil {
+		g.OutboundEdges.Iterate(func(src string, edges []link.ResolvedEdge) {
+			for _, e := range edges {
+				if e.Type != link.EdgeCalls && e.Type != link.EdgeDependsOn {
+					continue
+				}
+				ensure(src)
+				ensure(e.TargetID)
+				if src != "" && e.TargetID != "" {
+					adj[src] = append(adj[src], e.TargetID)
+				}
+			}
+		})
+	}
+	for v := range adj {
+		adj[v] = sortedUnique(adj[v])
+	}
+	return adj, len(adj)
+}
+
+// graphHasCycle reports whether the graph's module graph contains a directed
+// cycle (iterative Tarjan SCC; any SCC of size > 1, or a self-loop, counts).
+func graphHasCycle(g *akg.CodePropertyGraph) bool {
+	adj, n := moduleAdjacency(g)
+	if n == 0 || n > maxCycleNodes {
+		return false
+	}
+	return hasCycleTarjan(adj)
+}
+
+// hasCycleTarjan is an iterative Tarjan strongly-connected-components pass
+// returning true on the first cyclic SCC found. The explicit frame stack
+// avoids recursion-depth limits on deep call chains.
+func hasCycleTarjan(adj map[string][]string) bool {
+	index := make(map[string]int, len(adj))
+	low := make(map[string]int, len(adj))
+	onStack := make(map[string]bool, len(adj))
+	var stack []string
+	counter := 0
+
+	// Deterministic outer visit order.
+	verts := make([]string, 0, len(adj))
+	for v := range adj {
+		verts = append(verts, v)
+	}
+	sort.Strings(verts)
+
+	type frame struct {
+		v  string
+		pi int // next successor index to visit
+	}
+	assign := func(v string) {
+		index[v] = counter
+		low[v] = counter
+		counter++
+		stack = append(stack, v)
+		onStack[v] = true
+	}
+
+	for _, root := range verts {
+		if _, seen := index[root]; seen {
+			continue
+		}
+		assign(root)
+		call := []frame{{v: root}}
+		for len(call) > 0 {
+			top := len(call) - 1
+			v := call[top].v
+			succ := adj[v]
+			if call[top].pi < len(succ) {
+				w := succ[call[top].pi]
+				call[top].pi++
+				if _, seen := index[w]; !seen {
+					assign(w)
+					call = append(call, frame{v: w})
+				} else if onStack[w] {
+					if index[w] < low[v] {
+						low[v] = index[w]
+					}
+				}
+			} else {
+				call = call[:top]
+				if len(call) > 0 {
+					parent := call[len(call)-1].v
+					if low[v] < low[parent] {
+						low[parent] = low[v]
+					}
+				}
+				if low[v] == index[v] {
+					size := 0
+					for {
+						topNode := stack[len(stack)-1]
+						stack = stack[:len(stack)-1]
+						onStack[topNode] = false
+						size++
+						if topNode == v {
+							break
+						}
+					}
+					if size > 1 {
+						return true
+					}
+					for _, w := range adj[v] {
+						if w == v {
+							return true // self-loop
+						}
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// layerRank maps a top-level directory to its architectural rank.
+//
+// Convention (documented for the violation check below): rank increases
+// toward the entry-point edge — cmd(3) > internal(2) > pkg(1) > rest(0).
+// Upper (higher-rank) layers may depend DOWNWARD on lower-rank layers; a NEW
+// edge from a LOWER-rank package to a HIGHER-rank package is an upward
+// dependency and is flagged as LAYER_VIOLATION.
+func layerRank(top string) int {
+	switch top {
+	case "cmd":
+		return 3
+	case "internal":
+		return 2
+	case "pkg":
+		return 1
+	default:
+		return 0
+	}
+}
+
+// topLevelDir returns the first path segment of a repo-relative file path
+// ("" for repo-root files).
+func topLevelDir(p string) string {
+	norm := strings.ReplaceAll(strings.TrimSpace(p), "\\", "/")
+	norm = strings.TrimPrefix(norm, "./")
+	norm = strings.TrimPrefix(norm, "/")
+	if norm == "" {
+		return ""
+	}
+	if idx := strings.Index(norm, "/"); idx >= 0 {
+		return norm[:idx]
+	}
+	return ""
+}
+
+// edgeEndpointFile resolves the repo-relative file path for an edge
+// endpoint: head node first, then base node, then the ID's file part
+// ("path::Name" → "path").
+func edgeEndpointFile(head, base *akg.CodePropertyGraph, id string) string {
+	if head != nil && head.Nodes != nil {
+		if n, ok := head.Nodes.Get(id); ok && n != nil && n.FileSpec.Path != "" {
+			return n.FileSpec.Path
+		}
+	}
+	if base != nil && base.Nodes != nil {
+		if n, ok := base.Nodes.Get(id); ok && n != nil && n.FileSpec.Path != "" {
+			return n.FileSpec.Path
+		}
+	}
+	if idx := strings.Index(id, "::"); idx > 0 {
+		return id[:idx]
+	}
+	return id
+}
+
+// moduleEdgeKey identifies a module-graph edge for base/head set comparison.
+func moduleEdgeKey(e link.ResolvedEdge) string {
+	return string(e.Type) + "\x00" + e.SourceID + "\x00" + e.TargetID
+}
+
+// hasNewLayerViolation reports whether head introduces a call/depends edge
+// absent from base that runs from a lower-rank layer to a higher-rank layer
+// (e.g. pkg/* → cmd/*). Only NEW edges are considered, so pre-existing
+// layering debt does not re-fire the event every commit.
+func hasNewLayerViolation(base, head *akg.CodePropertyGraph) bool {
+	if head == nil || head.OutboundEdges == nil {
+		return false
+	}
+	baseKeys := make(map[string]bool)
+	if base != nil && base.OutboundEdges != nil {
+		base.OutboundEdges.Iterate(func(_ string, edges []link.ResolvedEdge) {
+			for _, e := range edges {
+				if e.Type != link.EdgeCalls && e.Type != link.EdgeDependsOn {
+					continue
+				}
+				baseKeys[moduleEdgeKey(e)] = true
+			}
+		})
+	}
+	violation := false
+	head.OutboundEdges.Iterate(func(_ string, edges []link.ResolvedEdge) {
+		if violation {
+			return
+		}
+		for _, e := range edges {
+			if e.Type != link.EdgeCalls && e.Type != link.EdgeDependsOn {
+				continue
+			}
+			if baseKeys[moduleEdgeKey(e)] {
+				continue
+			}
+			srcRank := layerRank(topLevelDir(edgeEndpointFile(head, base, e.SourceID)))
+			dstRank := layerRank(topLevelDir(edgeEndpointFile(head, base, e.TargetID)))
+			if srcRank < dstRank {
+				violation = true
+				return
+			}
+		}
+	})
+	return violation
+}
+
+// hasPublicSurfaceDelta reports whether the node sets differ in a
+// public-surface-relevant way: any added symbol, any removed symbol, or any
+// modified symbol whose short name is exported (uppercase). Signature and
+// doc-comment text both count as modifications.
+func hasPublicSurfaceDelta(base, head *akg.CodePropertyGraph) bool {
+	baseSigs := make(map[string]string)
+	if base != nil && base.Nodes != nil {
+		base.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
+			if n == nil {
+				return
+			}
+			baseSigs[id] = extractSignature(n) + "\x00" + extractDoc(n)
+		})
+	}
+	changed := false
+	if head != nil && head.Nodes != nil {
+		head.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
+			if changed || n == nil {
+				return
+			}
+			before, ok := baseSigs[id]
+			if !ok {
+				changed = true // added symbol
+				return
+			}
+			if isExportedShortName(id) && before != extractSignature(n)+"\x00"+extractDoc(n) {
+				changed = true // exported symbol modified
+			}
+		})
+	}
+	if changed {
+		return true
+	}
+	if base != nil && base.Nodes != nil && head != nil {
+		base.Nodes.Iterate(func(id string, _ *link.ResolvedNode) {
+			if changed {
+				return
+			}
+			if head.Nodes == nil {
+				changed = true
+				return
+			}
+			if _, ok := head.Nodes.Get(id); !ok {
+				changed = true // removed symbol
+			}
+		})
+	}
+	return changed
+}
+
+// sortedUnique sorts a slice copy and drops duplicates.
+func sortedUnique(in []string) []string {
+	if len(in) == 0 {
+		return in
+	}
+	cp := append([]string(nil), in...)
+	sort.Strings(cp)
+	out := cp[:1]
+	for _, s := range cp[1:] {
+		if s != out[len(out)-1] {
+			out = append(out, s)
+		}
+	}
+	return out
 }

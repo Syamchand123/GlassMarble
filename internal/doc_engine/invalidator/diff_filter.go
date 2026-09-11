@@ -235,12 +235,29 @@ func (inv *Invalidator) FindDirtySections(
 	return catalog.EnforceBudget(confirmedDirty, maxUpdates), nil
 }
 
+// structuralRootEvents lists the B3 structural dossier events that always
+// invalidate root docs (defense in depth: even if the generic ArchEvents
+// check below ever narrows, cycle/layering/public-surface deltas must still
+// reach README-level documents).
+var structuralRootEvents = map[string]bool{
+	"CYCLE_INTRODUCED":       true,
+	"CYCLE_RESOLVED":         true,
+	"LAYER_VIOLATION":        true,
+	"PUBLIC_SURFACE_CHANGED": true,
+}
+
 // isPublicSurfaceChange reports whether the dossier carries a public-surface
-// change: an added/removed EXPORTED symbol under cmd/ paths, or any
-// architectural events.
+// change: an added/removed EXPORTED symbol under cmd/ paths, any
+// architectural events, or — explicitly — any structural cycle/layering/
+// public-surface event.
 func isPublicSurfaceChange(dossier *config.GlobalCommitDossier) bool {
 	if dossier == nil {
 		return false
+	}
+	for _, ev := range dossier.ArchEvents {
+		if structuralRootEvents[strings.ToUpper(strings.TrimSpace(ev))] {
+			return true
+		}
 	}
 	if len(dossier.ArchEvents) > 0 {
 		return true

@@ -147,3 +147,47 @@ func TestAutoGenerateADRs(t *testing.T) {
 		t.Errorf("expected 0 ADR paths for non-arch commit, got %v", paths)
 	}
 }
+
+func TestEventsFromDossier(t *testing.T) {
+	events := EventsFromDossier([]string{
+		"COMPONENT_SPLIT", "COMPONENT_ADDED", "COMPONENT_REMOVED",
+		"CYCLE_INTRODUCED", "cycle_resolved", "LAYER_VIOLATION",
+		"NEW_DATABASE_LAYER", "SERVICE_ADDED", "INTERFACE_CHANGED",
+		"PUBLIC_SURFACE_CHANGED", "SECURITY_BOUNDARY_CHANGED",
+		"BOGUS_EVENT", "", "CYCLE_INTRODUCED",
+	}, "abc123")
+	if len(events) != 11 {
+		t.Fatalf("expected 11 mapped events (unknown/empty/dup skipped), got %d: %+v", len(events), events)
+	}
+	seen := map[string]bool{}
+	for _, e := range events {
+		seen[e.Type] = true
+		if strings.TrimSpace(e.Title) == "" || strings.TrimSpace(e.Context) == "" ||
+			strings.TrimSpace(e.Decision) == "" || strings.TrimSpace(e.Consequence) == "" {
+			t.Errorf("event %s has empty defaults: %+v", e.Type, e)
+		}
+		if e.CommitHash != "abc123" {
+			t.Errorf("event %s missing commit hash: %+v", e.Type, e)
+		}
+		if e.Timestamp.IsZero() {
+			t.Errorf("event %s missing timestamp", e.Type)
+		}
+	}
+	for _, want := range []string{
+		"COMPONENT_SPLIT", "COMPONENT_ADDED", "COMPONENT_REMOVED",
+		"CYCLE_INTRODUCED", "CYCLE_RESOLVED", "LAYER_VIOLATION",
+		"NEW_DATABASE_LAYER", "SERVICE_ADDED", "INTERFACE_CHANGED",
+		"PUBLIC_SURFACE_CHANGED", "SECURITY_BOUNDARY_CHANGED",
+	} {
+		if !seen[want] {
+			t.Errorf("expected mapped event type %s", want)
+		}
+	}
+	if seen["BOGUS_EVENT"] {
+		t.Errorf("unknown event names must not map")
+	}
+
+	if got := EventsFromDossier(nil, "abc123"); len(got) != 0 {
+		t.Errorf("expected no events for nil input, got %v", got)
+	}
+}

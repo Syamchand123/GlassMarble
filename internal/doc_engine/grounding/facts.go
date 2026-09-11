@@ -10,6 +10,8 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/catalog"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
+	doccontext "github.com/Syamchand123/GlassMarble/internal/doc_engine/grounding/context"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/grounding/resolve"
 )
 
 // AssembleFactSheet builds a complete, sanitized FactSheet for a single section.
@@ -19,6 +21,7 @@ func AssembleFactSheet(
 	graph *akg.CodePropertyGraph,
 	dossier *config.GlobalCommitDossier,
 	priorMarkdown string,
+	repoRoot string,
 ) *config.FactSheet {
 	if doc == nil {
 		return nil
@@ -69,26 +72,41 @@ func AssembleFactSheet(
 		}
 	}
 
-	// Callers: inbound CPG call edges into added/modified symbols.
+	// Callers: inbound CPG call edges into added/modified symbols AND every
+	// other payload symbol (B3: union of inbound CALLS sources over ALL
+	// payload symbols — added, modified, in-scope, and full-owned — deduped,
+	// sorted, and capped at maxPayloadCallers for prompt-budget safety).
 	// CallFlow: entry points followed by their outbound callee chain.
 	if graph != nil {
 		seenCallers := make(map[string]bool)
-		changedFQNs := make([]string, 0, len(payload.AddedSymbols)+len(payload.ModifiedSymbols))
+		fqnSet := make(map[string]bool)
 		for _, s := range payload.AddedSymbols {
-			changedFQNs = append(changedFQNs, s.FQN)
+			fqnSet[s.FQN] = true
 		}
 		for _, m := range payload.ModifiedSymbols {
-			changedFQNs = append(changedFQNs, m.FQN)
+			fqnSet[m.FQN] = true
 		}
-		for _, fqn := range changedFQNs {
+		for _, s := range payload.Symbols {
+			fqnSet[s.FQN] = true
+		}
+		for _, s := range payload.AllSymbols {
+			fqnSet[s.FQN] = true
+		}
+		for fqn := range fqnSet {
+			if fqn == "" {
+				continue
+			}
 			for _, e := range graph.GetInboundEdges(fqn) {
-				if e.Type == link.EdgeCalls && !seenCallers[e.SourceID] {
+				if e.Type == link.EdgeCalls && e.SourceID != "" && !seenCallers[e.SourceID] {
 					seenCallers[e.SourceID] = true
 					payload.Callers = append(payload.Callers, e.SourceID)
 				}
 			}
 		}
 		sortStrings(payload.Callers)
+		if len(payload.Callers) > maxPayloadCallers {
+			payload.Callers = payload.Callers[:maxPayloadCallers]
+		}
 		for _, ep := range doc.Scope.EntryPoints {
 			payload.CallFlow = append(payload.CallFlow, ep)
 			for _, e := range graph.GetOutboundEdges(ep) {
@@ -118,6 +136,16 @@ func AssembleFactSheet(
 			payload.DocComments[s.FQN] = s.Doc
 		}
 	}
+
+	// B1 precision layer: upgrade symbol positions via SCIP → LSP → AST
+	// resolution. Only SCIP/LSP answers override (higher provenance);
+	// AST answers confirm what the collectors already extracted.
+	// B2 relevance layer: PageRank-ranked neighborhood context within a
+	// fixed token budget (default 1000, Aider --map-tokens pattern).
+	// Both are deterministic: identical inputs → identical payloads, so
+	// section hashes stay stable across runs.
+	applyPrecisionLayer(doc, payload, graph, repoRoot)
+	applyContextLayer(doc, payload, graph)
 
 	// Render diagrams specified for this document
 	for _, diagRef := range doc.Diagrams {
@@ -168,7 +196,140 @@ func fqnFilePart(fqn string) string {
 	return ""
 }
 
+// maxPayloadCallers caps payload.Callers (union of inbound callers over all
+// payload symbols) so caller context stays within prompt budget.
+const maxPayloadCallers = 20
+
 // sortStrings sorts in place for deterministic payloads.
 func sortStrings(items []string) {
 	sort.Strings(items)
 }
+
+// applyPrecisionLayer (plan B1) upgrades symbol positions via SCIP → LSP →
+// AST resolution. Only higher-provenance answers (scip, lsp) override what
+// the collectors extracted; AST answers merely confirm. Every symbol keeps
+// a Provenance trail on the fact itself.
+func applyPrecisionLayer(doc *config.DocSpec, payload *config.GroundTruthPayload, graph *akg.CodePropertyGraph, repoRoot string) {
+	if payload == nil || doc == nil {
+		return
+	}
+	var fqns []string
+	seen := make(map[string]bool)
+	collect := func(fqn string) {
+		if fqn != "" && !seen[fqn] {
+			seen[fqn] = true
+			fqns = append(fqns, fqn)
+		}
+	}
+	for i := range payload.Symbols {
+		collect(payload.Symbols[i].FQN)
+	}
+	for i := range payload.AllSymbols {
+		collect(payload.AllSymbols[i].FQN)
+	}
+	if len(fqns) == 0 {
+		return
+	}
+	results := resolve.ResolveBatch(fqns, graph, repoRoot)
+	upgrade := func(s *config.SymbolFact) {
+		r, ok := results[s.FQN]
+		if !ok {
+			return
+		}
+		if r.Provenance == "scip" || r.Provenance == "lsp" {
+			if r.File != "" {
+				s.File = r.File
+			}
+			if r.Line > 0 {
+				s.Line = r.Line
+				end := r.EndLine
+				if end < r.Line {
+					end = r.Line
+				}
+				s.Permalink = FormatPermalink(r.File, r.Line, end)
+			}
+		}
+		s.Provenance = provenanceOr(s.Provenance, r.Provenance)
+	}
+	for i := range payload.Symbols {
+		upgrade(&payload.Symbols[i])
+	}
+	for i := range payload.AllSymbols {
+		upgrade(&payload.AllSymbols[i])
+	}
+}
+
+// provenanceOr prefers the higher-precision source: scip > lsp > ast.
+func provenanceOr(current, next string) string {
+	rank := map[string]int{"scip": 3, "lsp": 2, "ast": 1, "unresolved": 0}
+	if rank[next] > rank[current] {
+		return next
+	}
+	if current == "" {
+		return next
+	}
+	return current
+}
+
+// payloadCovers reports whether a ranked symbol is already grounded in the
+// payload (same FQN), to avoid duplicating facts.
+func payloadCovers(payload *config.GroundTruthPayload, fqn string) bool {
+	for _, s := range payload.Symbols {
+		if s.FQN == fqn {
+			return true
+		}
+	}
+	for _, s := range payload.AllSymbols {
+		if s.FQN == fqn {
+			return true
+		}
+	}
+	return false
+}
+
+// applyContextLayer (plan B2) appends PageRank-ranked neighborhood symbols
+// (the callers/types that explain WHY, capped for prompt-budget safety) as
+// Kind:"context" facts. Deterministic output keeps section hashes stable.
+func applyContextLayer(doc *config.DocSpec, payload *config.GroundTruthPayload, graph *akg.CodePropertyGraph) {
+	if payload == nil || doc == nil || graph == nil {
+		return
+	}
+	var seeds []string
+	for _, s := range payload.AddedSymbols {
+		seeds = append(seeds, s.FQN)
+	}
+	for _, m := range payload.ModifiedSymbols {
+		seeds = append(seeds, m.FQN)
+	}
+	seeds = append(seeds, doc.Scope.EntryPoints...)
+	if len(seeds) == 0 {
+		return
+	}
+	ranked := doccontext.SelectContext(graph, seeds, defaultContextBudgetTokens)
+	added := 0
+	for _, f := range ranked.Files {
+		for _, sym := range f.Symbols {
+			if added >= maxContextSymbols || payloadCovers(payload, sym.FQN) {
+				continue
+			}
+			payload.Symbols = append(payload.Symbols, config.SymbolFact{
+				FQN:        sym.FQN,
+				Kind:       "context",
+				File:       sym.File,
+				Line:       sym.Line,
+				Permalink:  FormatPermalink(sym.File, sym.Line, sym.Line),
+				Signature:  sym.FQN,
+				Provenance: "pagerank",
+			})
+			added++
+		}
+	}
+}
+
+const (
+	// defaultContextBudgetTokens mirrors Aider's --map-tokens default scale
+	// for relevance-ranked context allowances.
+	defaultContextBudgetTokens = 1000
+	// maxContextSymbols bounds FactSheet growth from the relevance layer.
+	maxContextSymbols = 10
+)

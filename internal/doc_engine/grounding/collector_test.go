@@ -285,3 +285,57 @@ func TestCollector_ExtendedAliasesResolve(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, payload)
 }
+
+// addEdgeBoth registers an edge in both the outbound and inbound maps,
+// mirroring how the AKG persists edges.
+func addEdgeBoth(g *akg.CodePropertyGraph, src, dst string, typ link.RelationshipType) {
+	e := link.ResolvedEdge{SourceID: src, TargetID: dst, Type: typ}
+	out, _ := g.OutboundEdges.Get(src)
+	g.OutboundEdges = g.OutboundEdges.Set(src, append(out, e))
+	in, _ := g.InboundEdges.Get(dst)
+	g.InboundEdges = g.InboundEdges.Set(dst, append(in, e))
+}
+
+func TestCollectCallgraphFacts_InboundCallers(t *testing.T) {
+	g := akg.NewCodePropertyGraph("inbound-test")
+	ep := "a.go::Main"
+	callee := "b.go::Work"
+	callerOfEP := "c.go::Trigger"
+	callerOfCallee := "d.go::Other"
+	for _, id := range []string{ep, callee, callerOfEP, callerOfCallee} {
+		g.Nodes = g.Nodes.Set(id, &link.ResolvedNode{
+			ID:   id,
+			Name: id,
+			Kind: "FUNCTION",
+			FileSpec: link.LocationMeta{
+				Path:      "a.go",
+				LineStart: 1,
+				LineEnd:   3,
+			},
+		})
+	}
+	addEdgeBoth(g, ep, callee, link.EdgeCalls)             // outbound: callee
+	addEdgeBoth(g, callerOfEP, ep, link.EdgeCalls)         // inbound of entry point
+	addEdgeBoth(g, callerOfCallee, callee, link.EdgeCalls) // one-hop inbound via callee
+	addEdgeBoth(g, "e.go::Dep", ep, link.EdgeDependsOn)    // non-call edge: ignored
+
+	c := NewCollector(g)
+	scope := &config.ScopeRule{Paths: []string{"**"}, EntryPoints: []string{ep}}
+	sec := &config.SectionSpec{ID: "cg", GroundWith: []string{"callgraph"}}
+
+	payload, err := c.CollectSectionFacts(sec, scope)
+	require.NoError(t, err)
+	require.NotNil(t, payload)
+
+	kindByFQN := make(map[string]string)
+	for _, s := range payload.Symbols {
+		if prev, dup := kindByFQN[s.FQN]; dup {
+			t.Fatalf("duplicate symbol fact %q (kinds %q and %q)", s.FQN, prev, s.Kind)
+		}
+		kindByFQN[s.FQN] = s.Kind
+	}
+	assert.Equal(t, "callee", kindByFQN[callee], "outbound callee must be present")
+	assert.Equal(t, "caller", kindByFQN[callerOfEP], "inbound caller of entry point must be present")
+	assert.Equal(t, "caller", kindByFQN[callerOfCallee], "one-hop inbound caller via callee must be present")
+	assert.NotContains(t, kindByFQN, "e.go::Dep", "non-CALLS inbound edges must be ignored")
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -177,3 +178,68 @@ func TestOperations_DevExAndPublishing(t *testing.T) {
 	}
 }
 
+func TestComputeFreshnessScore_ArchEventsDecay(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := t.TempDir()
+	runGit := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	writeScope := func(content string) {
+		t.Helper()
+		full := filepath.Join(repo, "scope", "a.txt")
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGit("init", "-q")
+	runGit("config", "user.email", "test@example.com")
+	runGit("config", "user.name", "Test")
+	writeScope("v1")
+	runGit("add", ".")
+	runGit("commit", "-qm", "feat: add thing")
+	hashA := runGit("rev-parse", "HEAD")
+	writeScope("v2")
+	runGit("add", ".")
+	runGit("commit", "-qm", "feat: add second thing")
+
+	doc := config.DocSpec{
+		ID:         "fresh",
+		TargetPath: "docs/fresh.md",
+		Scope:      config.ScopeRule{Paths: []string{"scope/**"}},
+	}
+
+	// One in-scope commit behind HEAD either way.
+	plainScore, plainBehind := ComputeFreshnessScore(repo, doc, hashA)
+	eventScore, eventBehind := ComputeFreshnessScoreWithArchEvents(repo, doc, hashA, []string{"LAYER_VIOLATION"})
+	if plainBehind != 1 || eventBehind != 1 {
+		t.Fatalf("expected 1 commit behind, got plain=%d events=%d", plainBehind, eventBehind)
+	}
+	// B3: dossier arch events raise the decay base (1.0 vs 0.5), so the
+	// events-aware score must decay harder than the event-less score.
+	if eventScore >= plainScore {
+		t.Errorf("expected events-aware score < plain score, got events=%d plain=%d", eventScore, plainScore)
+	}
+	// Empty events behave like the dossier-less entry point.
+	emptyScore, _ := ComputeFreshnessScoreWithArchEvents(repo, doc, hashA, nil)
+	if emptyScore != plainScore {
+		t.Errorf("expected empty events to match plain score (%d), got %d", plainScore, emptyScore)
+	}
+	// Fully synced HEAD scores 100 regardless of events.
+	head := runGit("rev-parse", "HEAD")
+	fullScore, fullBehind := ComputeFreshnessScoreWithArchEvents(repo, doc, head, []string{"CYCLE_INTRODUCED"})
+	if fullScore != 100 || fullBehind != 0 {
+		t.Errorf("expected (100, 0) when synced, got (%d, %d)", fullScore, fullBehind)
+	}
+}

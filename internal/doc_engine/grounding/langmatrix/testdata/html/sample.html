@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- Page meta for the grounding fixture (doc comment analog). -->
+  <title>Greeting fixture</title>
+</head>
+<body>
+  <!-- Card is the primary greeting surface (type analog: element). -->
+  <main id="app" class="card">
+    <h1 data-testid="greeting">hello ada</h1>
+    <button type="button" onclick="greetOne('ada')">Greet</button>
+  </main>
+  <!-- NOCONCURRENCY: HTML has no concurrency primitives. -->
+  <!-- NOCONFIG: HTML has no env reads; config is injected at build time. -->
+  <!-- NOTEST: HTML has no test functions; tests live in script files. -->
+</body>
+</html>

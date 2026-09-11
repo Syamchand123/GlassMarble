@@ -234,3 +234,90 @@ func AutoGenerateADRs(repoRoot, commitHash, commitMsg string) ([]string, error) 
 	}
 	return paths, nil
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// B3: dossier-event → ADR mapping (ADD ONLY — existing code above untouched)
+// ────────────────────────────────────────────────────────────────────────────
+
+// dossierADRDefaults maps known dossier ArchEvent names (structural events
+// from the invalidator plus the keyword-derived set) to ADR skeleton
+// Title/Decision text. Title/Decision reuse the ScanArchEvents defaults
+// where possible; Consequence reuses the shared generic default.
+var dossierADRDefaults = map[string]struct {
+	title    string
+	decision string
+}{
+	"COMPONENT_SPLIT": {
+		title:    "Subsystem Decoupling & Component Split",
+		decision: "Separated concerns into autonomous domain subpackages to eliminate architectural coupling.",
+	},
+	"COMPONENT_ADDED": {
+		title:    "New Component Introduced",
+		decision: "Scoped the new component with explicit package boundaries and ownership.",
+	},
+	"COMPONENT_REMOVED": {
+		title:    "Component Removed",
+		decision: "Retired the obsolete component and re-homed its dependents on the surviving public surface.",
+	},
+	"CYCLE_INTRODUCED": {
+		title:    "Dependency Cycle Introduced — Remediation Required",
+		decision: "Flagged the new import cycle for inversion; depend on abstractions, not concretions.",
+	},
+	"CYCLE_RESOLVED": {
+		title:    "Resolution of Dependency Cycle",
+		decision: "Inverted dependency relationships to establish an acyclic package hierarchy.",
+	},
+	"LAYER_VIOLATION": {
+		title:    "Layer Boundary Violation Detected",
+		decision: "Restored strict layering: upper layers may depend downward only, never upward.",
+	},
+	"NEW_DATABASE_LAYER": {
+		title:    "Introduction of Storage & Persistence Layer",
+		decision: "Adopted standardized persistence patterns with MVCC file locking and atomic writes.",
+	},
+	"SERVICE_ADDED": {
+		title:    "New Service / Component Introduced",
+		decision: "Registered the new service boundary with explicit ownership and interface contracts.",
+	},
+	"INTERFACE_CHANGED": {
+		title:    "Public Interface Change",
+		decision: "Versioned the public surface change with a migration path for existing callers.",
+	},
+	"PUBLIC_SURFACE_CHANGED": {
+		title:    "Public Surface Change",
+		decision: "Versioned the public surface change with a migration path for existing callers.",
+	},
+	"SECURITY_BOUNDARY_CHANGED": {
+		title:    "Security Boundary Change",
+		decision: "Centralized auth decisions behind a single session/token boundary with auditable flows.",
+	},
+}
+
+// EventsFromDossier maps dossier arch-event names to ADR event skeletons
+// with non-empty Title/Context/Decision/Consequence defaults. Names match
+// case-insensitively and dedupe; unknown names produce no event.
+func EventsFromDossier(archEvents []string, commitHash string) []ADREvent {
+	var out []ADREvent
+	seen := make(map[string]bool, len(archEvents))
+	for _, raw := range archEvents {
+		evType := strings.ToUpper(strings.TrimSpace(raw))
+		if evType == "" || seen[evType] {
+			continue
+		}
+		seen[evType] = true
+		def, ok := dossierADRDefaults[evType]
+		if !ok {
+			continue
+		}
+		out = append(out, ADREvent{
+			Type:        evType,
+			Title:       def.title,
+			Context:     fmt.Sprintf("Structural architectural event %s detected at commit %s.", evType, commitHash),
+			Decision:    def.decision,
+			Consequence: "Reduces coupling, clarifies module boundaries, and improves testability.",
+			CommitHash:  commitHash,
+			Timestamp:   time.Now(),
+		})
+	}
+	return out
+}

@@ -1,0 +1,16 @@
+/* Grounding fixture for the depth matrix. */
+/* NOCONFIG: CSS has no env reads; theming comes from variables. */
+:root {
+  --greet-fg: #1a1a1a;
+  --greet-gap: 8px;
+}
+
+/* Card is the primary greeting surface (type analog: rule set). */
+.card {
+  color: var(--greet-fg);
+  margin: calc(var(--greet-gap) * 2);
+  display: grid;
+}
+
+/* NOCONCURRENCY: CSS has no concurrency primitives. */
+/* NOTEST: CSS has no test functions; checks live in visual tests. */

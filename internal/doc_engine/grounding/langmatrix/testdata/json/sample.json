@@ -1,0 +1,7 @@
+{
+  "service": "greeting-fixture",
+  "addr": "localhost",
+  "port": 8080,
+  "features": ["greet", "greetAll"],
+  "limits": { "maxNames": 100, "timeoutMs": 250 }
+}

@@ -456,7 +456,12 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 	}
 	for i := range docs {
 		ds := storage.GetOrCreateDocState(freshState, docs[i].TargetPath)
-		freshScore, behind := ComputeFreshnessScore(repoRoot, docs[i], ds.LastUpdatedCommit)
+		// B3: thread the run dossier's structural arch events into decay.
+		var runArchEvents []string
+		if dossier != nil {
+			runArchEvents = dossier.ArchEvents
+		}
+		freshScore, behind := ComputeFreshnessScoreWithArchEvents(repoRoot, docs[i], ds.LastUpdatedCommit, runArchEvents)
 		ds.FreshnessScore = freshScore
 		ds.CommitsBehind = behind
 	}
@@ -765,18 +770,31 @@ func displayBranch(branch string) string {
 // P8 freshness (master-plan Appendix B)
 // ────────────────────────────────────────────────────────────────────────────
 
-// ComputeFreshnessScore scores how in-sync a document is with HEAD (0-100)
-// and counts the in-scope commits since lastSyncCommit.
+// ComputeFreshnessScoreWithArchEvents scores how in-sync a document is with
+// HEAD (0-100) and counts the in-scope commits since lastSyncCommit,
+// decaying by the current dossier's structural arch events.
 //
 // It runs `git rev-list --count` and `git log --format=%H|%s|%ct
 // <lastSync>..HEAD -- <scope paths>` (scope globs pass through verbatim;
 // entry_points are ignored for history). Each commit (capped at 100) is
 // weighted by intent — via commit_reasoning, falling back to keyword weights
 // — and decayed by recency: contribution = weight * base / sqrt(days+1),
-// where base is 1.0 when any subject carries dossier-arch keywords
-// (split/cycle/layer/service/database/interface), else 0.5.
+// where base is 1.0 iff len(archEvents) > 0 (the dossier carries structural
+// arch events), else 0.5.
 // score = max(0, 100 - round(sum)). Any git failure yields (0, 0).
+func ComputeFreshnessScoreWithArchEvents(repoRoot string, doc docconfig.DocSpec, lastSyncCommit string, archEvents []string) (score int, commitsBehind int) {
+	return computeFreshnessScore(repoRoot, doc, lastSyncCommit, archEvents)
+}
+
+// ComputeFreshnessScore is the dossier-less entry point: identical scoring
+// with no arch events (base 0.5). Prefer ComputeFreshnessScoreWithArchEvents
+// when the run dossier is available.
 func ComputeFreshnessScore(repoRoot string, doc docconfig.DocSpec, lastSyncCommit string) (score int, commitsBehind int) {
+	return computeFreshnessScore(repoRoot, doc, lastSyncCommit, nil)
+}
+
+// computeFreshnessScore implements both exported entry points above.
+func computeFreshnessScore(repoRoot string, doc docconfig.DocSpec, lastSyncCommit string, archEvents []string) (score int, commitsBehind int) {
 	paths := append([]string{}, doc.Scope.Paths...)
 
 	rangeSpec := "HEAD"
@@ -838,12 +856,11 @@ func ComputeFreshnessScore(repoRoot string, doc docconfig.DocSpec, lastSyncCommi
 		return 100, commitsBehind
 	}
 
+	// B3: the recency base keys off the dossier's structural arch events —
+	// base is 1.0 iff the dossier carries any arch event, else 0.5.
 	base := 0.5
-	for _, c := range commits {
-		if hasDossierArchKeyword(c.subject) {
-			base = 1.0
-			break
-		}
+	if len(archEvents) > 0 {
+		base = 1.0
 	}
 
 	now := time.Now().Unix()
@@ -934,18 +951,6 @@ func keywordWeightForSubject(subject string) int {
 	default:
 		return 5
 	}
-}
-
-// hasDossierArchKeyword reports whether a commit subject carries
-// dossier-arch keywords (split/cycle/layer/service/database/interface).
-func hasDossierArchKeyword(subject string) bool {
-	lower := strings.ToLower(subject)
-	for _, kw := range []string{"split", "cycle", "layer", "service", "database", "interface"} {
-		if strings.Contains(lower, kw) {
-			return true
-		}
-	}
-	return false
 }
 
 // ────────────────────────────────────────────────────────────────────────────

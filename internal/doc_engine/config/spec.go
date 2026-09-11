@@ -396,6 +396,11 @@ type SymbolFact struct {
 	// Permalink is the file:line range anchor for embedded links.
 	// Example: "internal/auth/pkce.go#L47-L89"
 	Permalink string `json:"permalink,omitempty"`
+
+	// Provenance records which resolver produced this fact's location
+	// (plan B1): "scip" | "lsp" | "ast" | "unresolved".
+	// Empty means the location predates provenance tracking.
+	Provenance string `json:"provenance,omitempty"`
 }
 
 // SymbolDelta captures a change to an existing symbol between two commits.
