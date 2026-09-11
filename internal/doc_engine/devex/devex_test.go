@@ -218,8 +218,9 @@ func TestExportKnowledgeBaseChunkSymbols(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExportKnowledgeBase failed: %v", err)
 	}
-	if summary.TotalChunks != 1 {
-		t.Fatalf("expected 1 chunk, got %d", summary.TotalChunks)
+	// 1 section chunk + 1 AST code chunk for the referenced auth.go (D3).
+	if summary.TotalChunks != 2 {
+		t.Fatalf("expected 2 chunks (section + code), got %d", summary.TotalChunks)
 	}
 	chunkFile := filepath.Join(tempDir, ".glassmarble", "rag", "auth_intro.json")
 	raw, err := os.ReadFile(chunkFile)

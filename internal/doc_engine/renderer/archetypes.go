@@ -482,3 +482,38 @@ func ApplyArchetype(spec *config.DocSpec) error {
 
 	return nil
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// D2: Diátaxis quadrants (ADD ONLY — existing code above untouched)
+// ────────────────────────────────────────────────────────────────────────────
+
+// Archetype describes a built-in document template and its Diátaxis quadrant.
+// Quadrant is one of "tutorial", "how-to", "reference" or "explanation".
+type Archetype struct {
+	Name     string
+	Quadrant string
+}
+
+// archetypeQuadrants maps each of the 10 built-in archetype names to its
+// Diátaxis quadrant: api/database/module/config → reference (complete,
+// code-mirroring catalogs); runbook/migration → how-to (goal-shaped,
+// verifiable procedures); onboarding → tutorial (end-to-end guided lesson);
+// architecture/security/adr → explanation (why-focused, decision-linked).
+var archetypeQuadrants = map[string]string{
+	"architecture": "explanation",
+	"module":       "reference",
+	"runbook":      "how-to",
+	"onboarding":   "tutorial",
+	"migration":    "how-to",
+	"adr":          "explanation",
+	"api":          "reference",
+	"security":     "explanation",
+	"database":     "reference",
+	"config":       "reference",
+}
+
+// ArchetypeQuadrant returns the Diátaxis quadrant for the named archetype.
+// The lookup is case-insensitive and trims whitespace; unknown names map to "".
+func ArchetypeQuadrant(name string) string {
+	return archetypeQuadrants[strings.ToLower(strings.TrimSpace(name))]
+}

@@ -321,3 +321,406 @@ func EventsFromDossier(archEvents []string, commitHash string) []ADREvent {
 	}
 	return out
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// D4: ADR lifecycle — MADR template, supersession, index, validation
+// (ADD ONLY — existing code above untouched)
+// ────────────────────────────────────────────────────────────────────────────
+
+// ADRMADRTemplate is the MADR v2 skeleton rendered by RenderMADR. Verbs in
+// order: title, status, date, commit, context, decision drivers, considered
+// options, decision outcome, consequences.
+const ADRMADRTemplate = `# %s
+
+* Status: %s
+* Date: %s
+* Commit: %s
+
+## Context and Problem Statement
+
+%s
+
+## Decision Drivers
+
+%s
+
+## Considered Options
+
+%s
+
+## Decision Outcome
+
+%s
+
+## Consequences
+
+%s
+`
+
+// RenderMADR renders an ADREvent as a MADR v2 decision record. Missing fields
+// fall back to deterministic defaults so every section is always present;
+// history is never rewritten, only rendered.
+func RenderMADR(event ADREvent) string {
+	title := strings.TrimSpace(event.Title)
+	if title == "" {
+		title = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(event.Type), "_", " "))
+	}
+	if title == "" {
+		title = "Untitled architectural decision"
+	}
+	status := "proposed"
+	dateStr := event.Timestamp.Format("2006-01-02")
+	if event.Timestamp.IsZero() {
+		dateStr = time.Now().Format("2006-01-02")
+	}
+	commit := strings.TrimSpace(event.CommitHash)
+	if commit == "" {
+		commit = "unknown"
+	}
+	context := strings.TrimSpace(event.Context)
+	if context == "" {
+		context = fmt.Sprintf("Architectural decision context for %s.", event.Type)
+	}
+	drivers := "Primary drivers: reduce coupling, preserve correctness, " +
+		"and keep the architecture evolvable under future change."
+	options := "Considered options: (1) adopt the decision recorded below; " +
+		"(2) keep the status quo; (3) defer pending further evidence. " +
+		"See Decision Outcome for the chosen path."
+	outcome := strings.TrimSpace(event.Decision)
+	if outcome == "" {
+		outcome = "Recorded the architectural decision implied by the change with explicit ownership."
+	}
+	consequences := strings.TrimSpace(event.Consequence)
+	if consequences == "" {
+		consequences = "Reduces coupling, clarifies module boundaries, and improves testability."
+	}
+	return fmt.Sprintf(ADRMADRTemplate,
+		title, status, dateStr, commit,
+		context, drivers, options, outcome, consequences)
+}
+
+// trimEndCR strips a single trailing carriage return (CRLF tolerance).
+func trimEndCR(s string) string {
+	return strings.TrimSuffix(s, "\r")
+}
+
+// rewriteFrontmatterStatus sets the `status:` value inside the YAML
+// frontmatter block (leading --- ... ---) to status. Files without
+// frontmatter are returned unchanged; body text is never touched.
+func rewriteFrontmatterStatus(content, status string) string {
+	lines := strings.Split(content, "\n")
+	if len(lines) < 2 || strings.TrimSpace(trimEndCR(lines[0])) != "---" {
+		return content
+	}
+	end := -1
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(trimEndCR(lines[i])) == "---" {
+			end = i
+			break
+		}
+	}
+	if end < 0 {
+		return content
+	}
+	for i := 1; i < end; i++ {
+		cr := ""
+		line := lines[i]
+		if strings.HasSuffix(line, "\r") {
+			cr = "\r"
+			line = strings.TrimSuffix(line, "\r")
+		}
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "status:") {
+			indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+			lines[i] = indent + "status: " + status + cr
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// MarkSuperseded flips the old ADR's frontmatter `status:` to "superseded"
+// and appends a `> Superseded by [<newFile>](<newFile>)` note when not
+// already present (idempotent reruns are byte-identical). History is never
+// otherwise rewritten, per the ADR immutability rule. oldFile is resolved
+// under repoRoot unless absolute; a missing target is an error.
+func MarkSuperseded(repoRoot, oldFile, newFile string) error {
+	oldPath := oldFile
+	if !filepath.IsAbs(oldPath) {
+		oldPath = filepath.Join(repoRoot, filepath.FromSlash(oldFile))
+	}
+	data, err := os.ReadFile(oldPath)
+	if err != nil {
+		return fmt.Errorf("archfeatures: supersede target %q not found: %w", oldFile, err)
+	}
+	content := string(data)
+	updated := rewriteFrontmatterStatus(content, "superseded")
+	note := fmt.Sprintf("> Superseded by [%s](%s)", newFile, newFile)
+	if !strings.Contains(updated, note) {
+		if !strings.HasSuffix(updated, "\n") {
+			updated += "\n"
+		}
+		updated += "\n" + note + "\n"
+	}
+	if err := os.WriteFile(oldPath, []byte(updated), 0644); err != nil {
+		return fmt.Errorf("archfeatures: writing superseded ADR %q: %w", oldFile, err)
+	}
+	return nil
+}
+
+// adrKnownStatuses is the closed ADR status vocabulary.
+var adrKnownStatuses = map[string]bool{
+	"proposed":   true,
+	"accepted":   true,
+	"rejected":   true,
+	"deprecated": true,
+	"superseded": true,
+}
+
+// adrAllowedTransitions maps each status to the set of legal successors.
+// "" denotes a brand-new file. Terminal states map to an empty set.
+var adrAllowedTransitions = map[string]map[string]bool{
+	"": {
+		"proposed": true,
+		"accepted": true,
+	},
+	"proposed": {
+		"accepted":   true,
+		"rejected":   true,
+		"deprecated": true,
+	},
+	"accepted": {
+		"deprecated": true,
+		"superseded": true,
+	},
+	"deprecated": {
+		"superseded": true,
+	},
+	"rejected":   {},
+	"superseded": {},
+}
+
+// ValidateStatusTransition enforces the ADR status lifecycle: proposed →
+// {accepted, rejected, deprecated}, accepted → {deprecated, superseded},
+// deprecated → {superseded}, superseded/rejected terminal, "" (new file) →
+// {proposed, accepted}. Same→same is nil; unknown statuses are errors.
+func ValidateStatusTransition(old, new string) error {
+	o := strings.ToLower(strings.TrimSpace(old))
+	n := strings.ToLower(strings.TrimSpace(new))
+	if o != "" && !adrKnownStatuses[o] {
+		return fmt.Errorf("archfeatures: unknown ADR status %q", old)
+	}
+	if !adrKnownStatuses[n] {
+		return fmt.Errorf("archfeatures: unknown ADR status %q", new)
+	}
+	if o == n {
+		return nil
+	}
+	if adrAllowedTransitions[o][n] {
+		return nil
+	}
+	return fmt.Errorf("archfeatures: illegal ADR status transition %q → %q", old, new)
+}
+
+// frontmatterValue extracts a `key: value` entry from the leading YAML
+// frontmatter block (--- ... ---), trimming quotes. Case-insensitive key.
+func frontmatterValue(lines []string, key string) (string, bool) {
+	if len(lines) < 2 || strings.TrimSpace(trimEndCR(lines[0])) != "---" {
+		return "", false
+	}
+	for i := 1; i < len(lines); i++ {
+		line := trimEndCR(lines[i])
+		if strings.TrimSpace(line) == "---" {
+			break
+		}
+		trimmed := strings.TrimSpace(line)
+		if ci := strings.Index(trimmed, ":"); ci >= 0 {
+			if strings.ToLower(strings.TrimSpace(trimmed[:ci])) == key {
+				return strings.Trim(strings.TrimSpace(trimmed[ci+1:]), `"'`), true
+			}
+		}
+	}
+	return "", false
+}
+
+// parseADRTitle returns the first `# ` heading text, or "" when absent.
+func parseADRTitle(content string) string {
+	for _, raw := range strings.Split(content, "\n") {
+		line := trimEndCR(raw)
+		if strings.HasPrefix(line, "# ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "# "))
+		}
+	}
+	return ""
+}
+
+// parseADRStatus returns the frontmatter `status:` value, else the first
+// non-empty line of the `## Status` section, else "unknown".
+func parseADRStatus(content string) string {
+	lines := strings.Split(content, "\n")
+	if v, ok := frontmatterValue(lines, "status"); ok && strings.TrimSpace(v) != "" {
+		return strings.TrimSpace(v)
+	}
+	for i, raw := range lines {
+		if strings.ToLower(strings.TrimSpace(trimEndCR(raw))) == "## status" {
+			for _, rest := range lines[i+1:] {
+				if t := strings.TrimSpace(trimEndCR(rest)); t != "" {
+					return t
+				}
+			}
+		}
+	}
+	return "unknown"
+}
+
+// escapeADRCell escapes pipe characters so titles never break the index table.
+func escapeADRCell(s string) string {
+	return strings.ReplaceAll(s, "|", "\\|")
+}
+
+// adrDateCell renders the index Date cell from parsed date/commit metadata.
+func adrDateCell(date, commit string) string {
+	date = strings.TrimSpace(date)
+	commit = strings.TrimSpace(commit)
+	switch {
+	case date != "" && commit != "":
+		return date + " (" + commit + ")"
+	case date != "":
+		return date
+	case commit != "":
+		return commit
+	default:
+		return "unknown"
+	}
+}
+
+// RegenerateIndex rebuilds docs/adr/index.md deterministically (filename
+// ascending): a markdown table (| ADR | Title | Status | Date |) over every
+// docs/adr/*.md except index.md/template.md, plus per-file supersession
+// notes for lines containing "Superseded by". Missing docs/adr is created
+// with a header-only table.
+func RegenerateIndex(repoRoot string) error {
+	adrDir := filepath.Join(repoRoot, "docs", "adr")
+	if err := os.MkdirAll(adrDir, 0755); err != nil {
+		return fmt.Errorf("archfeatures: creating adr directory: %w", err)
+	}
+	entries, err := os.ReadDir(adrDir)
+	if err != nil {
+		return fmt.Errorf("archfeatures: reading adr directory: %w", err)
+	}
+	type adrRow struct {
+		file   string
+		title  string
+		status string
+		date   string
+		notes  []string
+	}
+	var rows []adrRow
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(strings.ToLower(name), ".md") {
+			continue
+		}
+		if lower := strings.ToLower(name); lower == "index.md" || lower == "template.md" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(adrDir, name))
+		if err != nil {
+			return fmt.Errorf("archfeatures: reading ADR %q: %w", name, err)
+		}
+		content := string(data)
+		lines := strings.Split(content, "\n")
+		title := parseADRTitle(content)
+		if title == "" {
+			title = strings.TrimSuffix(name, ".md")
+		}
+		date, _ := frontmatterValue(lines, "date")
+		commit, _ := frontmatterValue(lines, "commit")
+		var notes []string
+		for _, raw := range lines {
+			if t := strings.TrimSpace(trimEndCR(raw)); strings.Contains(t, "Superseded by") {
+				notes = append(notes, t)
+			}
+		}
+		rows = append(rows, adrRow{
+			file:   name,
+			title:  title,
+			status: parseADRStatus(content),
+			date:   adrDateCell(date, commit),
+			notes:  notes,
+		})
+	}
+	var b strings.Builder
+	b.WriteString("# ADR Index\n\n")
+	b.WriteString("> Auto-generated by GlassMarble. Do not edit by hand.\n\n")
+	b.WriteString("| ADR | Title | Status | Date |\n")
+	b.WriteString("| --- | --- | --- | --- |\n")
+	for _, r := range rows {
+		fmt.Fprintf(&b, "| %s | %s | %s | %s |\n",
+			escapeADRCell(r.file), escapeADRCell(r.title),
+			escapeADRCell(r.status), escapeADRCell(r.date))
+	}
+	hasNotes := false
+	for _, r := range rows {
+		if len(r.notes) > 0 {
+			hasNotes = true
+			break
+		}
+	}
+	if hasNotes {
+		b.WriteString("\n## Supersession\n\n")
+		for _, r := range rows {
+			for _, n := range r.notes {
+				fmt.Fprintf(&b, "- `%s`: %s\n", r.file, n)
+			}
+		}
+	}
+	indexPath := filepath.Join(adrDir, "index.md")
+	if err := os.WriteFile(indexPath, []byte(b.String()), 0644); err != nil {
+		return fmt.Errorf("archfeatures: writing ADR index: %w", err)
+	}
+	return nil
+}
+
+// ValidateADRLifecycle checks every docs/adr/*.md (except index.md and
+// template.md) in filename order: unknown status is a failure, and
+// `superseded` status without a "Superseded by" link is a failure. A
+// missing docs/adr directory means the opt-in feature is unused → nil.
+func ValidateADRLifecycle(repoRoot string) []string {
+	adrDir := filepath.Join(repoRoot, "docs", "adr")
+	entries, err := os.ReadDir(adrDir)
+	if err != nil {
+		return nil
+	}
+	var failures []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(strings.ToLower(name), ".md") {
+			continue
+		}
+		if lower := strings.ToLower(name); lower == "index.md" || lower == "template.md" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(adrDir, name))
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("adr %s: unreadable: %v",
+				filepath.ToSlash(filepath.Join("docs", "adr", name)), err))
+			continue
+		}
+		content := string(data)
+		status := strings.ToLower(strings.TrimSpace(parseADRStatus(content)))
+		rel := filepath.ToSlash(filepath.Join("docs", "adr", name))
+		if status == "" || status == "unknown" {
+			failures = append(failures, fmt.Sprintf("adr %s: unknown status", rel))
+			continue
+		}
+		if status == "superseded" && !strings.Contains(content, "Superseded by") {
+			failures = append(failures, fmt.Sprintf("adr %s: status superseded without a \"Superseded by\" link", rel))
+		}
+	}
+	return failures
+}

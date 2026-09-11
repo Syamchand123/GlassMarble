@@ -45,8 +45,10 @@ import (
 	docconfig "github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/grounding"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/invalidator"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/ledger"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/patcher"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/renderer"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/review"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/storage"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/verifier"
 	"github.com/Syamchand123/GlassMarble/internal/git"
@@ -446,6 +448,7 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 
 	result.DocsUpdated = docsUpdatedCount
 	result.TokensUsed = totalTokens
+	freshSum := 0
 
 	// P8 freshness (master-plan Appendix B): refresh per-document scores.
 	// Reload state first — ProcessDocument performs its own Load/Save cycles,
@@ -465,6 +468,7 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 		freshScore, behind := ComputeFreshnessScoreWithArchEvents(repoRoot, docs[i], ds.LastUpdatedCommit, runArchEvents)
 		ds.FreshnessScore = freshScore
 		ds.CommitsBehind = behind
+		freshSum += freshScore
 	}
 
 	// Update state with this commit hash so we know we've seen it.
@@ -477,11 +481,51 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 	commitSubject := gitCommitSubject(repoRoot, opts.CommitHash)
 	if created, adrErr := archfeatures.AutoGenerateADRs(repoRoot, opts.CommitHash, commitSubject); adrErr != nil {
 		result.Warnings = append(result.Warnings, fmt.Sprintf("auto ADR generation failed: %v", adrErr))
-	} else if opts.Verbose {
+	} else {
+		if opts.Verbose {
+			for _, p := range created {
+				fmt.Fprintf(out, "doc_engine: auto-generated ADR %s\n", p)
+			}
+		}
+		// D4 lifecycle: new ADRs join the review queue as drafts and the
+		// ADR index regenerates (both best-effort, never fail the run).
 		for _, p := range created {
-			fmt.Fprintf(out, "doc_engine: auto-generated ADR %s\n", p)
+			_, _ = review.Queue(repoRoot, review.ReviewItem{
+				Kind:      "adr-draft",
+				DocPath:   p,
+				Summary:   fmt.Sprintf("review auto-generated ADR %s", p),
+				Detail:    fmt.Sprintf("generated from commit %s", shortHash(opts.CommitHash)),
+			})
+		}
+		if len(created) > 0 {
+			if idxErr := archfeatures.RegenerateIndex(repoRoot); idxErr != nil && opts.Verbose {
+				fmt.Fprintf(out, "doc_engine: ADR index regeneration failed: %v\n", idxErr)
+			}
 		}
 	}
+
+	// D5 observability ledger: one JSONL record per run (best-effort).
+	// Prune keeps the ledger bounded.
+	tracks, repairs, fallbacks := orch.SnapshotCounters()
+	avgFresh := 0
+	if len(docs) > 0 {
+		avgFresh = freshSum / len(docs)
+	}
+	_ = ledger.Append(repoRoot, ledger.RunRecord{
+		Commit:            opts.CommitHash,
+		BranchPolicy:      opts.BranchPolicy,
+		DocsUpdated:       result.DocsUpdated,
+		SectionsUpdated:   result.SectionsUpdated,
+		SectionsProcessed: result.SectionsProcessed,
+		TokensUsed:        result.TokensUsed,
+		DurationMs:        time.Since(start).Milliseconds(),
+		TracksUsed:        tracks,
+		Repairs:           repairs,
+		Fallbacks:         fallbacks,
+		GlobalFreshness:   avgFresh,
+		Warnings:          len(result.Warnings),
+	})
+	_ = ledger.Prune(repoRoot, 500)
 
 	result.Duration = time.Since(start)
 	return result
@@ -635,9 +679,57 @@ func Check(repoRoot string, opts CheckOptions) (CheckResult, error) {
 						fmt.Sprintf("%s: toc: %s", doc.TargetPath, msg))
 				}
 			}
+
+			// D2 Diátaxis compass + reference completeness. Quadrant comes
+			// from the doc's archetype; unknown archetypes skip silently.
+			if quadrant := renderer.ArchetypeQuadrant(doc.Archetype); quadrant != "" {
+				for _, sec := range doc.Sections {
+					for _, msg := range renderer.CompassCheck(sec.Title, sec.Instruction, quadrant) {
+						result.Warnings = append(result.Warnings,
+							fmt.Sprintf("%s [%s]: diataxis: %s", doc.TargetPath, sec.ID, msg))
+					}
+				}
+				if quadrant == "reference" && opts.HeadGraph != nil && opts.HeadGraph.Nodes != nil {
+					var scopeSyms []string
+					opts.HeadGraph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
+						if n == nil || n.FileSpec.Path == "" {
+							return
+						}
+						if !catalog.MatchesScope(&doc.Scope, n.FileSpec.Path) {
+							return
+						}
+						name := n.Name
+						if idx := strings.LastIndex(name, "."); idx >= 0 {
+							name = name[idx+1:]
+						}
+						if r := []rune(name); len(r) > 0 && r[0] >= 'A' && r[0] <= 'Z' {
+							scopeSyms = append(scopeSyms, name)
+						}
+					})
+					if content, readErr := os.ReadFile(absPath); readErr == nil && len(scopeSyms) > 0 {
+						missing := renderer.ReferenceCompleteness(scopeSyms, string(content))
+						for i, msg := range missing {
+							if i >= 10 {
+								result.Warnings = append(result.Warnings,
+									fmt.Sprintf("%s: reference completeness: ... and %d more undocumented symbols", doc.TargetPath, len(missing)-10))
+								break
+							}
+							result.Warnings = append(result.Warnings,
+								fmt.Sprintf("%s: reference completeness: %s", doc.TargetPath, msg))
+						}
+					}
+				}
+			}
 		}
 
 		result.Documents = append(result.Documents, docResult)
+	}
+
+	// D4 ADR lifecycle governance: unknown statuses and dangling
+	// supersessions fail the gate (opt-in: clean when docs/adr absent).
+	for _, msg := range archfeatures.ValidateADRLifecycle(repoRoot) {
+		result.AllFresh = false
+		result.Failures = append(result.Failures, fmt.Sprintf("adr lifecycle: %s", msg))
 	}
 
 	// Compute global freshness.

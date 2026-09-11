@@ -14,8 +14,12 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/compliance"
 	docconfig "github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/devex"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/eval"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/grounding"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/ledger"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/patcher"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/renderer"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/review"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/sre"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/storage"
 )
@@ -241,4 +245,115 @@ func truncateLine(s string, maxLen int) string {
 		return s[:maxLen-3] + "..."
 	}
 	return s
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Eval — D1 faithfulness scoring over current managed sections
+// ────────────────────────────────────────────────────────────────────────────
+
+// DocEval is the faithfulness rollup for one document.
+type DocEval struct {
+	DocID       string   `json:"doc_id"`
+	TargetPath  string   `json:"target_path"`
+	Score       float64  `json:"score"`
+	Sections    int      `json:"sections"`
+	Unsupported []string `json:"unsupported,omitempty"`
+}
+
+// EvalResult aggregates faithfulness across the doc suite.
+type EvalResult struct {
+	GlobalScore float64   `json:"global_score"`
+	Samples     int       `json:"samples"`
+	Docs        []DocEval `json:"docs"`
+}
+
+// EvalFaithfulness scores every non-empty managed section body against a
+// freshly assembled FactSheet (deterministic judge — no network, no AKG
+// required). sampleN caps evaluated sections (<=0 = all), in deterministic
+// doc/section order. Empty bodies are skipped, not scored.
+func EvalFaithfulness(repoRoot string, sampleN int) (EvalResult, error) {
+	cfg, err := docconfig.LoadDocsConfig(repoRoot)
+	if err != nil {
+		return EvalResult{}, fmt.Errorf("doc eval: %w", err)
+	}
+	result := EvalResult{}
+	evaluated := 0
+	for _, doc := range cfg.Documents {
+		absTarget := filepath.Join(repoRoot, doc.TargetPath)
+		rawBytes, err := os.ReadFile(absTarget)
+		if err != nil {
+			continue
+		}
+		parsedDoc := patcher.ParseMarkdown(string(rawBytes))
+		de := DocEval{DocID: doc.ID, TargetPath: doc.TargetPath}
+		var sum float64
+		for _, sec := range doc.Sections {
+			if sampleN > 0 && evaluated >= sampleN {
+				break
+			}
+			if !sec.Managed || sec.Freeze {
+				continue
+			}
+			zone := patcher.ManagedZone(parsedDoc, sec.ID)
+			if zone == nil {
+				continue
+			}
+			priorBody := strings.TrimSpace(patcher.ExtractBody(zone))
+			if priorBody == "" {
+				continue
+			}
+			secCopy := sec
+			fs := grounding.AssembleFactSheet(&doc, &secCopy, nil, nil, priorBody, repoRoot)
+			if fs == nil {
+				continue
+			}
+			rep := eval.ScoreSection(priorBody, fs)
+			sum += rep.Score
+			de.Sections++
+			evaluated++
+			for _, u := range rep.Unsupported {
+				if len(de.Unsupported) < 10 {
+					de.Unsupported = append(de.Unsupported, fmt.Sprintf("[%s] %s", sec.ID, u))
+				}
+			}
+		}
+		if de.Sections > 0 {
+			de.Score = sum / float64(de.Sections)
+			result.Docs = append(result.Docs, de)
+		}
+		if sampleN > 0 && evaluated >= sampleN {
+			break
+		}
+	}
+	result.Samples = evaluated
+	if evaluated > 0 {
+		total := 0.0
+		for _, d := range result.Docs {
+			total += d.Score * float64(d.Sections)
+		}
+		result.GlobalScore = total / float64(evaluated)
+	} else {
+		result.GlobalScore = 1.0
+	}
+	return result, nil
+}
+
+// LedgerSummary returns the D5 run-ledger rollup (lastN<=0 = all runs).
+func LedgerSummary(repoRoot string, lastN int) (ledger.Summary, error) {
+	return ledger.Summarize(repoRoot, lastN)
+}
+
+// ReviewStats counts review items by status (D6).
+func ReviewStats(repoRoot string) (pending, approved, rejected, observed int, err error) {
+	return review.Stats(repoRoot)
+}
+
+// ListPendingReviews returns unresolved D6 human-review items.
+func ListPendingReviews(repoRoot string) ([]review.ReviewItem, error) {
+	return review.ListPending(repoRoot)
+}
+
+// ResolveReview approves or rejects a D6 review item with a reason.
+func ResolveReview(repoRoot, id string, approve bool, reason string) error {
+	return review.Resolve(repoRoot, id, approve, reason)
 }

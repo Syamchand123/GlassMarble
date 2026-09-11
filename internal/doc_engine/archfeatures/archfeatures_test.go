@@ -191,3 +191,283 @@ func TestEventsFromDossier(t *testing.T) {
 		t.Errorf("expected no events for nil input, got %v", got)
 	}
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// D4: ADR lifecycle tests (APPEND ONLY — existing tests above untouched)
+// ────────────────────────────────────────────────────────────────────────────
+
+func TestRenderMADR(t *testing.T) {
+	event := ADREvent{
+		Type:        "COMPONENT_SPLIT",
+		Title:       "Split Monolith into Subsystems",
+		Context:     "High coupling between ingest and link layers.",
+		Decision:    "Split packages into autonomous bounded contexts.",
+		Consequence: "Clean architectural boundaries and isolated unit tests.",
+		CommitHash:  "abc1234",
+		Timestamp:   time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC),
+	}
+	out := RenderMADR(event)
+	for _, section := range []string{
+		"# Split Monolith into Subsystems",
+		"Status",
+		"Context",
+		"Decision Drivers",
+		"Considered Options",
+		"Decision Outcome",
+		"Consequences",
+		"2026-09-09",
+		"abc1234",
+		"Split packages into autonomous bounded contexts.",
+		"Clean architectural boundaries",
+	} {
+		if !strings.Contains(out, section) {
+			t.Errorf("rendered MADR missing %q:\n%s", section, out)
+		}
+	}
+	// Empty event still renders every section (defaults, never blank skeleton).
+	empty := RenderMADR(ADREvent{})
+	for _, section := range []string{
+		"Context", "Decision Drivers", "Considered Options",
+		"Decision Outcome", "Consequences",
+	} {
+		if !strings.Contains(empty, section) {
+			t.Errorf("empty-event MADR missing section %q:\n%s", section, empty)
+		}
+	}
+}
+
+func TestMarkSuperseded(t *testing.T) {
+	tempDir := t.TempDir()
+	rel, err := GenerateADR(tempDir, ADREvent{
+		Type: "COMPONENT_SPLIT", Title: "Old Decision",
+		Context: "ctx", Decision: "dec", Consequence: "con",
+		CommitHash: "aaa1111", Timestamp: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("GenerateADR failed: %v", err)
+	}
+	full := filepath.Join(tempDir, filepath.FromSlash(rel))
+
+	if err := MarkSuperseded(tempDir, rel, "docs/adr/0002-new-decision.md"); err != nil {
+		t.Fatalf("MarkSuperseded failed: %v", err)
+	}
+	data, err := os.ReadFile(full)
+	if err != nil {
+		t.Fatalf("reading superseded ADR: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "status: superseded") {
+		t.Errorf("frontmatter status not flipped to superseded:\n%s", content)
+	}
+	want := "> Superseded by [docs/adr/0002-new-decision.md](docs/adr/0002-new-decision.md)"
+	if !strings.Contains(content, want) {
+		t.Errorf("supersession note missing:\n%s", content)
+	}
+	if !strings.Contains(content, "Old Decision") || !strings.Contains(content, "\ndec\n") || !strings.Contains(content, "\ncon\n") {
+		t.Errorf("history must be preserved:\n%s", content)
+	}
+
+	// Idempotent rerun: byte-identical.
+	before := content
+	if err := MarkSuperseded(tempDir, rel, "docs/adr/0002-new-decision.md"); err != nil {
+		t.Fatalf("MarkSuperseded rerun failed: %v", err)
+	}
+	after, _ := os.ReadFile(full)
+	if string(after) != before {
+		t.Errorf("MarkSuperseded not idempotent:\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	}
+	if n := strings.Count(string(after), "Superseded by"); n != 1 {
+		t.Errorf("expected exactly 1 supersession note, found %d", n)
+	}
+
+	// Missing target → error.
+	if err := MarkSuperseded(tempDir, "docs/adr/9999-nope.md", "docs/adr/0002-x.md"); err == nil {
+		t.Errorf("expected error for missing oldFile")
+	}
+}
+
+func TestValidateStatusTransition(t *testing.T) {
+	allowed := [][2]string{
+		{"", "proposed"}, {"", "accepted"},
+		{"proposed", "accepted"}, {"proposed", "rejected"}, {"proposed", "deprecated"},
+		{"accepted", "deprecated"}, {"accepted", "superseded"},
+		{"deprecated", "superseded"},
+		{"proposed", "proposed"}, {"accepted", "accepted"}, {"superseded", "superseded"},
+	}
+	for _, tc := range allowed {
+		if err := ValidateStatusTransition(tc[0], tc[1]); err != nil {
+			t.Errorf("transition %q → %q should be allowed: %v", tc[0], tc[1], err)
+		}
+	}
+	rejected := [][2]string{
+		{"proposed", "superseded"}, {"accepted", "rejected"}, {"accepted", "proposed"},
+		{"deprecated", "accepted"}, {"deprecated", "proposed"},
+		{"superseded", "accepted"}, {"superseded", "deprecated"}, {"rejected", "accepted"},
+		{"", "superseded"}, {"", "rejected"}, {"", ""},
+	}
+	for _, tc := range rejected {
+		if err := ValidateStatusTransition(tc[0], tc[1]); err == nil {
+			t.Errorf("transition %q → %q should be rejected", tc[0], tc[1])
+		}
+	}
+	if err := ValidateStatusTransition("bogus", "accepted"); err == nil {
+		t.Errorf("unknown old status should error")
+	}
+	if err := ValidateStatusTransition("accepted", "bogus"); err == nil {
+		t.Errorf("unknown new status should error")
+	}
+}
+
+func writeADRFixture(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, "docs", "adr"), 0755); err != nil {
+		t.Fatalf("mkdir adr: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "docs", "adr", name), []byte(content), 0644); err != nil {
+		t.Fatalf("writing fixture %s: %v", name, err)
+	}
+}
+
+func TestRegenerateIndex(t *testing.T) {
+	tempDir := t.TempDir()
+	writeADRFixture(t, tempDir, "0001-old.md", `---
+id: adr-0001
+title: "0001 - Old Decision"
+status: superseded
+date: 2026-09-01
+commit: "aaa1111"
+---
+
+# 0001. Old Decision
+
+## Status
+
+Superseded
+
+## Context
+
+Old context.
+
+> Superseded by [docs/adr/0002-new.md](docs/adr/0002-new.md)
+`)
+	writeADRFixture(t, tempDir, "0002-new.md", `---
+id: adr-0002
+title: "0002 - New Decision"
+status: accepted
+date: 2026-09-09
+commit: "bbb2222"
+---
+
+# 0002. New Decision
+
+## Status
+
+Accepted
+
+## Context
+
+New context.
+`)
+	writeADRFixture(t, tempDir, "template.md", "# ADR template — must be skipped\n")
+
+	if err := RegenerateIndex(tempDir); err != nil {
+		t.Fatalf("RegenerateIndex failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(tempDir, "docs", "adr", "index.md"))
+	if err != nil {
+		t.Fatalf("reading index: %v", err)
+	}
+	index := string(data)
+	if !strings.Contains(index, "| ADR | Title | Status | Date |") {
+		t.Errorf("index missing table header:\n%s", index)
+	}
+	if !strings.Contains(index, "0001-old.md") || !strings.Contains(index, "0002-new.md") {
+		t.Errorf("index missing ADR rows:\n%s", index)
+	}
+	if strings.Contains(index, "template.md") {
+		t.Errorf("index must skip template.md:\n%s", index)
+	}
+	if !strings.Contains(index, "Superseded by") || !strings.Contains(index, "0001-old.md") {
+		t.Errorf("index missing supersession note:\n%s", index)
+	}
+	// Deterministic filename-ascending order.
+	if strings.Index(index, "0001-old.md") > strings.Index(index, "0002-new.md") {
+		t.Errorf("index rows not in filename order:\n%s", index)
+	}
+	// Rerun is byte-identical.
+	before := index
+	if err := RegenerateIndex(tempDir); err != nil {
+		t.Fatalf("RegenerateIndex rerun failed: %v", err)
+	}
+	after, _ := os.ReadFile(filepath.Join(tempDir, "docs", "adr", "index.md"))
+	if string(after) != before {
+		t.Errorf("RegenerateIndex not deterministic")
+	}
+}
+
+func TestRegenerateIndexMissingDir(t *testing.T) {
+	tempDir := t.TempDir()
+	if err := RegenerateIndex(tempDir); err != nil {
+		t.Fatalf("RegenerateIndex on empty root failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(tempDir, "docs", "adr", "index.md"))
+	if err != nil {
+		t.Fatalf("reading empty index: %v", err)
+	}
+	index := string(data)
+	if !strings.Contains(index, "| ADR | Title | Status | Date |") {
+		t.Errorf("empty index missing header-only table:\n%s", index)
+	}
+}
+
+func TestValidateADRLifecycle(t *testing.T) {
+	// Clean fixture.
+	clean := t.TempDir()
+	writeADRFixture(t, clean, "0001-ok.md", `---
+status: accepted
+date: 2026-09-09
+---
+
+# 0001. Fine
+
+## Status
+
+Accepted
+`)
+	writeADRFixture(t, clean, "0002-ok.md", `---
+status: superseded
+---
+
+# 0002. Replaced
+
+> Superseded by [docs/adr/0003-next.md](docs/adr/0003-next.md)
+`)
+	if got := ValidateADRLifecycle(clean); len(got) != 0 {
+		t.Errorf("clean fixture should validate, got %v", got)
+	}
+
+	// Dirty fixture: unknown status + dangling superseded.
+	dirty := t.TempDir()
+	writeADRFixture(t, dirty, "0001-mystery.md", "# 0001. Mystery\n\nNo status anywhere.\n")
+	writeADRFixture(t, dirty, "0002-dangling.md", `---
+status: superseded
+---
+
+# 0002. Dangling
+
+No supersession link here.
+`)
+	writeADRFixture(t, dirty, "index.md", "# stale index — must be skipped\n")
+	failures := ValidateADRLifecycle(dirty)
+	if len(failures) != 2 {
+		t.Fatalf("expected 2 lifecycle failures, got %v", failures)
+	}
+	if !strings.Contains(failures[0], "0001-mystery.md") || !strings.Contains(failures[1], "0002-dangling.md") {
+		t.Errorf("failures not deterministic filename-ordered: %v", failures)
+	}
+
+	// Missing docs/adr → nil (opt-in feature).
+	if got := ValidateADRLifecycle(t.TempDir()); got != nil {
+		t.Errorf("missing docs/adr should yield nil, got %v", got)
+	}
+}

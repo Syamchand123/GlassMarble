@@ -705,6 +705,166 @@ by Bubble Tea. Supports fuzzy section search and symbol-to-source navigation
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// gmb doc eval — D1 faithfulness scoring
+// ────────────────────────────────────────────────────────────────────────────
+
+var docEvalCmd = &cobra.Command{
+	Use:   "eval",
+	Short: "Score managed sections for faithfulness against fresh FactSheets",
+	Args:  cobra.NoArgs,
+	Long: `Scores every non-empty managed section against a freshly assembled
+FactSheet using the deterministic faithfulness scorer (no network, no AKG
+required). Score = supported claims / total claims (RAGAS formula).
+
+Exit codes:
+  0  Global score at or above --min-score
+  1  Global score below --min-score`,
+	Example: `  gmb doc eval
+  gmb doc eval --sample 20 --min-score 0.9 --json`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		targetDir := resolveDir(cmd)
+		absDir, err := filepath.Abs(targetDir)
+		if err != nil {
+			return fmt.Errorf("doc eval: %w", err)
+		}
+		sampleN, _ := cmd.Flags().GetInt("sample")
+		minScore, _ := cmd.Flags().GetFloat64("min-score")
+		asJSON, _ := cmd.Flags().GetBool("json")
+
+		result, err := doc_engine.EvalFaithfulness(absDir, sampleN)
+		if err != nil {
+			return err
+		}
+		if asJSON {
+			data, _ := json.MarshalIndent(result, "", "  ")
+			fmt.Fprintln(cmd.OutOrStdout(), string(data))
+		} else {
+			docPrintf(cmd, "doc eval: global faithfulness %.2f across %d section(s)\n", result.GlobalScore, result.Samples)
+			for _, d := range result.Docs {
+				docPrintf(cmd, "  %-45s  %.2f  (%d sections)\n", d.TargetPath, d.Score, d.Sections)
+				for _, u := range d.Unsupported {
+					docPrintf(cmd, "   unsupported: %s\n", u)
+				}
+			}
+		}
+		if result.GlobalScore < minScore {
+			return fmt.Errorf("faithfulness %.2f below minimum %.2f", result.GlobalScore, minScore)
+		}
+		return nil
+	},
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// gmb doc ledger — D5 run-ledger rollup
+// ────────────────────────────────────────────────────────────────────────────
+
+var docLedgerCmd = &cobra.Command{
+	Use:   "ledger",
+	Short: "Show the structured run ledger (tokens, tracks, repairs, freshness)",
+	Args:  cobra.NoArgs,
+	Long: `Prints the D5 observability rollup over recent doc-engine runs:
+total tokens, per-track render counts, repairs, fallbacks, and freshness.
+The ledger is append-only JSONL under .glassmarble/runs/.`,
+	Example: `  gmb doc ledger
+  gmb doc ledger --last 20 --json`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		targetDir := resolveDir(cmd)
+		absDir, err := filepath.Abs(targetDir)
+		if err != nil {
+			return fmt.Errorf("doc ledger: %w", err)
+		}
+		lastN, _ := cmd.Flags().GetInt("last")
+		asJSON, _ := cmd.Flags().GetBool("json")
+
+		summary, err := doc_engine.LedgerSummary(absDir, lastN)
+		if err != nil {
+			return err
+		}
+		if asJSON {
+			data, _ := json.MarshalIndent(summary, "", "  ")
+			fmt.Fprintln(cmd.OutOrStdout(), string(data))
+			return nil
+		}
+		docPrintf(cmd, "doc ledger: %d run(s) | %d tokens | %d docs updated | %d sections | %d repairs | %d fallbacks | freshness %.1f%%\n",
+			summary.Runs, summary.TotalTokens, summary.TotalDocsUpdated, summary.TotalSectionsUpdated,
+			summary.TotalRepairs, summary.TotalFallbacks, summary.AvgFreshness)
+		for track, n := range summary.TracksUsed {
+			docPrintf(cmd, "  track %-14s %d render(s)\n", track, n)
+		}
+		if summary.Runs > 0 {
+			docPrintf(cmd, "  window: %s → %s\n", summary.FirstRun, summary.LastRun)
+		}
+		return nil
+	},
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// gmb doc review — D6 human review queue
+// ────────────────────────────────────────────────────────────────────────────
+
+var docReviewCmd = &cobra.Command{
+	Use:   "review [approve|reject] <id>",
+	Short: "List or resolve human-review items (conflicts, fixes, ADR drafts)",
+	Args:  cobra.RangeArgs(0, 2),
+	Long: `The D6 review queue holds items needing a human decision: merge
+conflicts, applied snippet fixes, and auto-generated ADR drafts.
+With no arguments, lists pending items. Approve or reject by ID.`,
+	Example: `  gmb doc review
+  gmb doc review approve r1a2b3c4d --reason "looks right"
+  gmb doc review reject r1a2b3c4d --reason "wrong callers"
+  gmb doc review --stats`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		targetDir := resolveDir(cmd)
+		absDir, err := filepath.Abs(targetDir)
+		if err != nil {
+			return fmt.Errorf("doc review: %w", err)
+		}
+		if showStats, _ := cmd.Flags().GetBool("stats"); showStats {
+			pending, approved, rejected, observed, err := doc_engine.ReviewStats(absDir)
+			if err != nil {
+				return err
+			}
+			docPrintf(cmd, "doc review: %d pending | %d approved | %d rejected | %d observed\n",
+				pending, approved, rejected, observed)
+			return nil
+		}
+		if len(args) == 0 {
+			items, err := doc_engine.ListPendingReviews(absDir)
+			if err != nil {
+				return err
+			}
+			if len(items) == 0 {
+				docPrintf(cmd, "doc review: no pending items\n")
+				return nil
+			}
+			for _, it := range items {
+				docPrintf(cmd, "  %s [%s] %s — %s\n", it.ID, it.Kind, it.DocPath, it.Summary)
+			}
+			return nil
+		}
+		if len(args) != 2 {
+			return fmt.Errorf("doc review: usage: gmb doc review [approve|reject] <id>")
+		}
+		action, id := args[0], args[1]
+		reason, _ := cmd.Flags().GetString("reason")
+		var rerr error
+		switch action {
+		case "approve":
+			rerr = doc_engine.ResolveReview(absDir, id, true, reason)
+		case "reject":
+			rerr = doc_engine.ResolveReview(absDir, id, false, reason)
+		default:
+			return fmt.Errorf("doc review: unknown action %q (want approve|reject)", action)
+		}
+		if rerr != nil {
+			return rerr
+		}
+		docPrintf(cmd, "doc review: %s %sd\n", id, action)
+		return nil
+	},
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Registration
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -756,6 +916,19 @@ func init() {
 	// ── gmb doc view flags ────────────────────────────────────────────────
 	docViewCmd.Flags().String("doc", "", "Document ID to open")
 
+	// ── gmb doc eval flags ────────────────────────────────────────────────
+	docEvalCmd.Flags().Int("sample", 0, "Maximum sections to score (0 = all)")
+	docEvalCmd.Flags().Float64("min-score", 0.75, "Minimum global faithfulness (exit 1 below)")
+	docEvalCmd.Flags().Bool("json", false, "Emit machine-readable JSON output")
+
+	// ── gmb doc ledger flags ──────────────────────────────────────────────
+	docLedgerCmd.Flags().Int("last", 0, "Roll up only the last N runs (0 = all)")
+	docLedgerCmd.Flags().Bool("json", false, "Emit machine-readable JSON output")
+
+	// ── gmb doc review flags ──────────────────────────────────────────────
+	docReviewCmd.Flags().String("reason", "", "Reason recorded with approve/reject")
+	docReviewCmd.Flags().Bool("stats", false, "Show review queue counts")
+
 	// ── Register subcommands ──────────────────────────────────────────────
 	docCmd.AddCommand(
 		docInitCmd,
@@ -765,6 +938,9 @@ func init() {
 		docReleaseCmd,
 		docExportCmd,
 		docViewCmd,
+		docEvalCmd,
+		docLedgerCmd,
+		docReviewCmd,
 	)
 
 	// ── Register gmb doc with root ────────────────────────────────────────

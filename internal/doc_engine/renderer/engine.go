@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/provider"
@@ -20,6 +21,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/grounding"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/invalidator"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/patcher"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/review"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/storage"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/verifier"
 )
@@ -41,6 +43,46 @@ type Orchestrator struct {
 	opts     OrchestratorOptions
 	det      *DeterministicRenderer
 	actuator *LLMActuator
+
+	// D5 observability: usage counters accumulated across ProcessDocument
+	// calls (guarded for parallel section rendering).
+	countsMu   sync.Mutex
+	tracksUsed map[string]int
+	repairs    int
+	fallbacks  int
+}
+
+// SnapshotCounters returns D5 observability counters: per-track render
+// counts, repair uses, and Track A→B fallbacks. Safe for concurrent use.
+func (o *Orchestrator) SnapshotCounters() (tracks map[string]int, repairs, fallbacks int) {
+	o.countsMu.Lock()
+	defer o.countsMu.Unlock()
+	tracks = make(map[string]int, len(o.tracksUsed))
+	for k, v := range o.tracksUsed {
+		tracks[k] = v
+	}
+	return tracks, o.repairs, o.fallbacks
+}
+
+func (o *Orchestrator) countTrack(track string) {
+	o.countsMu.Lock()
+	defer o.countsMu.Unlock()
+	if o.tracksUsed == nil {
+		o.tracksUsed = make(map[string]int)
+	}
+	o.tracksUsed[track]++
+}
+
+func (o *Orchestrator) countRepair() {
+	o.countsMu.Lock()
+	defer o.countsMu.Unlock()
+	o.repairs++
+}
+
+func (o *Orchestrator) countFallback() {
+	o.countsMu.Lock()
+	defer o.countsMu.Unlock()
+	o.fallbacks++
 }
 
 // NewOrchestrator creates a new Dual-Track Orchestrator.
@@ -88,6 +130,10 @@ func (o *Orchestrator) RenderSection(ctx context.Context, fs *config.FactSheet, 
 	if useLLM {
 		outcome, err := o.renderTrackA(ctx, fs, symIndex)
 		if err == nil {
+			o.countTrack("llm")
+			if outcome.RepairUsed {
+				o.countRepair()
+			}
 			return outcome, nil
 		}
 		// Log warning and fall back to Track B
@@ -102,11 +148,20 @@ func (o *Orchestrator) RenderSection(ctx context.Context, fs *config.FactSheet, 
 		}
 		detOutcome.FallbackUsed = true
 		detOutcome.Warning = warn
+		o.countTrack("deterministic")
+		o.countFallback()
+		if detOutcome.RepairUsed {
+			o.countRepair()
+		}
 		return detOutcome, nil
 	}
 
 	// Track B directly
-	return o.renderTrackB(fs, symIndex)
+	outcome, err := o.renderTrackB(fs, symIndex)
+	if err == nil {
+		o.countTrack("deterministic")
+	}
+	return outcome, err
 }
 
 // renderTrackA executes Track A with 1 repair retry on Gate 1/2/3 failure.
@@ -212,6 +267,7 @@ func (o *Orchestrator) enforceMaxWords(ctx context.Context, fs *config.FactSheet
 			repairGateRes := verifier.RunGates(fs.PriorSectionMarkdown, repairResp.Text, buildSymbolIndex(fs, graph))
 			if repairGateRes.Pass && wordCount(repairResp.Text) <= sec.MaxWords {
 				*warnings = append(*warnings, fmt.Sprintf("section %s shortened to MaxWords cap (%d words)", sec.ID, sec.MaxWords))
+				o.countRepair()
 				return repairResp.Text
 			}
 		}
@@ -222,6 +278,37 @@ func (o *Orchestrator) enforceMaxWords(ctx context.Context, fs *config.FactSheet
 
 func wordCount(s string) int {
 	return len(strings.Fields(s))
+}
+
+// queueConflictReview records a 3-way merge conflict as a D6 human-review
+// item (kind "conflict"). Best-effort: any queue error is swallowed by the
+// caller contract — review must never fail a doc run.
+func queueConflictReview(repoRoot, docPath, sectionID, base, ours, theirs string) error {
+	oursLine, theirsLine := firstDiffLine(base, ours), firstDiffLine(base, theirs)
+	_, err := review.Queue(repoRoot, review.ReviewItem{
+		Kind:      "conflict",
+		DocPath:   docPath,
+		SectionID: sectionID,
+		Summary:   fmt.Sprintf("merge conflict in %s [%s]: human edits preserved, machine update appended as note", docPath, sectionID),
+		Detail:    fmt.Sprintf("first human divergence at line %d; first machine divergence at line %d", oursLine, theirsLine),
+	})
+	return err
+}
+
+func firstDiffLine(base, other string) int {
+	bl, ol := strings.Split(base, "\n"), strings.Split(other, "\n")
+	for i := 0; i < len(bl) && i < len(ol); i++ {
+		if bl[i] != ol[i] {
+			return i + 1
+		}
+	}
+	if len(bl) != len(ol) {
+		if len(bl) < len(ol) {
+			return len(bl) + 1
+		}
+		return len(ol) + 1
+	}
+	return 0
 }
 
 // ProcessDocument coordinates the full read -> ground -> render -> merge -> write pipeline for a single document.
@@ -331,6 +418,17 @@ func (o *Orchestrator) ProcessDocument(
 				fs.SectionInstruction = inst
 			}
 		}
+		// D2: Diátaxis quadrant guidance. The archetype's quadrant shapes
+		// the prose contract (reference/how-to/tutorial/explanation) without
+		// touching user content — prompt payload only.
+		if q := ArchetypeQuadrant(doc.Archetype); q != "" {
+			if qp := QuadrantPrompt(q); qp != "" {
+				if fs.SectionInstruction != "" {
+					fs.SectionInstruction += "\n\n"
+				}
+				fs.SectionInstruction += "Documentation quadrant (" + q + "): " + qp
+			}
+		}
 
 	// Stage 6 & 7: Render + Quality Firewall. Default RenderMode from the
 	// orchestrator decision so the contract field is never decorative:
@@ -398,6 +496,7 @@ func (o *Orchestrator) ProcessDocument(
 							outcome.RepairUsed = true
 							outcome.TokensUsed += repairResp.TotalTokens
 							tokensUsed += repairResp.TotalTokens
+							o.countRepair()
 							warnings = append(warnings, fmt.Sprintf("section %s/%s prose repaired to strict style", doc.ID, sec.ID))
 							goto gate7
 						} else {
@@ -454,6 +553,9 @@ func (o *Orchestrator) ProcessDocument(
 		mergeRes := patcher.MergeSection(base, priorBody, outcome.Content)
 		if mergeRes.Conflicted {
 			patcher.WarnConflict(o.opts.Out, doc.TargetPath, sec.ID)
+			// D6 review queue: conflicts are human-decision items, recorded
+			// best-effort (never fail the run on queue errors).
+			_ = queueConflictReview(repoRoot, doc.TargetPath, sec.ID, base, priorBody, outcome.Content)
 		}
 
 		// Apply to in-memory parsed doc
