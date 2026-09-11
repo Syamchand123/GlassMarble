@@ -129,7 +129,11 @@ func TestExecTagSemanticsInRepo(t *testing.T) {
 		t.Errorf("expected zero errors for passing exec block, got %+v", errs)
 	}
 
-	// exec block with compile failure → one error, empty SuggestedFix.
+	// exec block with compile failure → one error carrying a visible --fix
+	// marker SuggestedFix (marker-beats-skip: ApplySnippetFixes inserts the
+	// marker into the doc so the failure is reviewable and greppable;
+	// an empty SuggestedFix would be silently skipped by --fix and the doc
+	// would ship broken with no trace).
 	bad := "# G\n<!-- gmb:snippet:exec -->\n```go\nfunc broken( {\n```\n"
 	errs, err = VerifySnippetsInRepo(repo, bad, nil)
 	if err != nil {
@@ -139,8 +143,11 @@ func TestExecTagSemanticsInRepo(t *testing.T) {
 	for _, e := range errs {
 		if e.Symbol == "go" && strings.Contains(e.ErrorMessage, "failed to compile") {
 			found = true
-			if e.SuggestedFix != "" {
-				t.Errorf("exec errors must carry empty SuggestedFix, got %q", e.SuggestedFix)
+			if !strings.HasPrefix(e.SuggestedFix, "// TODO(doc-fix):") {
+				t.Errorf("exec errors must carry a // TODO(doc-fix) marker SuggestedFix, got %q", e.SuggestedFix)
+			}
+			if len(e.SuggestedFix) > len("// TODO(doc-fix): snippet failed (); needs human repair")+execFixExcerptMax {
+				t.Errorf("marker excerpt must be capped at %d chars, got %q", execFixExcerptMax, e.SuggestedFix)
 			}
 			if e.LineNumber <= 0 {
 				t.Errorf("expected positive LineNumber, got %d", e.LineNumber)
@@ -259,5 +266,156 @@ func TestPythonRoundTrip(t *testing.T) {
 	}
 	if bad.Compiled || bad.ErrMsg == "" {
 		t.Errorf("expected python compile failure, got %+v", bad)
+	}
+}
+
+func TestShouldPanicTag(t *testing.T) {
+	repo := t.TempDir()
+
+	// Panicking block with should_panic → passes (no errors).
+	ok := "# G\n<!-- gmb:snippet:exec:should_panic -->\n```go\npanic(\"boom\")\n```\n"
+	errs, err := VerifySnippetsInRepo(repo, ok, nil)
+	if err != nil {
+		t.Fatalf("verify failed: %v", err)
+	}
+	for _, e := range errs {
+		if strings.Contains(e.ErrorMessage, "executable snippet") {
+			t.Errorf("fulfilled should_panic must pass, got %+v", e)
+		}
+	}
+
+	// Clean exit with should_panic → "expected panic, exited 0" + marker.
+	calm := "# G\n<!-- gmb:snippet:exec:should_panic -->\n```go\nprintln(\"calm\")\n```\n"
+	errs, err = VerifySnippetsInRepo(repo, calm, nil)
+	if err != nil {
+		t.Fatalf("verify failed: %v", err)
+	}
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.ErrorMessage, "expected panic, exited 0") {
+			found = true
+			if !strings.HasPrefix(e.SuggestedFix, "// TODO(doc-fix):") {
+				t.Errorf("should_panic miss must carry a marker fix, got %q", e.SuggestedFix)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected should_panic miss error, got %+v", errs)
+	}
+
+	// should_panic without execution (no_run) → compile gate only, no error.
+	noRun := "# G\n<!-- gmb:snippet:exec:no_run:should_panic -->\n```go\nprintln(\"nocompile-issue\")\n```\n"
+	errs, err = VerifySnippetsInRepo(repo, noRun, nil)
+	if err != nil {
+		t.Fatalf("verify failed: %v", err)
+	}
+	for _, e := range errs {
+		if strings.Contains(e.ErrorMessage, "executable snippet") {
+			t.Errorf("no_run should_panic with good code must pass compile gate, got %+v", e)
+		}
+	}
+}
+
+func TestRustHiddenSetupStripped(t *testing.T) {
+	stripped := stripRustHiddenLines("# use crate::Foo;\n# setup();\nfn main() {}")
+	if strings.Contains(stripped, "# use") || strings.Contains(stripped, "# setup") {
+		t.Errorf("rust `# ` lines must be stripped, got %q", stripped)
+	}
+	if !strings.Contains(stripped, "fn main()") {
+		t.Errorf("non-hidden lines must survive, got %q", stripped)
+	}
+	// Other languages are verbatim: no stripping helper applies outside rust.
+	if got := stripRustHiddenLines; got == nil {
+		t.Fatal("strip helper must exist for rust path")
+	}
+}
+
+func TestMergedGoUnitsSuccess(t *testing.T) {
+	md := "# G\n" +
+		"<!-- gmb:snippet:exec -->\n```go\nimport \"fmt\"\nfmt.Println(\"merge-one\")\n```\n" +
+		"<!-- gmb:snippet:exec -->\n```go\nimport \"fmt\"\nfmt.Println(\"merge-two\")\n```\n"
+	repo := t.TempDir()
+	errs, err := VerifySnippetsInRepo(repo, md, nil)
+	if err != nil {
+		t.Fatalf("verify failed: %v", err)
+	}
+	for _, e := range errs {
+		if strings.Contains(e.ErrorMessage, "executable snippet") {
+			t.Errorf("merged passing blocks must verify clean, got %+v", e)
+		}
+	}
+}
+
+func TestMergedGoUnitsCulpritMapping(t *testing.T) {
+	// Both blocks are mergeable (no package clause, no top-level func), so
+	// the undefined identifier fails the merged build and the offset table
+	// must attribute it to the second block.
+	md := "# G\n" +
+		"<!-- gmb:snippet:exec -->\n```go\nprintln(\"fine\")\n```\n" +
+		"<!-- gmb:snippet:exec -->\n```go\nundefinedIdentCulprit()\n```\n"
+	repo := t.TempDir()
+	errs, err := VerifySnippetsInRepo(repo, md, nil)
+	if err != nil {
+		t.Fatalf("verify failed: %v", err)
+	}
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.ErrorMessage, "failed to compile") {
+			found = true
+			// Second block starts at markdown line 8 (code line); the
+			// mapped error must point at/after it, never at block one.
+			if e.LineNumber < 8 {
+				t.Errorf("culprit misattributed to first block: %+v", e)
+			}
+			if !strings.HasPrefix(e.SuggestedFix, "// TODO(doc-fix):") {
+				t.Errorf("merged error must carry a marker fix, got %q", e.SuggestedFix)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected merged compile error, got %+v", errs)
+	}
+}
+
+func TestMergedGoUnitsRuntimeCulprit(t *testing.T) {
+	md := "# G\n" +
+		"<!-- gmb:snippet:exec -->\n```go\nprintln(\"fine\")\n```\n" +
+		"<!-- gmb:snippet:exec -->\n```go\npanic(\"second-boom\")\n```\n"
+	repo := t.TempDir()
+	errs, err := VerifySnippetsInRepo(repo, md, nil)
+	if err != nil {
+		t.Fatalf("verify failed: %v", err)
+	}
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.ErrorMessage, "failed at runtime") {
+			found = true
+			if e.LineNumber < 8 {
+				t.Errorf("runtime culprit misattributed to first block: %+v", e)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected merged runtime error, got %+v", errs)
+	}
+}
+
+func TestTypeScriptRunGateDegrades(t *testing.T) {
+	if _, err := exec.LookPath("tsc"); err != nil {
+		t.Skip("tsc absent")
+	}
+	// Compile gate passes; run gate needs deno/node — either it runs or it
+	// degrades to a compile-pass skip, but it must never report an error
+	// for good code.
+	res := ExecuteSnippetBlock("typescript", "const x: number = 1;\nconsole.log(x);\n")
+	if res.Skipped {
+		t.Logf("run gate skipped (no runtime): %s", res.SkipReason)
+		if !res.Compiled {
+			t.Errorf("skipped run must preserve compile pass, got %+v", res)
+		}
+		return
+	}
+	if !res.Compiled || !res.Ran || res.ErrMsg != "" {
+		t.Fatalf("typescript run failed: %+v", res)
 	}
 }

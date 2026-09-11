@@ -5,6 +5,7 @@
 package archfeatures
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -169,7 +170,7 @@ func ScanArchEvents(commitLogs []string) []ADREvent {
 			evType = "AUTH_ARCHITECTURE"
 			title = "Authentication Architecture Change"
 			decision = "Centralized auth decisions behind a single session/token boundary with auditable flows."
-		} else if (strings.Contains(lower, "new subsystem") || strings.Contains(lower, "new package") || strings.Contains(lower, "new module") || strings.Contains(lower, "new layer")) {
+		} else if strings.Contains(lower, "new subsystem") || strings.Contains(lower, "new package") || strings.Contains(lower, "new module") || strings.Contains(lower, "new layer") {
 			evType = "NEW_SUBSYSTEM"
 			title = "New Subsystem / Package Introduced"
 			decision = "Scoped the new subsystem with explicit package boundaries and ownership."
@@ -209,6 +210,11 @@ func ScanArchEvents(commitLogs []string) []ADREvent {
 // GenerateADR for each detected event (filling Context/Decision/Consequence
 // defaults when empty). It returns the created repo-relative paths in order.
 // A sibling agent calls this exact contract: do not change the signature.
+//
+// D4 supersession wiring: after generating each ADR, existing docs/adr/*.md
+// files holding ACCEPTED records whose title shares ≥2 significant tokens
+// with the new event title are best-effort superseded via MarkSuperseded
+// (the new file wins). Supersession never fails the generation.
 func AutoGenerateADRs(repoRoot, commitHash, commitMsg string) ([]string, error) {
 	events := ScanArchEvents([]string{commitMsg})
 	var paths []string
@@ -231,8 +237,127 @@ func AutoGenerateADRs(repoRoot, commitHash, commitMsg string) ([]string, error) 
 			return paths, err
 		}
 		paths = append(paths, rel)
+		if old := findSupersededCandidate(repoRoot, ev.Title, rel); old != "" {
+			_ = MarkSuperseded(repoRoot, old, rel)
+		}
 	}
 	return paths, nil
+}
+
+// adrSupersedeStopwords excludes low-signal tokens from title-overlap
+// matching so generic prose ("the", "with", "decision") can never force a
+// supersession on its own.
+var adrSupersedeStopwords = map[string]bool{
+	"the": true, "a": true, "an": true, "and": true, "or": true,
+	"of": true, "to": true, "in": true, "on": true, "for": true,
+	"with": true, "from": true, "into": true, "that": true, "this": true,
+	"these": true, "those": true, "are": true, "was": true, "were": true,
+	"been": true, "have": true, "has": true, "will": true, "would": true,
+	"there": true, "their": true, "them": true, "they": true, "then": true,
+	"than": true, "also": true, "when": true, "where": true, "which": true,
+	"while": true, "what": true, "about": true, "your": true, "using": true,
+	"used": true, "across": true, "among": true, "both": true, "each": true,
+	"other": true, "more": true, "most": true, "some": true, "such": true,
+	"only": true, "same": true, "too": true, "very": true, "just": true,
+	"should": true, "under": true, "over": true, "between": true,
+	"through": true, "during": true, "before": true, "after": true,
+	"above": true, "below": true, "without": true, "within": true,
+	"upon": true, "decision": true, "decisions": true, "architectural": true,
+	"architecture": true, "record": true, "records": true, "required": true,
+}
+
+// significantTokens lowercases s, splits on non-alphanumerics, and keeps
+// tokens with length ≥4 that are not stopwords.
+func significantTokens(s string) map[string]bool {
+	out := make(map[string]bool)
+	for _, tok := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
+	}) {
+		if len(tok) >= 4 && !adrSupersedeStopwords[tok] {
+			out[tok] = true
+		}
+	}
+	return out
+}
+
+// adrFileTitle returns the display title of an ADR file: the first `# `
+// heading, falling back to the frontmatter `title:` value, else "".
+func adrFileTitle(content string) string {
+	if t := parseADRTitle(content); t != "" {
+		return t
+	}
+	if v, ok := frontmatterValue(strings.Split(content, "\n"), "title"); ok {
+		return strings.TrimSpace(v)
+	}
+	return ""
+}
+
+// findSupersededCandidate scans docs/adr/*.md (filename ascending) for an
+// ACCEPTED record — other than newRel — whose title shares ≥2 significant
+// tokens (case-insensitive, length ≥4, stopwords excluded) with newTitle.
+// It returns the best match (highest overlap, ties broken by filename) as a
+// repo-relative slash path, or "" when nothing qualifies. Missing docs/adr
+// yields "".
+func findSupersededCandidate(repoRoot, newTitle, newRel string) string {
+	adrDir := filepath.Join(repoRoot, "docs", "adr")
+	entries, err := os.ReadDir(adrDir)
+	if err != nil {
+		return ""
+	}
+	want := significantTokens(newTitle)
+	if len(want) < 2 {
+		return ""
+	}
+	best := ""
+	bestOverlap := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(strings.ToLower(name), ".md") {
+			continue
+		}
+		if lower := strings.ToLower(name); lower == "index.md" || lower == "template.md" {
+			continue
+		}
+		rel := filepath.ToSlash(filepath.Join("docs", "adr", name))
+		if rel == newRel {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(adrDir, name))
+		if err != nil {
+			continue
+		}
+		content := string(data)
+		if normADRStatus(parseADRStatus(content)) != "accepted" {
+			continue
+		}
+		have := significantTokens(adrFileTitle(content))
+		overlap := 0
+		for tok := range want {
+			if have[tok] {
+				overlap++
+			}
+		}
+		if overlap >= 2 && (overlap > bestOverlap || (overlap == bestOverlap && (best == "" || rel < best))) {
+			best, bestOverlap = rel, overlap
+		}
+	}
+	return best
+}
+
+// normADRStatus normalizes a parsed ADR status to its leading lowercase
+// word so body-derived values ("Accepted (auto-generated …)") compare like
+// their frontmatter single-word forms. "" and "unknown" stay as-is.
+func normADRStatus(status string) string {
+	fields := strings.FieldsFunc(strings.ToLower(strings.TrimSpace(status)), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z')
+	})
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -592,28 +717,26 @@ func adrDateCell(date, commit string) string {
 	}
 }
 
-// RegenerateIndex rebuilds docs/adr/index.md deterministically (filename
-// ascending): a markdown table (| ADR | Title | Status | Date |) over every
-// docs/adr/*.md except index.md/template.md, plus per-file supersession
-// notes for lines containing "Superseded by". Missing docs/adr is created
-// with a header-only table.
-func RegenerateIndex(repoRoot string) error {
-	adrDir := filepath.Join(repoRoot, "docs", "adr")
-	if err := os.MkdirAll(adrDir, 0755); err != nil {
-		return fmt.Errorf("archfeatures: creating adr directory: %w", err)
-	}
+// adrIndexRow is one parsed ADR file for the index and timeline writers.
+type adrIndexRow struct {
+	file    string
+	title   string
+	status  string
+	date    string // display cell: "date (commit)" / "date" / "commit" / "unknown"
+	rawDate string // raw frontmatter date ("" when absent)
+	commit  string
+	notes   []string
+}
+
+// collectADRRows parses every docs/adr/*.md (except index.md/template.md)
+// in filename-ascending order into index rows. It is the single shared
+// parsing path for RegenerateIndex and WriteTimelineData.
+func collectADRRows(adrDir string) ([]adrIndexRow, error) {
 	entries, err := os.ReadDir(adrDir)
 	if err != nil {
-		return fmt.Errorf("archfeatures: reading adr directory: %w", err)
+		return nil, fmt.Errorf("archfeatures: reading adr directory: %w", err)
 	}
-	type adrRow struct {
-		file   string
-		title  string
-		status string
-		date   string
-		notes  []string
-	}
-	var rows []adrRow
+	var rows []adrIndexRow
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -627,7 +750,7 @@ func RegenerateIndex(repoRoot string) error {
 		}
 		data, err := os.ReadFile(filepath.Join(adrDir, name))
 		if err != nil {
-			return fmt.Errorf("archfeatures: reading ADR %q: %w", name, err)
+			return nil, fmt.Errorf("archfeatures: reading ADR %q: %w", name, err)
 		}
 		content := string(data)
 		lines := strings.Split(content, "\n")
@@ -643,13 +766,33 @@ func RegenerateIndex(repoRoot string) error {
 				notes = append(notes, t)
 			}
 		}
-		rows = append(rows, adrRow{
-			file:   name,
-			title:  title,
-			status: parseADRStatus(content),
-			date:   adrDateCell(date, commit),
-			notes:  notes,
+		rows = append(rows, adrIndexRow{
+			file:    name,
+			title:   title,
+			status:  parseADRStatus(content),
+			date:    adrDateCell(date, commit),
+			rawDate: strings.TrimSpace(date),
+			commit:  strings.TrimSpace(commit),
+			notes:   notes,
 		})
+	}
+	return rows, nil
+}
+
+// RegenerateIndex rebuilds docs/adr/index.md deterministically (filename
+// ascending): a markdown table (| ADR | Title | Status | Date |) over every
+// docs/adr/*.md except index.md/template.md, plus per-file supersession
+// notes for lines containing "Superseded by". Missing docs/adr is created
+// with a header-only table. The machine-readable timeline.json is refreshed
+// at the end via WriteTimelineData.
+func RegenerateIndex(repoRoot string) error {
+	adrDir := filepath.Join(repoRoot, "docs", "adr")
+	if err := os.MkdirAll(adrDir, 0755); err != nil {
+		return fmt.Errorf("archfeatures: creating adr directory: %w", err)
+	}
+	rows, err := collectADRRows(adrDir)
+	if err != nil {
+		return err
 	}
 	var b strings.Builder
 	b.WriteString("# ADR Index\n\n")
@@ -680,13 +823,58 @@ func RegenerateIndex(repoRoot string) error {
 	if err := os.WriteFile(indexPath, []byte(b.String()), 0644); err != nil {
 		return fmt.Errorf("archfeatures: writing ADR index: %w", err)
 	}
+	return WriteTimelineData(repoRoot)
+}
+
+// ADRTimelineEntry is one machine-readable ADR record in docs/adr/timeline.json.
+type ADRTimelineEntry struct {
+	File   string `json:"file"`
+	Title  string `json:"title"`
+	Status string `json:"status"`
+	Date   string `json:"date"`
+	Commit string `json:"commit"`
+}
+
+// WriteTimelineData emits docs/adr/timeline.json: a filename-ascending array
+// of {file,title,status,date,commit} over the same parsed rows as
+// RegenerateIndex (via the shared collectADRRows helper). A missing docs/adr
+// directory is created and yields an empty array.
+func WriteTimelineData(repoRoot string) error {
+	adrDir := filepath.Join(repoRoot, "docs", "adr")
+	if err := os.MkdirAll(adrDir, 0755); err != nil {
+		return fmt.Errorf("archfeatures: creating adr directory: %w", err)
+	}
+	rows, err := collectADRRows(adrDir)
+	if err != nil {
+		return err
+	}
+	entries := make([]ADRTimelineEntry, 0, len(rows))
+	for _, r := range rows {
+		entries = append(entries, ADRTimelineEntry{
+			File:   r.file,
+			Title:  r.title,
+			Status: r.status,
+			Date:   r.rawDate,
+			Commit: r.commit,
+		})
+	}
+	data, err := json.MarshalIndent(entries, "", "  ")
+	if err != nil {
+		return fmt.Errorf("archfeatures: marshaling ADR timeline: %w", err)
+	}
+	if _, err := storage.AtomicWriteFile(filepath.Join(adrDir, "timeline.json"), append(data, '\n')); err != nil {
+		return fmt.Errorf("archfeatures: writing ADR timeline: %w", err)
+	}
 	return nil
 }
 
 // ValidateADRLifecycle checks every docs/adr/*.md (except index.md and
-// template.md) in filename order: unknown status is a failure, and
-// `superseded` status without a "Superseded by" link is a failure. A
-// missing docs/adr directory means the opt-in feature is unused → nil.
+// template.md) in filename order: unknown status is a failure, any status
+// outside the closed vocabulary {proposed,accepted,rejected,deprecated,
+// superseded} is a failure, `superseded` status without a "Superseded by"
+// link is a failure, and `deprecated` status without a deprecation link
+// ("Superseded by" or "Deprecated by") is a failure. A missing docs/adr
+// directory means the opt-in feature is unused → nil.
 func ValidateADRLifecycle(repoRoot string) []string {
 	adrDir := filepath.Join(repoRoot, "docs", "adr")
 	entries, err := os.ReadDir(adrDir)
@@ -712,14 +900,21 @@ func ValidateADRLifecycle(repoRoot string) []string {
 			continue
 		}
 		content := string(data)
-		status := strings.ToLower(strings.TrimSpace(parseADRStatus(content)))
+		status := normADRStatus(parseADRStatus(content))
 		rel := filepath.ToSlash(filepath.Join("docs", "adr", name))
 		if status == "" || status == "unknown" {
 			failures = append(failures, fmt.Sprintf("adr %s: unknown status", rel))
 			continue
 		}
+		if !adrKnownStatuses[status] {
+			failures = append(failures, fmt.Sprintf("adr %s: unknown status %q", rel, status))
+			continue
+		}
 		if status == "superseded" && !strings.Contains(content, "Superseded by") {
 			failures = append(failures, fmt.Sprintf("adr %s: status superseded without a \"Superseded by\" link", rel))
+		}
+		if status == "deprecated" && !strings.Contains(content, "Superseded by") && !strings.Contains(content, "Deprecated by") {
+			failures = append(failures, fmt.Sprintf("adr %s: status deprecated without a deprecation link", rel))
 		}
 	}
 	return failures

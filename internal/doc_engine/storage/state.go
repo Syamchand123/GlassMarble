@@ -95,10 +95,11 @@ type SectionState struct {
 // ────────────────────────────────────────────────────────────────────────────
 
 // StateManager provides safe read and write access to the doc-engine state.
-// The default backend is docs_state.json (atomic tmp → fsync → rename with a
-// SHA256 integrity check and a best-effort O_EXCL advisory lock file). When
-// UsingSQLite reports true (docs_state.db exists, or GMB_DOC_STATE=sqlite),
-// the SQLite WAL backend in store_sqlite.go is used transparently instead.
+// The default backend is SQLite WAL (docs_state.db); the legacy
+// docs_state.json backend (atomic tmp → fsync → rename with a SHA256
+// integrity check and a best-effort O_EXCL advisory lock file) is used only
+// when GMB_DOC_STATE=json forces it. First SQLite open auto-migrates an
+// existing docs_state.json (see ensureSQLiteMigrated in store_sqlite.go).
 // Callers use Load/Save identically on either backend.
 type StateManager struct {
 	path     string

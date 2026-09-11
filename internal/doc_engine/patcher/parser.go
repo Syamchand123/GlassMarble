@@ -447,6 +447,9 @@ func parseBegin(line string) (id string, ok bool) {
 	if !strings.HasPrefix(s, "<!--") || !strings.HasSuffix(s, "-->") {
 		return "", false
 	}
+	if len(s) < 7 { // overlapping "<!--" / "-->" (e.g. "<!-->"): no inner text
+		return "", false
+	}
 	inner := strings.TrimSpace(s[4 : len(s)-3])
 	if !strings.HasPrefix(inner, "gmb:begin:") {
 		return "", false
@@ -461,6 +464,9 @@ func parseEnd(line string) bool {
 	if !strings.HasPrefix(s, "<!--") || !strings.HasSuffix(s, "-->") {
 		return false
 	}
+	if len(s) < 7 { // overlapping "<!--" / "-->" (e.g. "<!-->"): no inner text
+		return false
+	}
 	inner := strings.TrimSpace(s[4 : len(s)-3])
 	return strings.HasPrefix(inner, "gmb:end")
 }
@@ -469,6 +475,9 @@ func parseEnd(line string) bool {
 func parseDirective(line string) (key, value string, ok bool) {
 	s := strings.TrimSpace(line)
 	if !strings.HasPrefix(s, "<!--") || !strings.HasSuffix(s, "-->") {
+		return "", "", false
+	}
+	if len(s) < 7 { // overlapping "<!--" / "-->" (e.g. "<!-->"): no inner text
 		return "", "", false
 	}
 	inner := strings.TrimSpace(s[4 : len(s)-3])

@@ -1,6 +1,8 @@
 package verifier
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -363,5 +365,111 @@ func TestProseGateCleanPasses(t *testing.T) {
 	}
 	if len(failures) != 0 {
 		t.Errorf("clean content must report no failures, got %v", failures)
+	}
+}
+
+// ── Gap C1: terminology-allowlist + learned vocabulary ──
+
+func writeVocabRepo(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	files := map[string]string{
+		"authz/tokenbucket.go": "package authz\n\nfunc TokenBucket() {}\n\ntype Ledger struct{}\n\nfunc Foo() {}\n",
+		"ledger/store.go":      "package ledger\n\nfunc Reconcile() {}\n\nvar ExportedVar = 1\n",
+		"README.md":            "# hi\n", // non-Go files never contribute idents
+	}
+	for rel, content := range files {
+		full := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	return root
+}
+
+func TestLearnVocabulary_CollectsExportedIdents(t *testing.T) {
+	vocab := LearnVocabulary(writeVocabRepo(t), 100)
+	for _, want := range []string{"tokenbucket", "ledger", "reconcile", "exportedvar", "authz", "store"} {
+		if !vocab[want] {
+			t.Errorf("expected vocab to contain %q, got %v", want, vocab)
+		}
+	}
+	// Min length 4: "Foo" must not be collected.
+	if vocab["foo"] {
+		t.Errorf("short ident %q must be excluded (min len 4)", "foo")
+	}
+	if len(vocab) == 0 {
+		t.Error("vocab must not be empty for a repo with exported idents")
+	}
+}
+
+func TestLearnVocabulary_DeterministicCap(t *testing.T) {
+	root := writeVocabRepo(t)
+	a := LearnVocabulary(root, 3)
+	b := LearnVocabulary(root, 3)
+	if len(a) != 3 {
+		t.Fatalf("expected capped vocab of 3, got %d (%v)", len(a), a)
+	}
+	for term := range a {
+		if !b[term] {
+			t.Errorf("cap is nondeterministic: %q in first but not second", term)
+		}
+	}
+	// Empty root → empty vocab, never nil-map panic.
+	if got := LearnVocabulary("", 100); len(got) != 0 {
+		t.Errorf("empty repoRoot must yield empty vocab, got %v", got)
+	}
+}
+
+func TestProseGateWithVocab_SkipsVocabTypo(t *testing.T) {
+	// "teh" is in the fixed typo list: strict fails without vocab...
+	if pass, _ := CheckProseGateWithVocab("Fix teh bug.", config.StyleSpec{}, true, nil); pass {
+		t.Error("nil vocab must behave like CheckProseGate (strict fails on typo)")
+	}
+	// ...but passes when the project learned it as a term.
+	vocab := map[string]bool{"teh": true}
+	if pass, failures := CheckProseGateWithVocab("Fix teh bug.", config.StyleSpec{}, true, vocab); !pass {
+		t.Errorf("vocab term must skip the typo rule, got %v", failures)
+	}
+}
+
+func TestProseGateWithVocab_StillFlagsRealTypo(t *testing.T) {
+	vocab := map[string]bool{"teh": true}
+	pass, failures := CheckProseGateWithVocab("Fix teh and recieve bugs.", config.StyleSpec{}, true, vocab)
+	if pass {
+		t.Error("vocab must not excuse real typos (recieve must still fail strict)")
+	}
+	if len(failures) == 0 {
+		t.Error("expected failure strings for the unlisted typo")
+	}
+	// Non-strict still reports the real typo while passing.
+	if pass, failures := CheckProseGateWithVocab("Fix teh and recieve bugs.", config.StyleSpec{}, false, vocab); !pass || len(failures) == 0 {
+		t.Errorf("non-strict must pass yet report, got pass=%v failures=%v", pass, failures)
+	}
+}
+
+func TestProseGateWithVocab_DoubledWordUnaffected(t *testing.T) {
+	// Doubled-word detection ignores vocab: a repeated project term is
+	// still a doubled word.
+	vocab := map[string]bool{"ledger": true}
+	if pass, _ := CheckProseGateWithVocab("Update ledger ledger now.", config.StyleSpec{}, true, vocab); pass {
+		t.Error("doubled project term must still fail strict (doubled-word is vocab-exempt)")
+	}
+}
+
+func TestProseGateWithVocab_MatchesGateOnNilVocab(t *testing.T) {
+	contents := []string{"Cats sit here.", "Fix teh bug.", "The file was created by the tool."}
+	for _, c := range contents {
+		for _, strict := range []bool{false, true} {
+			wantPass, wantFails := CheckProseGate(c, config.StyleSpec{}, strict)
+			gotPass, gotFails := CheckProseGateWithVocab(c, config.StyleSpec{}, strict, nil)
+			if wantPass != gotPass || len(wantFails) != len(gotFails) {
+				t.Errorf("nil vocab diverges for %q strict=%v: gate=(%v,%d) vocab=(%v,%d)",
+					c, strict, wantPass, len(wantFails), gotPass, len(gotFails))
+			}
+		}
 	}
 }

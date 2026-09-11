@@ -66,7 +66,19 @@ type RenderResult struct {
 
 // Render runs Track A prose generation for the given FactSheet.
 // Retries up to 3 times with exponential backoff (100ms -> 500ms -> 2000ms).
+//
+// v1 heuristic routing runs first: sections RouteForFactSheet marks
+// deterministic fail here with a "routed to deterministic" error so the
+// orchestrator's existing Track A→B fallback ladder renders them
+// deterministically (warning + fallback counter, no engine change).
 func (a *LLMActuator) Render(ctx context.Context, fs *config.FactSheet) (*RenderResult, error) {
+	if RouteForFactSheet(fs) == RouteDeterministic {
+		section := ""
+		if fs != nil {
+			section = fs.SectionID
+		}
+		return nil, fmt.Errorf("doc_engine/llm_actuator: section %q routed to deterministic (v1 heuristic routing)", section)
+	}
 	if a.cfg.Provider == nil {
 		return nil, fmt.Errorf("doc_engine/llm_actuator: no AI provider configured")
 	}

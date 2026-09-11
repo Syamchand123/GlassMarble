@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/archfeatures"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/compliance"
 	docconfig "github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
@@ -22,6 +23,7 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/review"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/sre"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/storage"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/verifier"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -216,6 +218,16 @@ func GenerateErrorCatalog(repoRoot string) (string, error) {
 	return sre.GenerateErrorCatalog(repoRoot)
 }
 
+// GenerateErrorCatalogWithGraph is the CPG-aware error catalog: caller
+// resolution uses graph.GetInboundEdges (file#line via node FileSpec) with
+// ident-scan fallback when graph is nil. No production caller exists yet
+// (verified: only tests reference GenerateErrorCatalog; neither doc_engine.go
+// nor cmd/ call it), so this pass-through is the available API for the owner
+// to wire once a graph is at hand — no forbidden-file edits required.
+func GenerateErrorCatalogWithGraph(repoRoot string, graph *akg.CodePropertyGraph) (string, error) {
+	return sre.GenerateErrorCatalogWithGraph(repoRoot, graph)
+}
+
 // GenerateConfigDictionary generates the environment variable and runtime configuration reference.
 func GenerateConfigDictionary(repoRoot string) (string, error) {
 	return compliance.GenerateConfigDictionary(repoRoot)
@@ -238,6 +250,12 @@ func ApplySnippetFixes(markdown string, errs []devex.SnippetError) string {
 	return devex.ApplySnippetFixes(markdown, errs)
 }
 
+// RegenerateTOC rewrites a document's TOC block (<!-- toc --> or Contents
+// section) from its actual headings. No-op without a TOC marker.
+func RegenerateTOC(markdown string) string {
+	return verifier.RegenerateTOC(markdown)
+}
+
 func truncateLine(s string, maxLen int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.TrimSpace(s)
@@ -258,6 +276,9 @@ type DocEval struct {
 	Score       float64  `json:"score"`
 	Sections    int      `json:"sections"`
 	Unsupported []string `json:"unsupported,omitempty"`
+	// Relevance is the fraction of evaluated sections whose prose satisfies
+	// its section instruction (eval.InstructionSatisfied relevance proxy).
+	Relevance float64 `json:"relevance,omitempty"`
 }
 
 // EvalResult aggregates faithfulness across the doc suite.
@@ -265,12 +286,20 @@ type EvalResult struct {
 	GlobalScore float64   `json:"global_score"`
 	Samples     int       `json:"samples"`
 	Docs        []DocEval `json:"docs"`
+	// Relevance is the global fraction of evaluated sections satisfying
+	// their instruction (1.0 when nothing was evaluated).
+	Relevance float64 `json:"relevance,omitempty"`
 }
 
 // EvalFaithfulness scores every non-empty managed section body against a
 // freshly assembled FactSheet (deterministic judge — no network, no AKG
 // required). sampleN caps evaluated sections (<=0 = all), in deterministic
-// doc/section order. Empty bodies are skipped, not scored.
+// doc/section order. Empty bodies are skipped, not scored. After computing
+// the result it appends a ledger record {Kind:"eval", EvalScore: GlobalScore,
+// EvalSamples: Samples} for D1 trend tracking; the append is best-effort
+// (observability must never fail an eval) and Commit is "" by design — eval
+// scores working-tree bodies without git context, and a HEAD lookup would
+// add git failure modes to an offline deterministic path.
 func EvalFaithfulness(repoRoot string, sampleN int) (EvalResult, error) {
 	cfg, err := docconfig.LoadDocsConfig(repoRoot)
 	if err != nil {
@@ -278,6 +307,7 @@ func EvalFaithfulness(repoRoot string, sampleN int) (EvalResult, error) {
 	}
 	result := EvalResult{}
 	evaluated := 0
+	satisfiedTotal := 0
 	for _, doc := range cfg.Documents {
 		absTarget := filepath.Join(repoRoot, doc.TargetPath)
 		rawBytes, err := os.ReadFile(absTarget)
@@ -287,6 +317,7 @@ func EvalFaithfulness(repoRoot string, sampleN int) (EvalResult, error) {
 		parsedDoc := patcher.ParseMarkdown(string(rawBytes))
 		de := DocEval{DocID: doc.ID, TargetPath: doc.TargetPath}
 		var sum float64
+		satisfied := 0
 		for _, sec := range doc.Sections {
 			if sampleN > 0 && evaluated >= sampleN {
 				break
@@ -311,6 +342,10 @@ func EvalFaithfulness(repoRoot string, sampleN int) (EvalResult, error) {
 			sum += rep.Score
 			de.Sections++
 			evaluated++
+			if eval.InstructionSatisfied(priorBody, sec.Instruction) {
+				satisfied++
+				satisfiedTotal++
+			}
 			for _, u := range rep.Unsupported {
 				if len(de.Unsupported) < 10 {
 					de.Unsupported = append(de.Unsupported, fmt.Sprintf("[%s] %s", sec.ID, u))
@@ -319,6 +354,7 @@ func EvalFaithfulness(repoRoot string, sampleN int) (EvalResult, error) {
 		}
 		if de.Sections > 0 {
 			de.Score = sum / float64(de.Sections)
+			de.Relevance = float64(satisfied) / float64(de.Sections)
 			result.Docs = append(result.Docs, de)
 		}
 		if sampleN > 0 && evaluated >= sampleN {
@@ -332,9 +368,17 @@ func EvalFaithfulness(repoRoot string, sampleN int) (EvalResult, error) {
 			total += d.Score * float64(d.Sections)
 		}
 		result.GlobalScore = total / float64(evaluated)
+		result.Relevance = float64(satisfiedTotal) / float64(evaluated)
 	} else {
 		result.GlobalScore = 1.0
+		result.Relevance = 1.0
 	}
+	_ = ledger.Append(repoRoot, ledger.RunRecord{
+		Kind:        "eval",
+		Commit:      "",
+		EvalScore:   result.GlobalScore,
+		EvalSamples: result.Samples,
+	})
 	return result, nil
 }
 

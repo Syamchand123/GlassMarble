@@ -334,3 +334,68 @@ func TestCheckReferences_SymbolVerification(t *testing.T) {
 		t.Fatalf("nil symbolExists must skip symbols, got %+v", repNil.Broken)
 	}
 }
+
+// ── Gap C2: TOC regeneration ──
+
+func TestRegenerateTOC_CommentMarkerRewrite(t *testing.T) {
+	md := "# Guide\n\n<!-- toc -->\n\n- [Stale](#gone)\n- [Old](#old)\n\n## Getting Started\n\nBody.\n\n### Install\n\nMore.\n"
+	got := RegenerateTOC(md)
+	want := "# Guide\n\n<!-- toc -->\n\n- [Guide](#guide)\n  - [Getting Started](#getting-started)\n    - [Install](#install)\n\n## Getting Started\n\nBody.\n\n### Install\n\nMore.\n"
+	if got != want {
+		t.Errorf("TOC rewrite mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+	// Idempotence: a second regeneration is a no-op.
+	if again := RegenerateTOC(got); again != got {
+		t.Errorf("RegenerateTOC not idempotent:\n--- first ---\n%s\n--- second ---\n%s", got, again)
+	}
+}
+
+func TestRegenerateTOC_ContentsHeadingRewrite(t *testing.T) {
+	md := "# Guide\n\n## Contents\n\n- [Stale](#gone)\n\n## Alpha\n\nText.\n\n## Beta\n\nText.\n"
+	got := RegenerateTOC(md)
+	if strings.Contains(got, "#gone") {
+		t.Errorf("stale TOC entry survived regeneration:\n%s", got)
+	}
+	if !strings.Contains(got, "- [Alpha](#alpha)") || !strings.Contains(got, "- [Beta](#beta)") {
+		t.Errorf("regenerated TOC missing headings:\n%s", got)
+	}
+	// The Contents heading itself must never be listed.
+	if strings.Contains(got, "#contents") {
+		t.Errorf("TOC must not list itself:\n%s", got)
+	}
+	if again := RegenerateTOC(got); again != got {
+		t.Errorf("RegenerateTOC not idempotent:\n--- first ---\n%s\n--- second ---\n%s", got, again)
+	}
+}
+
+func TestRegenerateTOC_TableOfContentsHeading(t *testing.T) {
+	md := "# Guide\n\n## Table of Contents\n\n## Alpha\n"
+	got := RegenerateTOC(md)
+	if !strings.Contains(got, "- [Alpha](#alpha)") {
+		t.Errorf("## Table of Contents not treated as TOC marker:\n%s", got)
+	}
+	if again := RegenerateTOC(got); again != got {
+		t.Errorf("RegenerateTOC not idempotent:\n--- first ---\n%s\n--- second ---\n%s", got, again)
+	}
+}
+
+func TestRegenerateTOC_NoMarkerPassthrough(t *testing.T) {
+	md := "# Guide\n\n## Alpha\n\n- [Alpha](#alpha)\n"
+	if got := RegenerateTOC(md); got != md {
+		t.Errorf("document without TOC marker must return unchanged:\n--- got ---\n%s\n--- want ---\n%s", got, md)
+	}
+}
+
+func TestRegenerateTOC_SlugDedupAndFences(t *testing.T) {
+	md := "# Guide\n\n<!-- toc -->\n\n## Repeat\n\n## Repeat\n\n```md\n## Not A Heading\n```\n"
+	got := RegenerateTOC(md)
+	if !strings.Contains(got, "- [Repeat](#repeat)") || !strings.Contains(got, "- [Repeat](#repeat-1)") {
+		t.Errorf("repeated headings need GitHub -1 dedup suffixes:\n%s", got)
+	}
+	if strings.Contains(got, "not-a-heading") {
+		t.Errorf("fenced code must never contribute TOC entries:\n%s", got)
+	}
+	if again := RegenerateTOC(got); again != got {
+		t.Errorf("RegenerateTOC not idempotent:\n--- first ---\n%s\n--- second ---\n%s", got, again)
+	}
+}

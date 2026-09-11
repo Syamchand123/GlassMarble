@@ -1,6 +1,7 @@
 package ledger
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -209,5 +210,75 @@ func TestAppendDefaultsTimestamp(t *testing.T) {
 	}
 	if sum.Runs != 1 || sum.LastRun == "" {
 		t.Fatalf("zero timestamp must default: %+v", sum)
+	}
+}
+
+func TestEvalRecordKindBackCompat(t *testing.T) {
+	root := t.TempDir()
+	// Pre-D1 lines carry no kind ("" = run); eval lines carry Kind:"eval".
+	if err := Append(root, RunRecord{Commit: "run1", TokensUsed: 100}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if err := Append(root, RunRecord{Commit: "", Kind: "eval", EvalScore: 0.85, EvalSamples: 4}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, ".glassmarble", "runs", "runs.jsonl"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("ledger lines = %d, want 2", len(lines))
+	}
+	// Old readers ignore the additive fields; new readers see them.
+	var evalRec RunRecord
+	if err := json.Unmarshal([]byte(lines[1]), &evalRec); err != nil {
+		t.Fatalf("unmarshal eval record: %v", err)
+	}
+	if evalRec.Kind != "eval" || evalRec.EvalScore != 0.85 || evalRec.EvalSamples != 4 {
+		t.Fatalf("eval fields lost: %+v", evalRec)
+	}
+	var runRec RunRecord
+	if err := json.Unmarshal([]byte(lines[0]), &runRec); err != nil {
+		t.Fatalf("unmarshal run record: %v", err)
+	}
+	if runRec.Kind != "" {
+		t.Fatalf("run Kind must default to %q, got %q", "", runRec.Kind)
+	}
+	// Summaries roll both kinds up without breaking existing math.
+	sum, err := Summarize(root, 0)
+	if err != nil {
+		t.Fatalf("Summarize: %v", err)
+	}
+	if sum.Runs != 2 || sum.TotalTokens != 100 {
+		t.Fatalf("summary must include both records: %+v", sum)
+	}
+}
+
+func TestCheckAlerts(t *testing.T) {
+	sum := Summary{TotalTokens: 5000, AvgFreshness: 72.5, TotalFallbacks: 3}
+
+	// Zero thresholds = all disabled → all clear.
+	if got := CheckAlerts(sum, AlertThresholds{}); len(got) != 0 {
+		t.Fatalf("zero thresholds must be all clear, got %v", got)
+	}
+	// Generous thresholds → all clear.
+	if got := CheckAlerts(sum, AlertThresholds{MaxTokensPerRun: 9000, MinFreshness: 50, MaxFallbacks: 5}); len(got) != 0 {
+		t.Fatalf("generous thresholds must be all clear, got %v", got)
+	}
+	// Every breach fires with a human string naming the dimension.
+	got := CheckAlerts(sum, AlertThresholds{MaxTokensPerRun: 1000, MinFreshness: 90, MaxFallbacks: 1})
+	if len(got) != 3 {
+		t.Fatalf("want 3 alerts, got %v", got)
+	}
+	joined := strings.Join(got, "\n")
+	for _, want := range []string{"tokens 5000", "freshness 72.5", "fallbacks 3"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("alert strings must name values, missing %q in %v", want, got)
+		}
+	}
+	// Boundary values do not fire (strict inequalities).
+	if got := CheckAlerts(sum, AlertThresholds{MaxTokensPerRun: 5000, MaxFallbacks: 3}); len(got) != 0 {
+		t.Fatalf("boundary values must not fire, got %v", got)
 	}
 }

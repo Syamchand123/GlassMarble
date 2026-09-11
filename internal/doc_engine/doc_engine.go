@@ -20,6 +20,8 @@ package doc_engine
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -32,6 +34,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine"
@@ -294,7 +297,13 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 	}
 
 	// ── Phase 1: Catalog & Invalidation Engine ────────────────────────────
-	cat := catalog.New(docs)
+	// In-memory catalog cache (gap C5, honest scope): the catalog rebuild
+	// from docs.yaml is cheap, but reusing the index across in-process Run
+	// calls helps daemon/serve + tests. Keyed by docs.yaml content hash +
+	// doc/tag filter; any config change misses and rebuilds. The expensive
+	// part (AKG load) is outside doc_engine control — cross-process AKG
+	// caching belongs to the analyze/daemon layers, not here.
+	cat := cachedCatalogForDocs(docs, docsConfigCacheKey(repoRoot, opts.DocID, opts.Tag))
 
 	// Stage 1: Fast-bail evaluator (< 15ms latency target)
 	bail, changedFiles, bailReason, _ := invalidator.FastBail(repoRoot, opts.CommitHash, cat, state, opts.Force)
@@ -448,6 +457,17 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 
 	result.DocsUpdated = docsUpdatedCount
 	result.TokensUsed = totalTokens
+
+	// P33 living error catalog: regenerate with CPG caller resolution when
+	// a real graph is available (analyze path). Parser-only runs skip it to
+	// avoid noisy heuristic output. Non-fatal by design.
+	if canWrite && opts.HeadGraph != nil {
+		if _, errCat := GenerateErrorCatalogWithGraph(repoRoot, opts.HeadGraph); errCat != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("error catalog regeneration failed: %v", errCat))
+		} else if opts.Verbose {
+			fmt.Fprintln(out, "doc_engine: regenerated living error catalog (docs/errors.md)")
+		}
+	}
 	freshSum := 0
 
 	// P8 freshness (master-plan Appendix B): refresh per-document scores.
@@ -719,6 +739,19 @@ func Check(repoRoot string, opts CheckOptions) (CheckResult, error) {
 						}
 					}
 				}
+				// D2 tutorial-exec linkage (gap D2, non-breaking): a
+				// tutorial-quadrant doc whose rendered markdown contains
+				// fenced code blocks without exec/no_run tags earns a
+				// WARNING suggesting gmb:snippet:exec linkage so tutorial
+				// code stays executable. Warnings only, never failures.
+				if quadrant == "tutorial" {
+					if content, readErr := os.ReadFile(absPath); readErr == nil {
+						if hasNonExecutableCodeBlocks(string(content)) {
+							result.Warnings = append(result.Warnings,
+								fmt.Sprintf("%s: tutorial section has non-executable code blocks; consider gmb:snippet:exec", doc.TargetPath))
+						}
+					}
+				}
 			}
 		}
 
@@ -751,6 +784,51 @@ func Check(repoRoot string, opts CheckOptions) (CheckResult, error) {
 	}
 
 	return result, nil
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// In-memory catalog cache (gap C5, honest scope)
+// ────────────────────────────────────────────────────────────────────────────
+
+// catalogCache reuses the catalog index across in-process Run calls
+// (daemon/serve + tests). The cached Catalog is treated as read-only by
+// all consumers (invalidator, FastBail); nothing mutates through it.
+var catalogCache struct {
+	sync.Mutex
+	key string
+	cat *catalog.Catalog
+}
+
+// cachedCatalogForDocs returns a catalog for docs, reusing the cached index
+// when key matches the last build. Any docs.yaml/filter change rebuilds.
+func cachedCatalogForDocs(docs []docconfig.DocSpec, key string) *catalog.Catalog {
+	catalogCache.Lock()
+	defer catalogCache.Unlock()
+	if catalogCache.cat != nil && catalogCache.key == key {
+		return catalogCache.cat
+	}
+	cat := catalog.New(docs)
+	catalogCache.key = key
+	catalogCache.cat = cat
+	return cat
+}
+
+// docsConfigCacheKey hashes the docs.yaml bytes plus the doc/tag filter so
+// the catalog cache invalidates on any config or filter change. It probes
+// .glassmarble/docs.yaml first, then the repo-root fallback (mirroring
+// LoadDocsConfig); missing files hash as empty (same as an empty config).
+func docsConfigCacheKey(repoRoot, docID, tag string) string {
+	var data []byte
+	for _, p := range []string{docconfig.DocsConfigPath(repoRoot), filepath.Join(repoRoot, docconfig.DocsConfigFilename)} {
+		if b, err := os.ReadFile(p); err == nil {
+			data = b
+			break
+		}
+	}
+	h := sha256.New()
+	h.Write(data)
+	h.Write([]byte("\x00" + docID + "\x00" + tag))
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1065,6 +1143,38 @@ func keywordWeightForSubject(subject string) int {
 	default:
 		return 5
 	}
+}
+
+// hasNonExecutableCodeBlocks reports whether markdown contains a fenced
+// code block without an exec/no_run tag (D2 tutorial-exec linkage). A
+// block counts as executable when its opening fence info string mentions
+// "exec" or "no_run"/"norun", or when the document carries a
+// gmb:snippet:exec directive. Advisory only — callers emit warnings.
+func hasNonExecutableCodeBlocks(markdown string) bool {
+	s := strings.ReplaceAll(markdown, "\r\n", "\n")
+	if !strings.Contains(s, "```") && !strings.Contains(s, "~~~") {
+		return false
+	}
+	if strings.Contains(s, "gmb:snippet:exec") {
+		return false
+	}
+	inFence := false
+	for _, line := range strings.Split(s, "\n") {
+		t := strings.TrimLeft(line, " \t")
+		if !strings.HasPrefix(t, "```") && !strings.HasPrefix(t, "~~~") {
+			continue
+		}
+		if inFence {
+			inFence = false
+			continue
+		}
+		info := strings.ToLower(strings.TrimSpace(t[3:]))
+		if !strings.Contains(info, "exec") && !strings.Contains(info, "no_run") && !strings.Contains(info, "norun") {
+			return true
+		}
+		inFence = true
+	}
+	return false
 }
 
 // ────────────────────────────────────────────────────────────────────────────

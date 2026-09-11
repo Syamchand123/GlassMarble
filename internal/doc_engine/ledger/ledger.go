@@ -23,6 +23,7 @@ package ledger
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +37,11 @@ const (
 )
 
 // RunRecord is one structured engine-run observation.
+//
+// D1 eval trend fields (additive, back-compat): Kind distinguishes "run"
+// from "eval" records ("" reads as "run" for pre-D1 lines); EvalScore and
+// EvalSamples carry the faithfulness rollup on eval records and stay zero
+// on run records.
 type RunRecord struct {
 	Timestamp         time.Time      `json:"timestamp"`
 	Commit            string         `json:"commit"`
@@ -50,6 +56,9 @@ type RunRecord struct {
 	Fallbacks         int            `json:"fallbacks"`
 	GlobalFreshness   int            `json:"global_freshness"`
 	Warnings          int            `json:"warnings"`
+	Kind              string         `json:"kind,omitempty"`
+	EvalScore         float64        `json:"eval_score,omitempty"`
+	EvalSamples       int            `json:"eval_samples,omitempty"`
 }
 
 // Summary is the rollup over the (windowed) ledger.
@@ -172,4 +181,39 @@ func Prune(repoRoot string, keepN int) error {
 	}
 	lines = lines[len(lines)-keepN:]
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// D5 alert hooks: threshold evaluation over a ledger Summary
+// ────────────────────────────────────────────────────────────────────────────
+
+// AlertThresholds bounds the operating envelope a Summary is checked
+// against. Zero values DISABLE that check (no threshold configured means no
+// alert, never an all-clear lie about an unconfigured dimension).
+type AlertThresholds struct {
+	MaxTokensPerRun int     `json:"max_tokens_per_run,omitempty"`
+	MinFreshness    float64 `json:"min_freshness,omitempty"`
+	MaxFallbacks    int     `json:"max_fallbacks,omitempty"`
+}
+
+// CheckAlerts evaluates s against t and returns one human-readable string
+// per breached threshold (tokens above max, freshness below min, fallbacks
+// above max). Zero thresholds are disabled and never fire. Empty return
+// means all clear. A Summary with no runs still evaluates: configured
+// thresholds fire on the zero values only when the zero itself breaches
+// (freshness 0 < min fires; tokens 0 > max cannot; fallbacks 0 > max
+// cannot) — callers that want "no data, no alerts" should skip empty
+// summaries themselves.
+func CheckAlerts(s Summary, t AlertThresholds) []string {
+	var alerts []string
+	if t.MaxTokensPerRun > 0 && s.TotalTokens > t.MaxTokensPerRun {
+		alerts = append(alerts, fmt.Sprintf("tokens %d exceed budget %d", s.TotalTokens, t.MaxTokensPerRun))
+	}
+	if t.MinFreshness > 0 && s.AvgFreshness < t.MinFreshness {
+		alerts = append(alerts, fmt.Sprintf("freshness %.1f below minimum %.1f", s.AvgFreshness, t.MinFreshness))
+	}
+	if t.MaxFallbacks > 0 && s.TotalFallbacks > t.MaxFallbacks {
+		alerts = append(alerts, fmt.Sprintf("fallbacks %d exceed maximum %d", s.TotalFallbacks, t.MaxFallbacks))
+	}
+	return alerts
 }

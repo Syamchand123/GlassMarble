@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -85,10 +86,56 @@ func (o *Orchestrator) countFallback() {
 	o.fallbacks++
 }
 
+// lockedWriter serializes concurrent writes to the orchestrator's Out
+// (phase-1 render goroutines share it for verbose fallback notes; the
+// configured writers — bytes.Buffer in tests included — are not
+// goroutine-safe on their own).
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
+}
+
+// parallelSections reports whether concurrent section rendering is enabled.
+// Env GMB_DOC_PARALLEL=0 (also "false"/"off"/"no") disables it and restores
+// strictly serial rendering. Any other value, including unset, enables it.
+// There is deliberately no CLI flag (cmd/ is frozen); the env gate is the
+// documented opt-out.
+func parallelSections() bool {
+	switch v := strings.ToLower(strings.TrimSpace(os.Getenv("GMB_DOC_PARALLEL"))); v {
+	case "0", "false", "off", "no":
+		return false
+	default:
+		return true
+	}
+}
+
+// maxSectionWorkers caps the phase-1 worker pool at min(4, NumCPU, nJobs).
+func maxSectionWorkers(nJobs int) int {
+	n := nJobs
+	if m := runtime.NumCPU(); m < n {
+		n = m
+	}
+	if n > 4 {
+		n = 4
+	}
+	if n < 1 {
+		n = 1
+	}
+	return n
+}
+
 // NewOrchestrator creates a new Dual-Track Orchestrator.
 func NewOrchestrator(opts OrchestratorOptions) *Orchestrator {
 	if opts.Out == nil {
 		opts.Out = io.Discard
+	} else {
+		opts.Out = &lockedWriter{w: opts.Out}
 	}
 
 	det := NewDeterministicRenderer()
@@ -358,8 +405,15 @@ func (o *Orchestrator) ProcessDocument(
 		}
 	}
 
-	docModified := false
+	// C1: learned project vocabulary, built ONCE per ProcessDocument call
+	// (not per section). One capped WalkDir (2000 .go files, vendor /
+	// node_modules / .git skipped); the map is read-only thereafter and
+	// shared across the phase-1 render goroutines.
+	vocab := verifier.LearnVocabulary(repoRoot, 1000)
 
+	// Phase 0 (serial): snapshot one job per dirty managed section.
+	// parsedDoc is only touched here and in phase 2 — never concurrently.
+	var jobs []sectionJob
 	for i := range doc.Sections {
 		sec := &doc.Sections[i]
 		if !sec.Managed || sec.Freeze {
@@ -375,166 +429,69 @@ func (o *Orchestrator) ProcessDocument(
 			continue
 		}
 
-		priorBody := ""
+		job := sectionJob{sec: *sec}
 		if zone != nil {
-			priorBody = patcher.ExtractBody(zone)
+			job.priorBody = patcher.ExtractBody(zone)
+			job.directives = zone.Directives
+			job.zoneContent = zone.Content
+			job.hasZone = true
 		}
+		jobs = append(jobs, job)
+	}
 
-		// Stage 4: Grounding
-		fs := grounding.AssembleFactSheet(doc, sec, graph, dossier, priorBody, repoRoot)
-		if fs == nil {
+	// Phase 1 (concurrent render — gap C5): grounding+render+gates per
+	// section, pure w.r.t. disk. A semaphore caps workers at
+	// min(4, NumCPU); GMB_DOC_PARALLEL=0 restores serial rendering.
+	// Per-section outcomes are collected by index; first-errors are NOT
+	// fatal — a failed section records a warning and is skipped in the
+	// merge phase. State-manager calls remain phase-2-only (serial).
+	results := make([]sectionResult, len(jobs))
+	if parallelSections() && len(jobs) > 1 {
+		sem := make(chan struct{}, maxSectionWorkers(len(jobs)))
+		var wg sync.WaitGroup
+		for i := range jobs {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				results[i] = o.renderOneSection(ctx, repoRoot, doc, jobs[i], graph, dossier, commitHash, vocab)
+			}(i)
+		}
+		wg.Wait()
+	} else {
+		for i := range jobs {
+			results[i] = o.renderOneSection(ctx, repoRoot, doc, jobs[i], graph, dossier, commitHash, vocab)
+		}
+	}
+
+	docModified := false
+
+	// Phase 2 (serial merge/write/state, in doc.Sections order): the
+	// pre-existing merge path, fed from phase-1 outcomes. Warnings and
+	// token counts fold in by index, so concurrent rendering stays
+	// byte-identical to serial rendering (determinism gate).
+	for i := range results {
+		res := &results[i]
+		secID := res.job.sec.ID
+
+		// B2c ranked-map emission (Verbose only): top-5 files+scores for
+		// this section, printed in section order for determinism.
+		if o.opts.Verbose && len(res.rankedFiles) > 0 {
+			top := res.rankedFiles
+			if len(top) > 5 {
+				top = top[:5]
+			}
+			fmt.Fprintf(o.opts.Out, "doc_engine: context map %s [%s]: %s\n",
+				doc.ID, secID, strings.Join(top, ", "))
+		}
+		warnings = append(warnings, res.secWarnings...)
+		tokensUsed += res.secTokens
+		if res.skipped {
 			continue
 		}
-		fs.CommitHash = commitHash
-		fs.DocPurpose = doc.Purpose
-		fs.DocAudience = doc.Audience
-		// Global style is the fallback; per-doc style wins on non-empty fields.
-		fs.Style = o.opts.GlobalStyle
-		if doc.Style != nil {
-			if doc.Style.Standard != "" {
-				fs.Style.Standard = doc.Style.Standard
-			}
-			if doc.Style.Voice != "" {
-				fs.Style.Voice = doc.Style.Voice
-			}
-			if doc.Style.Tone != "" {
-				fs.Style.Tone = doc.Style.Tone
-			}
-			if doc.Style.CodeBlockFormat != "" {
-				fs.Style.CodeBlockFormat = doc.Style.CodeBlockFormat
-			}
-			if len(doc.Style.JargonBlacklist) > 0 {
-				fs.Style.JargonBlacklist = doc.Style.JargonBlacklist
-			}
-		}
-		// Thread the section's MaxWords cap through to the system prompt.
-		fs.MaxWords = sec.MaxWords
-		if dossier != nil {
-			fs.CommitIntent = dossier.CommitIntent
-			fs.CommitReason = dossier.CommitReason
-		}
-		if zone != nil && zone.Directives != nil {
-			if inst, ok := zone.Directives["instruction"]; ok && inst != "" {
-				fs.SectionInstruction = inst
-			}
-		}
-		// D2: Diátaxis quadrant guidance. The archetype's quadrant shapes
-		// the prose contract (reference/how-to/tutorial/explanation) without
-		// touching user content — prompt payload only.
-		if q := ArchetypeQuadrant(doc.Archetype); q != "" {
-			if qp := QuadrantPrompt(q); qp != "" {
-				if fs.SectionInstruction != "" {
-					fs.SectionInstruction += "\n\n"
-				}
-				fs.SectionInstruction += "Documentation quadrant (" + q + "): " + qp
-			}
-		}
-
-	// Stage 6 & 7: Render + Quality Firewall. Default RenderMode from the
-	// orchestrator decision so the contract field is never decorative:
-	// deterministic when no LLM is available, llm otherwise.
-	if fs.RenderMode == "" {
-		if o.actuator != nil && !o.opts.NoLLM {
-			fs.RenderMode = "llm"
-		} else {
-			fs.RenderMode = "deterministic"
-		}
-	}
-	outcome, rErr := o.RenderSection(ctx, fs, graph)
-	if rErr != nil {
-		warnings = append(warnings, fmt.Sprintf("failed rendering section %s/%s: %v", doc.ID, sec.ID, rErr))
-		continue
-	}
-	tokensUsed += outcome.TokensUsed
-	if outcome.Warning != "" {
-		warnings = append(warnings, outcome.Warning)
-	}
-	outcome.Content = o.enforceMaxWords(ctx, fs, sec, graph, outcome, &warnings)
-
-		// P9: living diagram directive — best-effort. After a managed
-		// section renders, if the zone directives contain `diagram`
-		// (parsed via patcher.ProcessDirectives), generate the diagram
-		// markdown via the grounding diagram path and inject it into the
-		// section body before merge. On error, warning only.
-		if zone != nil && len(zone.Directives) > 0 {
-			pd := patcher.ProcessDirectives(zone.Directives)
-			if pd.DiagramType != "" {
-				ref := config.DiagramRef{Type: pd.DiagramType, Scope: pd.DiagramScope}
-				if (strings.EqualFold(ref.Type, "callgraph") || strings.EqualFold(ref.Type, "sequence")) && ref.Entry == "" && len(doc.Scope.EntryPoints) > 0 {
-					ref.Entry = doc.Scope.EntryPoints[0]
-				}
-				if diag, dErr := grounding.GenerateDiagram(ref, graph); dErr != nil {
-					warnings = append(warnings, fmt.Sprintf("diagram directive %q for section %s/%s failed: %v", pd.DiagramType, doc.ID, sec.ID, dErr))
-				} else if strings.TrimSpace(diag) != "" {
-					outcome.Content = strings.TrimRight(outcome.Content, "\n") + "\n\n" + strings.TrimSpace(diag) + "\n"
-				}
-			}
-		}
-
-		// P9: todo population — best-effort. When the managed zone contains
-		// a `gmb:todo:` marker, append a deterministic draft line derived
-		// from grounding via patcher.PopulateTodos.
-		if zone != nil && strings.Contains(zone.Content, "gmb:todo:") {
-			outcome.Content = patcher.PopulateTodos(outcome.Content, exportedShortNames(fs))
-		}
-
-		// Gate 6: prose quality (plan C1, both tracks). Strict mode fails;
-		// non-strict only reports. On strict LLM failure: one repair retry,
-		// then deterministic fallback (mirrors the Stage 7 recovery ladder).
-		// On strict deterministic failure: warn + ship (tables cannot be
-		// re-voiced; failing would discard grounded facts).
-		prosePass, proseFailures := verifier.CheckProseGate(outcome.Content, fs.Style, fs.Style.StrictProse)
-		if !prosePass {
-			proseErr := fmt.Errorf("prose quality gate failed: %s", strings.Join(proseFailures, "; "))
-			if outcome.RenderMode == "llm" && o.actuator != nil && !outcome.RepairUsed {
-				repairResp, repairErr := o.actuator.Repair(ctx, fs, outcome.Content, proseErr)
-				if repairErr == nil {
-					symIndex := buildSymbolIndex(fs, graph)
-					if rg := verifier.RunGates(fs.PriorSectionMarkdown, repairResp.Text, symIndex); rg.Pass {
-						if rp, rf := verifier.CheckProseGate(repairResp.Text, fs.Style, true); rp {
-							outcome.Content = repairResp.Text
-							outcome.RepairUsed = true
-							outcome.TokensUsed += repairResp.TotalTokens
-							tokensUsed += repairResp.TotalTokens
-							o.countRepair()
-							warnings = append(warnings, fmt.Sprintf("section %s/%s prose repaired to strict style", doc.ID, sec.ID))
-							goto gate7
-						} else {
-							_ = rf
-						}
-					}
-				}
-				detOutcome, detErr := o.renderTrackB(fs, buildSymbolIndex(fs, graph))
-				if detErr != nil {
-					warnings = append(warnings, fmt.Sprintf("section %s/%s strict prose failed (%v); skipping update", doc.ID, sec.ID, proseErr))
-					continue
-				}
-				detOutcome.FallbackUsed = true
-				detOutcome.Warning = fmt.Sprintf("strict prose failed on LLM output; deterministic fallback used (%v)", proseErr)
-				outcome = detOutcome
-				tokensUsed += outcome.TokensUsed
-			} else {
-				warnings = append(warnings, fmt.Sprintf("section %s/%s prose quality: %s", doc.ID, sec.ID, strings.Join(proseFailures, "; ")))
-			}
-		} else if len(proseFailures) > 0 {
-			warnings = append(warnings, fmt.Sprintf("section %s/%s prose suggestions: %s", doc.ID, sec.ID, strings.Join(proseFailures, "; ")))
-		}
-
-	gate7:
-		// Gate 7: reference integrity (plan C2). Engine-side it reports
-		// warnings only — hard failures belong to `doc check` (CI), where
-		// missing files and bad anchors fail the gate without blocking
-		// generation here.
-		{
-			var symFn func(string) bool
-			if symIndex := buildSymbolIndex(fs, graph); symIndex != nil {
-				symFn = func(s string) bool { return symIndex.HasSymbol(s) }
-			}
-			refRep := verifier.CheckReferences(repoRoot, doc.TargetPath, outcome.Content, symFn, false)
-			for _, br := range refRep.Broken {
-				warnings = append(warnings, fmt.Sprintf("section %s/%s reference integrity: %s (line %d: %s)", doc.ID, sec.ID, br.Reason, br.Line, br.Target))
-			}
-		}
+		outcome := res.outcome
+		priorBody := res.job.priorBody
 
 		// Stage 8: 3-way merge. BASE is the last rendered body from state
 		// (not priorBody): it records what the machine wrote last run, while
@@ -544,7 +501,7 @@ func (o *Orchestrator) ProcessDocument(
 		if sm != nil {
 			if st, lErr := sm.Load(); lErr == nil && st != nil {
 				if ds, ok := st.Documents[doc.TargetPath]; ok && ds != nil {
-					if ss, ok := ds.Sections[sec.ID]; ok && ss != nil && ss.LastRenderedBody != "" {
+					if ss, ok := ds.Sections[secID]; ok && ss != nil && ss.LastRenderedBody != "" {
 						base = ss.LastRenderedBody
 					}
 				}
@@ -552,26 +509,26 @@ func (o *Orchestrator) ProcessDocument(
 		}
 		mergeRes := patcher.MergeSection(base, priorBody, outcome.Content)
 		if mergeRes.Conflicted {
-			patcher.WarnConflict(o.opts.Out, doc.TargetPath, sec.ID)
+			patcher.WarnConflict(o.opts.Out, doc.TargetPath, secID)
 			// D6 review queue: conflicts are human-decision items, recorded
 			// best-effort (never fail the run on queue errors).
-			_ = queueConflictReview(repoRoot, doc.TargetPath, sec.ID, base, priorBody, outcome.Content)
+			_ = queueConflictReview(repoRoot, doc.TargetPath, secID, base, priorBody, outcome.Content)
 		}
 
 		// Apply to in-memory parsed doc
-		newFullText := patcher.ApplyToDoc(parsedDoc, sec.ID, mergeRes.Content)
+		newFullText := patcher.ApplyToDoc(parsedDoc, secID, mergeRes.Content)
 		parsedDoc = patcher.ParseMarkdown(newFullText)
 		docModified = true
 
-	// Update section hash in state manager. Recompute the exact Stage-3
-	// hash (same inputs FindDirtySections compares) so the next run can
-	// hit "clean → 0 tokens". Persisting "" here would defeat zero-churn.
-	if sm != nil {
-		astHash := invalidator.SectionHash(doc, sec, graph)
-		_ = storage.WriteSectionHash(sm, doc.TargetPath, sec.ID, astHash, outcome.RenderMode, commitHash, outcome.TokensUsed, outcome.DurationMs)
-		// Persist the merged body as the BASE for the next run's 3-way merge.
-		_ = storage.SetLastRenderedBody(sm, doc.TargetPath, sec.ID, mergeRes.Content)
-	}
+		// Update section hash in state manager. Recompute the exact Stage-3
+		// hash (same inputs FindDirtySections compares) so the next run can
+		// hit "clean → 0 tokens". Persisting "" here would defeat zero-churn.
+		if sm != nil {
+			astHash := invalidator.SectionHash(doc, &res.job.sec, graph)
+			_ = storage.WriteSectionHash(sm, doc.TargetPath, secID, astHash, outcome.RenderMode, commitHash, outcome.TokensUsed, outcome.DurationMs)
+			// Persist the merged body as the BASE for the next run's 3-way merge.
+			_ = storage.SetLastRenderedBody(sm, doc.TargetPath, secID, mergeRes.Content)
+		}
 	}
 
 	if !docModified {
@@ -588,6 +545,218 @@ func (o *Orchestrator) ProcessDocument(
 	}
 
 	return writeRes.Changed, tokensUsed, warnings, nil
+}
+
+// sectionJob is one dirty section's phase-1 input snapshot. Captured
+// serially (phase 0) so the concurrent render phase never touches parsedDoc.
+type sectionJob struct {
+	sec         config.SectionSpec // value copy; never aliases doc.Sections
+	priorBody   string
+	directives  map[string]string // read-only in phase 1 (zone directives)
+	zoneContent string            // read-only in phase 1 (todo-marker scan)
+	hasZone     bool
+}
+
+// sectionResult is one section's phase-1 render outcome. Merged serially in
+// job order (phase 2), so warnings, token counts, and file bytes stay
+// deterministic regardless of goroutine completion order.
+type sectionResult struct {
+	job         sectionJob
+	skipped     bool // true: nothing to merge (fact-sheet nil / render failed)
+	outcome     SectionRenderOutcome
+	secTokens   int
+	secWarnings []string
+	rankedFiles []string // B2c: TakeRankedMap stash for verbose emission
+}
+
+// renderOneSection runs the phase-1 pipeline for a single section:
+// grounding → render + firewall → post-render gates. Pure w.r.t. disk:
+// no parsedDoc mutation, no state-manager calls (those are phase-2-only
+// and serial). Safe for concurrent use across sections of one document:
+// the only shared mutable state is the orchestrator's mutex-guarded
+// counters and the locked Out writer, plus read-only graph/dossier/doc
+// access. vocab (C1) is built once per ProcessDocument and read-only here.
+func (o *Orchestrator) renderOneSection(
+	ctx context.Context,
+	repoRoot string,
+	doc *config.DocSpec,
+	job sectionJob,
+	graph *akg.CodePropertyGraph,
+	dossier *config.GlobalCommitDossier,
+	commitHash string,
+	vocab map[string]bool,
+) sectionResult {
+	sec := &job.sec
+	var res sectionResult
+	res.job = job
+
+	// Stage 4: Grounding
+	fs := grounding.AssembleFactSheet(doc, sec, graph, dossier, job.priorBody, repoRoot)
+	if fs == nil {
+		res.skipped = true
+		return res
+	}
+	// B2c: stash the ranked file map immediately (single-flight take from
+	// the keyed store); the serial merge phase prints it when Verbose.
+	if ranked, ok := grounding.TakeRankedMap(doc.TargetPath, sec.ID); ok {
+		res.rankedFiles = ranked
+	}
+	fs.CommitHash = commitHash
+	fs.DocPurpose = doc.Purpose
+	fs.DocAudience = doc.Audience
+	// Global style is the fallback; per-doc style wins on non-empty fields.
+	fs.Style = o.opts.GlobalStyle
+	if doc.Style != nil {
+		if doc.Style.Standard != "" {
+			fs.Style.Standard = doc.Style.Standard
+		}
+		if doc.Style.Voice != "" {
+			fs.Style.Voice = doc.Style.Voice
+		}
+		if doc.Style.Tone != "" {
+			fs.Style.Tone = doc.Style.Tone
+		}
+		if doc.Style.CodeBlockFormat != "" {
+			fs.Style.CodeBlockFormat = doc.Style.CodeBlockFormat
+		}
+		if len(doc.Style.JargonBlacklist) > 0 {
+			fs.Style.JargonBlacklist = doc.Style.JargonBlacklist
+		}
+	}
+	// Thread the section's MaxWords cap through to the system prompt.
+	fs.MaxWords = sec.MaxWords
+	if dossier != nil {
+		fs.CommitIntent = dossier.CommitIntent
+		fs.CommitReason = dossier.CommitReason
+	}
+	if len(job.directives) > 0 {
+		if inst, ok := job.directives["instruction"]; ok && inst != "" {
+			fs.SectionInstruction = inst
+		}
+	}
+	// D2: Diátaxis quadrant guidance. The archetype's quadrant shapes
+	// the prose contract (reference/how-to/tutorial/explanation) without
+	// touching user content — prompt payload only.
+	if q := ArchetypeQuadrant(doc.Archetype); q != "" {
+		if qp := QuadrantPrompt(q); qp != "" {
+			if fs.SectionInstruction != "" {
+				fs.SectionInstruction += "\n\n"
+			}
+			fs.SectionInstruction += "Documentation quadrant (" + q + "): " + qp
+		}
+	}
+
+	// Stage 6 & 7: Render + Quality Firewall. Default RenderMode from the
+	// orchestrator decision so the contract field is never decorative:
+	// deterministic when no LLM is available, llm otherwise.
+	if fs.RenderMode == "" {
+		if o.actuator != nil && !o.opts.NoLLM {
+			fs.RenderMode = "llm"
+		} else {
+			fs.RenderMode = "deterministic"
+		}
+	}
+	outcome, rErr := o.RenderSection(ctx, fs, graph)
+	if rErr != nil {
+		res.skipped = true
+		res.secWarnings = append(res.secWarnings, fmt.Sprintf("failed rendering section %s/%s: %v", doc.ID, sec.ID, rErr))
+		return res
+	}
+	res.secTokens += outcome.TokensUsed
+	if outcome.Warning != "" {
+		res.secWarnings = append(res.secWarnings, outcome.Warning)
+	}
+	outcome.Content = o.enforceMaxWords(ctx, fs, sec, graph, outcome, &res.secWarnings)
+
+	// P9: living diagram directive — best-effort. After a managed
+	// section renders, if the zone directives contain `diagram`
+	// (parsed via patcher.ProcessDirectives), generate the diagram
+	// markdown via the grounding diagram path and inject it into the
+	// section body before merge. On error, warning only.
+	if job.hasZone && len(job.directives) > 0 {
+		pd := patcher.ProcessDirectives(job.directives)
+		if pd.DiagramType != "" {
+			ref := config.DiagramRef{Type: pd.DiagramType, Scope: pd.DiagramScope}
+			if (strings.EqualFold(ref.Type, "callgraph") || strings.EqualFold(ref.Type, "sequence")) && ref.Entry == "" && len(doc.Scope.EntryPoints) > 0 {
+				ref.Entry = doc.Scope.EntryPoints[0]
+			}
+			if diag, dErr := grounding.GenerateDiagram(ref, graph); dErr != nil {
+				res.secWarnings = append(res.secWarnings, fmt.Sprintf("diagram directive %q for section %s/%s failed: %v", pd.DiagramType, doc.ID, sec.ID, dErr))
+			} else if strings.TrimSpace(diag) != "" {
+				outcome.Content = strings.TrimRight(outcome.Content, "\n") + "\n\n" + strings.TrimSpace(diag) + "\n"
+			}
+		}
+	}
+
+	// P9: todo population — best-effort. When the managed zone contains
+	// a `gmb:todo:` marker, append a deterministic draft line derived
+	// from grounding via patcher.PopulateTodos.
+	if job.hasZone && strings.Contains(job.zoneContent, "gmb:todo:") {
+		outcome.Content = patcher.PopulateTodos(outcome.Content, exportedShortNames(fs))
+	}
+
+	// Gate 6: prose quality (plan C1, both tracks, with learned project
+	// vocabulary so project terms never flag the typo rule). Strict mode
+	// fails; non-strict only reports. On strict LLM failure: one repair
+	// retry, then deterministic fallback (mirrors the Stage 7 ladder).
+	// On strict deterministic failure: warn + ship (tables cannot be
+	// re-voiced; failing would discard grounded facts).
+	prosePass, proseFailures := verifier.CheckProseGateWithVocab(outcome.Content, fs.Style, fs.Style.StrictProse, vocab)
+	if !prosePass {
+		proseErr := fmt.Errorf("prose quality gate failed: %s", strings.Join(proseFailures, "; "))
+		if outcome.RenderMode == "llm" && o.actuator != nil && !outcome.RepairUsed {
+			repairResp, repairErr := o.actuator.Repair(ctx, fs, outcome.Content, proseErr)
+			if repairErr == nil {
+				symIndex := buildSymbolIndex(fs, graph)
+				if rg := verifier.RunGates(fs.PriorSectionMarkdown, repairResp.Text, symIndex); rg.Pass {
+					if rp, rf := verifier.CheckProseGateWithVocab(repairResp.Text, fs.Style, true, vocab); rp {
+						outcome.Content = repairResp.Text
+						outcome.RepairUsed = true
+						outcome.TokensUsed += repairResp.TotalTokens
+						res.secTokens += repairResp.TotalTokens
+						o.countRepair()
+						res.secWarnings = append(res.secWarnings, fmt.Sprintf("section %s/%s prose repaired to strict style", doc.ID, sec.ID))
+						goto gate7
+					} else {
+						_ = rf
+					}
+				}
+			}
+			detOutcome, detErr := o.renderTrackB(fs, buildSymbolIndex(fs, graph))
+			if detErr != nil {
+				res.skipped = true
+				res.secWarnings = append(res.secWarnings, fmt.Sprintf("section %s/%s strict prose failed (%v); skipping update", doc.ID, sec.ID, proseErr))
+				return res
+			}
+			detOutcome.FallbackUsed = true
+			detOutcome.Warning = fmt.Sprintf("strict prose failed on LLM output; deterministic fallback used (%v)", proseErr)
+			outcome = detOutcome
+			res.secTokens += outcome.TokensUsed
+		} else {
+			res.secWarnings = append(res.secWarnings, fmt.Sprintf("section %s/%s prose quality: %s", doc.ID, sec.ID, strings.Join(proseFailures, "; ")))
+		}
+	} else if len(proseFailures) > 0 {
+		res.secWarnings = append(res.secWarnings, fmt.Sprintf("section %s/%s prose suggestions: %s", doc.ID, sec.ID, strings.Join(proseFailures, "; ")))
+	}
+
+gate7:
+	// Gate 7: reference integrity (plan C2). Engine-side it reports
+	// warnings only — hard failures belong to `doc check` (CI), where
+	// missing files and bad anchors fail the gate without blocking
+	// generation here.
+	{
+		var symFn func(string) bool
+		if symIndex := buildSymbolIndex(fs, graph); symIndex != nil {
+			symFn = func(s string) bool { return symIndex.HasSymbol(s) }
+		}
+		refRep := verifier.CheckReferences(repoRoot, doc.TargetPath, outcome.Content, symFn, false)
+		for _, br := range refRep.Broken {
+			res.secWarnings = append(res.secWarnings, fmt.Sprintf("section %s/%s reference integrity: %s (line %d: %s)", doc.ID, sec.ID, br.Reason, br.Line, br.Target))
+		}
+	}
+
+	res.outcome = outcome
+	return res
 }
 
 // ────────────────────────────────────────────────────────────────────────────

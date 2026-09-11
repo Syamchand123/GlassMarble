@@ -215,16 +215,19 @@ func TestSha256sum_Deterministic(t *testing.T) {
 // SQLite WAL backend (A3): dual-backend default, round-trip, migration, export
 // ────────────────────────────────────────────────────────────────────────────
 
-func TestStateManager_DefaultIsJSON(t *testing.T) {
+// Behavior change (gap A3e): SQLite WAL is now the DEFAULT backend for new
+// StateManagers; GMB_DOC_STATE=json selects the legacy JSON backend.
+// JSON state is never orphaned — first SQLite open auto-migrates it.
+func TestStateManager_DefaultIsSQLite(t *testing.T) {
 	t.Setenv("GMB_DOC_STATE", "")
 	dir := t.TempDir()
 	sm := NewStateManager(dir)
-	assert.False(t, sm.UsingSQLite(), "default backend must stay JSON for one release")
+	assert.True(t, sm.UsingSQLite(), "default backend must be SQLite (set GMB_DOC_STATE=json for legacy JSON)")
 
 	state := &DocEngineState{SchemaVersion: 1, Documents: map[string]*DocumentState{}}
 	require.NoError(t, sm.Save(state))
-	assert.FileExists(t, filepath.Join(dir, "docs_state.json"))
-	assert.NoFileExists(t, filepath.Join(dir, "docs_state.db"))
+	assert.FileExists(t, filepath.Join(dir, "docs_state.db"))
+	assert.NoFileExists(t, filepath.Join(dir, "docs_state.json"))
 }
 
 func TestStateManager_SQLiteRoundTrip(t *testing.T) {
@@ -297,7 +300,10 @@ func TestStateManager_SQLiteRoundTrip(t *testing.T) {
 }
 
 func TestStateManager_SQLiteMigratesFromJSON(t *testing.T) {
-	t.Setenv("GMB_DOC_STATE", "")
+	// Backend pin (not a contract change): the legacy fixture must be
+	// written as JSON, so force the JSON backend for setup; the migration
+	// assertion below is unchanged.
+	t.Setenv("GMB_DOC_STATE", "json")
 	dir := t.TempDir()
 
 	legacy := &DocEngineState{
@@ -358,8 +364,9 @@ func TestStateManager_SQLiteUsedWhenDBExists(t *testing.T) {
 func TestExportStateJSON(t *testing.T) {
 	require.Error(t, func() error { _, err := ExportStateJSON(nil); return err }())
 
-	// JSON backend export.
-	t.Setenv("GMB_DOC_STATE", "")
+	// JSON backend export (backend pin: GMB_DOC_STATE=json forces JSON now
+	// that SQLite is the default; assertions unchanged).
+	t.Setenv("GMB_DOC_STATE", "json")
 	dir := t.TempDir()
 	sm := NewStateManager(dir)
 	require.NoError(t, sm.Save(&DocEngineState{

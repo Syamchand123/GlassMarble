@@ -138,9 +138,14 @@ func BuildDossier(repoDir string, commitHash string, baseGraph, headGraph *akg.C
 	}
 
 	// 3. Structural arch events from the CPG snapshots (B3: message-
-	// independent signals). Merged structural-first over the keyword
-	// fallback; when both graphs are nil this degrades to keywords alone.
-	dossier.ArchEvents = mergeArchEvents(deriveStructuralEvents(baseGraph, headGraph), keywordEvents)
+	// independent signals). Keyword events are appended ONLY when BOTH
+	// graphs are nil (no structural signal exists at all); whenever either
+	// snapshot is available the structural derivation is authoritative and
+	// keyword proxies are suppressed entirely — even when the structural
+	// pass yields zero events (a quiet graph means "no architectural
+	// change", not "fall back to message guessing").
+	dossier.ArchEvents = mergeArchEventsForGraphs(
+		deriveStructuralEvents(baseGraph, headGraph), keywordEvents, baseGraph, headGraph)
 
 	// NOTE: DirtySections is intentionally left empty here. It is populated
 	// later by the invalidation engine (Invalidator.FindDirtySections +
@@ -295,6 +300,13 @@ func deriveStructuralEvents(baseGraph, headGraph *akg.CodePropertyGraph) []strin
 
 // mergeArchEvents concatenates structural events first, then keyword events,
 // deduped by exact name for deterministic output.
+//
+// B3b suppression policy: keyword proxies are only meaningful when NO
+// structural signal exists (both CPG snapshots nil). Use
+// mergeArchEventsForGraphs at the BuildDossier call site so keywords are
+// dropped whenever either graph is available — even if the structural pass
+// is quiet. This bare two-arg form is kept for unit-test compatibility and
+// retains the historical structural-first merge.
 func mergeArchEvents(structural, keywords []string) []string {
 	seen := make(map[string]bool, len(structural)+len(keywords))
 	var out []string
@@ -311,6 +323,17 @@ func mergeArchEvents(structural, keywords []string) []string {
 		}
 	}
 	return out
+}
+
+// mergeArchEventsForGraphs applies the B3b suppression policy: structural
+// events always; keyword events appended ONLY when BOTH graphs are nil.
+// When either snapshot is available, keywords are suppressed (nil) and the
+// result is the deduped structural list alone.
+func mergeArchEventsForGraphs(structural, keywords []string, baseGraph, headGraph *akg.CodePropertyGraph) []string {
+	if baseGraph != nil || headGraph != nil {
+		keywords = nil
+	}
+	return mergeArchEvents(structural, keywords)
 }
 
 // packageDirSet collects the set of package directories holding CPG nodes.

@@ -12,6 +12,7 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/archfeatures"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/ledger"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/storage"
 )
 
@@ -150,6 +151,62 @@ func TestOperations_SRE(t *testing.T) {
 	}
 	if !strings.Contains(errCat, "Living Error Code Catalog") {
 		t.Errorf("unexpected error catalog:\n%s", errCat)
+	}
+
+	// CPG-aware wrapper with nil graph delegates to the ident-scan catalog.
+	errCatG, err := GenerateErrorCatalogWithGraph(tempDir, nil)
+	if err != nil {
+		t.Fatalf("GenerateErrorCatalogWithGraph failed: %v", err)
+	}
+	if !strings.Contains(errCatG, "Living Error Code Catalog") {
+		t.Errorf("unexpected graph error catalog:\n%s", errCatG)
+	}
+}
+
+func TestOperations_EvalFaithfulnessLedgerAndRelevance(t *testing.T) {
+	tempDir := setupTestRepoWithDoc(t)
+
+	result, err := EvalFaithfulness(tempDir, 0)
+	if err != nil {
+		t.Fatalf("EvalFaithfulness failed: %v", err)
+	}
+	if result.Samples != 1 {
+		t.Fatalf("Samples = %d, want 1 (one non-empty managed section)", result.Samples)
+	}
+	if len(result.Docs) != 1 {
+		t.Fatalf("Docs = %d, want 1", len(result.Docs))
+	}
+	de := result.Docs[0]
+	if de.Relevance < 0 || de.Relevance > 1 {
+		t.Errorf("per-doc Relevance out of range: %v", de.Relevance)
+	}
+	// Fixture body "Old content" shares no content token with instruction
+	// "Explain module overview" → relevance 0 deterministically.
+	if de.Relevance != 0 {
+		t.Errorf("Relevance = %v, want 0 for unrelated body/instruction", de.Relevance)
+	}
+	if result.Relevance != de.Relevance {
+		t.Errorf("global Relevance = %v, want per-doc %v (single doc)", result.Relevance, de.Relevance)
+	}
+
+	// D1 trend record appended: Kind eval, score/samples mirror result.
+	data, err := os.ReadFile(filepath.Join(tempDir, ".glassmarble", "runs", "runs.jsonl"))
+	if err != nil {
+		t.Fatalf("eval must append a ledger record: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	var rec ledger.RunRecord
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &rec); err != nil {
+		t.Fatalf("ledger record is not JSON: %v", err)
+	}
+	if rec.Kind != "eval" {
+		t.Errorf("ledger Kind = %q, want eval", rec.Kind)
+	}
+	if rec.EvalScore != result.GlobalScore || rec.EvalSamples != result.Samples {
+		t.Errorf("ledger eval fields %+v must mirror result %+v", rec, result)
+	}
+	if rec.Commit != "" {
+		t.Errorf("eval Commit must be empty (working-tree scoring), got %q", rec.Commit)
 	}
 }
 

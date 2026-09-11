@@ -3,8 +3,10 @@
 package grounding
 
 import (
+	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
@@ -13,6 +15,39 @@ import (
 	doccontext "github.com/Syamchand123/GlassMarble/internal/doc_engine/grounding/context"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/grounding/resolve"
 )
+
+// rankedBySection carries the PageRank-ranked file map from applyContextLayer
+// (which has no Out writer and cannot extend FactSheet — spec.go is frozen)
+// to the renderer, which prints the top entries when Verbose (gap B2c).
+//
+// Key: doc.TargetPath + "\x00" + sectionID. A sync.Map (not a package-global
+// single slot) so concurrent section rendering (GMB_DOC_PARALLEL) never mixes
+// sections: each render stores under its own key and the serial merge phase
+// takes it back right after. Entries are single-flight: TakeRankedMap deletes
+// on read, so a stale entry can never leak into a later run.
+var rankedBySection sync.Map // key string → []string of "path(score)"
+
+// rankedMapKey builds the sync.Map key for one rendered section.
+func rankedMapKey(docPath, sectionID string) string {
+	return docPath + "\x00" + sectionID
+}
+
+// storeRankedMap records the ranked file list for one section (B2c emission).
+func storeRankedMap(docPath, sectionID string, files []string) {
+	rankedBySection.Store(rankedMapKey(docPath, sectionID), files)
+}
+
+// TakeRankedMap returns the ranked file list ("path(score)" strings,
+// score-descending) stored for one section and clears the slot.
+// ok=false when nothing was stored (nil graph, no seeds, or already taken).
+func TakeRankedMap(docPath, sectionID string) (files []string, ok bool) {
+	v, ok := rankedBySection.LoadAndDelete(rankedMapKey(docPath, sectionID))
+	if !ok {
+		return nil, false
+	}
+	files, _ = v.([]string)
+	return files, true
+}
 
 // AssembleFactSheet builds a complete, sanitized FactSheet for a single section.
 func AssembleFactSheet(
@@ -145,7 +180,7 @@ func AssembleFactSheet(
 	// Both are deterministic: identical inputs → identical payloads, so
 	// section hashes stay stable across runs.
 	applyPrecisionLayer(doc, payload, graph, repoRoot)
-	applyContextLayer(doc, payload, graph)
+	applyContextLayer(doc, sec, payload, graph)
 
 	// Render diagrams specified for this document
 	for _, diagRef := range doc.Diagrams {
@@ -290,7 +325,12 @@ func payloadCovers(payload *config.GroundTruthPayload, fqn string) bool {
 // applyContextLayer (plan B2) appends PageRank-ranked neighborhood symbols
 // (the callers/types that explain WHY, capped for prompt-budget safety) as
 // Kind:"context" facts. Deterministic output keeps section hashes stable.
-func applyContextLayer(doc *config.DocSpec, payload *config.GroundTruthPayload, graph *akg.CodePropertyGraph) {
+//
+// B2c emission: the ranked file map is also stashed in rankedBySection keyed
+// by doc.TargetPath+sectionID (TakeRankedMap) so the renderer can print the
+// top files when Verbose. sec may be nil (direct callers); then nothing is
+// stashed but the payload layer still applies.
+func applyContextLayer(doc *config.DocSpec, sec *config.SectionSpec, payload *config.GroundTruthPayload, graph *akg.CodePropertyGraph) {
 	if payload == nil || doc == nil || graph == nil {
 		return
 	}
@@ -306,6 +346,16 @@ func applyContextLayer(doc *config.DocSpec, payload *config.GroundTruthPayload, 
 		return
 	}
 	ranked := doccontext.SelectContext(graph, seeds, defaultContextBudgetTokens)
+	// Stash the ranked file map for verbose emission (score-descending,
+	// same order SelectContext returned). Stored even when no new symbols
+	// are appended — the map is still the honest relevance signal.
+	if sec != nil {
+		listed := make([]string, 0, len(ranked.Files))
+		for _, f := range ranked.Files {
+			listed = append(listed, fmt.Sprintf("%s(%.4f)", f.Path, f.Score))
+		}
+		storeRankedMap(doc.TargetPath, sec.ID, listed)
+	}
 	added := 0
 	for _, f := range ranked.Files {
 		for _, sym := range f.Symbols {

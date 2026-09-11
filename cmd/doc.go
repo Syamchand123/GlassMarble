@@ -13,6 +13,9 @@ import (
 
 	doc_engine "github.com/Syamchand123/GlassMarble/internal/doc_engine"
 	docconfig "github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/grounding/langmatrix"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/review"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/storage"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/programs/doc_view"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
@@ -327,6 +330,16 @@ Exit codes (plan Section 11):
 			Out:     cmd.OutOrStdout(),
 		}
 
+		// --fix runs BEFORE the audit so Check evaluates fixed files.
+		// Without it a drifted doc would return before fixes apply.
+		fixSnippets, _ := cmd.Flags().GetBool("fix")
+		verifySnippets, _ := cmd.Flags().GetBool("verify-snippets")
+		if fixSnippets {
+			if err := applyCheckFixes(cmd, absDir, verifySnippets); err != nil {
+				return err
+			}
+		}
+
 		result, err := doc_engine.Check(absDir, opts)
 		if err != nil {
 			// Exit-code contract (plan Section 11): hard errors
@@ -347,10 +360,9 @@ Exit codes (plan Section 11):
 			return fmt.Errorf("documentation drift detected: %d document(s) below fail threshold", len(result.Failures))
 		}
 
-		verifySnippets, _ := cmd.Flags().GetBool("verify-snippets")
+		verifySnippets, _ = cmd.Flags().GetBool("verify-snippets")
 		if verifySnippets {
 			snippetErrors := 0
-			fixSnippets, _ := cmd.Flags().GetBool("fix")
 			cfg, _ := docconfig.LoadDocsConfig(absDir)
 			if cfg != nil {
 				for _, doc := range cfg.Documents {
@@ -361,22 +373,12 @@ Exit codes (plan Section 11):
 					}
 					// P14: repo-aware arity verification (func signatures from
 					// the working tree), not just syntax + name presence.
+					// Fixes (if --fix) already applied pre-audit above; this
+					// pass is report-only.
 					errs, _ := doc_engine.VerifySnippetsInRepo(absDir, string(data), nil)
 					for _, se := range errs {
 						snippetErrors++
 						docPrintf(cmd, "  SNIPPET ERROR [%s: line %d]: %s\n", doc.TargetPath, se.LineNumber, se.ErrorMessage)
-					}
-					// P14: deterministic fix application (explicit --fix only;
-					// plain check stays non-modifying per the CI contract).
-					if fixSnippets && len(errs) > 0 {
-						fixed := doc_engine.ApplySnippetFixes(string(data), errs)
-						if fixed != string(data) {
-							if wErr := os.WriteFile(absPath, []byte(fixed), 0644); wErr != nil {
-								return fmt.Errorf("snippet fix failed for %s: %w", doc.TargetPath, wErr)
-							}
-							docPrintf(cmd, "  SNIPPET FIXED [%s]: applied %d deterministic fix(es)\n", doc.TargetPath, len(errs))
-							snippetErrors = 0
-						}
 					}
 				}
 			}
@@ -386,6 +388,44 @@ Exit codes (plan Section 11):
 		}
 		return nil
 	},
+}
+
+// applyCheckFixes applies explicit --fix repairs before the audit runs:
+// snippet fixes (only with --verify-snippets) and TOC regeneration
+// (always; no marker → no-op per document).
+func applyCheckFixes(cmd *cobra.Command, absDir string, verifySnippets bool) error {
+	cfg, _ := docconfig.LoadDocsConfig(absDir)
+	if cfg == nil {
+		return nil
+	}
+	for _, doc := range cfg.Documents {
+		absPath := filepath.Join(absDir, doc.TargetPath)
+		data, err := os.ReadFile(absPath)
+		if err != nil {
+			continue
+		}
+		if verifySnippets {
+			errs, _ := doc_engine.VerifySnippetsInRepo(absDir, string(data), nil)
+			if len(errs) > 0 {
+				fixed := doc_engine.ApplySnippetFixes(string(data), errs)
+				if fixed != string(data) {
+					if wErr := os.WriteFile(absPath, []byte(fixed), 0644); wErr != nil {
+						return fmt.Errorf("snippet fix failed for %s: %w", doc.TargetPath, wErr)
+					}
+					docPrintf(cmd, "  SNIPPET FIXED [%s]: applied %d deterministic fix(es)\n", doc.TargetPath, len(errs))
+					data = []byte(fixed)
+				}
+			}
+		}
+		// C2: TOC regeneration (no marker → no-op).
+		if regenerated := doc_engine.RegenerateTOC(string(data)); regenerated != string(data) {
+			if wErr := os.WriteFile(absPath, []byte(regenerated), 0644); wErr != nil {
+				return fmt.Errorf("toc regeneration failed for %s: %w", doc.TargetPath, wErr)
+			}
+			docPrintf(cmd, "  TOC REGENERATED [%s]\n", doc.TargetPath)
+		}
+	}
+	return nil
 }
 
 func printCheckResult(cmd *cobra.Command, result doc_engine.CheckResult) {
@@ -467,14 +507,14 @@ Exit codes:
 		if asJSON {
 			data, _ := json.MarshalIndent(diffRes, "", "  ")
 			fmt.Fprintln(cmd.OutOrStdout(), string(data))
-		// Exit-code contract (plan Section 11): pending changes are exit 1.
-		if diffRes.HasChanges {
-			docExit(1)
+			// Exit-code contract (plan Section 11): pending changes are exit 1.
+			if diffRes.HasChanges {
+				docExit(1)
+			}
+			return nil
 		}
-		return nil
-	}
 
-	if !diffRes.HasChanges {
+		if !diffRes.HasChanges {
 			docPrintf(cmd, "doc diff: all documents are up-to-date (no changes pending)\n")
 			return nil
 		}
@@ -485,10 +525,10 @@ Exit codes:
 				docPrintf(cmd, "--- %s [%s] ---\n%s\n\n", sec.TargetPath, sec.SectionID, sec.DiffPreview)
 			}
 		}
-	// Exit-code contract (plan Section 11): pending changes are exit 1.
-	docExit(1)
-	return nil
-},
+		// Exit-code contract (plan Section 11): pending changes are exit 1.
+		docExit(1)
+		return nil
+	},
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -608,9 +648,12 @@ Compatible with LlamaIndex, LangChain, and direct embedding APIs.
 
 Formats:
   rag     Section-level chunks with full AKG metadata (default)
-  jsonl   One JSON object per chunk in JSONL format`,
+  jsonl   One JSON object per chunk in JSONL format
+  state   Raw docs_state.json dump (engine state, for interchange tooling)`,
 	Example: `  gmb doc export --format rag
-  gmb doc export --format jsonl --out .glassmarble/rag/`,
+  gmb doc export --format jsonl --out .glassmarble/rag/
+  gmb doc export --format state
+  gmb doc export --format state --out .glassmarble/state.json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		targetDir := resolveDir(cmd)
 		absDir, err := filepath.Abs(targetDir)
@@ -621,6 +664,38 @@ Formats:
 		asJSON, _ := cmd.Flags().GetBool("json")
 		format, _ := cmd.Flags().GetString("format")
 		outDir, _ := cmd.Flags().GetString("out")
+
+		if format == "state" {
+			sm := storage.NewStateManager(docconfig.StorageDirPath(absDir))
+			data, err := storage.ExportStateJSON(sm)
+			if err != nil {
+				return err
+			}
+			if cmd.Flags().Changed("out") {
+				target := outDir
+				if fi, statErr := os.Stat(target); statErr == nil && fi.IsDir() {
+					target = filepath.Join(target, "state.json")
+				} else if strings.HasSuffix(strings.ToLower(target), ".glassmarble/rag") || (!strings.Contains(filepath.Base(target), ".")) {
+					// A directory-style --out (no file extension): land
+					// state.json inside it, mirroring the rag/jsonl writers.
+					target = filepath.Join(target, "state.json")
+				}
+				if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+					return fmt.Errorf("doc export: creating output dir: %w", err)
+				}
+				if err := os.WriteFile(target, append(data, '\n'), 0644); err != nil {
+					return fmt.Errorf("doc export: writing state: %w", err)
+				}
+				if asJSON {
+					fmt.Fprintln(cmd.OutOrStdout(), string(data))
+					return nil
+				}
+				docPrintf(cmd, "doc export: exported state to %s\n", target)
+				return nil
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), string(data))
+			return nil
+		}
 
 		exp, err := doc_engine.Export(absDir, format, outDir)
 		if err != nil {
@@ -812,12 +887,29 @@ With no arguments, lists pending items. Approve or reject by ID.`,
 	Example: `  gmb doc review
   gmb doc review approve r1a2b3c4d --reason "looks right"
   gmb doc review reject r1a2b3c4d --reason "wrong callers"
-  gmb doc review --stats`,
+  gmb doc review --stats
+  gmb doc review --tuning
+  gmb doc review record-revert --doc docs/auth.md --section intro --reason "human rewrote the table"`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		targetDir := resolveDir(cmd)
 		absDir, err := filepath.Abs(targetDir)
 		if err != nil {
 			return fmt.Errorf("doc review: %w", err)
+		}
+		if showTuning, _ := cmd.Flags().GetBool("tuning"); showTuning {
+			suggestions, err := review.SuggestTuning(absDir)
+			if err != nil {
+				return err
+			}
+			if len(suggestions) == 0 {
+				docPrintf(cmd, "doc review: no tuning suggestions (no resolved outcomes yet)\n")
+				return nil
+			}
+			docPrintf(cmd, "doc review: %d tuning suggestion(s):\n", len(suggestions))
+			for _, s := range suggestions {
+				docPrintf(cmd, "  [%s] %s → %s\n", s.Area, s.Evidence, s.Action)
+			}
+			return nil
 		}
 		if showStats, _ := cmd.Flags().GetBool("stats"); showStats {
 			pending, approved, rejected, observed, err := doc_engine.ReviewStats(absDir)
@@ -860,6 +952,69 @@ With no arguments, lists pending items. Approve or reject by ID.`,
 			return rerr
 		}
 		docPrintf(cmd, "doc review: %s %sd\n", id, action)
+		return nil
+	},
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// gmb doc review record-revert — log a human revert observation
+// ────────────────────────────────────────────────────────────────────────────
+
+var docReviewRecordRevertCmd = &cobra.Command{
+	Use:   "record-revert",
+	Short: "Record a human revert of machine text as an observed review item",
+	Long: `Logs a human revert of machine-generated text as a terminal
+informational observation (Kind "revert", Status "observed"). The doc and
+section flags are optional; the reason is required and feeds prompt/style
+tuning via 'gmb doc review --tuning'.`,
+	Example: `  gmb doc review record-revert --doc docs/auth.md --section intro --reason "human rewrote the table"`,
+	Args:    cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		targetDir := resolveDir(cmd)
+		absDir, err := filepath.Abs(targetDir)
+		if err != nil {
+			return fmt.Errorf("doc review record-revert: %w", err)
+		}
+		docPath, _ := cmd.Flags().GetString("doc")
+		section, _ := cmd.Flags().GetString("section")
+		reason, _ := cmd.Flags().GetString("reason")
+		if strings.TrimSpace(reason) == "" {
+			return fmt.Errorf("doc review record-revert: --reason is required")
+		}
+		if err := review.RecordRevert(absDir, docPath, section, reason); err != nil {
+			return err
+		}
+		docPrintf(cmd, "doc review: revert recorded for %s#%s\n", docPath, section)
+		return nil
+	},
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// gmb doc langmatrix — B4c grounding depth matrix
+// ────────────────────────────────────────────────────────────────────────────
+
+var docLangmatrixCmd = &cobra.Command{
+	Use:   "langmatrix",
+	Short: "Print the per-language grounding depth matrix",
+	Args:  cobra.NoArgs,
+	Long: `Grades every embedded language fixture across the seven grounding
+dimensions (signatures, doc-comments, call-edges, errors, concurrency,
+config, tests) and prints the Markdown report table. With --json, prints
+the per-language grade reports as JSON instead.`,
+	Example: `  gmb doc langmatrix
+  gmb doc langmatrix --json`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		asJSON, _ := cmd.Flags().GetBool("json")
+		reports := langmatrix.GradeAll()
+		if asJSON {
+			data, err := json.MarshalIndent(reports, "", "  ")
+			if err != nil {
+				return fmt.Errorf("doc langmatrix: %w", err)
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), string(data))
+			return nil
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), langmatrix.MarkdownReport(reports))
 		return nil
 	},
 }
@@ -909,7 +1064,7 @@ func init() {
 	docReleaseCmd.Flags().String("out", "", "Output file path for the migration guide")
 
 	// ── gmb doc export flags ──────────────────────────────────────────────
-	docExportCmd.Flags().String("format", "rag", "Export format: rag|jsonl")
+	docExportCmd.Flags().String("format", "rag", "Export format: rag|jsonl|state")
 	docExportCmd.Flags().String("out", ".glassmarble/rag", "Output directory")
 	docExportCmd.Flags().Bool("json", false, "Emit machine-readable JSON output")
 
@@ -928,6 +1083,17 @@ func init() {
 	// ── gmb doc review flags ──────────────────────────────────────────────
 	docReviewCmd.Flags().String("reason", "", "Reason recorded with approve/reject")
 	docReviewCmd.Flags().Bool("stats", false, "Show review queue counts")
+	docReviewCmd.Flags().Bool("tuning", false, "Show prompt/style tuning suggestions from resolved outcomes")
+
+	// ── gmb doc review record-revert flags ──────────────────────────────────
+	docReviewRecordRevertCmd.Flags().String("doc", "", "Reverted document path (optional)")
+	docReviewRecordRevertCmd.Flags().String("section", "", "Reverted section ID (optional)")
+	docReviewRecordRevertCmd.Flags().String("reason", "", "Why the text was reverted (required)")
+
+	// ── gmb doc langmatrix flags ────────────────────────────────────────────
+	docLangmatrixCmd.Flags().Bool("json", false, "Emit machine-readable JSON output")
+
+	docReviewCmd.AddCommand(docReviewRecordRevertCmd)
 
 	// ── Register subcommands ──────────────────────────────────────────────
 	docCmd.AddCommand(
@@ -941,6 +1107,7 @@ func init() {
 		docEvalCmd,
 		docLedgerCmd,
 		docReviewCmd,
+		docLangmatrixCmd,
 	)
 
 	// ── Register gmb doc with root ────────────────────────────────────────

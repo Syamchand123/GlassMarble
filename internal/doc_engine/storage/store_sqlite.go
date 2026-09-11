@@ -9,10 +9,9 @@
 //   - Schema: documents (one row per DocSpec target) + sections (one row per
 //     (target, section_id)) + meta (top-level SchemaVersion/LastCommit/
 //     GeneratedAt that have no natural row home).
-//   - Dual-backend, JSON default for one release: StateManager routes to
-//     SQLite only when docs_state.db already exists OR when the env var
-//     GMB_DOC_STATE=sqlite is set. Otherwise the legacy JSON path in
-//     state.go is used untouched.
+//   - Dual-backend, SQLite default: StateManager routes to SQLite unless
+//     the env var GMB_DOC_STATE=json forces the legacy JSON path in
+//     state.go. JSON stays supported explicitly and as the migration source.
 //   - Auto-migration: on the first SQLite open, when docs_state.json exists
 //     and the database is fresh (all three tables empty), the JSON state is
 //     imported inside a transaction. The check-and-migrate critical section
@@ -76,22 +75,23 @@ const (
 )
 
 // UsingSQLite reports whether this StateManager routes to the SQLite backend:
-// true when docs_state.db already exists, or when GMB_DOC_STATE=sqlite forces
-// the backend (creating the database on first use). False means the legacy
-// JSON backend. The default stays JSON for one release.
+// true unless the env var GMB_DOC_STATE=json forces the legacy JSON backend.
+// SQLite is the DEFAULT for new StateManagers (gap A3e behavior change —
+// previously JSON was the default for one release); JSON remains available
+// explicitly via GMB_DOC_STATE=json and as the auto-migration source.
 func (sm *StateManager) UsingSQLite() bool {
 	return sm.useSQLite()
 }
 
-// useSQLite is the internal backend switch.
+// useSQLite is the internal backend switch: SQLite WAL unless
+// GMB_DOC_STATE=json. Auto-migration from docs_state.json still runs on
+// first SQLite open (ensureSQLiteMigrated), so existing JSON state is
+// imported, never orphaned.
 func (sm *StateManager) useSQLite() bool {
-	if os.Getenv("GMB_DOC_STATE") == "sqlite" {
-		return true
+	if os.Getenv("GMB_DOC_STATE") == "json" {
+		return false
 	}
-	if _, err := os.Stat(sm.dbPath); err == nil {
-		return true
-	}
-	return false
+	return true
 }
 
 // ExportStateJSON loads the current state through the StateManager (either

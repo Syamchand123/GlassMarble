@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Syamchand123/GlassMarble/internal/akg"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/storage"
 )
 
@@ -31,7 +33,18 @@ type SentinelErrorFact struct {
 // GenerateErrorCatalog scans the repository for sentinel errors and generates
 // docs/errors.md with triage playbooks for each error.
 func GenerateErrorCatalog(repoRoot string) (string, error) {
-	errors, err := scanSentinelErrors(repoRoot)
+	return GenerateErrorCatalogWithGraph(repoRoot, nil)
+}
+
+// GenerateErrorCatalogWithGraph is the CPG-aware error catalog: sentinel
+// extraction is unchanged (go/parser), but caller resolution prefers the
+// CodePropertyGraph — graph.GetInboundEdges per sentinel node, file#line via
+// the source node's FileSpec — and falls back to the parser ident-scan when
+// graph is nil. A nil graph therefore reproduces GenerateErrorCatalog
+// exactly; a non-nil graph is authoritative for the sentinels it knows
+// (unknown sentinels keep empty caller lists rather than mixing sources).
+func GenerateErrorCatalogWithGraph(repoRoot string, graph *akg.CodePropertyGraph) (string, error) {
+	errors, err := scanSentinelErrorsWithGraph(repoRoot, graph)
 	if err != nil {
 		return "", err
 	}
@@ -79,6 +92,10 @@ func GenerateErrorCatalog(repoRoot string) (string, error) {
 }
 
 func scanSentinelErrors(repoRoot string) ([]SentinelErrorFact, error) {
+	return scanSentinelErrorsWithGraph(repoRoot, nil)
+}
+
+func scanSentinelErrorsWithGraph(repoRoot string, graph *akg.CodePropertyGraph) ([]SentinelErrorFact, error) {
 	var results []SentinelErrorFact
 	fset := token.NewFileSet()
 
@@ -179,10 +196,12 @@ func scanSentinelErrors(repoRoot string) ([]SentinelErrorFact, error) {
 		return results, err
 	}
 
-	// Caller resolution: for each sentinel, record files that REFERENCE the
-	// sentinel name via parser-identified idents (ast.Inspect for *ast.Ident
-	// with matching Name) outside its declaration file. Up to 5 callers
-	// (file#line) per error, in deterministic walk order.
+	// Caller resolution: CPG edges when a graph is provided, otherwise the
+	// parser ident-scan below. Up to 5 callers (file#line) per error.
+	if graph != nil {
+		resolveCallersFromGraph(graph, results)
+		return results, err
+	}
 	declFile := make(map[string]string, len(results))
 	for _, r := range results {
 		if _, ok := declFile[r.Name]; !ok {
@@ -221,4 +240,70 @@ func scanSentinelErrors(repoRoot string) ([]SentinelErrorFact, error) {
 	}
 
 	return results, err
+}
+
+// resolveCallersFromGraph fills Callers from CPG inbound edges: sentinel
+// nodes are located by Name match, each inbound edge's source node
+// contributes its FileSpec (path#LineStart, falling back to the edge's own
+// LineNumber when the node carries no coordinates), excluding the
+// declaration file, capped at 5 callers per sentinel in deterministic
+// (sorted source-ID) order. Sentinels unknown to the graph keep empty caller
+// lists.
+func resolveCallersFromGraph(graph *akg.CodePropertyGraph, results []SentinelErrorFact) {
+	declFile := make(map[string]string, len(results))
+	for _, r := range results {
+		if _, ok := declFile[r.Name]; !ok {
+			declFile[r.Name] = r.SourcePath
+		}
+	}
+	// Index node IDs by literal name (one scan; sentinels are few).
+	idsByName := make(map[string][]string)
+	if graph.Nodes != nil {
+		graph.Nodes.Iterate(func(id string, node *link.ResolvedNode) {
+			if node == nil || node.Name == "" {
+				return
+			}
+			idsByName[node.Name] = append(idsByName[node.Name], id)
+		})
+	}
+	for i := range results {
+		var entries []string
+		seen := make(map[string]bool)
+		ids := append([]string(nil), idsByName[results[i].Name]...)
+		sort.Strings(ids)
+		for _, id := range ids {
+			edges := append([]link.ResolvedEdge(nil), graph.GetInboundEdges(id)...)
+			sort.Slice(edges, func(a, b int) bool { return edges[a].SourceID < edges[b].SourceID })
+			for _, edge := range edges {
+				src, ok := graph.GetNode(edge.SourceID)
+				if !ok || src == nil {
+					continue
+				}
+				path := filepath.ToSlash(src.FileSpec.Path)
+				if path == "" || path == declFile[results[i].Name] {
+					continue
+				}
+				line := src.FileSpec.LineStart
+				if line <= 0 {
+					line = edge.LineNumber
+				}
+				if line <= 0 {
+					continue
+				}
+				entry := fmt.Sprintf("%s#%d", path, line)
+				if seen[entry] {
+					continue
+				}
+				seen[entry] = true
+				entries = append(entries, entry)
+				if len(entries) >= 5 {
+					break
+				}
+			}
+			if len(entries) >= 5 {
+				break
+			}
+		}
+		results[i].Callers = entries
+	}
 }

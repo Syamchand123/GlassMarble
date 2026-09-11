@@ -89,8 +89,11 @@ func TestBloatRegressionGuard(t *testing.T) {
 	// Recalibrated at Documentation Intelligence Engine sign-off:
 	// internal/doc_engine/ packages across phases 0 to 5 raised the
 	// healthy deduplicated baseline. Budgets calibrated with standard 15% headroom to guard against noisy passes.
+	// Recalibrated at improvement-plan P0–P3 sign-off: resolve, context,
+	// langmatrix, eval, ledger, review, daemon, prose, references, exec,
+	// routing packages added (re-measured baseline 19631 nodes).
 	const (
-		nodeBudget = 19500
+		nodeBudget = 22600
 		edgeBudget = 42000
 	)
 	if nodes < 1000 {

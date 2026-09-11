@@ -56,6 +56,12 @@ package verifier
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
+	"path/filepath"
+	"sort"
 	"strings"
 	"unicode"
 
@@ -134,10 +140,146 @@ func CheckProseGate(content string, style config.StyleSpec, strict bool) (pass b
 	return true, failures
 }
 
+// CheckProseGateWithVocab is CheckProseGate with a learned project
+// vocabulary (gap C1): typo-rule tokens present in vocab (lowercased project
+// terms from LearnVocabulary) are never flagged, so project identifiers
+// never fail the gate. A nil/empty vocab behaves exactly like CheckProseGate.
+func CheckProseGateWithVocab(content string, style config.StyleSpec, strict bool, vocab map[string]bool) (pass bool, failures []string) {
+	report := CheckProseWithVocab(content, style, strict, vocab)
+	for _, v := range report.Violations {
+		failures = append(failures, fmt.Sprintf("line %d [%s] %s: %s", v.Line, v.Severity, v.Rule, v.Message))
+	}
+	if strict {
+		for _, v := range report.Violations {
+			if v.Severity == proseError {
+				return false, failures
+			}
+		}
+	}
+	return true, failures
+}
+
+// CheckProseWithVocab is CheckProse with a learned project vocabulary:
+// the typo rule skips tokens present in vocab. All other rules are
+// identical. A nil/empty vocab behaves exactly like CheckProse.
+func CheckProseWithVocab(content string, style config.StyleSpec, strict bool, vocab map[string]bool) ProseReport {
+	return checkProseInner(content, style, strict, vocab)
+}
+
+// LearnVocabulary collects a deterministic set of project terms (gap C1
+// terminology-allowlist) from repoRoot: exported Go identifiers (funcs,
+// methods as Recv.Name, types, vars/consts via go/parser) plus .go filename
+// stems and directory base names as a parser-failure fallback. Terms are
+// lowercased, minimum 4 letters, sorted, and capped at maxTerms (<=0 means
+// a 1000-term default; 0 terms when repoRoot is empty/unreadable).
+//
+// Cost: one WalkDir capped at 2000 .go files, skipping vendor,
+// node_modules, and .git. Callers should build once per ProcessDocument
+// (not per section) and reuse the map for every CheckProseGateWithVocab
+// call; the walk is read-only and safe to share across goroutines once
+// built (maps are never mutated after return).
+func LearnVocabulary(repoRoot string, maxTerms int) map[string]bool {
+	out := make(map[string]bool)
+	if maxTerms <= 0 {
+		maxTerms = 1000
+	}
+	if strings.TrimSpace(repoRoot) == "" {
+		return out
+	}
+	const maxFiles = 2000
+	files := 0
+	add := func(term string) {
+		t := strings.ToLower(strings.TrimSpace(term))
+		if len([]rune(t)) < 4 {
+			return
+		}
+		out[t] = true
+	}
+	_ = filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			base := strings.ToLower(d.Name())
+			switch base {
+			case "vendor", "node_modules", ".git":
+				return filepath.SkipDir
+			}
+			// Directory names are project vocabulary ("auth", "ledger").
+			if path != repoRoot && len([]rune(base)) >= 4 {
+				add(base)
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		if files >= maxFiles {
+			return filepath.SkipDir
+		}
+		files++
+		// Filename stem fallback (works even when parsing fails).
+		stem := strings.ToLower(strings.TrimSuffix(filepath.Base(path), ".go"))
+		if stem != "" && stem != "test" {
+			stem = strings.TrimSuffix(stem, "_test")
+			add(stem)
+		}
+		fset := token.NewFileSet()
+		node, parseErr := parser.ParseFile(fset, path, nil, 0)
+		if parseErr != nil || node == nil {
+			return nil
+		}
+		for _, decl := range node.Decls {
+			switch t := decl.(type) {
+			case *ast.FuncDecl:
+				if ast.IsExported(t.Name.Name) {
+					add(t.Name.Name)
+				}
+			case *ast.GenDecl:
+				for _, spec := range t.Specs {
+					switch s := spec.(type) {
+					case *ast.TypeSpec:
+						if ast.IsExported(s.Name.Name) {
+							add(s.Name.Name)
+						}
+					case *ast.ValueSpec:
+						for _, name := range s.Names {
+							if ast.IsExported(name.Name) {
+								add(name.Name)
+							}
+						}
+					}
+				}
+			}
+		}
+		return nil
+	})
+	if len(out) <= maxTerms {
+		return out
+	}
+	// Deterministic cap: sort and keep the first maxTerms.
+	sorted := make([]string, 0, len(out))
+	for t := range out {
+		sorted = append(sorted, t)
+	}
+	sort.Strings(sorted)
+	capped := make(map[string]bool, maxTerms)
+	for _, t := range sorted[:maxTerms] {
+		capped[t] = true
+	}
+	return capped
+}
+
 // CheckProse runs every Gate 6 rule and scores the result. The strict flag
 // only controls jargon severity (error when strict, warn otherwise); all
 // other severities are fixed. Use CheckProseGate for the pass/fail contract.
 func CheckProse(content string, style config.StyleSpec, strict bool) ProseReport {
+	return checkProseInner(content, style, strict, nil)
+}
+
+// checkProseInner implements CheckProse / CheckProseWithVocab. vocab (when
+// non-nil) exempts typo-rule tokens only; every other rule is unaffected.
+func checkProseInner(content string, style config.StyleSpec, strict bool, vocab map[string]bool) ProseReport {
 	normalized := strings.ReplaceAll(strings.ReplaceAll(content, "\r\n", "\n"), "\r", "\n")
 	lines := strings.Split(normalized, "\n")
 	var violations []ProseViolation
@@ -175,7 +317,7 @@ func CheckProse(content string, style config.StyleSpec, strict bool) ProseReport
 	numSentences, totalWords, longWords := collectSentences(prose, &violations)
 	checkPassiveVoice(prose, &violations)
 	checkJargon(prose, style.JargonBlacklist, strict, &violations)
-	checkSpelling(prose, &violations)
+	checkSpellingWithVocab(prose, vocab, &violations)
 
 	score := 100.0
 	for _, v := range violations {
@@ -662,6 +804,14 @@ func checkJargon(prose []proseLine, blacklist []string, strict bool, violations 
 
 // checkSpelling flags fixed-list typos and doubled adjacent words.
 func checkSpelling(prose []proseLine, violations *[]ProseViolation) {
+	checkSpellingWithVocab(prose, nil, violations)
+}
+
+// checkSpellingWithVocab is checkSpelling with a learned-vocabulary
+// exemption (gap C1): tokens present in vocab (lowercased) skip the
+// fixed-list typo rule. Doubled-word detection is unaffected — a repeated
+// project term is still a doubled word.
+func checkSpellingWithVocab(prose []proseLine, vocab map[string]bool, violations *[]ProseViolation) {
 	prev := ""
 	for _, pl := range prose {
 		for _, f := range strings.Fields(pl.text) {
@@ -669,7 +819,7 @@ func checkSpelling(prose []proseLine, violations *[]ProseViolation) {
 			if w == "" {
 				continue
 			}
-			if typoWords[w] {
+			if typoWords[w] && !vocab[w] {
 				*violations = append(*violations, ProseViolation{
 					Rule:     "typo",
 					Message:  fmt.Sprintf("possible typo %q", w),

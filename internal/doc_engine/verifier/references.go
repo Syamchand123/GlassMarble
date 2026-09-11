@@ -172,6 +172,204 @@ func CheckTOC(markdown string) []string {
 	return errs
 }
 
+// RegenerateTOC rewrites a document's table of contents from its actual
+// headings (gap C2, non-breaking: the owner wires --fix afterward).
+//
+// A document has a TOC iff hasTOCMarker holds: a "<!-- toc -->" comment
+// (case-insensitive) or a "## Contents" / "## Table of Contents" heading.
+// Documents without a marker return unchanged.
+//
+// Entries are "- [text](#slug)" lines (GitHubSlug with GitHub-style -1/-2
+// dedup suffixes for repeated headings), nested by level with two spaces
+// per level below H1, in document order, deterministic. The TOC section
+// heading itself ("Contents"/"Table of Contents") is never listed.
+//
+//   - "<!-- toc -->" form: entries replace the existing TOC list block —
+//     the consecutive "- [text](#anchor)" lines following the marker
+//     (blank lines around them are tolerated, not preserved) — so a second
+//     regeneration is a no-op (idempotent).
+//   - "## Contents" form: entries replace everything under that heading up
+//     to the next heading of level <= 2 or EOF (idempotent for the same
+//     reason).
+//
+// Fenced code blocks are never headings; headings inside fences are
+// excluded from the TOC.
+func RegenerateTOC(markdown string) string {
+	if !hasTOCMarker(markdown) {
+		return markdown
+	}
+	trailingNL := strings.HasSuffix(markdown, "\n")
+	lines := splitRefLines(markdown)
+
+	type tocHeading struct {
+		text  string
+		level int
+		slug  string
+		line  int // 0-based index of the heading line (to skip the TOC heading)
+	}
+	var ordered []tocHeading
+	counts := make(map[string]int)
+	inFence := false
+	tocHeadingLine := -1
+	for i, line := range lines {
+		if isFenceLine(line) {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
+		t := strings.TrimLeft(line, " \t")
+		if !strings.HasPrefix(t, "#") {
+			continue
+		}
+		level := 0
+		for level < len(t) && t[level] == '#' {
+			level++
+		}
+		if level == 0 || level > 6 {
+			continue
+		}
+		rest := t[level:]
+		if rest != "" && rest[0] != ' ' && rest[0] != '\t' {
+			continue
+		}
+		text := strings.TrimSpace(rest)
+		text = strings.TrimRight(text, "#")
+		text = strings.TrimSpace(text)
+		if text == "" {
+			continue
+		}
+		if level == 2 {
+			lower := strings.ToLower(text)
+			if lower == "contents" || lower == "table of contents" {
+				tocHeadingLine = i
+				continue // the TOC heading itself is never listed
+			}
+		}
+		slug := GitHubSlug(text)
+		if n := counts[slug]; n > 0 {
+			slug = fmt.Sprintf("%s-%d", slug, n)
+		}
+		counts[GitHubSlug(text)]++
+		ordered = append(ordered, tocHeading{text: text, level: level, slug: slug, line: i})
+	}
+
+	var entries []string
+	for _, h := range ordered {
+		indent := strings.Repeat("  ", h.level-1)
+		entries = append(entries, fmt.Sprintf("%s- [%s](#%s)", indent, h.text, h.slug))
+	}
+
+	// Prefer the "<!-- toc -->" marker when present.
+	markerIdx := -1
+	for i, line := range lines {
+		if strings.Contains(strings.ToLower(line), "<!-- toc -->") {
+			markerIdx = i
+			break
+		}
+	}
+	var out []string
+	if markerIdx >= 0 {
+		j := markerIdx + 1
+		// Skip blank lines between the marker and the old TOC list.
+		for j < len(lines) && strings.TrimSpace(lines[j]) == "" {
+			j++
+		}
+		// Skip the old TOC list block (list items linking to #anchors).
+		for j < len(lines) && isTOCEntryLine(lines[j]) {
+			j++
+		}
+		// Skip blank lines between the old TOC list and body content.
+		for j < len(lines) && strings.TrimSpace(lines[j]) == "" {
+			j++
+		}
+		out = append(out, lines[:markerIdx+1]...)
+		if len(entries) > 0 {
+			out = append(out, "")
+			out = append(out, entries...)
+		}
+		if j < len(lines) {
+			out = append(out, "")
+			out = append(out, lines[j:]...)
+		}
+	} else {
+		// "## Contents" / "## Table of Contents" form (marker guaranteed by
+		// hasTOCMarker when no comment marker exists).
+		headIdx := tocHeadingLine
+		if headIdx < 0 {
+			return markdown
+		}
+		j := headIdx + 1
+		for j < len(lines) {
+			t := strings.TrimLeft(lines[j], " \t")
+			if strings.HasPrefix(t, "#") {
+				level := 0
+				for level < len(t) && t[level] == '#' {
+					level++
+				}
+				rest := t[level:]
+				if level >= 1 && level <= 2 && (rest == "" || rest[0] == ' ' || rest[0] == '\t') {
+					break // next section at same-or-higher level ends the TOC
+				}
+			}
+			j++
+		}
+		// Drop trailing blank lines of the old TOC body (idempotence:
+		// regeneration then finds the same region boundaries).
+		end := j
+		for end > headIdx+1 && strings.TrimSpace(lines[end-1]) == "" {
+			end--
+		}
+		_ = end
+		out = append(out, lines[:headIdx+1]...)
+		if len(entries) > 0 {
+			out = append(out, "")
+			out = append(out, entries...)
+		}
+		// Re-attach from the next section (skipping the old TOC body).
+		k := j
+		for k < len(lines) && strings.TrimSpace(lines[k]) == "" {
+			k++
+		}
+		if k < len(lines) {
+			out = append(out, "")
+			out = append(out, lines[k:]...)
+		}
+	}
+	result := strings.Join(out, "\n")
+	if trailingNL && !strings.HasSuffix(result, "\n") {
+		result += "\n"
+	}
+	if !trailingNL {
+		result = strings.TrimSuffix(result, "\n")
+	}
+	return result
+}
+
+// isTOCEntryLine reports whether a line looks like a TOC entry:
+// a "-", "*", or "+" list item whose link targets a #anchor.
+func isTOCEntryLine(line string) bool {
+	t := strings.TrimLeft(line, " \t")
+	if t == "" || (t[0] != '-' && t[0] != '*' && t[0] != '+') {
+		return false
+	}
+	rest := strings.TrimLeft(t[1:], " \t")
+	if !strings.HasPrefix(rest, "[") {
+		return false
+	}
+	close := strings.Index(rest, "](")
+	if close == -1 {
+		return false
+	}
+	target := rest[close+2:]
+	end := strings.Index(target, ")")
+	if end == -1 {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimSpace(target[:end]), "#")
+}
+
 // CheckReferences verifies every internal link, permalink, backticked link
 // symbol, and (optionally) external URL in markdown.
 //

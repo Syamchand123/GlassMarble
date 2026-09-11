@@ -1,6 +1,7 @@
 package archfeatures
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -469,5 +470,212 @@ No supersession link here.
 	// Missing docs/adr → nil (opt-in feature).
 	if got := ValidateADRLifecycle(t.TempDir()); got != nil {
 		t.Errorf("missing docs/adr should yield nil, got %v", got)
+	}
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// D4 supersession wiring + timeline tests (APPEND ONLY — above untouched)
+// ────────────────────────────────────────────────────────────────────────────
+
+func TestAutoGenerateADRsSupersedesPriorAccepted(t *testing.T) {
+	tempDir := t.TempDir()
+	oldRel, err := GenerateADR(tempDir, ADREvent{
+		Type: "COMPONENT_SPLIT", Title: "Subsystem Decoupling & Component Split",
+		Context: "ctx", Decision: "dec", Consequence: "con",
+		CommitHash: "aaa1111", Timestamp: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("GenerateADR failed: %v", err)
+	}
+
+	paths, err := AutoGenerateADRs(tempDir, "bbb2222", "feat: split package into submodules to reduce coupling")
+	if err != nil {
+		t.Fatalf("AutoGenerateADRs failed: %v", err)
+	}
+	if len(paths) != 1 {
+		t.Fatalf("expected 1 ADR path, got %v", paths)
+	}
+	if paths[0] == oldRel {
+		t.Fatalf("new ADR must differ from the superseded file")
+	}
+
+	oldData, err := os.ReadFile(filepath.Join(tempDir, filepath.FromSlash(oldRel)))
+	if err != nil {
+		t.Fatalf("reading old ADR: %v", err)
+	}
+	oldContent := string(oldData)
+	if !strings.Contains(oldContent, "status: superseded") {
+		t.Errorf("prior accepted ADR with overlapping title must be superseded:\n%s", oldContent)
+	}
+	if !strings.Contains(oldContent, paths[0]) {
+		t.Errorf("supersession note must link the new ADR %q:\n%s", paths[0], oldContent)
+	}
+
+	// The new ADR itself stays accepted and unmarked.
+	newData, err := os.ReadFile(filepath.Join(tempDir, filepath.FromSlash(paths[0])))
+	if err != nil {
+		t.Fatalf("reading new ADR: %v", err)
+	}
+	if !strings.Contains(string(newData), "status: accepted") {
+		t.Errorf("new ADR must stay accepted:\n%s", newData)
+	}
+	if strings.Contains(string(newData), "Superseded by") {
+		t.Errorf("new ADR must not carry a supersession note:\n%s", newData)
+	}
+}
+
+func TestAutoGenerateADRsNoFalseSupersession(t *testing.T) {
+	tempDir := t.TempDir()
+	oldRel, err := GenerateADR(tempDir, ADREvent{
+		Type: "AUTH_ARCHITECTURE", Title: "Authentication Architecture Change",
+		Context: "ctx", Decision: "dec", Consequence: "con",
+		CommitHash: "aaa1111", Timestamp: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("GenerateADR failed: %v", err)
+	}
+	before, _ := os.ReadFile(filepath.Join(tempDir, filepath.FromSlash(oldRel)))
+
+	paths, err := AutoGenerateADRs(tempDir, "bbb2222", "feat: split package into submodules to reduce coupling")
+	if err != nil {
+		t.Fatalf("AutoGenerateADRs failed: %v", err)
+	}
+	if len(paths) != 1 {
+		t.Fatalf("expected 1 ADR path, got %v", paths)
+	}
+	after, _ := os.ReadFile(filepath.Join(tempDir, filepath.FromSlash(oldRel)))
+	if string(after) != string(before) {
+		t.Errorf("unrelated accepted ADR must be left untouched:\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	}
+}
+
+func TestValidateADRLifecycleDeprecatedLink(t *testing.T) {
+	// Deprecated without any deprecation link → failure.
+	bad := t.TempDir()
+	writeADRFixture(t, bad, "0001-old.md", `---
+status: deprecated
+date: 2026-09-01
+---
+
+# 0001. Old
+
+No link anywhere.
+`)
+	if got := ValidateADRLifecycle(bad); len(got) != 1 {
+		t.Fatalf("expected 1 deprecated-link failure, got %v", got)
+	} else if !strings.Contains(got[0], "0001-old.md") || !strings.Contains(got[0], "deprecated") {
+		t.Errorf("failure must name the file and status, got %v", got)
+	}
+
+	// Deprecated with a deprecation link → clean.
+	good := t.TempDir()
+	writeADRFixture(t, good, "0001-old.md", `---
+status: deprecated
+date: 2026-09-01
+---
+
+# 0001. Old
+
+> Deprecated by [docs/adr/0002-new.md](docs/adr/0002-new.md)
+`)
+	if got := ValidateADRLifecycle(good); len(got) != 0 {
+		t.Errorf("deprecated ADR with link should validate, got %v", got)
+	}
+}
+
+func TestValidateADRLifecycleUnknownVocabulary(t *testing.T) {
+	dir := t.TempDir()
+	writeADRFixture(t, dir, "0001-weird.md", `---
+status: draft-pending
+---
+
+# 0001. Weird
+`)
+	failures := ValidateADRLifecycle(dir)
+	if len(failures) != 1 {
+		t.Fatalf("expected 1 unknown-vocabulary failure, got %v", failures)
+	}
+	if !strings.Contains(failures[0], "0001-weird.md") {
+		t.Errorf("failure must name the file, got %v", failures)
+	}
+}
+
+func TestWriteTimelineData(t *testing.T) {
+	tempDir := t.TempDir()
+	writeADRFixture(t, tempDir, "0002-new.md", `---
+status: accepted
+date: 2026-09-09
+commit: "bbb2222"
+---
+
+# 0002. New Decision
+`)
+	writeADRFixture(t, tempDir, "0001-old.md", `---
+status: superseded
+date: 2026-09-01
+commit: "aaa1111"
+---
+
+# 0001. Old Decision
+
+> Superseded by [docs/adr/0002-new.md](docs/adr/0002-new.md)
+`)
+	if err := WriteTimelineData(tempDir); err != nil {
+		t.Fatalf("WriteTimelineData failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(tempDir, "docs", "adr", "timeline.json"))
+	if err != nil {
+		t.Fatalf("reading timeline: %v", err)
+	}
+	// Decode structurally: array of {file,title,status,date,commit}.
+	var raw []ADRTimelineEntry
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("timeline is not a JSON array: %v\n%s", err, data)
+	}
+	if len(raw) != 2 {
+		t.Fatalf("expected 2 timeline entries, got %v", raw)
+	}
+	if raw[0].File != "0001-old.md" || raw[1].File != "0002-new.md" {
+		t.Errorf("timeline must be filename-ascending, got %v", raw)
+	}
+	if raw[0].Status != "superseded" || raw[1].Status != "accepted" {
+		t.Errorf("timeline statuses wrong: %+v", raw)
+	}
+	if raw[0].Date != "2026-09-01" || raw[0].Commit != "aaa1111" {
+		t.Errorf("timeline date/commit wrong: %+v", raw[0])
+	}
+	if !strings.Contains(raw[0].Title, "Old Decision") {
+		t.Errorf("timeline title wrong: %+v", raw[0])
+	}
+}
+
+func TestRegenerateIndexWritesTimeline(t *testing.T) {
+	tempDir := t.TempDir()
+	writeADRFixture(t, tempDir, "0001-solo.md", `---
+status: accepted
+date: 2026-09-09
+commit: "ccc3333"
+---
+
+# 0001. Solo
+`)
+	if err := RegenerateIndex(tempDir); err != nil {
+		t.Fatalf("RegenerateIndex failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(tempDir, "docs", "adr", "timeline.json"))
+	if err != nil {
+		t.Fatalf("RegenerateIndex must emit timeline.json: %v", err)
+	}
+	if !strings.Contains(string(data), "0001-solo.md") {
+		t.Errorf("timeline missing ADR entry:\n%s", data)
+	}
+	// Empty adr dir → empty array, not null.
+	empty := t.TempDir()
+	if err := WriteTimelineData(empty); err != nil {
+		t.Fatalf("WriteTimelineData on empty root failed: %v", err)
+	}
+	emptyData, _ := os.ReadFile(filepath.Join(empty, "docs", "adr", "timeline.json"))
+	if strings.TrimSpace(string(emptyData)) != "[]" {
+		t.Errorf("empty timeline must be [], got:\n%s", emptyData)
 	}
 }
