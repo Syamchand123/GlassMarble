@@ -3,9 +3,15 @@ package renderer
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
 )
+
+// Prompt-builder budget: every builder below must complete a single call in
+// <5ms on ordinary CI hardware (pure string formatting / one small JSON
+// marshal — microseconds in practice). The benchmarks that follow measure
+// steady-state throughput; TestPromptBudgets is the ceiling tripwire.
 
 // BenchmarkBuildSystemPrompt measures the immutable system-prompt builder
 // (pure string formatting over a small rule list).
@@ -63,5 +69,47 @@ func BenchmarkQuadrantPrompt(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = QuadrantPrompt("reference")
+	}
+}
+
+// TestPromptBudgets asserts the <5ms single-call ceiling for each prompt
+// builder (see budget note above). These are order-of-magnitude tripwires
+// only — builders run in microseconds; failure means a path regressed to
+// milliseconds-plus (e.g. accidental I/O or runaway marshal).
+func TestPromptBudgets(t *testing.T) {
+	style := &config.StyleSpec{
+		Voice:           "active, second-person, present tense",
+		Tone:            "neutral",
+		JargonBlacklist: []string{"simply", "just", "leverage"},
+	}
+	fs := &config.FactSheet{
+		DocID:                "docs/bench.md",
+		SectionID:            "overview",
+		SectionInstruction:   "Describe the subsystem interface completely.",
+		PriorSectionMarkdown: "Prior prose.",
+		GroundTruth: config.GroundTruthPayload{
+			Symbols: []config.SymbolFact{
+				{FQN: "internal/bench.Service0", Kind: "func", Signature: "func Service0() error"},
+			},
+		},
+	}
+	cases := map[string]func(){
+		"BuildSystemPrompt": func() { _ = BuildSystemPrompt(style, 250) },
+		"BuildUserPrompt": func() {
+			if _, err := BuildUserPrompt(fs); err != nil {
+				t.Fatalf("BuildUserPrompt failed: %v", err)
+			}
+		},
+		"BuildRepairPrompt": func() {
+			_ = BuildRepairPrompt(fs, "prev", errors.New("gate 3: unresolved symbol"))
+		},
+		"QuadrantPrompt": func() { _ = QuadrantPrompt("reference") },
+	}
+	for name, fn := range cases {
+		start := time.Now()
+		fn()
+		if elapsed := time.Since(start); elapsed > 5*time.Millisecond {
+			t.Errorf("%s took %v, want <5ms", name, elapsed)
+		}
 	}
 }

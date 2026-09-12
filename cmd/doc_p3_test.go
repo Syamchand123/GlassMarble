@@ -190,3 +190,29 @@ func TestDocReviewTuning(t *testing.T) {
 		t.Errorf("expected tuning suggestion after revert, got:\n%s", out)
 	}
 }
+
+func TestDocReviewTuningApply(t *testing.T) {
+	tempDir := writeP3Fixture(t)
+	// --apply without --tuning must fail.
+	if out, err := runGmbCommand(t, "doc", "review", "--apply", "--dir", tempDir); err == nil {
+		t.Errorf("expected failure for --apply without --tuning, got success:\n%s", out)
+	}
+	// Record a revert whose reason names a jargon term in quotes.
+	if _, err := runGmbCommand(t, "doc", "review", "record-revert",
+		"--doc", "docs/guide.md", "--section", "overview", "--reason", `overuses "synergize" in intro`,
+		"--dir", tempDir); err != nil {
+		t.Fatalf("record-revert failed: %v", err)
+	}
+	out, err := runGmbCommand(t, "doc", "review", "--tuning", "--apply", "--dir", tempDir)
+	if err != nil {
+		t.Fatalf("doc review --tuning --apply failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "tuning apply:") {
+		t.Errorf("expected tuning apply summary, got:\n%s", out)
+	}
+	// Observed reverts map to the "doc corrections" area (no safe auto-fix),
+	// so the loop must report manual action rather than fail.
+	if !strings.Contains(out, "manual") {
+		t.Errorf("expected manual-action report for observed-revert suggestion, got:\n%s", out)
+	}
+}

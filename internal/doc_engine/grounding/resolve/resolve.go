@@ -25,6 +25,7 @@ import (
 // Provenance values recorded in Resolution.Provenance.
 const (
 	ProvenanceSCIP       = "scip"
+	ProvenanceCrossRepo  = "scip:xrepo"
 	ProvenanceLSP        = "lsp"
 	ProvenanceAST        = "ast"
 	ProvenanceUnresolved = "unresolved"
@@ -41,6 +42,8 @@ type Resolution struct {
 
 // AvailableSources reports which of scip/lsp/ast are usable for repoRoot:
 //   - "scip" when a SCIP index file exists at .glassmarble/scip/index.scip
+//     OR the JSON sidecar exists at .glassmarble/scip/index.json
+//     (resolution reads the JSON sidecar, so JSON-only repos count)
 //   - "lsp" when a gopls binary is on PATH
 //   - "ast" always (no setup required)
 func AvailableSources(repoRoot string) []string {

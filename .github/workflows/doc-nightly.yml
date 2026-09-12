@@ -48,6 +48,9 @@ jobs:
       - name: Fuzz snippet extractor
         run: go test -fuzz=FuzzSnippetExtract -fuzztime=60s ./internal/doc_engine/devex/
 
+      - name: Fuzz markdown parser
+        run: go test -fuzz=FuzzParseMarkdown -fuzztime=60s ./internal/doc_engine/patcher/
+
   gates:
     name: Mutation and behavior gates
     runs-on: ubuntu-latest
@@ -67,7 +70,15 @@ jobs:
           cache: true
 
       - name: Mutation and gate tests
-        run: go test -run 'TestMutation|TestGate|TestRunGates' -count=1 ./internal/doc_engine/verifier/
+        run: go test -run 'TestMutation|TestGate|TestRunGates' -count=1 -v ./internal/doc_engine/verifier/ 2>&1 | tee mutation-score.txt
+
+      - name: Publish mutation score
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-score
+          path: mutation-score.txt
+          if-no-files-found: warn
 
   benchmarks:
     name: Benchmark smoke (no gate)
@@ -88,4 +99,29 @@ jobs:
           cache: true
 
       - name: Benchmark smoke pass
+        run: go test -bench=. -benchtime=100x -run=^$ ./internal/doc_engine/...
+
+  benchmark-ceilings:
+    name: Benchmark ceilings (perf budgets)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CGO_ENABLED: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Benchmark ceilings pass
+        # Ceilings are enforced by TestPerfBudgets (10x-margin tripwires in
+        # internal/doc_engine/perf_budgets_test.go) and the prompt <5ms
+        # budget in internal/doc_engine/renderer/prompts_bench_test.go;
+        # this job exercises the benchmark surface at 100x iterations.
         run: go test -bench=. -benchtime=100x -run=^$ ./internal/doc_engine/...

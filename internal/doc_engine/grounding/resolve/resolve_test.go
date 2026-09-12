@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
@@ -197,7 +198,7 @@ func TestAvailableSources(t *testing.T) {
 	assert.Contains(t, src, "ast")
 	assert.NotContains(t, src, "scip")
 
-	// SCIP becomes usable exactly when the binary index file exists.
+	// SCIP becomes usable when the binary index or the JSON sidecar exists.
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".glassmarble", "scip"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".glassmarble", "scip", "index.scip"), []byte("x"), 0o644))
 	src = AvailableSources(root)
@@ -231,4 +232,80 @@ func TestCodeOccurrences_SkipsCommentsAndStrings(t *testing.T) {
 	}
 	assert.Empty(t, codeOccurrences(content, "Missing", 5))
 	assert.Empty(t, codeOccurrences(content, "", 5))
+}
+
+func TestAvailableSources_JSONOnly(t *testing.T) {
+	root := t.TempDir()
+
+	// JSON-only repo (no binary index.scip): resolution reads the JSON
+	// sidecar, so scip must still report available (gap B1 quirk).
+	writeSCIPSidecar(t, root, `[
+		{"fqn":"pkg/a.go::Alpha","file":"pkg/a.go","line":10,"end_line":20}
+	]`)
+	assert.Contains(t, AvailableSources(root), "scip")
+
+	// Sanity: sidecar answers through the normal batch path too.
+	out := ResolveBatch([]string{"pkg/a.go::Alpha"}, nil, root)
+	assert.Equal(t, "scip", out["pkg/a.go::Alpha"].Provenance)
+}
+
+func TestResolveCrossRepo_HitWithXRepoProvenance(t *testing.T) {
+	primary := t.TempDir() // no sidecar: primary cannot resolve
+	second := t.TempDir()
+	writeSCIPSidecar(t, second, `[
+		{"fqn":"otherrepo/pkg/a.go::Alpha","file":"pkg/a.go","line":42,"end_line":50}
+	]`)
+
+	// Miss in the primary repo stays unresolved through the normal path.
+	out := ResolveBatch([]string{"otherrepo/pkg/a.go::Alpha"}, nil, primary)
+	assert.Equal(t, "unresolved", out["otherrepo/pkg/a.go::Alpha"].Provenance)
+
+	// Cross-repo lookup hits with xrepo provenance.
+	got := ResolveCrossRepo("otherrepo/pkg/a.go::Alpha", []string{second}, nil)
+	assert.Equal(t, "scip:xrepo", got.Provenance)
+	assert.Equal(t, "pkg/a.go", got.File)
+	assert.Equal(t, 42, got.Line)
+	assert.Equal(t, 50, got.EndLine)
+}
+
+func TestResolveCrossRepo_FirstHitWins(t *testing.T) {
+	first := t.TempDir()
+	writeSCIPSidecar(t, first, `[
+		{"fqn":"otherrepo/pkg/a.go::Alpha","file":"pkg/a.go","line":1,"end_line":2}
+	]`)
+	second := t.TempDir()
+	writeSCIPSidecar(t, second, `[
+		{"fqn":"otherrepo/pkg/a.go::Alpha","file":"pkg/a.go","line":99,"end_line":100}
+	]`)
+
+	got := ResolveCrossRepo("otherrepo/pkg/a.go::Alpha", []string{first, second}, nil)
+	assert.Equal(t, "scip:xrepo", got.Provenance)
+	assert.Equal(t, 1, got.Line)
+}
+
+func TestResolveCrossRepo_NoRootsNoOp(t *testing.T) {
+	// Empty env → ExtraRepoRoots is nil; ResolveCrossRepo with no roots is
+	// a no-op returning unresolved (never an error, never a hit).
+	t.Setenv("GMB_EXTRA_REPOS", "")
+	assert.Empty(t, ExtraRepoRoots())
+
+	got := ResolveCrossRepo("otherrepo/pkg/a.go::Alpha", nil, nil)
+	assert.Equal(t, "unresolved", got.Provenance)
+
+	got = ResolveCrossRepo("otherrepo/pkg/a.go::Alpha", []string{}, nil)
+	assert.Equal(t, "unresolved", got.Provenance)
+
+	// Unknown symbol with real roots still misses cleanly.
+	second := t.TempDir()
+	writeSCIPSidecar(t, second, `[
+		{"fqn":"otherrepo/pkg/a.go::Alpha","file":"pkg/a.go","line":42,"end_line":50}
+	]`)
+	got = ResolveCrossRepo("otherrepo/pkg/z.go::Missing", []string{second}, nil)
+	assert.Equal(t, "unresolved", got.Provenance)
+}
+
+func TestExtraRepoRoots_ParsesPathList(t *testing.T) {
+	sep := string(filepath.ListSeparator)
+	t.Setenv("GMB_EXTRA_REPOS", strings.Join([]string{"  /repo/a  ", "", "/repo/b"}, sep))
+	assert.Equal(t, []string{"/repo/a", "/repo/b"}, ExtraRepoRoots())
 }

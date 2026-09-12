@@ -68,14 +68,23 @@ func (e *scipEntry) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// scipIndexPresent reports SCIP usability per contract: a binary index
-// file exists at .glassmarble/scip/index.scip under repoRoot.
+// scipIndexPresent reports SCIP usability per contract: a binary index at
+// .glassmarble/scip/index.scip OR the JSON sidecar at
+// .glassmarble/scip/index.json under repoRoot. The JSON check matters:
+// resolution reads the JSON sidecar, so JSON-only repos (no `scip` CLI
+// conversion artifact) must still report scip available (gap B1
+// source-gating quirk).
 func scipIndexPresent(repoRoot string) bool {
 	if repoRoot == "" {
 		return false
 	}
-	st, err := os.Stat(filepath.Join(repoRoot, filepath.FromSlash(scipIndexBinaryRel)))
-	return err == nil && !st.IsDir()
+	if st, err := os.Stat(filepath.Join(repoRoot, filepath.FromSlash(scipIndexBinaryRel))); err == nil && !st.IsDir() {
+		return true
+	}
+	if st, err := os.Stat(filepath.Join(repoRoot, filepath.FromSlash(scipIndexJSONRel))); err == nil && !st.IsDir() {
+		return true
+	}
+	return false
 }
 
 // loadSCIPSidecar reads the JSON sidecar once, returning an exact-FQN map

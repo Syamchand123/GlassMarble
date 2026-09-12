@@ -1,6 +1,7 @@
 package review
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -124,5 +125,59 @@ func TestSuggestTuningCap(t *testing.T) {
 	}
 	if len(got) != 10 {
 		t.Errorf("suggestions must be capped at 10, got %d", len(got))
+	}
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// TuningApply safe auto-fix tests (APPEND ONLY — above untouched)
+// ────────────────────────────────────────────────────────────────────────────
+
+func writeTuningDocsYAML(t *testing.T, root, body string) {
+	t.Helper()
+	gmDir := root + "/.glassmarble"
+	if err := os.MkdirAll(gmDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(gmDir+"/docs.yaml", []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTuningApplyStyleJargon(t *testing.T) {
+	root := t.TempDir()
+	writeTuningDocsYAML(t, root, "version: 1\ndocs_dir: docs\n")
+	s := TuningSuggestion{Area: "style/prompts", Evidence: `1x kind="revert" reason="overuses \"synergize\" in intro"`}
+	if err := TuningApply(root, s); err != nil {
+		t.Fatalf("TuningApply failed: %v", err)
+	}
+	data, _ := os.ReadFile(root + "/.glassmarble/docs.yaml")
+	if !strings.Contains(string(data), "synergize") || !strings.Contains(string(data), "jargon_blacklist:") {
+		t.Errorf("jargon term must be appended to style.jargon_blacklist:\n%s", data)
+	}
+	// Re-apply is a no-op success.
+	if err := TuningApply(root, s); err != nil {
+		t.Fatalf("TuningApply re-apply failed: %v", err)
+	}
+	data2, _ := os.ReadFile(root + "/.glassmarble/docs.yaml")
+	if got := strings.Count(string(data2), "synergize"); got != 1 {
+		t.Errorf("re-apply must be idempotent, got %d occurrences:\n%s", got, data2)
+	}
+}
+
+func TestTuningApplyManualRequired(t *testing.T) {
+	root := t.TempDir()
+	writeTuningDocsYAML(t, root, "version: 1\ndocs_dir: docs\n")
+	// Non-style area → manual.
+	if err := TuningApply(root, TuningSuggestion{Area: "merge-conflict prompts", Evidence: `2x kind="conflict" reason="wrong callers"`}); err == nil || !strings.Contains(err.Error(), "manual apply required") {
+		t.Errorf("non-style area must return manual-apply error, got %v", err)
+	}
+	// Style area without a quoted term → manual.
+	if err := TuningApply(root, TuningSuggestion{Area: "style/prompts", Evidence: `1x kind="revert" reason="tone drift"`}); err == nil || !strings.Contains(err.Error(), "manual apply required") {
+		t.Errorf("style suggestion without jargon term must return manual-apply error, got %v", err)
+	}
+	// Style suggestion with term but no docs.yaml → manual.
+	empty := t.TempDir()
+	if err := TuningApply(empty, TuningSuggestion{Area: "style/prompts", Evidence: `1x kind="revert" reason="overuses \"synergize\""`}); err == nil || !strings.Contains(err.Error(), "manual apply required") {
+		t.Errorf("missing docs.yaml must return manual-apply error, got %v", err)
 	}
 }

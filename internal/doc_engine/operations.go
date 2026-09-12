@@ -220,10 +220,10 @@ func GenerateErrorCatalog(repoRoot string) (string, error) {
 
 // GenerateErrorCatalogWithGraph is the CPG-aware error catalog: caller
 // resolution uses graph.GetInboundEdges (file#line via node FileSpec) with
-// ident-scan fallback when graph is nil. No production caller exists yet
-// (verified: only tests reference GenerateErrorCatalog; neither doc_engine.go
-// nor cmd/ call it), so this pass-through is the available API for the owner
-// to wire once a graph is at hand — no forbidden-file edits required.
+// ident-scan fallback when graph is nil. Production wiring lives in
+// doc_engine.go Run (P33 living error catalog: regenerates docs/errors.md
+// with opts.HeadGraph when non-nil); this operations wrapper is the
+// pass-through for tests and direct callers.
 func GenerateErrorCatalogWithGraph(repoRoot string, graph *akg.CodePropertyGraph) (string, error) {
 	return sre.GenerateErrorCatalogWithGraph(repoRoot, graph)
 }

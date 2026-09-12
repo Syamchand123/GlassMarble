@@ -14,8 +14,10 @@ import (
 	doc_engine "github.com/Syamchand123/GlassMarble/internal/doc_engine"
 	docconfig "github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/grounding/langmatrix"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/ledger"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/review"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/storage"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/verifier"
 	"github.com/Syamchand123/GlassMarble/internal/tui"
 	"github.com/Syamchand123/GlassMarble/internal/tui/programs/doc_view"
 	"github.com/Syamchand123/GlassMarble/internal/tui/views"
@@ -298,6 +300,11 @@ var docCheckCmd = &cobra.Command{
 	Args:  cobra.NoArgs,
 	Long: `Audits all managed documents for drift and freshness without modifying any files.
 
+With --check-external, a second pass verifies external http(s) links via
+HEAD requests (internal reference checks never touch the network).
+Unreachable hosts and network errors are skipped silently (offline-safe);
+only completed HTTP 4xx/5xx responses are reported as failures.
+
 Exit codes (plan Section 11):
   0  All documents are fresh (warnings allowed)
   1  Drift detected (one or more failures, including doc-lint asserts)
@@ -346,6 +353,17 @@ Exit codes (plan Section 11):
 			// (config/state load) are exit 2.
 			fmt.Fprintf(cmd.ErrOrStderr(), "doc check: %v\n", err)
 			docExit(2)
+		}
+
+		// --check-external runs a SECOND pass after Check (doc_engine.go is
+		// untouched): verifier.CheckReferences over each managed doc with
+		// external checking enabled. Only external targets are reported;
+		// internal references were already covered by Check above.
+		if checkExternal, _ := cmd.Flags().GetBool("check-external"); checkExternal {
+			for _, f := range checkExternalRefs(absDir, docID, tag) {
+				result.AllFresh = false
+				result.Failures = append(result.Failures, f)
+			}
 		}
 
 		if asJSON {
@@ -426,6 +444,58 @@ func applyCheckFixes(cmd *cobra.Command, absDir string, verifySnippets bool) err
 		}
 	}
 	return nil
+}
+
+// checkExternalRefs is the --check-external second pass: it runs
+// verifier.CheckReferences with external checking enabled over every managed
+// document (honouring the same --doc/--tag filter as Check) and returns one
+// failure string per broken EXTERNAL link. Internal references are excluded
+// (Check already covers them). Unreachable hosts and network errors are
+// skipped silently by the verifier, so offline runs never fail here — only
+// completed HTTP 4xx/5xx responses surface.
+func checkExternalRefs(absDir, docID, tag string) []string {
+	cfg, err := docconfig.LoadDocsConfig(absDir)
+	if err != nil || cfg == nil {
+		return nil
+	}
+	var failures []string
+	for _, doc := range cfg.Documents {
+		if docID != "" && doc.ID != docID {
+			continue
+		}
+		if tag != "" {
+			matched := false
+			for _, t := range doc.Tags {
+				if t == tag {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		data, err := os.ReadFile(filepath.Join(absDir, doc.TargetPath))
+		if err != nil {
+			continue
+		}
+		rep := verifier.CheckReferences(absDir, doc.TargetPath, string(data), nil, true)
+		for _, br := range rep.Broken {
+			if !isExternalTarget(br.Target) {
+				continue
+			}
+			failures = append(failures, fmt.Sprintf("%s: broken external reference (line %d): %s — %s",
+				doc.TargetPath, br.Line, br.Target, br.Reason))
+		}
+	}
+	return failures
+}
+
+// isExternalTarget reports whether a broken-reference target is an
+// external http(s) URL (the only class the --check-external pass reports).
+func isExternalTarget(target string) bool {
+	l := strings.ToLower(strings.TrimSpace(target))
+	return strings.HasPrefix(l, "http://") || strings.HasPrefix(l, "https://")
 }
 
 func printCheckResult(cmd *cobra.Command, result doc_engine.CheckResult) {
@@ -839,9 +909,18 @@ var docLedgerCmd = &cobra.Command{
 	Args:  cobra.NoArgs,
 	Long: `Prints the D5 observability rollup over recent doc-engine runs:
 total tokens, per-track render counts, repairs, fallbacks, and freshness.
-The ledger is append-only JSONL under .glassmarble/runs/.`,
+The ledger is append-only JSONL under .glassmarble/runs/.
+
+With --alerts, the rollup is evaluated against alert thresholds
+(--max-tokens, --min-freshness, --max-fallbacks; 0 disables that dimension)
+via ledger.CheckAlerts and every breach is printed.
+
+Exit codes:
+  0  Rollup printed and (with --alerts) no alert fired
+  1  One or more alerts fired (--alerts only)`,
 	Example: `  gmb doc ledger
-  gmb doc ledger --last 20 --json`,
+  gmb doc ledger --last 20 --json
+  gmb doc ledger --alerts --max-tokens 50000 --min-freshness 70 --max-fallbacks 10`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		targetDir := resolveDir(cmd)
 		absDir, err := filepath.Abs(targetDir)
@@ -850,24 +929,81 @@ The ledger is append-only JSONL under .glassmarble/runs/.`,
 		}
 		lastN, _ := cmd.Flags().GetInt("last")
 		asJSON, _ := cmd.Flags().GetBool("json")
+		wantAlerts, _ := cmd.Flags().GetBool("alerts")
 
 		summary, err := doc_engine.LedgerSummary(absDir, lastN)
 		if err != nil {
 			return err
 		}
+
+		var alerts []string
+		if wantAlerts {
+			maxTokens, _ := cmd.Flags().GetInt("max-tokens")
+			minFreshness, _ := cmd.Flags().GetFloat64("min-freshness")
+			maxFallbacks, _ := cmd.Flags().GetInt("max-fallbacks")
+			alerts = ledger.CheckAlerts(summary, ledger.AlertThresholds{
+				MaxTokensPerRun: maxTokens,
+				MinFreshness:    minFreshness,
+				MaxFallbacks:    maxFallbacks,
+			})
+		}
+
 		if asJSON {
-			data, _ := json.MarshalIndent(summary, "", "  ")
-			fmt.Fprintln(cmd.OutOrStdout(), string(data))
-			return nil
+			if wantAlerts {
+				data, _ := json.MarshalIndent(struct {
+					Runs                 int            `json:"runs"`
+					TotalTokens          int            `json:"total_tokens"`
+					AvgDurationMs        float64        `json:"avg_duration_ms"`
+					TotalDocsUpdated     int            `json:"total_docs_updated"`
+					TotalSectionsUpdated int            `json:"total_sections_updated"`
+					TotalRepairs         int            `json:"total_repairs"`
+					TotalFallbacks       int            `json:"total_fallbacks"`
+					TracksUsed           map[string]int `json:"tracks_used"`
+					AvgFreshness         float64        `json:"avg_freshness"`
+					FirstRun             string         `json:"first_run"`
+					LastRun              string         `json:"last_run"`
+					Alerts               []string       `json:"alerts"`
+				}{
+					Runs:                 summary.Runs,
+					TotalTokens:          summary.TotalTokens,
+					AvgDurationMs:        summary.AvgDurationMs,
+					TotalDocsUpdated:     summary.TotalDocsUpdated,
+					TotalSectionsUpdated: summary.TotalSectionsUpdated,
+					TotalRepairs:         summary.TotalRepairs,
+					TotalFallbacks:       summary.TotalFallbacks,
+					TracksUsed:           summary.TracksUsed,
+					AvgFreshness:         summary.AvgFreshness,
+					FirstRun:             summary.FirstRun,
+					LastRun:              summary.LastRun,
+					Alerts:               alerts,
+				}, "", "  ")
+				fmt.Fprintln(cmd.OutOrStdout(), string(data))
+			} else {
+				data, _ := json.MarshalIndent(summary, "", "  ")
+				fmt.Fprintln(cmd.OutOrStdout(), string(data))
+			}
+		} else {
+			docPrintf(cmd, "doc ledger: %d run(s) | %d tokens | %d docs updated | %d sections | %d repairs | %d fallbacks | freshness %.1f%%\n",
+				summary.Runs, summary.TotalTokens, summary.TotalDocsUpdated, summary.TotalSectionsUpdated,
+				summary.TotalRepairs, summary.TotalFallbacks, summary.AvgFreshness)
+			for track, n := range summary.TracksUsed {
+				docPrintf(cmd, "  track %-14s %d render(s)\n", track, n)
+			}
+			if summary.Runs > 0 {
+				docPrintf(cmd, "  window: %s → %s\n", summary.FirstRun, summary.LastRun)
+			}
+			if wantAlerts {
+				if len(alerts) == 0 {
+					docPrintf(cmd, "doc ledger: no alerts (thresholds clear)\n")
+				}
+				for _, a := range alerts {
+					docPrintf(cmd, "  ALERT: %s\n", a)
+				}
+			}
 		}
-		docPrintf(cmd, "doc ledger: %d run(s) | %d tokens | %d docs updated | %d sections | %d repairs | %d fallbacks | freshness %.1f%%\n",
-			summary.Runs, summary.TotalTokens, summary.TotalDocsUpdated, summary.TotalSectionsUpdated,
-			summary.TotalRepairs, summary.TotalFallbacks, summary.AvgFreshness)
-		for track, n := range summary.TracksUsed {
-			docPrintf(cmd, "  track %-14s %d render(s)\n", track, n)
-		}
-		if summary.Runs > 0 {
-			docPrintf(cmd, "  window: %s → %s\n", summary.FirstRun, summary.LastRun)
+		// Exit-code contract: alert breaches fail the command (exit 1).
+		if len(alerts) > 0 {
+			return fmt.Errorf("doc ledger: %d alert(s) fired", len(alerts))
 		}
 		return nil
 	},
@@ -883,7 +1019,11 @@ var docReviewCmd = &cobra.Command{
 	Args:  cobra.RangeArgs(0, 2),
 	Long: `The D6 review queue holds items needing a human decision: merge
 conflicts, applied snippet fixes, and auto-generated ADR drafts.
-With no arguments, lists pending items. Approve or reject by ID.`,
+With no arguments, lists pending items. Approve or reject by ID.
+With --tuning, prints prompt/style suggestions aggregated from resolved
+outcomes; --apply (requires --tuning) additionally applies the SAFE subset
+(style suggestions naming a jargon term are appended to the docs.yaml
+style.jargon_blacklist, everything else is reported as manual-action).`,
 	Example: `  gmb doc review
   gmb doc review approve r1a2b3c4d --reason "looks right"
   gmb doc review reject r1a2b3c4d --reason "wrong callers"
@@ -909,7 +1049,25 @@ With no arguments, lists pending items. Approve or reject by ID.`,
 			for _, s := range suggestions {
 				docPrintf(cmd, "  [%s] %s → %s\n", s.Area, s.Evidence, s.Action)
 			}
+			// --apply consumes the tuning loop: safe auto-fixes are
+			// applied via review.TuningApply, the rest are reported.
+			if apply, _ := cmd.Flags().GetBool("apply"); apply {
+				applied, manual := 0, 0
+				for _, s := range suggestions {
+					if err := review.TuningApply(absDir, s); err != nil {
+						manual++
+						docPrintf(cmd, "  [manual] [%s] %s\n", s.Area, err)
+					} else {
+						applied++
+						docPrintf(cmd, "  [applied] [%s] %s\n", s.Area, s.Evidence)
+					}
+				}
+				docPrintf(cmd, "doc review: tuning apply: %d applied, %d require manual action\n", applied, manual)
+			}
 			return nil
+		}
+		if applyOnly, _ := cmd.Flags().GetBool("apply"); applyOnly {
+			return fmt.Errorf("doc review: --apply requires --tuning")
 		}
 		if showStats, _ := cmd.Flags().GetBool("stats"); showStats {
 			pending, approved, rejected, observed, err := doc_engine.ReviewStats(absDir)
@@ -1049,6 +1207,7 @@ func init() {
 	docCheckCmd.Flags().Bool("json", false, "Emit machine-readable JSON output")
 	docCheckCmd.Flags().Bool("verify-snippets", false, "Verify executable code snippets in managed docs")
 	docCheckCmd.Flags().Bool("fix", false, "Deterministically fix failing snippets (modifies files; use without --json in CI gate mode)")
+	docCheckCmd.Flags().Bool("check-external", false, "Also verify external http(s) links via HEAD (network errors are skipped; HTTP 4xx/5xx fail)")
 
 	// ── gmb doc diff flags ────────────────────────────────────────────────
 	docDiffCmd.Flags().String("doc", "", "Only diff the document with this ID")
@@ -1079,11 +1238,16 @@ func init() {
 	// ── gmb doc ledger flags ──────────────────────────────────────────────
 	docLedgerCmd.Flags().Int("last", 0, "Roll up only the last N runs (0 = all)")
 	docLedgerCmd.Flags().Bool("json", false, "Emit machine-readable JSON output")
+	docLedgerCmd.Flags().Bool("alerts", false, "Evaluate alert thresholds over the rollup (exit 1 if any fires)")
+	docLedgerCmd.Flags().Int("max-tokens", 0, "Alert when total tokens exceed this budget (0 = disabled)")
+	docLedgerCmd.Flags().Float64("min-freshness", 0, "Alert when average freshness drops below this (0 = disabled)")
+	docLedgerCmd.Flags().Int("max-fallbacks", 0, "Alert when total fallbacks exceed this (0 = disabled)")
 
 	// ── gmb doc review flags ──────────────────────────────────────────────
 	docReviewCmd.Flags().String("reason", "", "Reason recorded with approve/reject")
 	docReviewCmd.Flags().Bool("stats", false, "Show review queue counts")
 	docReviewCmd.Flags().Bool("tuning", false, "Show prompt/style tuning suggestions from resolved outcomes")
+	docReviewCmd.Flags().Bool("apply", false, "Apply safe tuning suggestions (requires --tuning; style jargon only)")
 
 	// ── gmb doc review record-revert flags ──────────────────────────────────
 	docReviewRecordRevertCmd.Flags().String("doc", "", "Reverted document path (optional)")

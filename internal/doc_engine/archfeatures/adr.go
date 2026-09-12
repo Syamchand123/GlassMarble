@@ -868,13 +868,43 @@ func WriteTimelineData(repoRoot string) error {
 	return nil
 }
 
+// adrStatusReachableFromNew reports whether status is reachable from a
+// brand-new file ("") through the adrAllowedTransitions graph (breadth-first
+// search). Every known status is reachable: proposed/accepted are entry
+// points, rejected via proposed, deprecated via proposed/accepted,
+// superseded via accepted/deprecated. Unknown statuses are unreachable.
+func adrStatusReachableFromNew(status string) bool {
+	if !adrKnownStatuses[status] {
+		return false
+	}
+	visited := map[string]bool{"": true}
+	queue := []string{""}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for next := range adrAllowedTransitions[cur] {
+			if next == status {
+				return true
+			}
+			if !visited[next] {
+				visited[next] = true
+				queue = append(queue, next)
+			}
+		}
+	}
+	return false
+}
+
 // ValidateADRLifecycle checks every docs/adr/*.md (except index.md and
 // template.md) in filename order: unknown status is a failure, any status
 // outside the closed vocabulary {proposed,accepted,rejected,deprecated,
-// superseded} is a failure, `superseded` status without a "Superseded by"
-// link is a failure, and `deprecated` status without a deprecation link
-// ("Superseded by" or "Deprecated by") is a failure. A missing docs/adr
-// directory means the opt-in feature is unused → nil.
+// superseded} is a failure, a KNOWN status unreachable through the
+// ValidateStatusTransition matrix from a new file is a failure (wires the
+// transition matrix: proposed/accepted are the entry points), `superseded`
+// status without a "Superseded by" link is a failure, and `deprecated`
+// status without a deprecation link ("Superseded by" or "Deprecated by") is
+// a failure. A missing docs/adr directory means the opt-in feature is
+// unused → nil.
 func ValidateADRLifecycle(repoRoot string) []string {
 	adrDir := filepath.Join(repoRoot, "docs", "adr")
 	entries, err := os.ReadDir(adrDir)
@@ -908,6 +938,15 @@ func ValidateADRLifecycle(repoRoot string) []string {
 		}
 		if !adrKnownStatuses[status] {
 			failures = append(failures, fmt.Sprintf("adr %s: unknown status %q", rel, status))
+			continue
+		}
+		// Wire the transition matrix: the current status must be reachable
+		// from a new file through ValidateStatusTransition's allowed edges
+		// (proposed/accepted entry points). All vocabulary statuses pass;
+		// this is the guard that fails first if the matrix ever regresses.
+		if !adrStatusReachableFromNew(status) {
+			failures = append(failures, fmt.Sprintf("adr %s: status %q unreachable via legal transitions: %v",
+				rel, status, ValidateStatusTransition("", status)))
 			continue
 		}
 		if status == "superseded" && !strings.Contains(content, "Superseded by") {

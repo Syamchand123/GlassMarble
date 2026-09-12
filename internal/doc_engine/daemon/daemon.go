@@ -16,6 +16,14 @@
 //     Run returns nil on clean shutdown.
 //
 // Ignored subtrees: .git, node_modules, vendor, .glassmarble.
+//
+// AKG caching boundary (gap C5, honest scope): this package never loads the
+// AKG — it only debounces filesystem events and invokes onChange. The
+// caller (analyze/serve layer) owns the CodePropertyGraph and should load
+// it once per process and pass it as doc_engine RunOptions.HeadGraph across
+// runs; cross-process caching belongs there. In-process catalog reuse lives
+// one layer down in doc_engine (catalogCache keyed by docs.yaml hash +
+// doc/tag filter).
 package daemon
 
 import (

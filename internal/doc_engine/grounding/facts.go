@@ -235,15 +235,26 @@ func fqnFilePart(fqn string) string {
 // payload symbols) so caller context stays within prompt budget.
 const maxPayloadCallers = 20
 
+// maxCrossRepoLookups caps cross-repo (GMB_EXTRA_REPOS) sidecar lookups per
+// factsheet so one section with many unresolved symbols cannot fan out
+// across every extra checkout.
+const maxCrossRepoLookups = 20
+
 // sortStrings sorts in place for deterministic payloads.
 func sortStrings(items []string) {
 	sort.Strings(items)
 }
 
 // applyPrecisionLayer (plan B1) upgrades symbol positions via SCIP → LSP →
-// AST resolution. Only higher-provenance answers (scip, lsp) override what
-// the collectors extracted; AST answers merely confirm. Every symbol keeps
-// a Provenance trail on the fact itself.
+// AST resolution, plus a cross-repo SCIP pass (gap B1e): after
+// ResolveBatch, still-unresolved symbols whose FQN contains "/" (a
+// repo-qualified hint, e.g. "otherrepo/pkg/file.go::Symbol") are looked up
+// in the GMB_EXTRA_REPOS sidecars via resolve.ResolveCrossRepo. At most
+// maxCrossRepoLookups cross-repo lookups run per factsheet (budget guard),
+// in fqns order so results stay deterministic. Only higher-provenance
+// answers (scip, scip:xrepo, lsp) override what the collectors extracted;
+// AST answers merely confirm. Every symbol keeps a Provenance trail on the
+// fact itself.
 func applyPrecisionLayer(doc *config.DocSpec, payload *config.GroundTruthPayload, graph *akg.CodePropertyGraph, repoRoot string) {
 	if payload == nil || doc == nil {
 		return
@@ -266,12 +277,33 @@ func applyPrecisionLayer(doc *config.DocSpec, payload *config.GroundTruthPayload
 		return
 	}
 	results := resolve.ResolveBatch(fqns, graph, repoRoot)
+	// B1e cross-repo fallback: still-unresolved, repo-qualified hints only.
+	// Deterministic: iterate fqns (deduped input order), not the map.
+	if extra := resolve.ExtraRepoRoots(); len(extra) > 0 {
+		lookups := 0
+		for _, fqn := range fqns {
+			if lookups >= maxCrossRepoLookups {
+				break
+			}
+			r, ok := results[fqn]
+			if !ok || (r.Provenance != resolve.ProvenanceUnresolved && r.Provenance != "") {
+				continue
+			}
+			if !strings.Contains(fqn, "/") {
+				continue
+			}
+			lookups++
+			if xr := resolve.ResolveCrossRepo(fqn, extra, graph); xr.Provenance == resolve.ProvenanceCrossRepo {
+				results[fqn] = xr
+			}
+		}
+	}
 	upgrade := func(s *config.SymbolFact) {
 		r, ok := results[s.FQN]
 		if !ok {
 			return
 		}
-		if r.Provenance == "scip" || r.Provenance == "lsp" {
+		if r.Provenance == "scip" || r.Provenance == "scip:xrepo" || r.Provenance == "lsp" {
 			if r.File != "" {
 				s.File = r.File
 			}
@@ -294,9 +326,10 @@ func applyPrecisionLayer(doc *config.DocSpec, payload *config.GroundTruthPayload
 	}
 }
 
-// provenanceOr prefers the higher-precision source: scip > lsp > ast.
+// provenanceOr prefers the higher-precision source:
+// scip/scip:xrepo > lsp > ast > unresolved.
 func provenanceOr(current, next string) string {
-	rank := map[string]int{"scip": 3, "lsp": 2, "ast": 1, "unresolved": 0}
+	rank := map[string]int{"scip": 3, "scip:xrepo": 3, "lsp": 2, "ast": 1, "unresolved": 0}
 	if rank[next] > rank[current] {
 		return next
 	}

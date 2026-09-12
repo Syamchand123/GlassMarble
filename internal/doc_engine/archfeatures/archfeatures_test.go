@@ -679,3 +679,39 @@ commit: "ccc3333"
 		t.Errorf("empty timeline must be [], got:\n%s", emptyData)
 	}
 }
+
+func TestValidateADRLifecycleTransitionMatrix(t *testing.T) {
+	// Every vocabulary status is reachable from a new file through the
+	// transition matrix; unknown statuses are not.
+	for _, status := range []string{"proposed", "accepted", "rejected", "deprecated", "superseded"} {
+		if !adrStatusReachableFromNew(status) {
+			t.Errorf("status %q must be reachable from a new file", status)
+		}
+	}
+	// Only proposed/accepted are direct new-file entries; the rest are
+	// reachable via multi-hop paths (e.g. "" → proposed → rejected).
+	for _, status := range []string{"proposed", "accepted"} {
+		if err := ValidateStatusTransition("", status); err != nil {
+			t.Errorf("new-file entry to %q: %v", status, err)
+		}
+	}
+	if adrStatusReachableFromNew("draft-pending") {
+		t.Errorf("unknown status must be unreachable")
+	}
+	// A superseded ADR without a link still fails even though its status
+	// is reachable through the matrix.
+	dir := t.TempDir()
+	writeADRFixture(t, dir, "0001-old.md", `---
+status: superseded
+date: 2026-09-01
+---
+
+# 0001. Old
+
+No link anywhere.
+`)
+	failures := ValidateADRLifecycle(dir)
+	if len(failures) != 1 || !strings.Contains(failures[0], "Superseded by") {
+		t.Errorf("superseded without link must fail on the link check, got %v", failures)
+	}
+}
