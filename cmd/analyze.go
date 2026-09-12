@@ -88,6 +88,7 @@ See also: 'gmb status', 'gmb watch', 'gmb doctor'`,
 		}
 		includeDocs, _ := cmd.Flags().GetBool("include-docs")
 		runDocs, _ := cmd.Flags().GetBool("docs")
+		docsNoLLM, _ := cmd.Flags().GetBool("no-llm")
 		snapNoGraph, _ := cmd.Flags().GetBool("snapshot-no-graph")
 		snapKeep, _ := cmd.Flags().GetInt("snapshot-keep")
 		opts := runAnalysisOptions{
@@ -104,8 +105,9 @@ See also: 'gmb status', 'gmb watch', 'gmb doctor'`,
 			json:            asJSON,
 			bench:           isBench,
 			intelligence:    intelligence,
-			includeDocs:     includeDocs,
-			runDocs:         runDocs,
+		includeDocs:     includeDocs,
+		runDocs:         runDocs,
+		docsNoLLM:       docsNoLLM,
 			snapshotNoGraph: snapNoGraph,
 			snapshotKeep:    snapKeep,
 			out:             cmd.OutOrStdout(),
@@ -194,6 +196,10 @@ type runAnalysisOptions struct {
 	// scanning and git-history walks are not free on large repositories.
 	includeDocs     bool
 	runDocs         bool
+	// docsNoLLM forces the doc engine (run after --docs) onto the
+	// deterministic renderer: no LLM calls, fully offline. Without it the
+	// engine uses whatever provider the AI config resolves.
+	docsNoLLM       bool
 	snapshotNoGraph bool
 	snapshotKeep    int
 	// out is the writer for human-readable output. When nil, os.Stdout or
@@ -565,7 +571,7 @@ func runAnalysis(cmd *cobra.Command, opts runAnalysisOptions) error {
 	// Documentation Intelligence Engine: update living markdown documents
 	// grounded in the AKG. Non-fatal by design.
 	if opts.runDocs {
-		runDocEngine(storageDir, tm, commitHash, verbose)
+		runDocEngine(storageDir, tm, commitHash, verbose, opts.docsNoLLM)
 	}
 	// knowledge aging: freshness decay on every claim plus
 	// deterministic state transitions, persisted as replayable
@@ -732,6 +738,7 @@ func init() {
 	analyzeCmd.Flags().Bool("no-intelligence", false, "Disable architectural intelligence checks (equivalent to --intelligence=false)")
 	analyzeCmd.Flags().Bool("include-docs", false, "Run knowledge fusion: fuse ADR/README/PR claims into developer memory")
 	analyzeCmd.Flags().Bool("docs", false, "Run documentation intelligence engine after graph commit")
+	analyzeCmd.Flags().Bool("no-llm", false, "With --docs: use the deterministic renderer only (offline mode)")
 	analyzeCmd.Flags().Bool("snapshot-no-graph", false, "Omit embedded graph from snapshots (smaller files; disables snapshot --replay)")
 	analyzeCmd.Flags().Int("snapshot-keep", 0, "Max snapshots to retain (0 = config default 30)")
 

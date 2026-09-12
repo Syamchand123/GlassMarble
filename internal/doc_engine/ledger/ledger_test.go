@@ -282,3 +282,40 @@ func TestCheckAlerts(t *testing.T) {
 		t.Fatalf("boundary values must not fire, got %v", got)
 	}
 }
+
+// TestExtraPrunePreservesMalformedLines pins the documented raw-lines
+// contract: Prune operates on raw lines, so a corrupt line survives pruning
+// (Summarize keeps skipping it silently) instead of being dropped.
+func TestExtraPrunePreservesMalformedLines(t *testing.T) {
+	root := t.TempDir()
+	appendAll(t, root, testRecords())
+	ledgerFile := filepath.Join(root, ".glassmarble", "runs", "runs.jsonl")
+	f, err := os.OpenFile(ledgerFile, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("open ledger: %v", err)
+	}
+	if _, err := f.WriteString("this is not json{{{ corrupt\n"); err != nil {
+		t.Fatalf("write corrupt line: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close ledger: %v", err)
+	}
+
+	if err := Prune(root, 100); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	raw, err := os.ReadFile(ledgerFile)
+	if err != nil {
+		t.Fatalf("read ledger: %v", err)
+	}
+	if !strings.Contains(string(raw), "this is not json{{{ corrupt") {
+		t.Errorf("Prune must preserve malformed lines, ledger is now:\n%s", raw)
+	}
+	sum, err := Summarize(root, 0)
+	if err != nil {
+		t.Fatalf("Summarize: %v", err)
+	}
+	if sum.Runs != 3 {
+		t.Errorf("Summarize must still skip the corrupt line: Runs = %d, want 3", sum.Runs)
+	}
+}

@@ -9,7 +9,7 @@ import (
 
 // runDocEngine runs the Documentation Intelligence Engine after graph commit.
 // Non-fatal by design: failures are logged as warnings and do not abort analysis.
-func runDocEngine(storageDir string, tm *akg.AKGTransactionManager, commitHash string, verbose bool) {
+func runDocEngine(storageDir string, tm *akg.AKGTransactionManager, commitHash string, verbose bool, noLLM bool) {
 	if tm == nil {
 		return
 	}
@@ -24,6 +24,7 @@ func runDocEngine(storageDir string, tm *akg.AKGTransactionManager, commitHash s
 		CommitHash: commitHash,
 		Verbose:    verbose,
 		HeadGraph:  graph,
+		NoLLM:      noLLM,
 		Out:        tuiOut,
 	}
 

@@ -31,6 +31,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -117,10 +118,47 @@ func ExportStateJSON(sm *StateManager) ([]byte, error) {
 // openSQLite opens (creating parents as needed) the state database, applies
 // the WAL durability pragmas, and creates the schema. It does NOT run the
 // JSON migration; call ensureSQLiteMigrated for that.
+//
+// Simultaneous cold opens from concurrent runs can fail WAL-mode enablement
+// with SQLITE_BUSY before busy_timeout applies, so the whole open sequence
+// retries with backoff and only the last error surfaces.
 func (sm *StateManager) openSQLite() (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(sm.dbPath), 0755); err != nil {
 		return nil, fmt.Errorf("doc_engine: creating storage dir for sqlite: %w", err)
 	}
+	var db *sql.DB
+	var err error
+	backoff := 50 * time.Millisecond
+	for attempt := 0; attempt < 6; attempt++ {
+		if attempt > 0 {
+			time.Sleep(backoff)
+			backoff *= 2
+		}
+		db, err = sm.openSQLiteOnce()
+		if err == nil {
+			return db, nil
+		}
+		if !isBusyError(err) {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("doc_engine: opening sqlite state after retries: %w", err)
+}
+
+// isBusyError reports whether err is a SQLite contention failure worth
+// retrying ("database is locked" / "database table is locked" / SQLITE_BUSY).
+func isBusyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "database table is locked") ||
+		strings.Contains(msg, "sqlite_busy")
+}
+
+// openSQLiteOnce performs a single open+pragmas+schema attempt.
+func (sm *StateManager) openSQLiteOnce() (*sql.DB, error) {
 	db, err := sql.Open("sqlite", sm.dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("doc_engine: opening sqlite state: %w", err)

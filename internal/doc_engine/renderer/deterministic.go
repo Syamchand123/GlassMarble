@@ -44,12 +44,12 @@ func (r *DeterministicRenderer) RenderSection(fs *config.FactSheet) (string, err
 
 	// 1. Living Diagrams (Mermaid / PlantUML)
 	if fs.GroundTruth.DiagramMermaid != "" {
-		diag := strings.TrimSpace(fs.GroundTruth.DiagramMermaid)
+		diag := unwrapDiagramFences(fs.GroundTruth.DiagramMermaid)
 		sb.WriteString("```mermaid\n" + diag + "\n```\n\n")
 	}
 	for _, diagFact := range fs.GroundTruth.Diagrams {
 		if strings.TrimSpace(diagFact.Content) != "" {
-			diag := strings.TrimSpace(diagFact.Content)
+			diag := unwrapDiagramFences(diagFact.Content)
 			sb.WriteString("```mermaid\n" + diag + "\n```\n\n")
 		}
 	}
@@ -300,4 +300,36 @@ func formatFileLink(file string, line int, permalink string) string {
 		display = fmt.Sprintf("%s:%d", display, line)
 	}
 	return fmt.Sprintf("`%s`", display)
+}
+
+// unwrapDiagramFences strips one layer of surrounding fenced-code markers
+// (```mermaid ... ``` or bare ``` ... ```) so callers can wrap exactly
+// once. Grounding may already return fenced blocks; wrapping those again
+// produces nested fences whose unclosed tail swallows following anchors.
+func unwrapDiagramFences(s string) string {
+	t := strings.TrimSpace(s)
+	if !strings.HasPrefix(t, "```") {
+		return t
+	}
+	lines := strings.Split(t, "\n")
+	if len(lines) < 2 {
+		return strings.TrimSpace(strings.Trim(strings.TrimSpace(t), "`"))
+	}
+	// Drop the opening fence line (```mermaid, ```plantuml, or bare ```).
+	rest := strings.Join(lines[1:], "\n")
+	// Drop one closing fence line (a line that is only backticks, possibly
+	// trailed by whitespace).
+	restLines := strings.Split(rest, "\n")
+	for len(restLines) > 0 && isFenceLine(restLines[len(restLines)-1]) {
+		restLines = restLines[:len(restLines)-1]
+	}
+	return strings.TrimSpace(strings.Join(restLines, "\n"))
+}
+
+func isFenceLine(line string) bool {
+	t := strings.TrimSpace(line)
+	if len(t) < 3 || t[:3] != "```" {
+		return false
+	}
+	return strings.Trim(t[3:], " \t") == ""
 }
