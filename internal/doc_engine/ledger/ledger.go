@@ -59,6 +59,11 @@ type RunRecord struct {
 	Kind              string         `json:"kind,omitempty"`
 	EvalScore         float64        `json:"eval_score,omitempty"`
 	EvalSamples       int            `json:"eval_samples,omitempty"`
+	// EvalArchetypes maps archetype name to mean faithfulness for that eval
+	// run, enabling per-archetype trend tracking over ledger history.
+	EvalArchetypes map[string]float64 `json:"eval_archetypes,omitempty"`
+	// EvalRelevance is the global instruction-satisfaction fraction.
+	EvalRelevance float64 `json:"eval_relevance,omitempty"`
 }
 
 // Summary is the rollup over the (windowed) ledger.

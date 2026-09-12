@@ -498,8 +498,15 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 	}
 
 	// P16 auto-trigger: autonomous ADR generation (non-fatal, warnings only).
+	// B3: structural dossier events feed generation alongside commit-message
+	// keywords, so AKG-detected changes (splits, cycles, layer violations)
+	// scaffold ADRs even when the commit message is terse.
 	commitSubject := gitCommitSubject(repoRoot, opts.CommitHash)
-	if created, adrErr := archfeatures.AutoGenerateADRs(repoRoot, opts.CommitHash, commitSubject); adrErr != nil {
+	var dossierEvents []archfeatures.ADREvent
+	if dossier != nil {
+		dossierEvents = archfeatures.EventsFromDossier(dossier.ArchEvents, opts.CommitHash)
+	}
+	if created, adrErr := archfeatures.AutoGenerateADRsWithDossier(repoRoot, opts.CommitHash, commitSubject, dossierEvents); adrErr != nil {
 		result.Warnings = append(result.Warnings, fmt.Sprintf("auto ADR generation failed: %v", adrErr))
 	} else {
 		if opts.Verbose {

@@ -216,7 +216,36 @@ func ScanArchEvents(commitLogs []string) []ADREvent {
 // with the new event title are best-effort superseded via MarkSuperseded
 // (the new file wins). Supersession never fails the generation.
 func AutoGenerateADRs(repoRoot, commitHash, commitMsg string) ([]string, error) {
-	events := ScanArchEvents([]string{commitMsg})
+	return generateADRList(repoRoot, commitHash, commitMsg, ScanArchEvents([]string{commitMsg}))
+}
+
+// AutoGenerateADRsWithDossier merges keyword-scanned message events with
+// structural dossier events (B3: EventsFromDossier output), deduped by Type
+// with message-scan results winning ties, then generates ADRs for the union.
+// This is the production entry point used by doc_engine Run so structural
+// graph events (component splits, cycles, layer violations detected from the
+// AKG rather than commit prose) also trigger ADR scaffolding.
+func AutoGenerateADRsWithDossier(repoRoot, commitHash, commitMsg string, dossierEvents []ADREvent) ([]string, error) {
+	seen := make(map[string]bool)
+	var all []ADREvent
+	for _, ev := range ScanArchEvents([]string{commitMsg}) {
+		if !seen[ev.Type] {
+			seen[ev.Type] = true
+			all = append(all, ev)
+		}
+	}
+	for _, ev := range dossierEvents {
+		if !seen[ev.Type] {
+			seen[ev.Type] = true
+			all = append(all, ev)
+		}
+	}
+	return generateADRList(repoRoot, commitHash, commitMsg, all)
+}
+
+// generateADRList fills event defaults and generates one ADR file per event,
+// best-effort superseding prior accepted ADRs on title overlap.
+func generateADRList(repoRoot, commitHash, commitMsg string, events []ADREvent) ([]string, error) {
 	var paths []string
 	for _, ev := range events {
 		if strings.TrimSpace(ev.Context) == "" {

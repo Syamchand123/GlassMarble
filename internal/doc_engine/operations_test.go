@@ -210,6 +210,66 @@ func TestOperations_EvalFaithfulnessLedgerAndRelevance(t *testing.T) {
 	}
 }
 
+func TestOperations_EvalArchetypeScores(t *testing.T) {
+	tempDir := setupTestRepoWithDoc(t)
+
+	// Second doc with a different archetype: per-archetype means must
+	// carry both keys (module from fixture, runbook here).
+	second := config.DocSpec{
+		ID:         "rundoc",
+		TargetPath: "docs/rundoc.md",
+		Title:      "Runbook",
+		Archetype:  "runbook",
+		Audience:   "Operators",
+		Scope:      config.ScopeRule{Paths: []string{"internal/testdoc/**"}},
+		Sections: []config.SectionSpec{
+			{ID: "steps", Title: "Steps", Managed: true, Instruction: "List restart steps"},
+		},
+	}
+	if err := updateDocsYAML(tempDir, second); err != nil {
+		t.Fatalf("adding second doc: %v", err)
+	}
+	targetFull := filepath.Join(tempDir, second.TargetPath)
+	_ = os.MkdirAll(filepath.Dir(targetFull), 0755)
+	_ = os.WriteFile(targetFull, []byte("# Runbook\n\n<!-- gmb:begin:steps -->\nRestart steps\n<!-- gmb:end:steps -->\n"), 0644)
+
+	result, err := EvalFaithfulness(tempDir, 0)
+	if err != nil {
+		t.Fatalf("EvalFaithfulness failed: %v", err)
+	}
+	if len(result.ArchetypeScores) != 2 {
+		t.Fatalf("ArchetypeScores = %v, want module + runbook keys", result.ArchetypeScores)
+	}
+	for _, key := range []string{"module", "runbook"} {
+		s, ok := result.ArchetypeScores[key]
+		if !ok {
+			t.Errorf("ArchetypeScores missing %q: %v", key, result.ArchetypeScores)
+			continue
+		}
+		if s < 0 || s > 1 {
+			t.Errorf("archetype %q score out of range: %v", key, s)
+		}
+	}
+	// Docs without archetype group under "custom".
+	if _, ok := result.ArchetypeScores["custom"]; ok {
+		t.Errorf("no custom-archetype docs present, want no custom key: %v", result.ArchetypeScores)
+	}
+
+	// Ledger eval record mirrors the archetype map for trend tracking.
+	data, err := os.ReadFile(filepath.Join(tempDir, ".glassmarble", "runs", "runs.jsonl"))
+	if err != nil {
+		t.Fatalf("eval must append a ledger record: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	var rec ledger.RunRecord
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &rec); err != nil {
+		t.Fatalf("ledger record is not JSON: %v", err)
+	}
+	if len(rec.EvalArchetypes) != 2 {
+		t.Errorf("ledger EvalArchetypes = %v, want module + runbook", rec.EvalArchetypes)
+	}
+}
+
 func TestOperations_Compliance(t *testing.T) {
 	tempDir := setupTestRepoWithDoc(t)
 

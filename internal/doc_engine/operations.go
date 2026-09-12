@@ -273,6 +273,7 @@ func truncateLine(s string, maxLen int) string {
 type DocEval struct {
 	DocID       string   `json:"doc_id"`
 	TargetPath  string   `json:"target_path"`
+	Archetype   string   `json:"archetype,omitempty"`
 	Score       float64  `json:"score"`
 	Sections    int      `json:"sections"`
 	Unsupported []string `json:"unsupported,omitempty"`
@@ -289,6 +290,10 @@ type EvalResult struct {
 	// Relevance is the global fraction of evaluated sections satisfying
 	// their instruction (1.0 when nothing was evaluated).
 	Relevance float64 `json:"relevance,omitempty"`
+	// ArchetypeScores maps archetype name ("" reads as "custom" for docs
+	// without one) to the section-weighted mean faithfulness of its docs,
+	// enabling per-archetype trend tracking over ledger history.
+	ArchetypeScores map[string]float64 `json:"archetype_scores,omitempty"`
 }
 
 // EvalFaithfulness scores every non-empty managed section body against a
@@ -315,7 +320,7 @@ func EvalFaithfulness(repoRoot string, sampleN int) (EvalResult, error) {
 			continue
 		}
 		parsedDoc := patcher.ParseMarkdown(string(rawBytes))
-		de := DocEval{DocID: doc.ID, TargetPath: doc.TargetPath}
+		de := DocEval{DocID: doc.ID, TargetPath: doc.TargetPath, Archetype: doc.Archetype}
 		var sum float64
 		satisfied := 0
 		for _, sec := range doc.Sections {
@@ -364,20 +369,34 @@ func EvalFaithfulness(repoRoot string, sampleN int) (EvalResult, error) {
 	result.Samples = evaluated
 	if evaluated > 0 {
 		total := 0.0
+		archSum := make(map[string]float64)
+		archN := make(map[string]int)
 		for _, d := range result.Docs {
 			total += d.Score * float64(d.Sections)
+			key := d.Archetype
+			if key == "" {
+				key = "custom"
+			}
+			archSum[key] += d.Score * float64(d.Sections)
+			archN[key] += d.Sections
 		}
 		result.GlobalScore = total / float64(evaluated)
 		result.Relevance = float64(satisfiedTotal) / float64(evaluated)
+		result.ArchetypeScores = make(map[string]float64, len(archSum))
+		for key, sum := range archSum {
+			result.ArchetypeScores[key] = sum / float64(archN[key])
+		}
 	} else {
 		result.GlobalScore = 1.0
 		result.Relevance = 1.0
 	}
 	_ = ledger.Append(repoRoot, ledger.RunRecord{
-		Kind:        "eval",
-		Commit:      "",
-		EvalScore:   result.GlobalScore,
-		EvalSamples: result.Samples,
+		Kind:            "eval",
+		Commit:          "",
+		EvalScore:       result.GlobalScore,
+		EvalSamples:     result.Samples,
+		EvalArchetypes:  result.ArchetypeScores,
+		EvalRelevance:   result.Relevance,
 	})
 	return result, nil
 }

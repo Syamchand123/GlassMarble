@@ -99,7 +99,10 @@ func TestRunTimeoutHonored(t *testing.T) {
 	if !strings.Contains(res.ErrMsg, "timed out") {
 		t.Errorf("expected timeout ErrMsg, got %q", res.ErrMsg)
 	}
-	if elapsed > 20*time.Second {
+	// The sleep is 30s: finishing under 29s proves the timeout kill fired
+	// (not natural exit). Generous bound: `go run` compilation alone takes
+	// seconds on a loaded box; asserting kill-happened, not kill-speed.
+	if elapsed > 29*time.Second {
 		t.Errorf("timeout not honored: took %s", elapsed)
 	}
 }

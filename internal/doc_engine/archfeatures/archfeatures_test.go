@@ -193,6 +193,44 @@ func TestEventsFromDossier(t *testing.T) {
 	}
 }
 
+func TestAutoGenerateADRsWithDossier(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Terse message triggers nothing by itself; the structural dossier
+	// event must still scaffold an ADR (B3: no longer keyword-only).
+	dossierEvents := EventsFromDossier([]string{"LAYER_VIOLATION"}, "abc1234")
+	paths, err := AutoGenerateADRsWithDossier(tempDir, "abc1234", "chore: bump", dossierEvents)
+	if err != nil {
+		t.Fatalf("AutoGenerateADRsWithDossier failed: %v", err)
+	}
+	if len(paths) != 1 {
+		t.Fatalf("expected 1 ADR from dossier event, got %v", paths)
+	}
+
+	// Same type from both sources deduplicates to one ADR (message wins ties).
+	dossierDup := EventsFromDossier([]string{"COMPONENT_SPLIT"}, "def5678")
+	paths, err = AutoGenerateADRsWithDossier(tempDir, "def5678", "feat: split package into submodules", dossierDup)
+	if err != nil {
+		t.Fatalf("AutoGenerateADRsWithDossier (dedupe) failed: %v", err)
+	}
+	if len(paths) != 1 {
+		t.Fatalf("expected 1 deduplicated ADR, got %v", paths)
+	}
+
+	// Empty dossier input behaves exactly like AutoGenerateADRs.
+	plain, err := AutoGenerateADRs(t.TempDir(), "abc1234", "feat: split package into submodules")
+	if err != nil {
+		t.Fatalf("AutoGenerateADRs failed: %v", err)
+	}
+	merged, err := AutoGenerateADRsWithDossier(t.TempDir(), "abc1234", "feat: split package into submodules", nil)
+	if err != nil {
+		t.Fatalf("AutoGenerateADRsWithDossier (nil) failed: %v", err)
+	}
+	if len(plain) != len(merged) {
+		t.Errorf("nil-dossier merged run diverged from plain run: %v vs %v", plain, merged)
+	}
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // D4: ADR lifecycle tests (APPEND ONLY — existing tests above untouched)
 // ────────────────────────────────────────────────────────────────────────────

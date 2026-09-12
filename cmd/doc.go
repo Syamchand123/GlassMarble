@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"sort"
 	"strings"
 	"syscall"
 
@@ -849,6 +850,16 @@ by Bubble Tea. Supports fuzzy section search and symbol-to-source navigation
 	},
 }
 
+// sortedKeysFloat returns map keys in ascending order for deterministic CLI output.
+func sortedKeysFloat(m map[string]float64) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // gmb doc eval — D1 faithfulness scoring
 // ────────────────────────────────────────────────────────────────────────────
@@ -889,6 +900,12 @@ Exit codes:
 				docPrintf(cmd, "  %-45s  %.2f  (%d sections)\n", d.TargetPath, d.Score, d.Sections)
 				for _, u := range d.Unsupported {
 					docPrintf(cmd, "   unsupported: %s\n", u)
+				}
+			}
+			if len(result.ArchetypeScores) > 0 {
+				docPrintf(cmd, "  per-archetype:\n")
+				for _, arch := range sortedKeysFloat(result.ArchetypeScores) {
+					docPrintf(cmd, "    %-20s  %.2f\n", arch, result.ArchetypeScores[arch])
 				}
 			}
 		}
