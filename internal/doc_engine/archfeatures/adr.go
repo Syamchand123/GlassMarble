@@ -266,7 +266,7 @@ func generateADRList(repoRoot, commitHash, commitMsg string, events []ADREvent) 
 			return paths, err
 		}
 		paths = append(paths, rel)
-		if old := findSupersededCandidate(repoRoot, ev.Title, rel); old != "" {
+		if old := findSupersededCandidate(repoRoot, ev.Title, ev.Type, rel); old != "" {
 			_ = MarkSuperseded(repoRoot, old, rel)
 		}
 	}
@@ -327,7 +327,16 @@ func adrFileTitle(content string) string {
 // It returns the best match (highest overlap, ties broken by filename) as a
 // repo-relative slash path, or "" when nothing qualifies. Missing docs/adr
 // yields "".
-func findSupersededCandidate(repoRoot, newTitle, newRel string) string {
+//
+// When newType is non-empty and a candidate carries its own event_type
+// frontmatter, the types must match too. This package's canned titles
+// ("New Component Introduced" for COMPONENT_ADDED, "New Service / Component
+// Introduced" for SERVICE_ADDED, ...) are boilerplate that can share ≥2
+// significant words across genuinely DIFFERENT event types, which would
+// otherwise cross-match and mark an unrelated, still-valid ADR superseded.
+// A candidate with no event_type recorded (e.g. a hand-authored ADR) still
+// matches on title overlap alone, preserving prior behavior for that case.
+func findSupersededCandidate(repoRoot, newTitle, newType, newRel string) string {
 	adrDir := filepath.Join(repoRoot, "docs", "adr")
 	entries, err := os.ReadDir(adrDir)
 	if err != nil {
@@ -361,6 +370,13 @@ func findSupersededCandidate(repoRoot, newTitle, newRel string) string {
 		content := string(data)
 		if normADRStatus(parseADRStatus(content)) != "accepted" {
 			continue
+		}
+		if newType != "" {
+			if oldType, ok := frontmatterValue(strings.Split(content, "\n"), "event_type"); ok {
+				if strings.TrimSpace(oldType) != "" && !strings.EqualFold(strings.TrimSpace(oldType), newType) {
+					continue
+				}
+			}
 		}
 		have := significantTokens(adrFileTitle(content))
 		overlap := 0

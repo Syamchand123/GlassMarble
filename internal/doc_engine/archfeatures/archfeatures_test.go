@@ -587,6 +587,44 @@ func TestAutoGenerateADRsNoFalseSupersession(t *testing.T) {
 	}
 }
 
+// TestAutoGenerateADRsNoCrossTypeFalseSupersession guards against a
+// regression where two DIFFERENT event types with boilerplate canned titles
+// that happen to share ≥2 significant words ("New Component Introduced" for
+// COMPONENT_ADDED vs "New Service / Component Introduced" for SERVICE_ADDED
+// — both share "component" and "introduced") would cross-match and mark an
+// unrelated, still-valid ADR superseded. Unlike
+// TestAutoGenerateADRsSupersedesPriorAccepted (same type recurring — an
+// intentional, tested supersession case), these are genuinely different
+// event types and must never link.
+func TestAutoGenerateADRsNoCrossTypeFalseSupersession(t *testing.T) {
+	tempDir := t.TempDir()
+	oldRel, err := GenerateADR(tempDir, ADREvent{
+		Type: "COMPONENT_ADDED", Title: "New Component Introduced",
+		Context: "ctx", Decision: "dec", Consequence: "con",
+		CommitHash: "aaa1111", Timestamp: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("GenerateADR failed: %v", err)
+	}
+	before, _ := os.ReadFile(filepath.Join(tempDir, filepath.FromSlash(oldRel)))
+
+	// "new component" is a SERVICE_ADDED keyword trigger (ScanArchEvents),
+	// producing title "New Service / Component Introduced" — a different
+	// event type from the old ADR's COMPONENT_ADDED, despite the shared
+	// "component"/"introduced" words.
+	paths, err := AutoGenerateADRs(tempDir, "bbb2222", "feat: register new component for billing")
+	if err != nil {
+		t.Fatalf("AutoGenerateADRs failed: %v", err)
+	}
+	if len(paths) != 1 {
+		t.Fatalf("expected 1 ADR path, got %v", paths)
+	}
+	after, _ := os.ReadFile(filepath.Join(tempDir, filepath.FromSlash(oldRel)))
+	if string(after) != string(before) {
+		t.Errorf("cross-type ADR must be left untouched despite title word overlap:\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	}
+}
+
 func TestValidateADRLifecycleDeprecatedLink(t *testing.T) {
 	// Deprecated without any deprecation link → failure.
 	bad := t.TempDir()

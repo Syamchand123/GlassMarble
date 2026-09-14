@@ -37,7 +37,10 @@ type APIDelta struct {
 // and produces a comprehensive migration guide markdown document.
 func GenerateMigrationGuide(repoRoot, ref1, ref2, outFile string) (string, error) {
 	delta, commits, err := computeRevisionDiff(repoRoot, ref1, ref2)
-	if err != nil {
+	diffFailed := err != nil
+	var diffErr error
+	if diffFailed {
+		diffErr = err
 		commits = []string{fmt.Sprintf("Update between %s and %s", ref1, ref2)}
 	}
 
@@ -84,7 +87,14 @@ func GenerateMigrationGuide(repoRoot, ref1, ref2, outFile string) (string, error
 		sb.WriteString("\n")
 	}
 
-	if len(delta.DeletedFunctions) == 0 && len(delta.ModifiedSignatures) == 0 && len(delta.RenamedFields) == 0 {
+	if diffFailed {
+		// computeRevisionDiff failed (bad ref, unfetched tag, git error): delta
+		// is the zero value, not a verified "nothing changed" result. Say so
+		// explicitly rather than shipping a confident-looking "no breaking
+		// changes" claim the tool never actually verified.
+		sb.WriteString(fmt.Sprintf("⚠️ Automated interface diffing between `%s` and `%s` could not run (%v). "+
+			"Breaking-change detection below is incomplete — review the interface manually.\n\n", ref1, ref2, diffErr))
+	} else if len(delta.DeletedFunctions) == 0 && len(delta.ModifiedSignatures) == 0 && len(delta.RenamedFields) == 0 {
 		sb.WriteString("✅ No breaking interface changes or deleted symbols detected in public surfaces.\n\n")
 	}
 

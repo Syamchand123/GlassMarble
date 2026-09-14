@@ -198,11 +198,22 @@ func isConfigVar(fqn string) bool {
 	return strings.Contains(lower, "getenv") || strings.Contains(lower, "config")
 }
 
+// isSentinelError reports whether fqn's short name looks like a Go sentinel
+// error (ErrXxx). Strips the same separators isExportedFQN/isExportedShortName
+// do ("::", ".", "/") so an FQN using "." (e.g. "errors.ErrNotFound") is
+// recognized here too, not just the "::"-delimited form — otherwise such a
+// sentinel silently misses Stage-3 priority-1 classification (AddedSentinels/
+// ModifiedSentinels) and falls back to a lower dirty-section priority.
 func isSentinelError(fqn string) bool {
-	parts := strings.Split(fqn, "::")
 	name := fqn
-	if len(parts) > 1 {
-		name = parts[len(parts)-1]
+	if idx := strings.LastIndex(name, "::"); idx >= 0 {
+		name = name[idx+2:]
+	}
+	if idx := strings.LastIndex(name, "."); idx >= 0 {
+		name = name[idx+1:]
+	}
+	if idx := strings.LastIndex(name, "/"); idx >= 0 {
+		name = name[idx+1:]
 	}
 	return strings.HasPrefix(name, "Err")
 }

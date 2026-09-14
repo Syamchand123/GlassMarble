@@ -3,8 +3,18 @@
 // markdown.
 //
 // Pure stdlib; runs in-process on both tracks at zero token cost. Warns by
-// default; fails only when the caller passes strict=true (the owner wires
-// style.StrictProse through as that argument when Gate 6 joins RunGates).
+// default; fails only when the caller passes strict=true (renderer/engine.go
+// wires FactSheet.Style.StrictProse through as that argument).
+//
+// Wired as its own pipeline step in renderer/engine.go's renderOneSection,
+// immediately after RunGates (gates 1-5) rather than folded into RunGates
+// itself: it runs CheckProseGateWithVocab on the rendered content and, on a
+// strict-mode failure, drives its own repair-then-deterministic-fallback
+// ladder (one LLM repair attempt re-checked through RunGates + Gate 6, else
+// fall back to Track B) — see TestProcessDocument_GatesSixSevenWire for the
+// wiring proof. RunGates' 5-gate signature stays a separate, narrower
+// surface used by many existing callers/tests that don't need style/vocab
+// inputs at all.
 //
 // WHAT IS SCANNED AS PROSE (and what is not):
 //   - Fenced code blocks (``` / ~~~) are skipped entirely, delimiters included.

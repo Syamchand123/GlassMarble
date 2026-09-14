@@ -172,6 +172,63 @@ func TestHooksInstallUninstall(t *testing.T) {
 	}
 }
 
+// TestHooksInstallChainsExistingHook guards against a regression where the
+// first `gmb hooks install` over a pre-existing, non-GlassMarble post-commit
+// hook backed the original up to a ".gmb.bak" sidecar but then overwrote the
+// live hook with a GlassMarble-only script — silently dropping the user's
+// hook logic from the file git actually runs. The backup was real but never
+// re-chained, so a second install (the only path that used to build a
+// chained script) could never fire: by then the live hook already carried
+// the GlassMarble marker and took the "already managed" branch instead.
+func TestHooksInstallChainsExistingHook(t *testing.T) {
+	tempDir := t.TempDir()
+	hookDir := filepath.Join(tempDir, ".git", "hooks")
+	if err := os.MkdirAll(hookDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hookPath := filepath.Join(hookDir, "post-commit")
+	userHook := "#!/bin/sh\necho user-hook-ran\n"
+	if err := os.WriteFile(hookPath, []byte(userHook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := runGmbCommand(t, "hooks", "install", "--dir", tempDir)
+	if err != nil {
+		t.Fatalf("hooks install failed: %v\n%s", err, output)
+	}
+
+	data, err := os.ReadFile(hookPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "echo user-hook-ran") {
+		t.Errorf("first install dropped the user's original hook logic:\n%s", content)
+	}
+	if !strings.Contains(content, "# GlassMarble") {
+		t.Errorf("first install did not add the GlassMarble hook:\n%s", content)
+	}
+	bakPath := hookPath + ".gmb.bak"
+	if bak, err := os.ReadFile(bakPath); err != nil {
+		t.Errorf("expected a backup of the original hook at %s: %v", bakPath, err)
+	} else if string(bak) != userHook {
+		t.Errorf("backup content = %q, want %q", string(bak), userHook)
+	}
+
+	// Reinstalling again must still preserve the originally-chained user
+	// hook, not just on the very first install.
+	if _, err := runGmbCommand(t, "hooks", "install", "--dir", tempDir); err != nil {
+		t.Fatalf("second hooks install failed: %v", err)
+	}
+	data2, err := os.ReadFile(hookPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data2), "echo user-hook-ran") {
+		t.Errorf("reinstall dropped the user's original hook logic:\n%s", string(data2))
+	}
+}
+
 // TestHooksCommandNotAGitRepo fails when .git/hooks is absent.
 func TestHooksCommandNotAGitRepo(t *testing.T) {
 	tempDir := t.TempDir()

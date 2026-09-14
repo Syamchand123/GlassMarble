@@ -5,6 +5,7 @@ package renderer
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/provider"
@@ -143,7 +144,7 @@ func (a *LLMActuator) completeWithBackoff(ctx context.Context, req provider.Requ
 
 	for i := 0; i < attempts; i++ {
 		resp, err := a.cfg.Provider.Complete(ctx, req)
-		if err == nil && resp != nil {
+		if err == nil && resp != nil && strings.TrimSpace(resp.Text) != "" {
 			return &RenderResult{
 				Text:             resp.Text,
 				PromptTokens:     resp.Usage.PromptTokens,
@@ -153,15 +154,25 @@ func (a *LLMActuator) completeWithBackoff(ctx context.Context, req provider.Requ
 			}, nil
 		}
 
-		lastErr = err
+		if err != nil {
+			lastErr = err
+		} else {
+			// A 200-ok response with empty/whitespace-only text (a safety
+			// filter, finish_reason=length with zero output, a provider
+			// bug) is not a successful render — retry it rather than
+			// shipping blank content as if the LLM had produced prose.
+			lastErr = fmt.Errorf("empty completion text")
+		}
 
 		// Check if context canceled before sleeping
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
 
-		// Backoff sleep before next attempt (if not last)
-		if i < len(a.cfg.BackoffSchedule) {
+		// Backoff sleep before the next attempt — never after the last one,
+		// which would otherwise block the caller for the final backoff
+		// interval only to return the same error afterward.
+		if i < attempts-1 {
 			sleepDur := a.cfg.BackoffSchedule[i]
 			select {
 			case <-time.After(sleepDur):

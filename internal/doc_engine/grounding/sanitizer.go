@@ -19,9 +19,24 @@ type SecretPattern struct {
 
 var defaultSecretPatterns = []SecretPattern{
 	{
+		// The [A-Za-z0-9_-]* continuation after the keyword group lets this
+		// match compound identifiers where extra word characters sit between
+		// the sensitive keyword and "=/: " — AWS_SECRET_ACCESS_KEY=,
+		// secret_key: (opposite word order from client_secret/private_key),
+		// access_token=, refresh_token= — not just the keyword immediately
+		// followed by the separator. Bare "secret"/"token"/"credentials"
+		// keywords cover those compounds since the match isn't anchored.
 		Name:    "api_key_assignment",
-		Regex:   regexp.MustCompile(`(?i)(api[_-]?key|client[_-]?secret|auth[_-]?token|bearer|password|passwd|private[_-]?key)\s*[:=]\s*["']?([A-Za-z0-9_\-\.\/\+]{8,})["']?`),
+		Regex:   regexp.MustCompile(`(?i)((?:api[_-]?key|secret|token|client[_-]?secret|auth[_-]?token|credentials?|bearer|password|passwd|private[_-]?key)[A-Za-z0-9_-]*)\s*[:=]\s*["']?([A-Za-z0-9_\-\.\/\+]{8,})["']?`),
 		Replace: "$1=[REDACTED:$NAME]",
+	},
+	{
+		// "Authorization: Bearer <token>" / bare "Bearer <token>": the real
+		// HTTP-header shape uses a space, not "="/":" as api_key_assignment
+		// requires, so this case is never caught by that pattern alone.
+		Name:    "bearer_header",
+		Regex:   regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9\-_\.]{10,}`),
+		Replace: "[REDACTED:bearer_header]",
 	},
 	{
 		Name:    "aws_access_key",
@@ -44,8 +59,11 @@ var defaultSecretPatterns = []SecretPattern{
 		Replace: "[REDACTED:private_key]",
 	},
 	{
+		// Scheme variants: postgresql alias, mongodb+srv (the standard Atlas
+		// form), and the TLS-suffixed schemes (rediss, amqps) alongside the
+		// plain ones — all common in real connection strings.
 		Name:    "connection_string_credentials",
-		Regex:   regexp.MustCompile(`(?i)(postgres|mysql|mongodb|redis|amqp)://([^:]+):([^@]+)@`),
+		Regex:   regexp.MustCompile(`(?i)((?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|rediss?|amqps?|mssql))://([^:@/\s]+):([^@\s]+)@`),
 		Replace: "$1://$2:[REDACTED]@",
 	},
 	{

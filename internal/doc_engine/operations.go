@@ -22,7 +22,6 @@ import (
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/renderer"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/review"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/sre"
-	"github.com/Syamchand123/GlassMarble/internal/doc_engine/storage"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/verifier"
 )
 
@@ -53,10 +52,6 @@ func Diff(repoRoot string, opts RunOptions) (DiffResult, error) {
 	if err != nil {
 		return DiffResult{}, fmt.Errorf("doc diff: %w", err)
 	}
-
-	storageDir := docconfig.StorageDirPath(repoRoot)
-	sm := storage.NewStateManager(storageDir)
-	state, _ := sm.Load()
 
 	docs := filterDocuments(cfg.Documents, opts.DocID, opts.Tag)
 	result := DiffResult{}
@@ -124,7 +119,6 @@ func Diff(repoRoot string, opts RunOptions) (DiffResult, error) {
 		}
 	}
 
-	_ = state
 	return result, nil
 }
 

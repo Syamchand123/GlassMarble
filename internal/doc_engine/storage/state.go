@@ -152,6 +152,57 @@ func (sm *StateManager) loadJSON() (*DocEngineState, error) {
 	return &state, nil
 }
 
+// stateLockKey is the logical lock key for Update's cross-process state
+// transaction lock (see Update). It never needs to exist as a real file —
+// FlockForFile only hashes the string into a sidecar name — but must stay
+// STABLE and INDEPENDENT of which backend (JSON or SQLite) is active and of
+// which document/section a caller is touching, since the resource it
+// protects (the whole persisted DocEngineState) is a single shared blob on
+// either backend, not sharded per document.
+const stateLockKey = "docs_state.transaction"
+
+// Update performs an atomic read-modify-write cycle against the persisted
+// state: it acquires a single cross-process lock keyed on the state store
+// itself (not on any document or section), loads the current state, lets fn
+// mutate it in place, and saves the result — all while holding that lock.
+//
+// This closes a lost-update race: WriteDoc/WriteSectionHash and
+// SetLastRenderedBody used to each call Load() then Save() with no lock
+// spanning that gap (or, for WriteDoc, a lock keyed on the TARGET FILE being
+// written — a different sidecar per document). But Load/Save operate on the
+// entire persisted state (a full JSON document or, on the SQLite backend, a
+// full DELETE+INSERT transaction), not a per-document row. Two concurrent
+// `gmb doc` processes updating DIFFERENT documents could each Load the same
+// snapshot, mutate only their own document's entry, and Save — the second
+// Save (a full-state replace on both backends) would silently discard the
+// first process's update, since neither process's lock (if any) prevented
+// the other's Load from landing inside its read-modify-write gap.
+//
+// Update serializes the whole read-modify-write cycle on one lock so no
+// concurrent process's Load can observe a state this process is mid-way
+// through mutating. fn's error is returned without saving; a save error is
+// returned as-is. Callers with only a single field to change (no dependency
+// on state loaded earlier in a longer-lived call) should prefer Update over
+// a manual Load+mutate+Save pair even when no concurrent writer is expected
+// today — the whole point is that a future caller doesn't have to reason
+// about it.
+func (sm *StateManager) Update(fn func(*DocEngineState) error) error {
+	release, err := FlockForFile(stateLockKey, filepath.Join(sm.dir, "locks"))
+	if err != nil {
+		return fmt.Errorf("doc_engine: acquiring state transaction lock: %w", err)
+	}
+	defer release()
+
+	state, err := sm.Load()
+	if err != nil {
+		return err
+	}
+	if err := fn(state); err != nil {
+		return err
+	}
+	return sm.Save(state)
+}
+
 // Save writes state atomically to whichever backend is active (SQLite when
 // UsingSQLite is true, else docs_state.json via tmp → fsync → rename with a
 // SHA256 verify).
@@ -265,14 +316,12 @@ func SetLastRenderedBody(sm *StateManager, targetPath, sectionID, body string) e
 	if sm == nil {
 		return nil
 	}
-	state, err := sm.Load()
-	if err != nil {
-		return fmt.Errorf("doc_engine: loading state: %w", err)
-	}
-	ds := GetOrCreateDocState(state, targetPath)
-	ss := GetOrCreateSectionState(ds, sectionID)
-	ss.LastRenderedBody = body
-	if err := sm.Save(state); err != nil {
+	if err := sm.Update(func(state *DocEngineState) error {
+		ds := GetOrCreateDocState(state, targetPath)
+		ss := GetOrCreateSectionState(ds, sectionID)
+		ss.LastRenderedBody = body
+		return nil
+	}); err != nil {
 		return fmt.Errorf("doc_engine: saving section body: %w", err)
 	}
 	return nil

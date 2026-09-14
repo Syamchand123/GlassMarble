@@ -104,6 +104,17 @@ type RunOptions struct {
 
 	// Out is the writer for human-readable progress output. Defaults to os.Stderr.
 	Out io.Writer
+
+	// Ctx, when non-nil, governs cancellation of this run: it is passed to
+	// the LLM actuator (so an in-flight completion call aborts promptly on
+	// cancellation) and checked between documents/sections so a cancelled
+	// run stops picking up new work rather than running to completion.
+	// Defaults to context.Background() (never cancelled) when nil, so
+	// existing callers that don't set it keep today's behavior exactly.
+	// The daemon (cmd/docserve.go) sets this from its own shutdown context
+	// so a `gmb docserve` SIGINT/SIGTERM can actually interrupt an in-flight
+	// run instead of blocking shutdown until it finishes on its own.
+	Ctx context.Context
 }
 
 // RunResult is the aggregate outcome of a Run() execution.
@@ -246,6 +257,18 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 
 	result := RunResult{Commit: opts.CommitHash}
 
+	// Hook/daemon callers often invoke without --commit (notably git hooks,
+	// where GIT_DIR is set and no commit flag is passed). Resolve HEAD so
+	// the run processes a real commit instead of "commit (empty)".
+	if opts.CommitHash == "" {
+		if head, err := gitHeadCommit(repoRoot); err == nil && head != "" {
+			opts.CommitHash = head
+			result.Commit = head
+		} else if opts.Verbose {
+			fmt.Fprintln(out, "doc_engine: could not resolve HEAD commit, proceeding without commit context")
+		}
+	}
+
 	// Load docs.yaml.
 	cfg, err := docconfig.LoadDocsConfig(repoRoot)
 	if err != nil {
@@ -276,21 +299,25 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 		return result
 	}
 
-	// Fast-bail: if we've already processed this commit and --force is not set,
-	// skip the entire run.
-	if !opts.Force && state.LastCommit == opts.CommitHash && opts.CommitHash != "" {
-		if opts.Verbose {
-			fmt.Fprintf(out, "doc_engine: already processed commit %s, skipping (use --force to override)\n", opts.CommitHash[:8])
+	// Filter documents by --doc and --tag flags. This validation must run
+	// BEFORE the fast-bail check below: an invalid --doc/--tag filter is a
+	// user input error that must surface every time, not just on the first
+	// call for a given commit — otherwise a bad --doc id silently succeeds
+	// (fast-bails) whenever HEAD happens to already be state.LastCommit.
+	docs := filterDocuments(cfg.Documents, opts.DocID, opts.Tag)
+	if len(docs) == 0 {
+		if opts.DocID != "" {
+			result.Err = fmt.Errorf("doc_engine: no document with id %q found in docs.yaml", opts.DocID)
 		}
 		result.Duration = time.Since(start)
 		return result
 	}
 
-	// Filter documents by --doc and --tag flags.
-	docs := filterDocuments(cfg.Documents, opts.DocID, opts.Tag)
-	if len(docs) == 0 {
-		if opts.DocID != "" {
-			result.Err = fmt.Errorf("doc_engine: no document with id %q found in docs.yaml", opts.DocID)
+	// Fast-bail: if we've already processed this commit and --force is not set,
+	// skip the entire run.
+	if !opts.Force && state.LastCommit == opts.CommitHash && opts.CommitHash != "" {
+		if opts.Verbose {
+			fmt.Fprintf(out, "doc_engine: already processed commit %s, skipping (use --force to override)\n", opts.CommitHash[:8])
 		}
 		result.Duration = time.Since(start)
 		return result
@@ -355,14 +382,39 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 
 	// Comment-only / whitespace commits carry zero symbol, config, sentinel,
 	// or architectural changes. The ground truth is empty, so there is
-	// nothing to render — mark processed and exit without LLM calls.
+	// nothing to render — mark processed and exit without LLM calls. This
+	// wins over a non-empty dirtySections from FindDirtySections's coarse
+	// "no candidates -> treat every section as a candidate" fallback path
+	// (see TestExtraRunCommentOnlyBail): such sections are picked up on the
+	// next commit that carries a real dossier change instead.
 	if dossier != nil && !opts.Force && dossierChangeCount(dossier) == 0 {
 		if opts.Verbose || !isQuiet(out) {
 			fmt.Fprintln(out, "doc_engine: no code changes in dossier (comments/whitespace only), skipping render")
 		}
-		state.LastCommit = opts.CommitHash
-		if saveErr := sm.Save(state); saveErr != nil {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("could not save docs_state.json: %v", saveErr))
+		// Never persist an empty hash here either: it would clobber a good
+		// LastCommit and defeat the already-processed fast-bail for every
+		// future run (same hazard the later save in this function guards).
+		// Also never persist it for a --doc/--tag filtered run: LastCommit
+		// gates the top-level "whole commit already processed" fast-bail,
+		// and this run only looked at a subset of documents — recording the
+		// commit here would make a later unfiltered run for the same commit
+		// fast-bail and silently skip every document it didn't touch.
+		//
+		// Uses sm.Update rather than mutating the `state` loaded at the top
+		// of Run() and saving it directly: Update re-loads a fresh snapshot
+		// under the shared state-transaction lock immediately before saving,
+		// so a concurrent process's WriteDoc/WriteSectionHash committed
+		// between our earlier Load and now can never be silently clobbered
+		// by a save of our now-stale in-memory copy.
+		if opts.CommitHash != "" && opts.DocID == "" && opts.Tag == "" {
+			if saveErr := sm.Update(func(fresh *storage.DocEngineState) error {
+				fresh.LastCommit = opts.CommitHash
+				return nil
+			}); saveErr != nil {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("could not save docs_state.json: %v", saveErr))
+			}
+		} else if opts.CommitHash == "" {
+			result.Warnings = append(result.Warnings, "doc_engine: skipping state commit-hash update (unknown commit)")
 		}
 		result.Duration = time.Since(start)
 		return result
@@ -414,7 +466,10 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 		dirtyByDoc[ds.DocID] = append(dirtyByDoc[ds.DocID], ds.SectionID)
 	}
 
-	ctx := context.Background()
+	ctx := opts.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	docsUpdatedCount := 0
 	totalTokens := 0
 
@@ -428,6 +483,16 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 		d := &docs[i]
 		secIDs := dirtyByDoc[d.ID]
 		if opts.Force || len(secIDs) > 0 {
+			// Cancellation checkpoint: stop picking up NEW documents once the
+			// caller cancels (e.g. `gmb docserve` shutting down). An
+			// in-flight ProcessDocument call for the CURRENT document still
+			// gets to observe ctx.Done() on its own — this only stops the
+			// loop from starting another one after it.
+			if ctx.Err() != nil {
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("doc_engine: run cancelled, skipping remaining document(s): %v", ctx.Err()))
+				break
+			}
 			// F6/F10: once the budget is exhausted, skip ALL remaining docs.
 			if totalTokens >= maxTokens {
 				result.Warnings = append(result.Warnings,
@@ -473,11 +538,26 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 	// P8 freshness (master-plan Appendix B): refresh per-document scores.
 	// Reload state first — ProcessDocument performs its own Load/Save cycles,
 	// so the in-memory snapshot from the top of Run() is stale.
+	//
+	// Phase 1 (unlocked): compute each document's freshness score. This runs
+	// git subprocesses per document (ComputeFreshnessScoreWithArchEvents), so
+	// it deliberately happens OUTSIDE the state-transaction lock acquired
+	// below — holding that lock across potentially many git calls would
+	// serialize every other concurrent gmb doc/daemon/CI process's state
+	// updates behind this run's freshness computation for no correctness
+	// benefit (LastUpdatedCommit, the only input read from state here, is
+	// not expected to change concurrently for these documents at this point
+	// in Run()).
 	freshState, loadErr := sm.Load()
 	if loadErr != nil {
 		result.Warnings = append(result.Warnings, fmt.Sprintf("could not reload state for freshness update: %v", loadErr))
 		freshState = state
 	}
+	type freshnessResult struct {
+		targetPath     string
+		score, behind int
+	}
+	freshResults := make([]freshnessResult, 0, len(docs))
 	for i := range docs {
 		ds := storage.GetOrCreateDocState(freshState, docs[i].TargetPath)
 		// B3: thread the run dossier's structural arch events into decay.
@@ -486,15 +566,41 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 			runArchEvents = dossier.ArchEvents
 		}
 		freshScore, behind := ComputeFreshnessScoreWithArchEvents(repoRoot, docs[i], ds.LastUpdatedCommit, runArchEvents)
-		ds.FreshnessScore = freshScore
-		ds.CommitsBehind = behind
 		freshSum += freshScore
+		freshResults = append(freshResults, freshnessResult{docs[i].TargetPath, freshScore, behind})
 	}
 
-	// Update state with this commit hash so we know we've seen it.
-	freshState.LastCommit = opts.CommitHash
-	if saveErr := sm.Save(freshState); saveErr != nil {
-		result.Warnings = append(result.Warnings, fmt.Sprintf("could not save docs_state.json: %v", saveErr))
+	// Phase 2 (locked): apply the computed scores, plus the commit-hash
+	// update, atomically against whatever is CURRENTLY persisted — not the
+	// freshState snapshot read above, which a concurrent WriteDoc/
+	// WriteSectionHash/SetLastRenderedBody could have already moved past by
+	// now. sm.Update re-loads fresh state under the shared state-transaction
+	// lock immediately before saving, so this can never silently clobber
+	// another process's update the way saving a stale in-memory copy could.
+	//
+	// Never persist an empty commit hash: it would clobber a good LastCommit
+	// and defeat the already-processed fast-bail for every future run. Also
+	// never persist it for a --doc/--tag filtered run (see matching comment
+	// above): LastCommit gates the top-level "whole commit already
+	// processed" fast-bail, and a filtered run never looked at every
+	// document, so recording the commit here would make a later unfiltered
+	// run for the same commit skip documents this run never touched.
+	if opts.CommitHash == "" {
+		result.Warnings = append(result.Warnings, "doc_engine: skipping state commit-hash update (unknown commit)")
+	}
+	updateErr := sm.Update(func(fresh *storage.DocEngineState) error {
+		for _, r := range freshResults {
+			ds := storage.GetOrCreateDocState(fresh, r.targetPath)
+			ds.FreshnessScore = r.score
+			ds.CommitsBehind = r.behind
+		}
+		if opts.CommitHash != "" && opts.DocID == "" && opts.Tag == "" {
+			fresh.LastCommit = opts.CommitHash
+		}
+		return nil
+	})
+	if updateErr != nil {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("could not save docs_state.json: %v", updateErr))
 	}
 
 	// P16 auto-trigger: autonomous ADR generation (non-fatal, warnings only).
@@ -1301,6 +1407,22 @@ func currentGitBranch(repoRoot string) string {
 		return ""
 	}
 	return strings.TrimSpace(out)
+}
+
+// gitHeadCommit resolves HEAD to a full commit hash in repoRoot.
+// Non-fatal: "" on any error (non-git dir, empty repo). Inherits the
+// process environment (including GIT_DIR/GIT_WORK_TREE set by hooks),
+// with cmd.Dir anchoring relative paths — the standard git resolution.
+func gitHeadCommit(repoRoot string) (string, error) {
+	out, err := runGitOutput(repoRoot, "rev-parse", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	head := strings.TrimSpace(out)
+	if len(head) < 7 {
+		return "", fmt.Errorf("doc_engine: invalid HEAD hash %q", head)
+	}
+	return head, nil
 }
 
 // isExactTagHead reports whether HEAD is an exact tag match

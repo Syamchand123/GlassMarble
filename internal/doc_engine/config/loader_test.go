@@ -227,6 +227,38 @@ documents:
 	assert.Contains(t, err.Error(), ".md file")
 }
 
+// TestLoadDocsConfig_TargetPathTraversalRejected guards against a docs.yaml
+// 'target' escaping the repository: every consumer (the writer, rag_export,
+// permalink healing) joins this value onto repoRoot with no further
+// validation, so an unvalidated ".."-escaping or absolute target would let
+// the engine write or read outside the repo.
+func TestLoadDocsConfig_TargetPathTraversalRejected(t *testing.T) {
+	for _, target := range []string{
+		"../../../etc/passwd.md",
+		"../outside.md",
+		"/etc/passwd.md",
+	} {
+		dir := t.TempDir()
+		_ = os.MkdirAll(filepath.Join(dir, ".glassmarble"), 0755)
+		content := `
+version: 1
+documents:
+  - id: "arch"
+    target: "` + target + `"
+    title: "Architecture"
+    purpose: "Overview"
+    audience: "Contributors"
+    scope:
+      paths: ["internal/**"]
+`
+		writeConfig(t, dir, content)
+
+		_, err := LoadDocsConfig(dir)
+		require.Error(t, err, "target %q should be rejected", target)
+		assert.Contains(t, err.Error(), "relative path inside the repository")
+	}
+}
+
 func TestLoadDocsConfig_EmptyScope(t *testing.T) {
 	dir := t.TempDir()
 	_ = os.MkdirAll(filepath.Join(dir, ".glassmarble"), 0755)

@@ -22,6 +22,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 )
@@ -275,100 +276,145 @@ func ExtractBody(zone *Zone) string {
 //
 // ponytail: naive O(n²) LCS. Upgrade to Myers diff if sections exceed ~1000 lines.
 func mergeLCS(base, ours, theirs []string) ([]string, bool) {
-	// Find hunks changed in ours vs base and theirs vs base.
-	oursChanges := diffHunks(base, ours)
-	theirsChanges := diffHunks(base, theirs)
+	// Find hunks changed in ours vs base and theirs vs base. Each hunk pairs
+	// the base range it replaces with the range of the side's own content
+	// that replaces it (see hunk/diffHunks), so a pure insertion (nothing
+	// consumed from base — including a trailing append) and a pure deletion
+	// (nothing contributed back) are both represented, not just replacements.
+	oursHunks := diffHunks(base, ours)
+	theirsHunks := diffHunks(base, theirs)
 
-	// If either side is identical to base, use the other.
-	if len(oursChanges) == 0 {
+	// If either side produced no hunks at all, it is byte-identical to base
+	// (the LCS walk matched every element on both sides with nothing left
+	// over) — not merely "its hunk list happens to be non-empty starting
+	// from index 0", which is what a length-derived check on the wrong hunk
+	// set used to get wrong for a trailing-only change.
+	if len(oursHunks) == 0 {
 		return theirs, false
 	}
-	if len(theirsChanges) == 0 {
+	if len(theirsHunks) == 0 {
 		return ours, false
 	}
 
-	// Both sides changed. Check if the change regions overlap.
-	oursRange := hunkRange(oursChanges)
-	theirsRange := hunkRange(theirsChanges)
-
-	if !rangesOverlap(oursRange, theirsRange) {
-		// Non-overlapping: combine — apply theirs changes to ours baseline.
-		result := applyNonOverlapping(base, ours, theirs, oursRange, theirsRange)
-		return result, false
+	// Both sides changed. Check if the changed base regions overlap.
+	if hunksOverlap(oursHunks, theirsHunks) {
+		// Overlapping changes → conflict.
+		return ours, true
 	}
 
-	// Overlapping changes → conflict.
-	return ours, true
+	// Non-overlapping: splice both sides' own hunks into the shared base
+	// skeleton, each contributing its own content at its own position.
+	return applyNonOverlapping(base, ours, theirs, oursHunks, theirsHunks), false
 }
 
-type lineRange struct{ start, end int }
+// hunk pairs one diff region: the base range it replaces (baseStart..baseEnd,
+// possibly zero-length for a pure insertion) with the range of the modified
+// sequence's own content that stands in for it (modStart..modEnd, possibly
+// zero-length for a pure deletion). Representing both sides of the same
+// region together — rather than two independently-truncated hunk lists, one
+// per index space — is what lets a pure trailing (or interior) insertion
+// survive: it has an empty base range but a non-empty modified range.
+type hunk struct {
+	baseStart, baseEnd int
+	modStart, modEnd   int
+}
 
-func diffHunks(base, modified []string) []lineRange {
-	var hunks []lineRange
+// diffHunks walks the LCS alignment of base and modified and returns every
+// region where they diverge, in order. A trailing insertion/deletion beyond
+// the walked prefix is captured by the final unconditional hunk below.
+func diffHunks(base, modified []string) []hunk {
+	var hunks []hunk
 	lcs := lcsLines(base, modified)
-	// Walk both sequences; positions not in LCS are changed.
-	bi, mi := 0, 0
-	li := 0
+	bi, mi, li := 0, 0, 0
 	for bi < len(base) && mi < len(modified) {
 		if li < len(lcs) && base[bi] == lcs[li] && modified[mi] == lcs[li] {
 			bi++
 			mi++
 			li++
 		} else {
-			start := bi
+			bStart, mStart := bi, mi
 			for bi < len(base) && (li >= len(lcs) || base[bi] != lcs[li]) {
 				bi++
 			}
-			hunks = append(hunks, lineRange{start, bi})
-			// advance modified past its edits
 			for mi < len(modified) && (li >= len(lcs) || modified[mi] != lcs[li]) {
 				mi++
 			}
+			hunks = append(hunks, hunk{bStart, bi, mStart, mi})
 		}
 	}
-	// Trailing additions/deletions
-	if bi < len(base) {
-		hunks = append(hunks, lineRange{bi, len(base)})
+	// Trailing leftover on either side (deletion, insertion, or both).
+	if bi < len(base) || mi < len(modified) {
+		hunks = append(hunks, hunk{bi, len(base), mi, len(modified)})
 	}
 	return hunks
 }
 
-func hunkRange(hunks []lineRange) lineRange {
-	if len(hunks) == 0 {
-		return lineRange{-1, -1}
-	}
-	r := hunks[0]
-	for _, h := range hunks[1:] {
-		if h.start < r.start {
-			r.start = h.start
+// hunksOverlap reports whether any hunk in a shares changed base territory
+// with any hunk in b. A zero-length base range (a pure insertion) is
+// anchored to the single base position it sits at, so two insertions at
+// the exact same position still count as overlapping — the safe (conflict)
+// choice when ordering between them is ambiguous.
+func hunksOverlap(a, b []hunk) bool {
+	for _, ha := range a {
+		for _, hb := range b {
+			if hunkBaseRangesOverlap(ha, hb) {
+				return true
+			}
 		}
-		if h.end > r.end {
-			r.end = h.end
-		}
 	}
-	return r
+	return false
 }
 
-func rangesOverlap(a, b lineRange) bool {
-	return a.start < b.end && b.start < a.end
+func hunkBaseRangesOverlap(a, b hunk) bool {
+	aStart, aEnd := a.baseStart, a.baseEnd
+	if aStart == aEnd {
+		aEnd = aStart + 1
+	}
+	bStart, bEnd := b.baseStart, b.baseEnd
+	if bStart == bEnd {
+		bEnd = bStart + 1
+	}
+	return aStart < bEnd && bStart < aEnd
 }
 
-// applyNonOverlapping applies theirs changes to ours, assuming no overlap.
-func applyNonOverlapping(base, ours, theirs []string, _, theirsRange lineRange) []string {
-	// Insert theirs changes into ours at the corresponding positions.
-	// Simple strategy: replace the theirs-changed base lines in ours.
-	if theirsRange.start < 0 {
-		return ours
+// applyNonOverlapping splices ours' and theirs' hunks into a shared base
+// skeleton: base content survives everywhere neither side touched, and each
+// hunk contributes its own side's content (ours[modStart:modEnd] or
+// theirs[modStart:modEnd]) at its own base position. Hunks are assumed
+// non-overlapping (checked by the caller) and are processed in base-position
+// order regardless of which side they came from.
+func applyNonOverlapping(base, ours, theirs []string, oursHunks, theirsHunks []hunk) []string {
+	type tagged struct {
+		hunk
+		text []string
 	}
+	all := make([]tagged, 0, len(oursHunks)+len(theirsHunks))
+	for _, h := range oursHunks {
+		all = append(all, tagged{h, ours[h.modStart:h.modEnd]})
+	}
+	for _, h := range theirsHunks {
+		all = append(all, tagged{h, theirs[h.modStart:h.modEnd]})
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].baseStart != all[j].baseStart {
+			return all[i].baseStart < all[j].baseStart
+		}
+		return all[i].baseEnd < all[j].baseEnd
+	})
 
-	// Locate ours lines that correspond to the base lines in theirs' range
-	// by finding the LCS anchors. For non-overlapping case, prepend/append suffices.
-	result := make([]string, 0, len(ours)+len(theirs))
-	result = append(result, ours...)
-
-	// If theirs added lines at the end, append them.
-	if theirsRange.start >= len(base) {
-		result = append(result, theirs[theirsRange.start:]...)
+	result := make([]string, 0, len(base)+len(ours)+len(theirs))
+	pos := 0
+	for _, t := range all {
+		if t.baseStart > pos {
+			result = append(result, base[pos:t.baseStart]...)
+		}
+		result = append(result, t.text...)
+		if t.baseEnd > pos {
+			pos = t.baseEnd
+		}
+	}
+	if pos < len(base) {
+		result = append(result, base[pos:]...)
 	}
 	return result
 }

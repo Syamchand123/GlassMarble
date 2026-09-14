@@ -145,6 +145,27 @@ func TestDiffConfigVarRenames(t *testing.T) {
 	}
 }
 
+// TestGenerateMigrationGuideBadRefIsHonest guards against a regression where
+// a failed git diff (bad/unfetched ref) silently fell back to an empty
+// APIDelta and rendered a confident "no breaking changes detected" claim —
+// indistinguishable from a real, verified clean diff — instead of surfacing
+// that the interface comparison never actually ran.
+func TestGenerateMigrationGuideBadRefIsHonest(t *testing.T) {
+	dir := initGitRepo(t, map[string]string{
+		"api.go": "package api\nfunc Serve() {}\n",
+	})
+	guide, err := GenerateMigrationGuide(dir, "does-not-exist-ref", "HEAD", "")
+	if err != nil {
+		t.Fatalf("GenerateMigrationGuide failed: %v", err)
+	}
+	if strings.Contains(guide, "No breaking interface changes") {
+		t.Errorf("guide falsely claims a verified clean diff after a failed git ref comparison:\n%s", guide)
+	}
+	if !strings.Contains(guide, "could not run") {
+		t.Errorf("guide does not surface the diff failure:\n%s", guide)
+	}
+}
+
 func TestGenerateMigrationGuideConfigAndExamples(t *testing.T) {
 	dir := initGitRepo(t, map[string]string{
 		"api.go": "package api\nimport \"os\"\nfunc Serve(host string) {}\nfunc B() { _ = os.Getenv(\"APP_HOST\") }\n",

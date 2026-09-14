@@ -65,11 +65,32 @@ var hooksCmd = &cobra.Command{
 				return fmt.Errorf("failed to resolve binary path for hook: %w", err)
 			}
 			receipt.Binary = binary
-			script := fmt.Sprintf("#!/bin/sh\n# GlassMarble auto-analysis post-commit hook\n%q analyze --dir %q\n%q doc --dir %q --bg\n", binary, absDir, binary, absDir)
-			if existing, err := os.ReadFile(hookPath); err == nil {
-				if strings.Contains(string(existing), "# GlassMarble") {
-					// Already managed by GlassMarble — overwrite in place.
+			const marker = "# GlassMarble"
+			script := fmt.Sprintf("#!/bin/sh\n%s auto-analysis post-commit hook\n%q analyze --dir %q\n%q doc --dir %q --bg\n", marker, binary, absDir, binary, absDir)
+
+			finalContent := script
+			if existing, readErr := os.ReadFile(hookPath); readErr == nil {
+				if idx := strings.Index(string(existing), marker); idx >= 0 {
+					// Already managed by GlassMarble. Keep any user preamble
+					// that was chained in front of the marker on a prior
+					// install (see the else branch below) and just refresh
+					// the GlassMarble-owned portion — a plain overwrite here
+					// would silently re-drop that preamble on every reinstall.
+					preamble := strings.TrimRight(string(existing)[:idx], "\n")
+					preamble = strings.TrimPrefix(preamble, "#!/bin/sh")
+					preamble = strings.TrimLeft(preamble, "\n")
+					if preamble != "" {
+						finalContent = "#!/bin/sh\n" + preamble + "\n" + script
+						receipt.Chained = true
+					}
 				} else {
+					// Genuine pre-existing, non-GlassMarble hook: back it up
+					// (best-effort, once) and chain onto it immediately —
+					// never silently discard the user's hook logic from the
+					// live file. A prior version of this code deferred
+					// chaining to a "second install" branch that could never
+					// actually run, since after the first install hookPath
+					// itself already contains the marker.
 					bakPath := hookPath + ".gmb.bak"
 					if _, statErr := os.Stat(bakPath); os.IsNotExist(statErr) {
 						if wErr := os.WriteFile(bakPath, existing, 0755); wErr != nil {
@@ -79,25 +100,21 @@ var hooksCmd = &cobra.Command{
 						if !asJSON {
 							tui.Fprintf(cmd.ErrOrStderr(), "Existing post-commit hook backed up to %s\n", bakPath)
 						}
-					} else {
-						chained := string(existing) + "\n" + script
-						if wErr := os.WriteFile(hookPath, []byte(chained), 0755); wErr != nil {
-							return fmt.Errorf("failed to install chained git hook: %w", wErr)
-						}
-						receipt.Installed, receipt.Changed, receipt.Chained = true, true, true
-						receipt.Message = "GlassMarble post-commit hook chained onto the existing hook"
-						if !asJSON {
-							tui.Fprintln(cmd.OutOrStdout(), views.RenderHooksInstalled(hookPath, binary, absDir))
-						}
-						break
 					}
+					finalContent = strings.TrimRight(string(existing), "\n") + "\n" + script
+					receipt.Chained = true
 				}
 			}
-			if err := os.WriteFile(hookPath, []byte(script), 0755); err != nil {
+
+			if err := os.WriteFile(hookPath, []byte(finalContent), 0755); err != nil {
 				return fmt.Errorf("failed to install git hook: %w", err)
 			}
 			receipt.Installed, receipt.Changed = true, true
-			receipt.Message = "GlassMarble post-commit hook installed"
+			if receipt.Chained {
+				receipt.Message = "GlassMarble post-commit hook chained onto the existing hook"
+			} else {
+				receipt.Message = "GlassMarble post-commit hook installed"
+			}
 			if !asJSON {
 				tui.Fprintln(cmd.OutOrStdout(), views.RenderHooksInstalled(hookPath, binary, absDir))
 			}

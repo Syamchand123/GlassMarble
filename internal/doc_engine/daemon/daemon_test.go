@@ -148,6 +148,109 @@ func TestGracefulCancel(t *testing.T) {
 	}
 }
 
+// TestOnChangePanicDoesNotKillDaemon guards against a regression where a
+// panic anywhere inside onChange (a malformed docs.yaml, a nil map access on
+// a rarely-hit path) escaped the worker goroutine and silently stopped the
+// whole daemon — contradicting the documented "the daemon survives a failed
+// batch and retries on the next one" contract, which only covered a
+// returned error, not a panic. A batch that panics must not prevent a
+// later, unrelated batch from still triggering onChange.
+func TestOnChangePanicDoesNotKillDaemon(t *testing.T) {
+	resetDroppedBatches()
+	dir := t.TempDir()
+	var calls atomic.Int64
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Config{RepoRoot: dir, DebounceMs: 100, Workers: 1}, func(ctx context.Context, changed []string) {
+			n := calls.Add(1)
+			if n == 1 {
+				panic("simulated onChange panic")
+			}
+		})
+	}()
+	time.Sleep(200 * time.Millisecond) // let the watcher register
+
+	writeFile(t, filepath.Join(dir, "a.go"), "package f\n// v1\n")
+	waitFor(t, 5*time.Second, func() bool { return calls.Load() >= 1 }, "first (panicking) batch")
+
+	time.Sleep(300 * time.Millisecond) // past the debounce window
+	writeFile(t, filepath.Join(dir, "b.go"), "package f\n// v2\n")
+	waitFor(t, 5*time.Second, func() bool { return calls.Load() >= 2 }, "second batch after panic recovery")
+
+	select {
+	case err := <-done:
+		t.Fatalf("Run exited after a panicking batch, want it to keep running: %v", err)
+	default:
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("expected nil on graceful cancel, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after cancel")
+	}
+}
+
+// TestCancelReachesInFlightOnChange guards against a regression where the
+// context passed to onChange (runCtx) was derived from context.Background()
+// instead of the caller's ctx, so cancelling ctx (e.g. SIGINT/SIGTERM during
+// `gmb docserve`) never reached an in-flight onChange call at all — only the
+// deferred stopWorkers(), which itself only ran AFTER wg.Wait() had already
+// returned, i.e. after every worker had already exited on its own. An
+// operator hitting Ctrl+C during active generation would block until that
+// run finished, however long it took, defeating the point of a shutdown
+// signal. onChange here blocks on <-runCtx.Done() the way the real LLM
+// actuator's backoff loop does; it must observe cancellation almost
+// immediately once the caller cancels ctx, not merely "eventually."
+func TestCancelReachesInFlightOnChange(t *testing.T) {
+	resetDroppedBatches()
+	dir := t.TempDir()
+	started := make(chan struct{})
+	cancelObserved := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Config{RepoRoot: dir, DebounceMs: 100, Workers: 1}, func(runCtx context.Context, changed []string) {
+			close(started)
+			<-runCtx.Done()
+			close(cancelObserved)
+		})
+	}()
+	time.Sleep(200 * time.Millisecond) // let the watcher register
+
+	writeFile(t, filepath.Join(dir, "a.go"), "package f\n")
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("onChange never started")
+	}
+
+	cancelStart := time.Now()
+	cancel()
+
+	select {
+	case <-cancelObserved:
+	case <-time.After(2 * time.Second):
+		t.Fatal("in-flight onChange never observed ctx cancellation (runCtx not derived from caller's ctx)")
+	}
+	if elapsed := time.Since(cancelStart); elapsed > time.Second {
+		t.Errorf("cancellation took %s to reach in-flight onChange, want near-instant", elapsed)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("expected nil on cancel, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after cancel")
+	}
+}
+
 func TestIgnoredDirs(t *testing.T) {
 	for _, p := range []string{"/repo/.git/HEAD", "/repo/vendor/x.go", "/repo/node_modules/y.js", "/repo/.glassmarble/state.json"} {
 		if !isIgnored(p) {

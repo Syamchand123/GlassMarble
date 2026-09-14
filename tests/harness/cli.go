@@ -160,9 +160,19 @@ func ResetFlags() {
 
 // resetFlags walks the whole command tree and resets every flag to its
 // declared default so flag state cannot leak between test invocations.
+// Both the value AND the Changed bit are reset: production code branches
+// on cmd.Flags().Changed("out") (doc export), Changed("provider") (ai),
+// etc., and pflag's Value.Set does not clear Changed — without this, one
+// test's explicit flag silently alters later tests in the same process.
 func resetFlags(c *cobra.Command) {
-	c.Flags().VisitAll(func(f *pflag.Flag) { _ = f.Value.Set(f.DefValue) })
-	c.InheritedFlags().VisitAll(func(f *pflag.Flag) { _ = f.Value.Set(f.DefValue) })
+	c.Flags().VisitAll(func(f *pflag.Flag) {
+		_ = f.Value.Set(f.DefValue)
+		f.Changed = false
+	})
+	c.InheritedFlags().VisitAll(func(f *pflag.Flag) {
+		_ = f.Value.Set(f.DefValue)
+		f.Changed = false
+	})
 	for _, sub := range c.Commands() {
 		resetFlags(sub)
 	}

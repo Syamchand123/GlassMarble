@@ -99,6 +99,22 @@ func validateDocsConfig(cfg *DocsConfig, configPath string) error {
 		if !strings.HasSuffix(doc.TargetPath, ".md") {
 			return fmt.Errorf("%s (id=%q): 'target' must be a .md file", prefix, doc.ID)
 		}
+		// filepath.IsAbs alone is not enough here: on Windows it does not
+		// consider a Unix-style "/etc/passwd.md" absolute (no drive letter),
+		// even though docs.yaml is a portable config file that may be
+		// authored on one OS and loaded on another — so a leading "/" or
+		// "\" is rejected explicitly too.
+		if filepath.IsAbs(doc.TargetPath) || strings.HasPrefix(doc.TargetPath, "/") || strings.HasPrefix(doc.TargetPath, "\\") ||
+			strings.HasPrefix(filepath.ToSlash(doc.TargetPath), "../") ||
+			filepath.ToSlash(filepath.Clean(doc.TargetPath)) != filepath.ToSlash(doc.TargetPath) {
+			// Reject absolute paths and any ".."-escaping or non-canonical
+			// path (backslashes, "./", doubled separators): every consumer
+			// (rag_export, the writer, permalink healing) joins this value
+			// onto repoRoot with no further validation, so an entry like
+			// "../../../etc/passwd.md" would let docs.yaml write or read
+			// outside the repository.
+			return fmt.Errorf("%s (id=%q): 'target' %q must be a relative path inside the repository (no absolute path or \"..\" segments)", prefix, doc.ID, doc.TargetPath)
+		}
 
 		if len(doc.Scope.Paths) == 0 && len(doc.Scope.EntryPoints) == 0 {
 			return fmt.Errorf("%s (id=%q): 'scope' must specify at least one path or entry_point", prefix, doc.ID)

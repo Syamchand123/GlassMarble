@@ -345,6 +345,31 @@ func TestMergeLCS_HumanWins(t *testing.T) {
 	}
 }
 
+// TestMergeLCS_TrailingAppendNotLostAsNoOp guards against a regression where
+// diffHunks(base, theirs) reported zero hunks for a pure trailing append
+// (theirs = base + new lines, nothing else changed), because it only ever
+// recorded a trailing hunk for leftover BASE lines, never leftover MODIFIED
+// lines. mergeLCS then treated theirs as identical-to-base and returned ours
+// unmodified, silently discarding the machine's newly appended content
+// whenever a human had also edited something earlier in the section.
+func TestMergeLCS_TrailingAppendNotLostAsNoOp(t *testing.T) {
+	base := strings.Split("Intro.\nDetail line.\n", "\n")
+	ours := strings.Split("Intro (human-edited).\nDetail line.\n", "\n")
+	theirs := strings.Split("Intro.\nDetail line.\nNewly appended subsection.\n", "\n")
+
+	merged, conflicted := mergeLCS(base, ours, theirs)
+	if conflicted {
+		t.Fatalf("non-overlapping human edit + trailing append must not conflict")
+	}
+	got := strings.Join(merged, "\n")
+	if !strings.Contains(got, "human-edited") {
+		t.Errorf("merge dropped the human edit: %q", got)
+	}
+	if !strings.Contains(got, "Newly appended subsection") {
+		t.Errorf("merge silently dropped the machine's trailing append: %q", got)
+	}
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Anchor markers
 // ────────────────────────────────────────────────────────────────────────────

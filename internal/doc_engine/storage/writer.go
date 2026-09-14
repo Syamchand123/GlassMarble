@@ -46,8 +46,9 @@ func WriteDoc(sm *StateManager, targetPath, stateKey string, content []byte,
 	// AtomicWriteFile rename below plus the state update that follows, so a
 	// concurrent gmb doc / CI / hook run cannot interleave a torn
 	// file+state pair. Best-effort: on lock timeout the write is refused
-	// rather than risking a lost update.
-	release, err := FlockForFile(targetPath)
+	// rather than risking a lost update. Sidecars live under
+	// .glassmarble/locks/ (gitignored), never beside the target.
+	release, err := FlockForFile(targetPath, filepath.Join(sm.dir, "locks"))
 	if err != nil {
 		return WriterResult{}, fmt.Errorf("doc_engine/writer: %w", err)
 	}
@@ -66,26 +67,26 @@ func WriteDoc(sm *StateManager, targetPath, stateKey string, content []byte,
 		return WriterResult{Changed: false, FileHash: hash, BackupCreated: backupCreated}, nil
 	}
 
-	// Update docs_state.json.
-	state, err := sm.Load()
-	if err != nil {
-		return WriterResult{Changed: true, FileHash: hash}, fmt.Errorf("doc_engine/writer: loading state: %w", err)
-	}
+	// Update docs_state under the shared state-transaction lock (see
+	// StateManager.Update): the flock above only serializes writers of THIS
+	// target file, but the state store itself is one shared blob touched by
+	// every document's WriteDoc call, so the read-modify-write into it needs
+	// its own lock independent of which file is being written.
+	if err := sm.Update(func(state *DocEngineState) error {
+		ds := GetOrCreateDocState(state, stateKey)
+		ds.FileHash = "sha256:" + hash
+		ds.LastUpdatedCommit = commitHash
+		ds.LastUpdatedAt = time.Now().UTC()
 
-	ds := GetOrCreateDocState(state, stateKey)
-	ds.FileHash = "sha256:" + hash
-	ds.LastUpdatedCommit = commitHash
-	ds.LastUpdatedAt = time.Now().UTC()
-
-	if sectionID != "" {
-		ss := GetOrCreateSectionState(ds, sectionID)
-		ss.RenderMode = renderMode
-		ss.LastUpdatedAt = time.Now().UTC()
-	}
-
-	if err := sm.Save(state); err != nil {
+		if sectionID != "" {
+			ss := GetOrCreateSectionState(ds, sectionID)
+			ss.RenderMode = renderMode
+			ss.LastUpdatedAt = time.Now().UTC()
+		}
+		return nil
+	}); err != nil {
 		// State update failure is not fatal — the file is already written.
-		return WriterResult{Changed: true, FileHash: hash}, fmt.Errorf("doc_engine/writer: saving state: %w", err)
+		return WriterResult{Changed: true, FileHash: hash}, fmt.Errorf("doc_engine/writer: updating state: %w", err)
 	}
 
 	return WriterResult{Changed: true, FileHash: hash, BackupCreated: true}, nil
@@ -95,23 +96,19 @@ func WriteDoc(sm *StateManager, targetPath, stateKey string, content []byte,
 // in docs_state.json, without touching any file on disk.
 // Used by the invalidator after computing section hashes.
 func WriteSectionHash(sm *StateManager, targetPath, sectionID, astHash, renderMode, commitHash string, tokenCost int, renderMs int64) error {
-	state, err := sm.Load()
-	if err != nil {
-		return fmt.Errorf("doc_engine/writer: loading state: %w", err)
-	}
+	return sm.Update(func(state *DocEngineState) error {
+		ds := GetOrCreateDocState(state, targetPath)
+		ds.LastUpdatedCommit = commitHash
+		ds.LastUpdatedAt = time.Now().UTC()
 
-	ds := GetOrCreateDocState(state, targetPath)
-	ds.LastUpdatedCommit = commitHash
-	ds.LastUpdatedAt = time.Now().UTC()
-
-	ss := GetOrCreateSectionState(ds, sectionID)
-	ss.ASTSubgraphHash = astHash
-	ss.RenderMode = renderMode
-	ss.LastTokenCost = tokenCost
-	ss.LastRenderMs = renderMs
-	ss.LastUpdatedAt = time.Now().UTC()
-
-	return sm.Save(state)
+		ss := GetOrCreateSectionState(ds, sectionID)
+		ss.ASTSubgraphHash = astHash
+		ss.RenderMode = renderMode
+		ss.LastTokenCost = tokenCost
+		ss.LastRenderMs = renderMs
+		ss.LastUpdatedAt = time.Now().UTC()
+		return nil
+	})
 }
 
 // CopyToStdout writes the content of targetPath to w (e.g., os.Stdout).

@@ -172,16 +172,21 @@ func TestCrash_BackupRestore(t *testing.T) {
 func TestFlockForFile_BlocksUntilRelease(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "contended.md")
+	locksDir := filepath.Join(dir, "locks")
 
-	rel1, err := FlockForFile(path)
+	rel1, err := FlockForFile(path, locksDir)
 	require.NoError(t, err)
 	defer rel1()
 
-	assert.FileExists(t, path+".lock")
+	// Sidecar lives under locksDir (gitignored territory), never beside the target.
+	assert.DirExists(t, locksDir)
+	if _, err := os.Stat(path + ".lock"); !os.IsNotExist(err) {
+		t.Errorf("lock debris beside target: %s.lock must not exist", path)
+	}
 
 	acquired := make(chan struct{})
 	go func() {
-		rel2, err := FlockForFile(path)
+		rel2, err := FlockForFile(path, locksDir)
 		if err != nil {
 			// Must not happen: release below frees the lock well within the
 			// 30s FlockForFile timeout.

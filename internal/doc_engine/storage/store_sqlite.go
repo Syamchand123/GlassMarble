@@ -193,7 +193,7 @@ func (sm *StateManager) openSQLiteOnce() (*sql.DB, error) {
 // imported in a transaction. The check-and-migrate section holds
 // FlockForFile(dbPath) so concurrent first-opens cannot double-migrate.
 func (sm *StateManager) ensureSQLiteMigrated(db *sql.DB) error {
-	release, err := FlockForFile(sm.dbPath)
+	release, err := FlockForFile(sm.dbPath, filepath.Join(sm.dir, "locks"))
 	if err != nil {
 		return err
 	}

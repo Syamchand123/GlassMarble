@@ -64,6 +64,12 @@ daemon: the next batch retries on fresh state.`,
 				CommitHash: commit,
 				Force:      false,
 				Out:        out,
+				// ctx here is daemon.Run's runCtx, which is derived from
+				// cmd.Context() below — cancelling that (e.g. SIGINT/SIGTERM
+				// during `gmb docserve`) now reaches an in-flight run's LLM
+				// calls promptly instead of blocking shutdown until the run
+				// finishes on its own.
+				Ctx: ctx,
 			})
 			if res.Err != nil {
 				fmt.Fprintf(out, "docserve: warning: engine run failed: %v\n", res.Err)

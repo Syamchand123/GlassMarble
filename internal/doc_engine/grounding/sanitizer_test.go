@@ -1,6 +1,7 @@
 package grounding
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
@@ -64,9 +65,18 @@ func TestShannonEntropy_And_HighEntropySecrets(t *testing.T) {
 	highEntropyToken := "4a8f9c2d1e0b3a7f8e9d0c1b2a3f4e5d6c7b8a9f0e1d"
 	assert.True(t, IsHighEntropySecret(highEntropyToken))
 
+	// "secret token:" now also matches the api_key_assignment keyword
+	// pattern (deliberately widened to catch compound identifiers like
+	// secret_key=/access_token= — see sanitizer.go), which redacts this
+	// case earlier than the entropy fallback. Either tag is an acceptable,
+	// fully-redacted outcome; what matters is the raw token never survives.
 	text := "Found secret token: " + highEntropyToken + " in memory"
 	sanitized := SanitizeText(text)
-	assert.Contains(t, sanitized, "[REDACTED:high_entropy_secret]")
+	assert.NotContains(t, sanitized, highEntropyToken)
+	assert.False(t, ContainsSecret(sanitized), "sanitized output must not still be flagged as containing a secret")
+	assert.True(t,
+		strings.Contains(sanitized, "[REDACTED:high_entropy_secret]") || strings.Contains(sanitized, "[REDACTED:api_key_assignment]"),
+		"expected a redaction tag, got %q", sanitized)
 }
 
 func TestSanitizeFactSheet(t *testing.T) {

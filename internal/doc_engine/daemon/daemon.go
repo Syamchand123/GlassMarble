@@ -28,6 +28,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -117,7 +118,17 @@ func Run(ctx context.Context, cfg Config, onChange func(ctx context.Context, cha
 
 	batchCh := make(chan []string, maxPendingBatches)
 
-	runCtx, stopWorkers := context.WithCancel(context.Background())
+	// Derived from the caller's ctx (not context.Background()): cancelling
+	// ctx must reach an in-flight onChange run immediately, not just stop
+	// new batches from being queued. context.WithCancel propagates parent
+	// cancellation synchronously — runCtx.Done() closes the instant ctx is
+	// cancelled, well before the deferred stopWorkers() below would ever
+	// run (which only fires after wg.Wait() already returned, i.e. after
+	// every worker has already exited on its own — too late to interrupt
+	// anything). onChange (doc_engine.Run via RunOptions.Ctx) must itself
+	// check runCtx/ctx.Done() at its own checkpoints to actually stop
+	// promptly; this just ensures the signal reaches it in time to matter.
+	runCtx, stopWorkers := context.WithCancel(ctx)
 	defer stopWorkers()
 
 	var group singleflight.Group
@@ -139,6 +150,19 @@ func Run(ctx context.Context, cfg Config, onChange func(ctx context.Context, cha
 					runMu.Lock()
 					key := strings.Join(batch, "\x00")
 					_, _, _ = group.Do(key, func() (any, error) {
+						// The package doc promises the daemon survives a
+						// failed batch and retries on the next one; that
+						// only covers a returned error, not a panic
+						// anywhere in the generation pipeline (a malformed
+						// docs.yaml, a nil map access on a rarely-hit path).
+						// Without this recover, one panic escapes this
+						// goroutine and silently kills the whole daemon —
+						// every future file change stops triggering runs.
+						defer func() {
+							if r := recover(); r != nil {
+								fmt.Fprintf(os.Stderr, "doc_engine/daemon: recovered panic in onChange for batch %v: %v\n", batch, r)
+							}
+						}()
 						onChange(runCtx, batch)
 						return nil, nil
 					})

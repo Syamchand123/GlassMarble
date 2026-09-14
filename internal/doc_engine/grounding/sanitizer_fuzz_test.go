@@ -141,8 +141,11 @@ func TestSanitizeUUIDNotFlagged(t *testing.T) {
 
 // TestSanitizeBearerRedacted pins the Bearer contract: the
 // api_key_assignment pattern requires a `:`/`=` delimiter after the key
-// name, so `bearer = "..."` / `Bearer: ...` redact while a bare
-// `Bearer <short-token>` (no delimiter) passes through unchanged.
+// name, so `bearer = "..."` / `Bearer: ...` redact via that pattern. A bare
+// `Bearer <token>` (the real "Authorization: Bearer <token>" HTTP-header
+// shape, which uses a space rather than "="/":") is also redacted, via the
+// dedicated bearer_header pattern — leaving it unredacted would miss the
+// most common real-world bearer-token leak shape.
 func TestSanitizeBearerRedacted(t *testing.T) {
 	for _, in := range []string{
 		`bearer = "s3cr3t_T0ken-abc123XYZ"`,
@@ -157,7 +160,11 @@ func TestSanitizeBearerRedacted(t *testing.T) {
 		}
 	}
 	bare := "Bearer s3cr3t_T0ken-abc123XYZ"
-	if got := SanitizeText(bare); got != bare {
-		t.Fatalf("bare short bearer token should pass through per existing contract:\ninput:  %q\noutput: %q", bare, got)
+	got := SanitizeText(bare)
+	if !strings.Contains(got, "[REDACTED:bearer_header]") {
+		t.Fatalf("bare bearer token (Authorization header shape) must be redacted:\ninput:  %q\noutput: %q", bare, got)
+	}
+	if ContainsSecret(got) {
+		t.Fatalf("redacted bare bearer output still flagged: %q", got)
 	}
 }

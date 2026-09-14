@@ -620,6 +620,30 @@ func capOutput(s string) string {
 	return s
 }
 
+// boundedBuffer caps memory use during capture instead of only truncating
+// the string afterward: a runaway or malicious gmb:snippet:exec block that
+// prints gigabytes before its timeout expires must not exhaust host memory
+// buffering output nobody will read past the first few KB. Writes beyond
+// the cap are silently dropped (Write still reports the full byte count, as
+// io.Writer requires, so the child process never sees a short-write error).
+type boundedBuffer struct {
+	buf bytes.Buffer
+	cap int
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	if room := b.cap - b.buf.Len(); room > 0 {
+		if room > len(p) {
+			room = len(p)
+		}
+		b.buf.Write(p[:room])
+	}
+	return len(p), nil
+}
+
+func (b *boundedBuffer) String() string { return b.buf.String() }
+func (b *boundedBuffer) Len() int       { return b.buf.Len() }
+
 // runCmd runs name with args in dir, capped by timeout, returning combined
 // stdout (+stderr section) already output-capped.
 func runCmd(timeout time.Duration, dir, name string, args ...string) (output string, err error, timedOut bool) {
@@ -627,9 +651,13 @@ func runCmd(timeout time.Duration, dir, name string, args ...string) (output str
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	// Cap each stream during capture (not just the combined result
+	// afterward) so total buffered memory stays bounded regardless of how
+	// much the child actually writes.
+	stdout := &boundedBuffer{cap: maxSnippetOutput}
+	stderr := &boundedBuffer{cap: maxSnippetOutput}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	err = cmd.Run()
 	out := stdout.String()
 	if stderr.Len() > 0 {

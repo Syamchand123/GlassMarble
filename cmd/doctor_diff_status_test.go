@@ -66,13 +66,18 @@ func runGmbCommand(t *testing.T, args ...string) (string, error) {
 	// prior test invocation persist across Execute calls (e.g. a --json=true
 	// from one test would leak into the next). Walk the whole command tree and
 	// reset every flag back to its declared default so each test starts clean.
+	// Both value and Changed are reset: production branches on
+	// Flags().Changed (doc export --out, ai provider/model, ...), and
+	// Value.Set alone does not clear Changed.
 	var resetFlags func(c *cobra.Command)
 	resetFlags = func(c *cobra.Command) {
 		c.Flags().VisitAll(func(f *pflag.Flag) {
 			_ = f.Value.Set(f.DefValue)
+			f.Changed = false
 		})
 		c.InheritedFlags().VisitAll(func(f *pflag.Flag) {
 			_ = f.Value.Set(f.DefValue)
+			f.Changed = false
 		})
 		for _, sub := range c.Commands() {
 			resetFlags(sub)

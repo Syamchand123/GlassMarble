@@ -5,9 +5,11 @@ package storage
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -397,4 +399,62 @@ func TestExportStateJSON(t *testing.T) {
 	var decoded2 DocEngineState
 	require.NoError(t, json.Unmarshal(data2, &decoded2))
 	assert.Equal(t, "exp2", decoded2.LastCommit)
+}
+
+// TestStateManager_Update_NoLostUpdatesUnderConcurrency guards against the
+// lost-update race Update was introduced to close: WriteDoc/WriteSectionHash/
+// SetLastRenderedBody used to each do their own Load()-mutate-Save() with no
+// lock spanning that gap (or a lock keyed on the target FILE, not the shared
+// state store). Two concurrent updates to DIFFERENT documents could each
+// Load the same snapshot, mutate only their own entry, and Save — a full
+// state replace on both backends — so the second Save would silently
+// discard the first's update. Many goroutines each adding their OWN document
+// entry via Update, with no coordination beyond Update's own lock, must all
+// survive: nothing here works by luck of scheduling order.
+func TestStateManager_Update_NoLostUpdatesUnderConcurrency(t *testing.T) {
+	for _, backend := range []string{"sqlite", "json"} {
+		t.Run(backend, func(t *testing.T) {
+			t.Setenv("GMB_DOC_STATE", backend)
+			dir := t.TempDir()
+			sm := NewStateManager(dir)
+
+			const n = 25
+			var wg sync.WaitGroup
+			errCh := make(chan error, n)
+			for i := 0; i < n; i++ {
+				wg.Add(1)
+				go func(i int) {
+					defer wg.Done()
+					target := fmt.Sprintf("docs/doc-%02d.md", i)
+					err := sm.Update(func(state *DocEngineState) error {
+						ds := GetOrCreateDocState(state, target)
+						ds.FileHash = fmt.Sprintf("sha256:%02d", i)
+						return nil
+					})
+					errCh <- err
+				}(i)
+			}
+			wg.Wait()
+			close(errCh)
+			for err := range errCh {
+				require.NoError(t, err)
+			}
+
+			final, err := sm.Load()
+			require.NoError(t, err)
+			require.Len(t, final.Documents, n, "lost update: expected all %d concurrent Update calls to survive", n)
+			for i := 0; i < n; i++ {
+				target := fmt.Sprintf("docs/doc-%02d.md", i)
+				ds, ok := final.Documents[target]
+				if !ok {
+					t.Errorf("missing document %q after concurrent updates", target)
+					continue
+				}
+				want := fmt.Sprintf("sha256:%02d", i)
+				if ds.FileHash != want {
+					t.Errorf("document %q FileHash = %q, want %q", target, ds.FileHash, want)
+				}
+			}
+		})
+	}
 }
