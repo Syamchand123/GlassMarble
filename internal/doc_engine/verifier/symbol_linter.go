@@ -59,6 +59,48 @@ var stdlibAllowlist = map[string]bool{
 	"nil":   true,
 	"true":  true,
 	"false": true,
+	// Common CLI/ops tools: a runbook or onboarding section legitimately
+	// says "run `netstat -tlnp` to confirm the port is listening" — a
+	// completely normal operational instruction, not a code-symbol claim,
+	// but backtickRe can't tell the two apart by shape alone (both are
+	// bare identifiers). Without this, that section hard-fails Gate 3 as
+	// an "unresolved symbol" and ships with no content at all — found via
+	// live testing against the runbook archetype specifically, the one
+	// archetype whose whole job is describing operational commands. Not
+	// exhaustive (no allowlist can be, against an open-ended set of shell
+	// tools), but covers the ones that come up routinely.
+	"netstat":    true,
+	"curl":       true,
+	"wget":       true,
+	"ping":       true,
+	"traceroute": true,
+	"dig":        true,
+	"nslookup":   true,
+	"ssh":        true,
+	"scp":        true,
+	"ps":         true,
+	"top":        true,
+	"htop":       true,
+	"kill":       true,
+	"systemctl":  true,
+	"journalctl": true,
+	"docker":     true,
+	"kubectl":    true,
+	"grep":       true,
+	"awk":        true,
+	"sed":        true,
+	"tail":       true,
+	"head":       true,
+	"cat":        true,
+	"ls":         true,
+	"df":         true,
+	"du":         true,
+	"lsof":       true,
+	"tcpdump":    true,
+	"strace":     true,
+	"nc":         true,
+	"jq":         true,
+	"ss":         true,
 }
 
 // checkSymbols extracts all backtick identifiers from content and verifies them.

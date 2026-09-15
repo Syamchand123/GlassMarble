@@ -112,6 +112,22 @@ func TestGate3_StdlibAllowlist(t *testing.T) {
 	}
 }
 
+// TestGate3_CLIToolsAllowlist guards against a real bug found via live
+// end-to-end testing: a runbook section's operational instruction
+// ("run `netstat -tlnp` to confirm the port is listening") is a perfectly
+// normal thing for that archetype to say, but backtickRe can't
+// distinguish a shell command from a code-symbol claim by shape alone —
+// both are bare identifiers. Without this allowlist, that section
+// hard-failed Gate 3 as an "unresolved symbol" and shipped with no
+// content at all.
+func TestGate3_CLIToolsAllowlist(t *testing.T) {
+	content := "Run `netstat -tlnp` to confirm the port is listening, or check logs with `journalctl -u taskmgr`."
+	akg := &mockAKG{known: map[string]bool{}}
+	if err := checkSymbols(content, akg); err != nil {
+		t.Errorf("common CLI tool incorrectly rejected: %v", err)
+	}
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Gate 4: Secret check
 // ────────────────────────────────────────────────────────────────────────────
