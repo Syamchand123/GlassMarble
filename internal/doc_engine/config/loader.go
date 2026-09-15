@@ -194,6 +194,16 @@ func applyDefaults(cfg *DocsConfig) {
 	}
 }
 
+// IsValidDocOrSectionID reports whether s is a valid document or section id
+// (lowercase letters, digits, and hyphens only) — exported so callers that
+// construct a DocSpec/SectionSpec before it ever reaches LoadDocsConfig's
+// own validation (doc init's ID auto-derivation, most notably) can check
+// or sanitize an id up front, rather than writing an invalid one to
+// docs.yaml that only fails on the NEXT load.
+func IsValidDocOrSectionID(s string) bool {
+	return isURLSafe(s)
+}
+
 // isURLSafe reports whether s contains only lowercase letters, digits, and hyphens.
 func isURLSafe(s string) bool {
 	for _, r := range s {

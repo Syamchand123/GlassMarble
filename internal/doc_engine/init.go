@@ -40,6 +40,8 @@ func Init(repoRoot string, opts InitOptions) error {
 	docID := opts.DocID
 	if docID == "" {
 		docID = deriveDocID(targetPath)
+	} else if !config.IsValidDocOrSectionID(docID) {
+		return fmt.Errorf("doc_engine: --id %q must use only lowercase letters, digits, and hyphens", docID)
 	}
 
 	title := opts.Title
@@ -233,12 +235,35 @@ func generateScaffoldMarkdown(spec *config.DocSpec) string {
 	return sb.String()
 }
 
+// updateDocsYAML loads the existing docs.yaml, adds or replaces newDoc, and
+// writes the result back.
+//
+// LoadDocsConfig NEVER returns an error for a docs.yaml that simply doesn't
+// exist yet — that case already comes back as (an empty, valid config,
+// nil) — so every error it does return means the file exists but fails to
+// parse or validate. This used to be treated identically to "start fresh":
+// on any such error, updateDocsYAML silently substituted a brand-new empty
+// config, appended just the one new document, and wrote THAT over the
+// existing file — discarding every already-configured document in one
+// shot, with no warning. That combined with an invalid-looking (but
+// successfully written) id from an earlier `doc init` call — one with an
+// underscore or other character LoadDocsConfig's validation rejects but
+// this function's raw yaml.Marshal on write never checked — created a
+// silent, cascading data-loss bug: the write that introduced the bad id
+// succeeded and reported success, and the VERY NEXT `doc init` call wiped
+// every prior document out from under the user. Now any load error is
+// fatal instead of quietly papered over — the fix for the immediate
+// trigger is deriveDocID/sanitizeDocID always producing a valid id, but a
+// genuinely corrupted docs.yaml (hand-edited, merge conflict, etc.) must
+// still refuse to be silently overwritten.
 func updateDocsYAML(repoRoot string, newDoc config.DocSpec) error {
 	cfgPath := config.DocsConfigPath(repoRoot)
 
 	cfg, err := config.LoadDocsConfig(repoRoot)
-	if err != nil || cfg == nil {
-		// Create fresh default config if none exists
+	if err != nil {
+		return fmt.Errorf("existing docs.yaml is invalid, refusing to overwrite it (fix the error below, or restore from backup, then retry): %w", err)
+	}
+	if cfg == nil {
 		cfg = &config.DocsConfig{
 			Version:        config.CurrentSchemaVersion,
 			DocsDir:        "docs",
@@ -274,7 +299,42 @@ func updateDocsYAML(repoRoot string, newDoc config.DocSpec) error {
 	return err
 }
 
+// deriveDocID turns a target path's base filename into an id guaranteed to
+// pass config.IsValidDocOrSectionID — see sanitizeDocID for why that
+// matters beyond just this one write.
 func deriveDocID(targetPath string) string {
 	base := filepath.Base(targetPath)
-	return strings.ToLower(strings.TrimSuffix(base, filepath.Ext(base)))
+	name := strings.TrimSuffix(base, filepath.Ext(base))
+	return sanitizeDocID(name)
+}
+
+// sanitizeDocID maps name into the id charset LoadDocsConfig's validation
+// requires (lowercase letters, digits, hyphens): lowercases it and
+// collapses every run of other characters (underscores, spaces, dots)
+// into a single hyphen, trimming any leading/trailing hyphen left over.
+// Without this, a perfectly ordinary filename like "adr_doc.md" derives
+// the id "adr_doc" — accepted by updateDocsYAML's raw yaml.Marshal on
+// THIS write, since it never validates before writing, but rejected by
+// LoadDocsConfig's validation on the NEXT one. See updateDocsYAML's doc
+// comment for what that silent mismatch used to do to every other
+// document already in docs.yaml.
+func sanitizeDocID(name string) string {
+	var sb strings.Builder
+	lastWasHyphen := true // suppresses a leading hyphen
+	for _, r := range strings.ToLower(name) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			sb.WriteRune(r)
+			lastWasHyphen = false
+			continue
+		}
+		if !lastWasHyphen {
+			sb.WriteByte('-')
+			lastWasHyphen = true
+		}
+	}
+	id := strings.TrimSuffix(sb.String(), "-")
+	if id == "" {
+		return "doc"
+	}
+	return id
 }

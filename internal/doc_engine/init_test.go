@@ -28,6 +28,99 @@ func TestDeriveDocID(t *testing.T) {
 	}
 }
 
+// TestDeriveDocID_SanitizesInvalidCharacters guards against a real,
+// serious bug found via live end-to-end testing: an ordinary filename like
+// "adr_doc.md" used to derive the id "adr_doc" — accepted by
+// updateDocsYAML's raw write (which never validates before writing) but
+// rejected by LoadDocsConfig's own validation on the VERY NEXT `doc init`
+// call. That next call's load-existing-then-append step failed, and
+// (before the updateDocsYAML fix below) silently discarded every other
+// already-configured document and started over with an empty
+// docs.yaml — a real data-loss incident reproduced in a live scratch
+// repo, not a hypothetical.
+func TestDeriveDocID_SanitizesInvalidCharacters(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"docs/adr_doc.md", "adr-doc"},
+		{"docs/My Report.md", "my-report"},
+		{"docs/v1.2_release.md", "v1-2-release"},
+		{"docs/___.md", "doc"},
+	}
+	for _, tt := range tests {
+		got := deriveDocID(tt.path)
+		if got != tt.want {
+			t.Errorf("deriveDocID(%q) = %q, want %q", tt.path, got, tt.want)
+		}
+		if !config.IsValidDocOrSectionID(got) {
+			t.Errorf("deriveDocID(%q) = %q is not a valid doc id", tt.path, got)
+		}
+	}
+}
+
+// TestInit_RejectsInvalidExplicitID guards the other half of the same
+// bug: an explicit --id that isn't URL-safe must be rejected immediately
+// with a clear error, not silently written (only to break the NEXT init
+// call, exactly like the auto-derived case above).
+func TestInit_RejectsInvalidExplicitID(t *testing.T) {
+	tempDir := t.TempDir()
+	opts := InitOptions{
+		TargetPath:  "docs/thing.md",
+		DocID:       "bad_id",
+		Archetype:   "module",
+		ScopePaths:  []string{"internal/**"},
+		Interactive: false,
+		Out:         os.Stdout,
+	}
+	if err := Init(tempDir, opts); err == nil {
+		t.Fatal("expected Init to reject an invalid --id, got nil error")
+	}
+}
+
+// TestInit_SecondCallNeverDiscardsFirstDocument guards against the actual
+// data-loss incident directly: scaffolding a document whose derived id
+// would have been invalid before the sanitizeDocID fix, immediately
+// followed by a second, unrelated document, must leave BOTH documents in
+// docs.yaml — not silently drop the first.
+func TestInit_SecondCallNeverDiscardsFirstDocument(t *testing.T) {
+	tempDir := t.TempDir()
+
+	first := InitOptions{
+		TargetPath:  "docs/adr_doc.md",
+		Archetype:   "adr",
+		ScopePaths:  []string{"internal/**"},
+		Interactive: false,
+		Out:         os.Stdout,
+	}
+	if err := Init(tempDir, first); err != nil {
+		t.Fatalf("first Init failed: %v", err)
+	}
+
+	second := InitOptions{
+		TargetPath:  "docs/security.md",
+		Archetype:   "security",
+		ScopePaths:  []string{"internal/**"},
+		Interactive: false,
+		Out:         os.Stdout,
+	}
+	if err := Init(tempDir, second); err != nil {
+		t.Fatalf("second Init failed: %v", err)
+	}
+
+	cfg, err := config.LoadDocsConfig(tempDir)
+	if err != nil {
+		t.Fatalf("failed to load docs.yaml after both Init calls: %v", err)
+	}
+	if len(cfg.Documents) != 2 {
+		ids := make([]string, len(cfg.Documents))
+		for i, d := range cfg.Documents {
+			ids[i] = d.ID
+		}
+		t.Fatalf("expected both documents to survive, got %d: %v", len(cfg.Documents), ids)
+	}
+}
+
 func TestInit_NonInteractive_NewFile(t *testing.T) {
 	tempDir := t.TempDir()
 
