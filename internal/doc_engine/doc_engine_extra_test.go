@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -474,9 +475,10 @@ func TestExtraRunComputeOnlyNoWriteNoSave(t *testing.T) {
 // extraRecordingProvider is a stub LLM provider (mirroring the mockProvider
 // pattern in renderer tests) that records system prompts for inspection.
 type extraRecordingProvider struct {
-	text    string
-	systems []string
-	calls   int
+	text       string
+	systems    []string
+	calls      int
+	failAlways bool // when true, Complete always errors — see TestExtraRun_SectionsFailedTracksLLMFailures
 }
 
 func (m *extraRecordingProvider) Name() string { return "extra-stub" }
@@ -484,6 +486,9 @@ func (m *extraRecordingProvider) Name() string { return "extra-stub" }
 func (m *extraRecordingProvider) Complete(_ context.Context, req provider.Request) (*provider.Response, error) {
 	m.calls++
 	m.systems = append(m.systems, req.System)
+	if m.failAlways {
+		return nil, fmt.Errorf("503 Service Unavailable")
+	}
 	return &provider.Response{
 		Text:  m.text,
 		Usage: provider.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15},
@@ -528,7 +533,7 @@ func TestExtraGlobalStyleMergePrecedence(t *testing.T) {
 		},
 	})
 	sm := storage.NewStateManager(docconfig.StorageDirPath(dir))
-	changed, _, _, err := orch.ProcessDocument(context.Background(), dir, doc, nil, nil, nil, sm, "style-hash")
+	changed, _, _, _, err := orch.ProcessDocument(context.Background(), dir, doc, nil, nil, nil, sm, "style-hash")
 	if err != nil {
 		t.Fatalf("ProcessDocument: %v", err)
 	}
@@ -553,6 +558,36 @@ func TestExtraGlobalStyleMergePrecedence(t *testing.T) {
 	}
 	if !strings.Contains(sys, "global tone") {
 		t.Errorf("empty per-doc Tone must fall back to global, system prompt was:\n%s", sys)
+	}
+}
+
+// TestExtraRun_SectionsFailedTracksLLMFailures guards against a real gap
+// found via live end-to-end testing: a section whose LLM render fails
+// (provider outage, unrecoverable gate rejection) is skipped with only a
+// warning STRING appended to RunResult.Warnings — RunResult carried no
+// typed signal at all that real content went missing, and cmd/doc.go
+// always returned nil (exit 0) regardless, so a CI pipeline (or a human's
+// `&&`) checking $? saw a clean success on a run that silently shipped a
+// blank section. RunResult.SectionsFailed exists to fix that.
+func TestExtraRun_SectionsFailedTracksLLMFailures(t *testing.T) {
+	t.Setenv("GMB_DOC_STATE", "json")
+	dir := t.TempDir()
+	extraDocRepo(t, dir)
+
+	failing := &extraRecordingProvider{}
+	failing.failAlways = true
+
+	var out bytes.Buffer
+	res := Run(dir, RunOptions{
+		CommitHash: "sections-failed-hash",
+		ForceWrite: true,
+		HeadGraph:  extraDemoGraph("sections-failed-hash", true),
+		Provider:   failing,
+		Model:      "extra-test",
+		Out:        &out,
+	})
+	if res.SectionsFailed == 0 {
+		t.Errorf("expected SectionsFailed > 0 when every LLM call fails, got 0 (warnings: %v)", res.Warnings)
 	}
 }
 

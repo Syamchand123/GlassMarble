@@ -97,6 +97,9 @@ daemon: the next batch retries on fresh state.`,
 			}
 			fmt.Fprintf(out, "docserve: batch of %d changed file(s): %d doc(s) updated, %d section(s) updated\n",
 				len(changed), res.DocsUpdated, res.SectionsUpdated)
+			if res.SectionsFailed > 0 {
+				fmt.Fprintf(out, "docserve: warning: %d section(s) failed to render this batch (see warnings above) — those documents still carry stale or blank content until a future batch retries them\n", res.SectionsFailed)
+			}
 		})
 	},
 }

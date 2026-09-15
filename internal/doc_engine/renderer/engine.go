@@ -424,9 +424,9 @@ func (o *Orchestrator) ProcessDocument(
 	dossier *config.GlobalCommitDossier,
 	sm *storage.StateManager,
 	commitHash string,
-) (docUpdated bool, tokensUsed int, warnings []string, err error) {
+) (docUpdated bool, tokensUsed int, warnings []string, failedSections int, err error) {
 	if doc == nil {
-		return false, 0, nil, fmt.Errorf("doc_engine/orchestrator: nil DocSpec")
+		return false, 0, nil, 0, fmt.Errorf("doc_engine/orchestrator: nil DocSpec")
 	}
 
 	// Apply archetype defaults if needed
@@ -544,6 +544,15 @@ func (o *Orchestrator) ProcessDocument(
 		warnings = append(warnings, res.secWarnings...)
 		tokensUsed += res.secTokens
 		if res.skipped {
+			// A section that reaches here failed to render at all (LLM
+			// error, an unrecoverable quality-gate rejection, provider
+			// outage) — real content is missing from the final document,
+			// not just imperfect. RunResult.Err/Warnings are documented as
+			// "never fatal" (doc_engine.go), so this can't ride on those
+			// without changing that contract; callers that care whether a
+			// run actually finished everything it set out to do need this
+			// count instead of grepping warning strings.
+			failedSections++
 			continue
 		}
 		outcome := res.outcome
@@ -588,7 +597,7 @@ func (o *Orchestrator) ProcessDocument(
 	}
 
 	if !docModified {
-		return false, tokensUsed, warnings, nil
+		return false, tokensUsed, warnings, failedSections, nil
 	}
 
 	// Reconstruct and write file. absTarget is the filesystem path;
@@ -597,10 +606,10 @@ func (o *Orchestrator) ProcessDocument(
 	finalMarkdown := patcher.Reconstruct(parsedDoc.Zones)
 	writeRes, wErr := storage.WriteDoc(sm, absTarget, doc.TargetPath, []byte(finalMarkdown), doc.ID, "", commitHash, "managed")
 	if wErr != nil {
-		return false, tokensUsed, warnings, fmt.Errorf("writing document %s: %w", doc.TargetPath, wErr)
+		return false, tokensUsed, warnings, failedSections, fmt.Errorf("writing document %s: %w", doc.TargetPath, wErr)
 	}
 
-	return writeRes.Changed, tokensUsed, warnings, nil
+	return writeRes.Changed, tokensUsed, warnings, failedSections, nil
 }
 
 // sectionJob is one dirty section's phase-1 input snapshot. Captured

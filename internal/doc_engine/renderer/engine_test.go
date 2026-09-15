@@ -282,7 +282,7 @@ func TestOrchestrator_ProcessDocument_EndToEnd(t *testing.T) {
 		NoLLM: true,
 	})
 
-	changed, _, warnings, err := orch.ProcessDocument(
+	changed, _, warnings, _, err := orch.ProcessDocument(
 		context.Background(),
 		tempDir,
 		doc,
@@ -329,5 +329,52 @@ func TestOrchestrator_ProcessDocument_EndToEnd(t *testing.T) {
 	}
 	if ds.LastUpdatedCommit != "commit123" {
 		t.Errorf("unexpected commit in state: %s", ds.LastUpdatedCommit)
+	}
+}
+
+// TestOrchestrator_ProcessDocument_ReportsFailedSections guards a real gap
+// found via live end-to-end testing: a section that fails to render (LLM
+// provider outage, an unrecoverable quality-gate rejection) after retries
+// is skipped and only ever recorded as a warning STRING — nothing counted
+// it, so a caller like `gmb doc` had no reliable, non-string-matched
+// signal that real content went missing, and kept reporting a clean exit
+// even when a section shipped blank. ProcessDocument's failedSections
+// return value (threaded up into RunResult.SectionsFailed, see
+// doc_engine.go) exists so that signal is a number, not a grep target.
+func TestOrchestrator_ProcessDocument_ReportsFailedSections(t *testing.T) {
+	tempDir := t.TempDir()
+	storageDir := filepath.Join(tempDir, ".glassmarble")
+	_ = os.MkdirAll(storageDir, 0755)
+	sm := storage.NewStateManager(storageDir)
+
+	doc := &config.DocSpec{
+		ID:         "arch",
+		TargetPath: "docs/arch.md",
+		Title:      "Architecture",
+		Mode:       config.ModeManagedSections,
+		Sections: []config.SectionSpec{
+			{ID: "overview", Title: "Overview", Instruction: "Overview.", Managed: true},
+			{ID: "details", Title: "Details", Instruction: "Details.", Managed: true},
+		},
+	}
+
+	mock := &mockProvider{
+		completeFunc: func(ctx context.Context, req provider.Request) (*provider.Response, error) {
+			return nil, errors.New("503 Service Unavailable")
+		},
+	}
+	orch := NewOrchestrator(OrchestratorOptions{Provider: mock, Model: "gpt-4o"})
+	if orch.actuator != nil {
+		orch.actuator.cfg.BackoffSchedule = nil
+	}
+
+	_, _, warnings, failedSections, err := orch.ProcessDocument(
+		context.Background(), tempDir, doc, []string{"overview", "details"}, nil, nil, sm, "c1",
+	)
+	if err != nil {
+		t.Fatalf("ProcessDocument should stay non-fatal on a per-section LLM failure, got: %v", err)
+	}
+	if failedSections != 2 {
+		t.Errorf("failedSections = %d, want 2 (both sections' LLM calls fail): warnings=%v", failedSections, warnings)
 	}
 }

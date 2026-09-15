@@ -324,6 +324,7 @@ func runDocUpdate(cmd *cobra.Command, args []string) error {
 			DocsUpdated       int      `json:"docs_updated"`
 			SectionsProcessed int      `json:"sections_processed"`
 			SectionsUpdated   int      `json:"sections_updated"`
+			SectionsFailed    int      `json:"sections_failed,omitempty"`
 			TokensUsed        int      `json:"tokens_used"`
 			DurationMs        int64    `json:"duration_ms"`
 			Warnings          []string `json:"warnings,omitempty"`
@@ -334,6 +335,7 @@ func runDocUpdate(cmd *cobra.Command, args []string) error {
 			DocsUpdated:       result.DocsUpdated,
 			SectionsProcessed: result.SectionsProcessed,
 			SectionsUpdated:   result.SectionsUpdated,
+			SectionsFailed:    result.SectionsFailed,
 			TokensUsed:        result.TokensUsed,
 			DurationMs:        result.Duration.Milliseconds(),
 			Warnings:          result.Warnings,
@@ -343,6 +345,12 @@ func runDocUpdate(cmd *cobra.Command, args []string) error {
 		}
 		data, _ := json.MarshalIndent(out, "", "  ")
 		fmt.Fprintln(cmd.OutOrStdout(), string(data))
+		// A CI script parsing this JSON still checks the exit code first in
+		// practice — see the non-JSON branch below for why SectionsFailed
+		// must not be silently exit-0, same reasoning applies here.
+		if result.SectionsFailed > 0 {
+			return fmt.Errorf("doc: %d section(s) failed to render", result.SectionsFailed)
+		}
 		return nil
 	}
 
@@ -355,6 +363,16 @@ func runDocUpdate(cmd *cobra.Command, args []string) error {
 	if result.SectionsUpdated > 0 || verbose {
 		docPrintf(cmd, "doc: %d section(s) updated in %d document(s) | %d tokens | %s\n",
 			result.SectionsUpdated, result.DocsUpdated, result.TokensUsed, result.Duration.Round(1e6))
+	}
+	if result.SectionsFailed > 0 {
+		// A section that failed to render is missing real content in the
+		// written document, not just a cosmetic issue — RunResult.Err/
+		// Warnings are documented as non-fatal by design (doc_engine.go),
+		// so a run that hit this can still finish processing every other
+		// document, but the process exit code must not lie about it: a CI
+		// pipeline (or a human's `&&`) checking only $? would otherwise see
+		// a clean success on a run that silently shipped blank sections.
+		return fmt.Errorf("doc: %d section(s) failed to render — see warnings above", result.SectionsFailed)
 	}
 	return nil
 }

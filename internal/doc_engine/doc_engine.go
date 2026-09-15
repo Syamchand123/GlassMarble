@@ -155,6 +155,18 @@ type RunResult struct {
 
 	// Warnings are non-fatal issues encountered during the run.
 	Warnings []string
+
+	// SectionsFailed counts managed sections that were selected for
+	// rendering but never produced content — an LLM error, an
+	// unrecoverable quality-gate rejection, or a provider outage — as
+	// opposed to SectionsUpdated, which only ever counts what was found
+	// dirty, not what actually succeeded (see the loop below). The run
+	// itself stays non-fatal (every other document/section is still
+	// attempted), but a caller such as `gmb doc` in a CI pipeline needs a
+	// reliable, non-string-matched signal that real content is missing
+	// from the written document, distinct from the merely-cosmetic
+	// warnings above.
+	SectionsFailed int
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -553,7 +565,7 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 					fmt.Sprintf("token budget exhausted (%d/%d tokens used): skipping remaining document(s)", totalTokens, maxTokens))
 				break
 			}
-			changed, tokens, docWarns, pErr := orch.ProcessDocument(
+			changed, tokens, docWarns, failedSections, pErr := orch.ProcessDocument(
 				ctx,
 				repoRoot,
 				d,
@@ -563,9 +575,22 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 				sm,
 				opts.CommitHash,
 			)
-			if pErr != nil && opts.Verbose {
-				result.Warnings = append(result.Warnings, fmt.Sprintf("doc %s error: %v", d.ID, pErr))
+			if pErr != nil {
+				// A whole-document failure (e.g. the write itself failed)
+				// means every one of its dirty sections is effectively
+				// unrendered — tracked here so it always counts toward
+				// SectionsFailed even when opts.Verbose is off and the
+				// human-readable message below is skipped.
+				failed := len(secIDs)
+				if failed == 0 {
+					failed = 1
+				}
+				result.SectionsFailed += failed
+				if opts.Verbose {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("doc %s error: %v", d.ID, pErr))
+				}
 			}
+			result.SectionsFailed += failedSections
 			result.Warnings = append(result.Warnings, docWarns...)
 			totalTokens += tokens
 			if changed {

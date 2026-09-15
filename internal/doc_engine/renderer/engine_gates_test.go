@@ -35,7 +35,7 @@ func TestProcessDocument_GatesSixSevenWire(t *testing.T) {
 		},
 	}
 	orch := NewOrchestrator(OrchestratorOptions{NoLLM: true})
-	_, _, warnings, err := orch.ProcessDocument(context.Background(), tempDir, doc, []string{"arch"}, diagramTestGraph(), nil, sm, "c1")
+	_, _, warnings, _, err := orch.ProcessDocument(context.Background(), tempDir, doc, []string{"arch"}, diagramTestGraph(), nil, sm, "c1")
 	if err != nil {
 		t.Fatalf("ProcessDocument failed: %v (warnings: %v)", err, warnings)
 	}

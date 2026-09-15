@@ -31,7 +31,7 @@ func TestProcessDocument_DeterministicRerun(t *testing.T) {
 	orch := NewOrchestrator(OrchestratorOptions{NoLLM: true})
 	ctx := context.Background()
 
-	if _, _, _, err := orch.ProcessDocument(ctx, tempDir, doc, []string{"overview"}, nil, nil, sm, "c1"); err != nil {
+	if _, _, _, _, err := orch.ProcessDocument(ctx, tempDir, doc, []string{"overview"}, nil, nil, sm, "c1"); err != nil {
 		t.Fatalf("first render failed: %v", err)
 	}
 	first, err := os.ReadFile(filepath.Join(tempDir, "docs/det.md"))
@@ -42,7 +42,7 @@ func TestProcessDocument_DeterministicRerun(t *testing.T) {
 	// Fresh orchestrator + fresh state load: same inputs, must be identical.
 	sm2 := storage.NewStateManager(storageDir)
 	orch2 := NewOrchestrator(OrchestratorOptions{NoLLM: true})
-	if _, _, _, err := orch2.ProcessDocument(ctx, tempDir, doc, []string{"overview"}, nil, nil, sm2, "c1"); err != nil {
+	if _, _, _, _, err := orch2.ProcessDocument(ctx, tempDir, doc, []string{"overview"}, nil, nil, sm2, "c1"); err != nil {
 		t.Fatalf("second render failed: %v", err)
 	}
 	second, err := os.ReadFile(filepath.Join(tempDir, "docs/det.md"))

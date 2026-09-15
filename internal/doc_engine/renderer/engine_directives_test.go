@@ -67,7 +67,7 @@ func TestProcessDocument_DiagramDirectiveInjected(t *testing.T) {
 		},
 	}
 	orch := NewOrchestrator(OrchestratorOptions{NoLLM: true})
-	changed, _, warnings, err := orch.ProcessDocument(context.Background(), tempDir, doc, []string{"arch"}, diagramTestGraph(), nil, sm, "c1")
+	changed, _, warnings, _, err := orch.ProcessDocument(context.Background(), tempDir, doc, []string{"arch"}, diagramTestGraph(), nil, sm, "c1")
 	if err != nil {
 		t.Fatalf("ProcessDocument failed: %v (warnings: %v)", err, warnings)
 	}
@@ -99,7 +99,7 @@ func TestProcessDocument_TodoPopulated(t *testing.T) {
 		},
 	}
 	orch := NewOrchestrator(OrchestratorOptions{NoLLM: true})
-	_, _, _, err := orch.ProcessDocument(context.Background(), tempDir, doc, []string{"gap"}, diagramTestGraph(), nil, sm, "c1")
+	_, _, _, _, err := orch.ProcessDocument(context.Background(), tempDir, doc, []string{"gap"}, diagramTestGraph(), nil, sm, "c1")
 	if err != nil {
 		t.Fatalf("ProcessDocument failed: %v", err)
 	}
