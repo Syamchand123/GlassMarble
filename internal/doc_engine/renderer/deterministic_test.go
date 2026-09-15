@@ -27,11 +27,11 @@ func TestDeterministicRenderer_Basic(t *testing.T) {
 					Permalink: "internal/auth/auth.go#L42-L50",
 				},
 				{
-					FQN:       "internal/auth.SessionManager",
-					Kind:      "struct",
-					Doc:       "SessionManager coordinates active sessions.",
-					File:      "internal/auth/session.go",
-					Line:      12,
+					FQN:  "internal/auth.SessionManager",
+					Kind: "struct",
+					Doc:  "SessionManager coordinates active sessions.",
+					File: "internal/auth/session.go",
+					Line: 12,
 				},
 			},
 			Sentinels: []config.SentinelFact{
@@ -53,9 +53,18 @@ func TestDeterministicRenderer_Basic(t *testing.T) {
 					Line:     8,
 				},
 			},
+			// DiagramMermaid is a Track-A-only prompt convenience (see
+			// facts.go: "injected verbatim by the LLM actuator") that
+			// production code always sets as a copy of Diagrams[0].Content
+			// — never populated alone. Track B (this renderer) renders
+			// Diagrams directly and must NOT also render DiagramMermaid,
+			// or every section with a diagram would show it twice.
 			DiagramMermaid: "graph TD\n  A --> B\n",
-			CallFlow:       []string{"cmd.Login", "internal/auth.Authenticate"},
-			Callers:        []string{"cmd.Login"},
+			Diagrams: []config.DiagramFact{
+				{Type: "callgraph", Content: "graph TD\n  A --> B\n"},
+			},
+			CallFlow: []string{"cmd.Login", "internal/auth.Authenticate"},
+			Callers:  []string{"cmd.Login"},
 		},
 	}
 
@@ -192,5 +201,64 @@ func TestDeterministicRenderer_All10Archetypes(t *testing.T) {
 				t.Errorf("archetype %s section %s failed gate %d: %v", name, sec.ID, gateRes.FailedGate, gateRes.Error)
 			}
 		}
+	}
+}
+
+// TestDeterministicRenderer_PromptGuidanceNotLeaked guards against a
+// regression where the D2 Diátaxis quadrant contract (renderer/engine.go)
+// was appended directly onto FactSheet.SectionInstruction — a field Track B
+// renders verbatim as the section's visible blockquote header. Every
+// section whose archetype has a quadrant then showed an internal
+// LLM-steering paragraph ("Documentation quadrant (reference): Reference
+// documentation must be dry and complete...") as if it were real section
+// content. PromptGuidance exists specifically so this text reaches only
+// Track A's prompt (see BuildUserPrompt) and never a reader.
+func TestDeterministicRenderer_PromptGuidanceNotLeaked(t *testing.T) {
+	r := NewDeterministicRenderer()
+	fs := &config.FactSheet{
+		SectionInstruction: "Document the exported interface.",
+		PromptGuidance:     "Documentation quadrant (reference): Reference documentation must be dry and complete.",
+	}
+	out, err := r.RenderSection(fs)
+	if err != nil {
+		t.Fatalf("RenderSection failed: %v", err)
+	}
+	if !strings.Contains(out, "Document the exported interface.") {
+		t.Errorf("missing real section instruction:\n%s", out)
+	}
+	if strings.Contains(out, "Documentation quadrant") || strings.Contains(out, "PromptGuidance") {
+		t.Errorf("PromptGuidance leaked into Track B's rendered output:\n%s", out)
+	}
+}
+
+// TestDeterministicRenderer_DiagramNotDuplicated guards against a
+// regression where the renderer embedded a section's first diagram twice:
+// once via GroundTruth.DiagramMermaid (a Track-A-only prompt convenience
+// that facts.go always sets to a copy of Diagrams[0].Content) and again via
+// the Diagrams list itself. Every section configured with 1+ diagrams
+// showed its first diagram rendered twice in the generated markdown.
+func TestDeterministicRenderer_DiagramNotDuplicated(t *testing.T) {
+	r := NewDeterministicRenderer()
+	fs := &config.FactSheet{
+		SectionInstruction: "Document the call graph.",
+		GroundTruth: config.GroundTruthPayload{
+			// Mirrors real production population (facts.go): DiagramMermaid
+			// is always Diagrams[0].Content, never set independently.
+			DiagramMermaid: "graph TD\n  A --> B\n",
+			Diagrams: []config.DiagramFact{
+				{Type: "callgraph", Content: "graph TD\n  A --> B\n"},
+				{Type: "dependency", Content: "graph LR\n  X --> Y\n"},
+			},
+		},
+	}
+	out, err := r.RenderSection(fs)
+	if err != nil {
+		t.Fatalf("RenderSection failed: %v", err)
+	}
+	if got := strings.Count(out, "A --> B"); got != 1 {
+		t.Errorf("callgraph diagram rendered %d time(s), want exactly 1:\n%s", got, out)
+	}
+	if got := strings.Count(out, "X --> Y"); got != 1 {
+		t.Errorf("dependency diagram rendered %d time(s), want exactly 1:\n%s", got, out)
 	}
 }

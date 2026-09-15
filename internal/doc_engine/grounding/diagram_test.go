@@ -36,6 +36,47 @@ func TestGenerateDiagram_Callgraph(t *testing.T) {
 	assert.Contains(t, diag, "LookupKey")
 }
 
+// TestGenerateDiagram_Callgraph_NodeLabelsAreDeterministic guards against a
+// regression where the callgraph's node-label lines (the "id[\"name\"]"
+// declarations after the edge list) were emitted by iterating a
+// map[string]string directly. Go randomizes map iteration order per run, so
+// the exact same graph could render its label lines in a different order on
+// every regeneration even though nothing about the call graph changed —
+// causing `gmb doc diff` (and real re-generation) to report a spurious
+// change, and generated docs to churn in git diffs for no reason. Node IDs
+// must be sorted before the labels are written, so this asserts the exact
+// expected byte-for-byte output rather than just calling it twice.
+func TestGenerateDiagram_Callgraph_NodeLabelsAreDeterministic(t *testing.T) {
+	graph := akg.NewCodePropertyGraph("c3")
+	entry := "b.go::Bravo"
+	callee1 := "a.go::Alpha"
+	callee2 := "c.go::Charlie"
+
+	for _, id := range []string{entry, callee1, callee2} {
+		graph.Nodes = graph.Nodes.Set(id, &link.ResolvedNode{ID: id, Name: id})
+	}
+	graph.OutboundEdges = graph.OutboundEdges.Set(entry, []link.ResolvedEdge{
+		{SourceID: entry, TargetID: callee1, Type: link.EdgeCalls},
+		{SourceID: entry, TargetID: callee2, Type: link.EdgeCalls},
+	})
+
+	ref := config.DiagramRef{Type: "callgraph", Entry: entry}
+
+	want := "```mermaid\ngraph TD\n" +
+		"  n_b_go__Bravo --> n_a_go__Alpha\n" +
+		"  n_b_go__Bravo --> n_c_go__Charlie\n" +
+		"  n_a_go__Alpha[\"Alpha\"]\n" +
+		"  n_b_go__Bravo[\"Bravo\"]\n" +
+		"  n_c_go__Charlie[\"Charlie\"]\n" +
+		"```"
+
+	for i := 0; i < 5; i++ {
+		diag, err := GenerateDiagram(ref, graph)
+		require.NoError(t, err)
+		assert.Equal(t, want, diag)
+	}
+}
+
 func TestGenerateDiagram_DependencyAndLayered(t *testing.T) {
 	graph := akg.NewCodePropertyGraph("c2")
 	graph.OutboundEdges = graph.OutboundEdges.Set("cmd/root.go::Main", []link.ResolvedEdge{

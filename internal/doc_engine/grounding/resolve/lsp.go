@@ -193,6 +193,22 @@ func lspTarget(fqn string, graph *akg.CodePropertyGraph) (fileRel, sym string) {
 // string/character literals are skipped — doc comments name the symbol
 // they document, so the raw first textual match is usually a comment.
 // Character offsets are LSP (UTF-16) units.
+// codeOccurrences returns candidate positions for sym as a BARE identifier
+// only — never the right-hand side of a selector expression like
+// "errors.New" or "c.New". A top-level func/type/var declaration in Go is
+// always syntactically bare (no preceding "."), so filtering out selector
+// occurrences is safe for lspDefinition's actual use (finding where a
+// symbol is DECLARED), and it matters: without it, a symbol named "New" in
+// a file that also imports and calls some OTHER package's "New" (e.g.
+// `errors.New(...)`) could have that unrelated call site's occurrence
+// tried FIRST (whichever comes first in the file). gopls resolves that
+// occurrence "successfully" — correctly, to the OTHER package's New — and
+// lspDefinition accepts the first successful response, so THIS symbol's
+// permalink ends up pointing at someone else's (possibly stdlib, possibly
+// on a different machine entirely) source file instead of its own
+// declaration. Confirmed against a real repo: a `cache.New` function
+// alongside `errors.New(...)` produced a permalink into the local Go
+// toolchain's stdlib source tree.
 func codeOccurrences(content, sym string, max int) [][2]int {
 	var out [][2]int
 	if sym == "" || max <= 0 {
@@ -209,7 +225,7 @@ func codeOccurrences(content, sym string, max int) [][2]int {
 				break
 			}
 			j += from
-			if !inSpans(skip, j, j+len(want)) && isIdentBoundaryRunes(line, j, j+len(want)) {
+			if !inSpans(skip, j, j+len(want)) && isIdentBoundaryRunes(line, j, j+len(want)) && !isSelectorRHS(line, j) {
 				out = append(out, [2]int{i, utf16Length(line[:j])})
 				if len(out) >= max {
 					return out
@@ -219,6 +235,15 @@ func codeOccurrences(content, sym string, max int) [][2]int {
 		}
 	}
 	return out
+}
+
+// isSelectorRHS reports whether the identifier starting at j is the
+// right-hand side of a selector expression ("x.Sym") — i.e. immediately
+// preceded by "." with no space, Go's only selector syntax. Such an
+// occurrence names some OTHER value's member, never a bare top-level
+// declaration or reference to the symbol being resolved.
+func isSelectorRHS(line []rune, j int) bool {
+	return j > 0 && line[j-1] == '.'
 }
 
 // maskSpans returns rune spans covering comments and string/character

@@ -488,8 +488,16 @@ func runAnalysis(cmd *cobra.Command, opts runAnalysisOptions) error {
 		opts.progress(5, "Committing graph", 0, 1)
 	}
 	// Baseline quality BEFORE the delta commits: the final report measures
-	// the merged graph, so the delta is this-run minus this baseline.
-	baseQ := akg.MeasureGraphQuality(tm.GetActiveGraph())
+	// the merged graph, so the delta is this-run minus this baseline. The
+	// graph itself is also kept (not just its quality metrics): it is the
+	// one pre-commit snapshot the doc engine's dossier can diff against to
+	// find symbols truly added/removed BY THIS COMMIT. ExecuteDeltaTransaction
+	// applies the delta to a cloned shadow snapshot and only then promotes
+	// it (see AllocateShadowSnapshot/PromoteShadowSnapshot), so this pointer
+	// stays a stable, unmutated snapshot of the pre-commit graph after the
+	// transaction commits below — safe to hand to runDocEngine as BaseGraph.
+	baseGraph := tm.GetActiveGraph()
+	baseQ := akg.MeasureGraphQuality(baseGraph)
 	doneCommit := product.StartSpan("akg-commit")
 	if err := tm.ExecuteDeltaTransaction(cpg, modifiedFiles); err != nil {
 		doneCommit()
@@ -571,7 +579,7 @@ func runAnalysis(cmd *cobra.Command, opts runAnalysisOptions) error {
 	// Documentation Intelligence Engine: update living markdown documents
 	// grounded in the AKG. Non-fatal by design.
 	if opts.runDocs {
-		runDocEngine(storageDir, tm, commitHash, verbose, opts.docsNoLLM)
+		runDocEngine(storageDir, tm, baseGraph, commitHash, verbose, opts.docsNoLLM)
 	}
 	// knowledge aging: freshness decay on every claim plus
 	// deterministic state transitions, persisted as replayable

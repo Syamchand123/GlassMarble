@@ -191,6 +191,55 @@ func main() {
 	}
 }
 
+// TestLSP_SkipsQualifiedSelectorOccurrence guards against a regression
+// confirmed against a real repo: resolving a package-level symbol named
+// "New" in a file that ALSO calls some OTHER package's "New" (e.g.
+// `errors.New(...)`) could return the OTHER package's definition instead of
+// the symbol's own declaration. codeOccurrences used to return every
+// identifier-boundary match of the bare text "New", including the
+// right-hand side of "errors.New" — a reference to a completely different
+// symbol. Since that occurrence appears earlier in the file than the real
+// `func New()` declaration, gopls resolved it "successfully" (correctly,
+// for THAT occurrence) and lspDefinition accepted the first successful
+// response, producing a permalink into the Go stdlib source tree instead
+// of the symbol's own file.
+func TestLSP_SkipsQualifiedSelectorOccurrence(t *testing.T) {
+	if _, err := exec.LookPath("gopls"); err != nil {
+		t.Skip("gopls not on PATH; LSP stage untestable here")
+	}
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/lsptest\n\ngo 1.23\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "cache.go"), []byte(`package cache
+
+import "errors"
+
+// ErrNotFound is returned when a key is absent.
+var ErrNotFound = errors.New("not found")
+
+// New creates an empty Cache.
+func New() *Cache {
+	return &Cache{}
+}
+
+// Cache is a placeholder type.
+type Cache struct{}
+`), 0o644))
+
+	out := ResolveBatch([]string{"cache.go::New"}, nil, root)
+	require.Contains(t, out, "cache.go::New")
+	got := out["cache.go::New"]
+	t.Logf("LSP resolution: %+v", got)
+	assert.Contains(t, []string{"lsp", "unresolved"}, got.Provenance)
+	if got.Provenance == "lsp" {
+		// Must resolve to New's OWN declaration (line 9 in the source
+		// above), never to the unrelated errors.New(...) call site on
+		// line 6 — which would (as observed against a real repo) resolve
+		// into the Go stdlib's errors package source instead.
+		assert.Equal(t, "cache.go", got.File)
+		assert.Equal(t, 9, got.Line)
+	}
+}
+
 func TestAvailableSources(t *testing.T) {
 	root := t.TempDir()
 

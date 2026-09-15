@@ -97,6 +97,46 @@ func TestCheckReferences_MissingFile(t *testing.T) {
 	}
 }
 
+// TestCheckReferences_RepoRootRelativePermalink guards against a regression
+// where every permalink doc_engine's own generator produces (grounding/
+// permalink.go — e.g. "pkg/auth/auth.go#L24") was reported "file not found"
+// whenever the referencing doc lived outside the repo root (the default
+// docs_dir: "docs" layout: a doc at docs/auth.md, a permalink relative to
+// repoRoot, resolved as repoRoot/docs/pkg/auth/auth.go instead of
+// repoRoot/pkg/auth/auth.go). This broke `gmb doc check` — the CI gate — on
+// every freshly generated, perfectly healthy repo using the default layout.
+func TestCheckReferences_RepoRootRelativePermalink(t *testing.T) {
+	root := writeRefRepo(t, map[string]string{
+		"docs/auth.md":     "x",
+		"pkg/auth/auth.go": "package auth\n\nfunc Login() {}\n",
+	})
+	md := "See [Login](pkg/auth/auth.go#L3) and bare pkg/auth/auth.go#L3.\n"
+	rep := CheckReferences(root, "docs/auth.md", md, nil, false)
+	if len(rep.Broken) != 0 {
+		t.Fatalf("repo-root-relative permalink falsely reported broken: %+v", rep.Broken)
+	}
+	if rep.CheckedLinks == 0 {
+		t.Error("expected CheckedLinks > 0")
+	}
+}
+
+// TestCheckReferences_DocRelativeStillWinsWhenBothExist guards the other
+// direction: when a file exists in BOTH candidate locations, the doc-
+// relative resolution (the prior, sole behavior for hand-written
+// cross-references) must still win, not the repo-root fallback.
+func TestCheckReferences_DocRelativeStillWinsWhenBothExist(t *testing.T) {
+	root := writeRefRepo(t, map[string]string{
+		"docs/guide.md": "x",
+		"docs/other.md": "# Other\nline2\n",
+		"other.md":      "# Different file entirely\n",
+	})
+	md := "See [other](other.md#L2).\n"
+	rep := CheckReferences(root, "docs/guide.md", md, nil, false)
+	if len(rep.Broken) != 0 {
+		t.Fatalf("expected doc-relative resolution to win (both files exist): %+v", rep.Broken)
+	}
+}
+
 func TestCheckReferences_BadAnchor(t *testing.T) {
 	root := writeRefRepo(t, map[string]string{
 		"docs/other.md": "# Other\n\n## Real Heading\n",

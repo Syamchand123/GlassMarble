@@ -19,10 +19,31 @@ type DocStatusData struct {
 
 // RenderDocStatus renders the interactive or static Lip Gloss status table for managed docs.
 func RenderDocStatus(d DocStatusData) string {
+	// Derived from the per-document Status column below, NOT from
+	// len(d.Warnings)/len(d.Failures): those slices also carry advisory,
+	// non-freshness content (diataxis compass suggestions, frontmatter/TOC
+	// lint, reference-completeness hints) that doc_engine.Check appends
+	// for documents that are otherwise 100% fresh. Keying the banner off
+	// their raw counts made every managed doc's routine style advice flip
+	// this headline to "DRIFTING" even while every row underneath read
+	// "100% FRESH" — a direct, visible contradiction. Scanning Documents
+	// keeps the banner consistent with what the table actually shows.
 	badge := tui.BadgeOK.Render("  ● FRESH  ")
-	if len(d.Failures) > 0 {
+	worst := "fresh"
+	for _, doc := range d.Documents {
+		switch doc.Status {
+		case "stale", "missing":
+			worst = "stale"
+		case "warn":
+			if worst == "fresh" {
+				worst = "warn"
+			}
+		}
+	}
+	switch worst {
+	case "stale":
 		badge = tui.BadgeError.Render("  ✗ DRIFTED  ")
-	} else if len(d.Warnings) > 0 {
+	case "warn":
 		badge = tui.BadgeWarn.Render("  ⚠ DRIFTING  ")
 	}
 

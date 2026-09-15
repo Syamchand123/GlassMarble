@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/Syamchand123/GlassMarble/internal/akg"
 	doc_engine "github.com/Syamchand123/GlassMarble/internal/doc_engine"
 	docconfig "github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/grounding/langmatrix"
@@ -29,6 +30,46 @@ import (
 // direct os.Exit call) so the Section 11 exit-code contract is unit
 // testable: internal tests stub it to capture the code instead of exiting.
 var docExit = os.Exit
+
+// loadPersistedAKGGraph loads the Architecture Knowledge Graph `gmb analyze`
+// last persisted to <absDir>/.glassmarble/akg.json.
+//
+// Every `gmb doc*` subcommand (generate, check, diff, status) runs
+// standalone — unlike the in-process analyze pipeline (cmd/doc_pipeline.go's
+// runDocEngine), which already hands doc_engine its live in-memory graph
+// straight after building it. Without this, doc_engine.RunOptions.HeadGraph
+// / CheckOptions.HeadGraph stays nil on every standalone invocation, and the
+// deterministic renderer falls back to ungrounded archetype boilerplate for
+// every section (no real symbol tables, error catalogs, or call graphs) —
+// silently, with no warning — even on a repo that has already been
+// analyzed. This is the single most common way `gmb doc` is actually run
+// (scaffold a doc, then `gmb doc`), so grounding it in the persisted graph
+// when one exists is essential to the feature doing what it's for.
+//
+// Returns (nil, false) when no analysis has ever been run or the persisted
+// graph is empty — callers should warn, not fail: doc_engine degrades safely
+// without a graph (Check's assert evaluation falls back to a same-repo AST
+// scan; generation falls back to archetype-only prose), it just does so with
+// materially lower quality, which the caller should surface to the user.
+func loadPersistedAKGGraph(absDir string) (*akg.CodePropertyGraph, bool) {
+	storageDir := filepath.Join(absDir, ".glassmarble")
+	tm, err := akg.NewAKGTransactionManager(storageDir)
+	if err != nil || tm == nil {
+		return nil, false
+	}
+	graph := tm.GetActiveGraph()
+	if graph == nil || graph.Nodes == nil || graph.Nodes.Len() == 0 {
+		return nil, false
+	}
+	return graph, true
+}
+
+// warnNoAKGGraph prints the standard "run gmb analyze first" advisory. Never
+// fatal — every doc_engine entry point already degrades gracefully without a
+// graph; this only makes that degradation visible instead of silent.
+func warnNoAKGGraph(cmd *cobra.Command) {
+	docWarnf(cmd, "doc: warning: no AKG graph found (run 'gmb analyze' first for fully grounded documentation); continuing with reduced grounding\n")
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // gmb doc — root command
@@ -113,6 +154,11 @@ func runDocUpdate(cmd *cobra.Command, args []string) error {
 		BranchPolicy: branchPolicy,
 		ForceWrite:   forceWrite,
 		Out:          cmd.ErrOrStderr(),
+	}
+	if graph, ok := loadPersistedAKGGraph(absDir); ok {
+		opts.HeadGraph = graph
+	} else {
+		warnNoAKGGraph(cmd)
 	}
 
 	result := doc_engine.Run(absDir, opts)
@@ -246,12 +292,15 @@ var docInitCmd = &cobra.Command{
 	Long: `Scaffolds a new living document and adds its specification to
 .glassmarble/docs.yaml.
 
-Runs an interactive 5-step questionnaire to configure:
-  1. Scope (code paths and entry points)
-  2. Audience (shapes LLM tone and depth)
-  3. Archetype (built-in section template)
-  4. Living diagrams (auto-detected entry points)
-  5. Section boundaries (managed vs. human-only)`,
+Runs an interactive questionnaire (Title, Purpose, Audience, Archetype,
+Scope, Entry Points) unless --scope is given, which switches to
+non-interactive mode and requires every other field as a flag.
+
+Entry points seed call-graph/sequence diagrams and are NOT auto-detected:
+an archetype whose sections include a callgraph or sequence diagram (most
+of them do) renders that diagram as an empty placeholder until at least
+one entry point is set, here or later by hand-editing docs.yaml's
+entry_points key for the document.`,
 	Example: `  # Scaffold a new module reference
   gmb doc init docs/auth.md
 
@@ -259,7 +308,11 @@ Runs an interactive 5-step questionnaire to configure:
   gmb doc init docs/runbook.md --archetype runbook
 
   # Scaffold with a pre-set scope (non-interactive)
-  gmb doc init docs/storage.md --scope "internal/storage/**" --archetype module`,
+  gmb doc init docs/storage.md --scope "internal/storage/**" --archetype module
+
+  # Non-interactive with an entry point so call-graph diagrams populate
+  gmb doc init docs/auth.md --scope "internal/auth/**" --archetype module \
+    --entry-points "internal/auth/service.go::Authenticate"`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		targetDir := resolveDir(cmd)
@@ -270,6 +323,7 @@ Runs an interactive 5-step questionnaire to configure:
 
 		archetype, _ := cmd.Flags().GetString("archetype")
 		scope, _ := cmd.Flags().GetStringArray("scope")
+		entryPoints, _ := cmd.Flags().GetStringArray("entry-points")
 		title, _ := cmd.Flags().GetString("title")
 		purpose, _ := cmd.Flags().GetString("purpose")
 		audience, _ := cmd.Flags().GetString("audience")
@@ -279,6 +333,7 @@ Runs an interactive 5-step questionnaire to configure:
 			TargetPath:  args[0],
 			Archetype:   archetype,
 			ScopePaths:  scope,
+			EntryPoints: entryPoints,
 			Title:       title,
 			Purpose:     purpose,
 			Audience:    audience,
@@ -336,6 +391,12 @@ Exit codes (plan Section 11):
 			DocID:   docID,
 			Tag:     tag,
 			Out:     cmd.OutOrStdout(),
+		}
+		// Check() already logs its own "assert evaluation uses repo symbol
+		// scan (no AKG graph)" notice when Verbose and HeadGraph is nil, so
+		// no separate warning is added here — just wire the graph itself.
+		if graph, ok := loadPersistedAKGGraph(absDir); ok {
+			opts.HeadGraph = graph
 		}
 
 		// --fix runs BEFORE the audit so Check evaluates fixed files.
@@ -567,10 +628,16 @@ Exit codes:
 			return nil
 		}
 
-		diffRes, err := doc_engine.Diff(absDir, doc_engine.RunOptions{
+		diffOpts := doc_engine.RunOptions{
 			DocID: docID,
 			Tag:   tag,
-		})
+		}
+		if graph, ok := loadPersistedAKGGraph(absDir); ok {
+			diffOpts.HeadGraph = graph
+		} else {
+			warnNoAKGGraph(cmd)
+		}
+		diffRes, err := doc_engine.Diff(absDir, diffOpts)
 		if err != nil {
 			return err
 		}
@@ -630,13 +697,17 @@ Freshness colour coding:
 		docID, _ := cmd.Flags().GetString("doc")
 		tag, _ := cmd.Flags().GetString("tag")
 
-		result, err := doc_engine.Check(absDir, doc_engine.CheckOptions{
+		statusOpts := doc_engine.CheckOptions{
 			Verbose: true,
 			JSON:    asJSON,
 			DocID:   docID,
 			Tag:     tag,
 			Out:     cmd.OutOrStdout(),
-		})
+		}
+		if graph, ok := loadPersistedAKGGraph(absDir); ok {
+			statusOpts.HeadGraph = graph
+		}
+		result, err := doc_engine.Check(absDir, statusOpts)
 		if err != nil {
 			return err
 		}
@@ -1213,6 +1284,7 @@ func init() {
 	// ── gmb doc init flags ────────────────────────────────────────────────
 	docInitCmd.Flags().String("archetype", "", "Built-in document template: architecture|module|runbook|onboarding|migration|adr|api|security|database|config")
 	docInitCmd.Flags().StringArray("scope", nil, "Glob patterns for this document's scope (e.g. 'internal/auth/**')")
+	docInitCmd.Flags().StringArray("entry-points", nil, "FQNs seeding call-graph/sequence diagrams (e.g. 'internal/auth/service.go::Authenticate'); without at least one, this archetype's diagrams stay empty")
 	docInitCmd.Flags().String("title", "", "Document title")
 	docInitCmd.Flags().String("purpose", "", "One-sentence description of what the document is for")
 	docInitCmd.Flags().String("audience", "", "Intended reader (e.g. 'On-call SRE engineers')")

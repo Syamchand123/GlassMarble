@@ -64,12 +64,14 @@ func Diff(repoRoot string, opts RunOptions) (DiffResult, error) {
 
 	ctx := context.Background()
 
-	for _, doc := range docs {
+	for i := range docs {
+		doc := &docs[i]
 		absTarget := filepath.Join(repoRoot, doc.TargetPath)
 		rawBytes, _ := os.ReadFile(absTarget)
 		parsedDoc := patcher.ParseMarkdown(string(rawBytes))
 
-		for _, sec := range doc.Sections {
+		for j := range doc.Sections {
+			sec := &doc.Sections[j]
 			if !sec.Managed || sec.Freeze {
 				continue
 			}
@@ -80,13 +82,20 @@ func Diff(repoRoot string, opts RunOptions) (DiffResult, error) {
 				priorBody = patcher.ExtractBody(zone)
 			}
 
-			// Generate candidate
-			fs := &docconfig.FactSheet{
-				DocID:                doc.ID,
-				SectionID:            sec.ID,
-				SectionInstruction:   sec.Instruction,
-				PriorSectionMarkdown: priorBody,
-				GroundTruth:          docconfig.GroundTruthPayload{},
+			// Generate candidate. Must be grounded the same way the real
+			// render pipeline (renderer/engine.go via
+			// grounding.AssembleFactSheet) grounds it — a bare FactSheet
+			// with an empty GroundTruthPayload used to be built here
+			// instead, so the deterministic renderer had no symbols,
+			// diagrams, or sentinels to work with at all. The resulting
+			// candidate was drastically different from the real prior
+			// content (which DOES have all of that) regardless of whether
+			// anything had actually changed, so hasChange was true for
+			// every populated section, always — `gmb doc diff` could never
+			// report "up to date."
+			fs := grounding.AssembleFactSheet(doc, sec, opts.HeadGraph, nil, priorBody, repoRoot)
+			if fs == nil {
+				continue
 			}
 
 			outcome, rErr := orch.RenderSection(ctx, fs, opts.HeadGraph)
@@ -94,7 +103,21 @@ func Diff(repoRoot string, opts RunOptions) (DiffResult, error) {
 				continue
 			}
 
-			hasChange := strings.TrimSpace(priorBody) != strings.TrimSpace(outcome.Content)
+			// Diff() has no commit/dossier context (opts.CommitHash and a
+			// prior-commit BaseGraph aren't available to a standalone
+			// preview), so AssembleFactSheet above is called with a nil
+			// dossier and the candidate can never contain a "### Recent
+			// Symbol Changes" block (renderer/deterministic.go only emits
+			// it when FactSheet.GroundTruth carries Added/Modified/Removed
+			// symbols, which only a real dossier populates). Real
+			// commit-triggered regeneration (cmd/analyze.go's runDocEngine)
+			// DOES have that context and can legitimately bake such a block
+			// into the prior on-disk content. Comparing that prior content
+			// as-is against a candidate that structurally omits the block
+			// would report a change every time, forever, on any section
+			// that has ever shown a symbol delta — so both sides are
+			// compared with that block stripped.
+			hasChange := strings.TrimSpace(stripRecentSymbolChanges(priorBody)) != strings.TrimSpace(stripRecentSymbolChanges(outcome.Content))
 			diffPreview := ""
 			if hasChange {
 				diffPreview = fmt.Sprintf("@@ section: %s @@\n- %s\n+ %s",
@@ -248,6 +271,19 @@ func ApplySnippetFixes(markdown string, errs []devex.SnippetError) string {
 // section) from its actual headings. No-op without a TOC marker.
 func RegenerateTOC(markdown string) string {
 	return verifier.RegenerateTOC(markdown)
+}
+
+// stripRecentSymbolChanges removes a trailing "### Recent Symbol Changes"
+// block (see renderer/deterministic.go section 9) from a rendered section
+// body. That block is commit/dossier-derived and always the last thing
+// written, so cutting the string at its heading and trimming trailing
+// newlines removes it in full.
+func stripRecentSymbolChanges(body string) string {
+	idx := strings.Index(body, "### Recent Symbol Changes")
+	if idx < 0 {
+		return body
+	}
+	return strings.TrimRight(body[:idx], "\n")
 }
 
 func truncateLine(s string, maxLen int) string {

@@ -95,9 +95,18 @@ func generateCallgraph(entry string, graph *akg.CodePropertyGraph) string {
 		sb.WriteString(fmt.Sprintf("  %s --> %s\n", fromID, toID))
 	}
 
-	// Define node labels
-	for id, label := range nodeNames {
-		sb.WriteString(fmt.Sprintf("  %s[\"%s\"]\n", id, label))
+	// Define node labels. nodeNames is a map — Go's iteration order is
+	// randomized per run, so sort IDs first; otherwise this callgraph's
+	// label lines would shuffle on every regeneration of the exact same
+	// graph, making `gmb doc diff` (and real re-runs) report a spurious
+	// change for a document whose call graph never actually changed.
+	nodeIDs := make([]string, 0, len(nodeNames))
+	for id := range nodeNames {
+		nodeIDs = append(nodeIDs, id)
+	}
+	sort.Strings(nodeIDs)
+	for _, id := range nodeIDs {
+		sb.WriteString(fmt.Sprintf("  %s[\"%s\"]\n", id, nodeNames[id]))
 	}
 
 	sb.WriteString("```")

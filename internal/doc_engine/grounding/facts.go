@@ -62,7 +62,7 @@ func AssembleFactSheet(
 		return nil
 	}
 
-	collector := NewCollector(graph)
+	collector := NewCollector(graph).WithRepoRoot(repoRoot)
 	// Best-effort: unknown ground_with values surface as a collection error
 	// for direct callers; the render pipeline proceeds with partial facts.
 	payload, _ := collector.CollectSectionFacts(sec, &doc.Scope)
@@ -107,20 +107,30 @@ func AssembleFactSheet(
 		}
 	}
 
-	// Callers: inbound CPG call edges into added/modified symbols AND every
-	// other payload symbol (B3: union of inbound CALLS sources over ALL
-	// payload symbols — added, modified, in-scope, and full-owned — deduped,
-	// sorted, and capped at maxPayloadCallers for prompt-budget safety).
-	// CallFlow: entry points followed by their outbound callee chain.
+	// Callers: inbound CPG call edges into every payload symbol (B3: union
+	// of inbound CALLS sources over in-scope and full-owned symbols,
+	// deduped, sorted, and capped at maxPayloadCallers for prompt-budget
+	// safety). CallFlow: entry points followed by their outbound callee
+	// chain.
+	//
+	// Deliberately built ONLY from Symbols/AllSymbols (the section's stable
+	// steady-state facts), never from the dossier's AddedSymbols/
+	// ModifiedSymbols. Those are the current graph's full node set diffed
+	// against whatever base graph happened to be available for THIS
+	// commit — on a genesis run (no base graph yet) that is literally
+	// every symbol in the repo, most of them outside this section's
+	// scope/ground_with focus entirely. Seeding the caller search from them
+	// let unrelated, unexported helpers (e.g. a private helper with no
+	// error/interface relevance) leak into "Direct Callers" on whichever
+	// commit happened to touch them, then silently drop back out on the
+	// next commit once they were no longer "added" — the same section,
+	// regenerated from an unchanged symbol, showing a different caller list
+	// depending on incidental per-commit dossier contents. Restricting the
+	// seed to Symbols/AllSymbols makes Callers a pure function of the
+	// current graph and this section's scope, stable across regenerations.
 	if graph != nil {
 		seenCallers := make(map[string]bool)
 		fqnSet := make(map[string]bool)
-		for _, s := range payload.AddedSymbols {
-			fqnSet[s.FQN] = true
-		}
-		for _, m := range payload.ModifiedSymbols {
-			fqnSet[m.FQN] = true
-		}
 		for _, s := range payload.Symbols {
 			fqnSet[s.FQN] = true
 		}
@@ -184,6 +194,20 @@ func AssembleFactSheet(
 
 	// Render diagrams specified for this document
 	for _, diagRef := range doc.Diagrams {
+		// callgraph/sequence diagrams need a root entry point; the
+		// archetype-configured DiagramRef (docs.yaml's diagrams: list)
+		// never carries one on its own — only the doc's Scope.EntryPoints
+		// does. Without this, EVERY document's default diagrams: list
+		// rendered "No call graph edges detected" even when EntryPoints
+		// was set, because GenerateDiagram received an empty ref.Entry
+		// regardless. (A separate, opt-in inline `gmb:diagram` directive
+		// path in renderer/engine.go already does this same auto-fill —
+		// this mirrors it for the default, doc-config-driven diagram list
+		// every archetype actually uses.)
+		if (strings.EqualFold(diagRef.Type, "callgraph") || strings.EqualFold(diagRef.Type, "sequence")) &&
+			diagRef.Entry == "" && len(doc.Scope.EntryPoints) > 0 {
+			diagRef.Entry = doc.Scope.EntryPoints[0]
+		}
 		rendered, err := GenerateDiagram(diagRef, graph)
 		if err == nil && rendered != "" {
 			payload.Diagrams = append(payload.Diagrams, config.DiagramFact{

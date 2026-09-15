@@ -5,10 +5,18 @@
 //
 // Policy summary:
 //   - Internal links [t](rel.md[#anchor]) and [t](#anchor): the target file
-//     must exist (resolved as repoRoot + docDir + rel, cleaned; a leading "/"
-//     is repo-root-relative). When the file exists, a #slug anchor must match
-//     a heading slug in the target; a missing file reports "file not found"
-//     and skips anchor verification. A bad anchor reports "anchor not found".
+//     must exist. A leading "/" is repo-root-relative. Otherwise two
+//     candidates are tried, in order: repoRoot + docDir + rel (standard
+//     markdown/GitHub semantics for a hand-written cross-reference between
+//     docs) and repoRoot + rel (the convention doc_engine's own permalink
+//     generator, grounding/permalink.go, actually uses — a source-file
+//     permalink like "pkg/auth/auth.go#L24" is repo-root-relative so the
+//     same link is portable regardless of which directory the doc lives
+//     in). Whichever candidate exists on disk wins; when NEITHER exists, the
+//     doc-relative path is reported as "file not found". When the file
+//     exists, a #slug anchor must match a heading slug in the target; a
+//     missing file reports "file not found" and skips anchor verification.
+//     A bad anchor reports "anchor not found".
 //   - Permalinks [t](file#L12[-L30]) and bare path#Lx occurrences: the file
 //     must exist, 1 <= start <= linecount, and end >= start.
 //   - Backticked symbols in link text ([`Sym`](...)) are verified with
@@ -910,13 +918,34 @@ func resolveRefFile(repoRoot, docPath, rel string) string {
 	if strings.HasPrefix(rel, string(filepath.Separator)) {
 		return filepath.Join(repoRoot, strings.TrimLeft(rel, string(filepath.Separator)))
 	}
-	var base string
+
+	var docRelative string
 	if filepath.IsAbs(docPath) {
-		base = filepath.Dir(docPath)
+		docRelative = filepath.Join(filepath.Dir(docPath), rel)
 	} else {
-		base = filepath.Join(repoRoot, filepath.Dir(docPath))
+		docRelative = filepath.Join(repoRoot, filepath.Dir(docPath), rel)
 	}
-	return filepath.Join(base, rel)
+	if _, err := os.Stat(docRelative); err == nil {
+		return docRelative
+	}
+
+	// doc_engine's own generated permalinks (grounding/permalink.go) are
+	// repo-root-relative, not relative to the referencing doc's directory —
+	// e.g. a doc at docs/auth.md linking to "pkg/auth/auth.go#L24" means
+	// repoRoot/pkg/auth/auth.go, not repoRoot/docs/pkg/auth/auth.go. Without
+	// this fallback, every auto-generated permalink to a source file is
+	// reported "file not found" whenever the doc lives outside repoRoot
+	// (the default docs_dir: "docs" layout), which would fail `gmb doc
+	// check` — the CI gate — on a perfectly healthy, freshly generated repo.
+	if repoRootRelative := filepath.Join(repoRoot, rel); repoRootRelative != docRelative {
+		if _, err := os.Stat(repoRootRelative); err == nil {
+			return repoRootRelative
+		}
+	}
+
+	// Neither candidate exists: report the doc-relative form (matches the
+	// path prior behavior would have named as missing).
+	return docRelative
 }
 
 // checkLineRange validates a permalink's start/end line numbers against a

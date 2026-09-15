@@ -128,3 +128,76 @@ func TestAssembleFactSheet_CallersUnionCapped(t *testing.T) {
 		seen[c] = true
 	}
 }
+
+// TestAssembleFactSheet_CallersExcludeDossierOnlySymbols guards against a
+// regression where the Callers union was seeded from dossier.AddedSymbols/
+// ModifiedSymbols in addition to the section's own Symbols/AllSymbols. On a
+// genesis run (no base graph yet) or any run where a symbol happened to
+// be touched, the dossier's Added/Modified set is effectively "every node
+// in the graph" or an incidental grab-bag unrelated to this section's
+// scope/ground_with focus — so a caller into a symbol that is ONLY in the
+// dossier (never in this section's own Symbols/AllSymbols) must not leak
+// into the rendered "Direct Callers" list, or the same unchanged section
+// would show a different caller list on every regeneration depending on
+// what else happened to be in that commit's dossier.
+func TestAssembleFactSheet_CallersExcludeDossierOnlySymbols(t *testing.T) {
+	graph := buildTestGraph()
+	// DossierOnlyHelper is in-scope (matches factTestDoc's "internal/auth/**")
+	// so it survives the dossier's own scope filter, but it is never added
+	// as a graph node, so no collector ever puts it in Symbols/AllSymbols —
+	// the only way it reaches the payload at all is via dossier.AddedSymbols.
+	// Sneaky is its only caller.
+	dossierOnlyFQN := "internal/auth/other.go::DossierOnlyHelper"
+	addEdgeBoth(graph, "internal/auth/other.go::Sneaky", dossierOnlyFQN, link.EdgeCalls)
+
+	dossier := &config.GlobalCommitDossier{
+		AddedSymbols: []config.SymbolFact{{FQN: dossierOnlyFQN, File: "internal/auth/other.go"}},
+	}
+
+	sheet := AssembleFactSheet(factTestDoc(), factTestSection(), graph, dossier, "", "")
+	require.NotNil(t, sheet)
+	assert.NotContains(t, sheet.GroundTruth.Callers, "internal/auth/other.go::Sneaky")
+}
+
+// TestAssembleFactSheet_DiagramEntryAutoFilledFromScope guards against a
+// regression where a document's default diagrams: list (docs.yaml's
+// DocSpec.Diagrams — what every archetype actually configures, and the
+// ONLY diagram mechanism `gmb doc init` produces) never got an Entry
+// auto-filled from Scope.EntryPoints, so a callgraph/sequence diagram
+// rendered "No call graph edges detected" even when EntryPoints was
+// correctly set. A separate, opt-in inline `gmb:diagram` directive path
+// (renderer/engine.go) already did this auto-fill; facts.go's main
+// diagram-rendering loop — used for every default archetype — did not.
+func TestAssembleFactSheet_DiagramEntryAutoFilledFromScope(t *testing.T) {
+	graph := buildTestGraph()
+
+	doc := &config.DocSpec{
+		ID:         "auth-spec",
+		TargetPath: "docs/auth.md",
+		Scope: config.ScopeRule{
+			Paths:       []string{"internal/auth/**"},
+			EntryPoints: []string{"internal/auth/jwt.go::ValidateToken"},
+		},
+		// Exactly what ApplyArchetype/docs.yaml produces: no Entry set on
+		// the DiagramRef itself, unlike TestAssembleFactSheet_EndToEnd's
+		// fixture above (which sets Entry directly and so never exercised
+		// the auto-fill path this test targets).
+		Diagrams: []config.DiagramRef{
+			{Type: "callgraph"},
+		},
+	}
+	sec := &config.SectionSpec{
+		ID:         "interface",
+		Title:      "Interface",
+		GroundWith: []string{"signatures"},
+		Managed:    true,
+	}
+
+	sheet := AssembleFactSheet(doc, sec, graph, &config.GlobalCommitDossier{}, "", "")
+	require.NotNil(t, sheet)
+	require.Len(t, sheet.GroundTruth.Diagrams, 1)
+	content := sheet.GroundTruth.Diagrams[0].Content
+	assert.NotContains(t, content, "No call graph edges detected",
+		"callgraph diagram must use Scope.EntryPoints[0] when the DiagramRef has no Entry of its own:\n%s", content)
+	assert.Contains(t, content, "parseRaw", "expected the ValidateToken -> parseRaw call edge in the diagram:\n%s", content)
+}

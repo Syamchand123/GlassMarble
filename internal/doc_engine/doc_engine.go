@@ -218,6 +218,14 @@ type InitOptions struct {
 	// ScopePaths are the glob patterns the document will track.
 	ScopePaths []string
 
+	// EntryPoints are FQNs ("path/to/file.go::Symbol") that seed call-graph
+	// and sequence diagrams and PageRank-based context selection. Without
+	// at least one, every callgraph/sequence diagram configured by the
+	// chosen archetype renders as an empty "No call graph edges detected"
+	// placeholder forever — there is no other way to set this after
+	// scaffolding except hand-editing docs.yaml's entry_points key.
+	EntryPoints []string
+
 	// Title is the document title.
 	Title string
 
@@ -787,6 +795,15 @@ func Check(repoRoot string, opts CheckOptions) (CheckResult, error) {
 			if content, readErr := os.ReadFile(absPath); readErr == nil {
 				for _, msg := range patcher.EvaluateAsserts(string(content), assertSymbolExists) {
 					result.AllFresh = false
+					// A failed gmb:assert is a real per-document correctness
+					// problem, not merely a freshness-score dip — without
+					// this, docResult.Status (the dashboard's per-row
+					// STATUS column) would stay whatever the freshness
+					// check above set it to, e.g. "fresh", while this exact
+					// document also lands in result.Failures. `gmb doc
+					// status` would then show a 100% FRESH row for a
+					// document that just failed CI.
+					docResult.Status = "stale"
 					result.Failures = append(result.Failures,
 						fmt.Sprintf("%s: %s", doc.TargetPath, msg))
 				}
@@ -800,6 +817,7 @@ func Check(repoRoot string, opts CheckOptions) (CheckResult, error) {
 				refRep := verifier.CheckReferences(repoRoot, doc.TargetPath, string(content), assertSymbolExists, false)
 				for _, br := range refRep.Broken {
 					result.AllFresh = false
+					docResult.Status = "stale" // see gmb:assert comment above
 					result.Failures = append(result.Failures,
 						fmt.Sprintf("%s: broken reference (line %d): %s — %s", doc.TargetPath, br.Line, br.Target, br.Reason))
 				}

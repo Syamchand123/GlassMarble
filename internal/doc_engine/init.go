@@ -47,6 +47,7 @@ func Init(repoRoot string, opts InitOptions) error {
 	audience := opts.Audience
 	archetype := opts.Archetype
 	scopePaths := opts.ScopePaths
+	entryPoints := opts.EntryPoints
 
 	// Auto-detect candidate scope from target path
 	detectedCandidate := detectScopeCandidate(targetPath)
@@ -56,6 +57,7 @@ func Init(repoRoot string, opts InitOptions) error {
 
 	if opts.Interactive {
 		scopeInput := strings.Join(scopePaths, ", ")
+		entryPointsInput := strings.Join(entryPoints, ", ")
 		if archetype == "" {
 			archetype = "module"
 		}
@@ -100,6 +102,9 @@ func Init(repoRoot string, opts InitOptions) error {
 				huh.NewInput().
 					Title("Code Scope Paths (comma-separated globs)").
 					Value(&scopeInput),
+				huh.NewInput().
+					Title("Entry Points for call-graph/sequence diagrams (comma-separated FQNs, e.g. \"path/to/file.go::Symbol\" — optional, leave blank to skip diagrams)").
+					Value(&entryPointsInput),
 			),
 		).WithTheme(theme)
 
@@ -113,6 +118,13 @@ func Init(repoRoot string, opts InitOptions) error {
 			p = strings.TrimSpace(p)
 			if p != "" {
 				scopePaths = append(scopePaths, p)
+			}
+		}
+		entryPoints = nil
+		for _, e := range strings.Split(entryPointsInput, ",") {
+			e = strings.TrimSpace(e)
+			if e != "" {
+				entryPoints = append(entryPoints, e)
 			}
 		}
 	}
@@ -136,7 +148,8 @@ func Init(repoRoot string, opts InitOptions) error {
 		Archetype:  archetype,
 		Mode:       config.ModeManagedSections,
 		Scope: config.ScopeRule{
-			Paths: scopePaths,
+			Paths:       scopePaths,
+			EntryPoints: entryPoints,
 		},
 	}
 

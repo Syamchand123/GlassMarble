@@ -288,8 +288,23 @@ type FactSheet struct {
 	// DocAudience is the DocSpec.Audience field; shapes LLM tone.
 	DocAudience string `json:"doc_audience"`
 
-	// SectionInstruction is the SectionSpec.Instruction field.
+	// SectionInstruction is the SectionSpec.Instruction field, exactly as
+	// authored in docs.yaml. Track B (deterministic.go) renders this
+	// verbatim as the section's visible blockquote header, so it must stay
+	// free of anything not meant for a reader — see PromptGuidance below.
 	SectionInstruction string `json:"section_instruction"`
+
+	// PromptGuidance carries LLM-only steering text — currently the D2
+	// Diátaxis quadrant guidance (renderer/engine.go) — that must reach
+	// Track A's prompt but must NEVER appear in a reader-facing document.
+	// Kept separate from SectionInstruction specifically so Track B, which
+	// renders SectionInstruction verbatim, can't leak it: appending it to
+	// SectionInstruction directly used to make every section whose
+	// archetype has a Diátaxis quadrant show a paragraph of internal
+	// prose-style instructions ("Documentation quadrant (reference):
+	// Reference documentation must be dry and complete...") as if it were
+	// real section content, in EVERY section of EVERY such document.
+	PromptGuidance string `json:"prompt_guidance,omitempty"`
 
 	// MaxWords caps LLM output length for this section (from SectionSpec.MaxWords).
 	// 0 means no limit.

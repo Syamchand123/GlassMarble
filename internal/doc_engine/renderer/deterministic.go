@@ -43,10 +43,12 @@ func (r *DeterministicRenderer) RenderSection(fs *config.FactSheet) (string, err
 	}
 
 	// 1. Living Diagrams (Mermaid / PlantUML)
-	if fs.GroundTruth.DiagramMermaid != "" {
-		diag := unwrapDiagramFences(fs.GroundTruth.DiagramMermaid)
-		sb.WriteString("```mermaid\n" + diag + "\n```\n\n")
-	}
+	//
+	// GroundTruth.DiagramMermaid is deliberately NOT rendered here: it is
+	// always a copy of Diagrams[0].Content (see facts.go's "section-level
+	// diagram pointer... injected verbatim by the LLM actuator" — a Track-A
+	// prompt convenience, not a second diagram). Rendering both meant every
+	// section with 1+ configured diagrams showed its first diagram twice.
 	for _, diagFact := range fs.GroundTruth.Diagrams {
 		if strings.TrimSpace(diagFact.Content) != "" {
 			diag := unwrapDiagramFences(diagFact.Content)

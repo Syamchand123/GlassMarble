@@ -86,6 +86,42 @@ func TestInit_NonInteractive_NewFile(t *testing.T) {
 	}
 }
 
+// TestInit_NonInteractive_EntryPointsWired guards against a regression
+// where `gmb doc init` had NO way, interactive or not, to ever set
+// Scope.EntryPoints — every document it scaffolded permanently rendered
+// its archetype's callgraph/sequence diagrams as an empty "No call graph
+// edges detected" placeholder, since nothing else populates entry_points
+// short of hand-editing docs.yaml afterward.
+func TestInit_NonInteractive_EntryPointsWired(t *testing.T) {
+	tempDir := t.TempDir()
+
+	opts := InitOptions{
+		TargetPath:  "docs/auth.md",
+		Archetype:   "module",
+		ScopePaths:  []string{"internal/auth/**"},
+		EntryPoints: []string{"internal/auth/service.go::Authenticate"},
+		Title:       "Auth",
+		Interactive: false,
+		Out:         os.Stdout,
+	}
+
+	if err := Init(tempDir, opts); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	cfg, err := config.LoadDocsConfig(tempDir)
+	if err != nil {
+		t.Fatalf("failed to load generated docs.yaml: %v", err)
+	}
+	if len(cfg.Documents) != 1 {
+		t.Fatalf("expected 1 document in docs.yaml, got %d", len(cfg.Documents))
+	}
+	got := cfg.Documents[0].Scope.EntryPoints
+	if len(got) != 1 || got[0] != "internal/auth/service.go::Authenticate" {
+		t.Errorf("EntryPoints = %v, want [\"internal/auth/service.go::Authenticate\"]", got)
+	}
+}
+
 func TestInit_ExistingFile_PreservesHumanContent(t *testing.T) {
 	tempDir := t.TempDir()
 

@@ -1,6 +1,7 @@
 package doc_engine
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -12,7 +13,9 @@ import (
 
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/archfeatures"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/grounding"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/ledger"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/renderer"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/storage"
 )
 
@@ -73,6 +76,112 @@ func TestOperations_Diff(t *testing.T) {
 	// Should execute without panic and report section diffs
 	if len(diffRes.Sections) == 0 {
 		t.Logf("No sections dirty or detected")
+	}
+}
+
+// TestOperations_Diff_NoSpuriousChangeWhenContentMatchesRealRender guards
+// against the regression where Diff() built an empty GroundTruthPayload
+// instead of calling grounding.AssembleFactSheet: with no symbols,
+// diagrams, or sentinels to work with, the freshly rendered candidate was
+// drastically different from real prior content no matter what, so
+// hasChange was true for every populated section, always — `gmb doc diff`
+// could never report "up to date." This seeds the doc's on-disk content
+// with the actual output of a real grounded render, then asserts Diff
+// reports it unchanged.
+func TestOperations_Diff_NoSpuriousChangeWhenContentMatchesRealRender(t *testing.T) {
+	tempDir := setupTestRepoWithDoc(t)
+
+	cfg, err := config.LoadDocsConfig(tempDir)
+	if err != nil {
+		t.Fatalf("LoadDocsConfig: %v", err)
+	}
+	doc := &cfg.Documents[0]
+	sec := &doc.Sections[0]
+
+	fs := grounding.AssembleFactSheet(doc, sec, nil, nil, "", tempDir)
+	if fs == nil {
+		t.Fatal("AssembleFactSheet returned nil")
+	}
+	orch := renderer.NewOrchestrator(renderer.OrchestratorOptions{NoLLM: true})
+	outcome, err := orch.RenderSection(context.Background(), fs, nil)
+	if err != nil {
+		t.Fatalf("RenderSection: %v", err)
+	}
+
+	targetFull := filepath.Join(tempDir, doc.TargetPath)
+	mdContent := fmt.Sprintf("# Test Documentation\n\n<!-- gmb:begin:overview -->\n%s\n<!-- gmb:end:overview -->\n", outcome.Content)
+	if err := os.WriteFile(targetFull, []byte(mdContent), 0644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	diffRes, err := Diff(tempDir, RunOptions{})
+	if err != nil {
+		t.Fatalf("Diff returned error: %v", err)
+	}
+	for _, s := range diffRes.Sections {
+		if s.SectionID == "overview" && s.HasChange {
+			t.Errorf("expected no change for section already matching real render, got diff:\n%s", s.DiffPreview)
+		}
+	}
+	if diffRes.HasChanges {
+		t.Errorf("expected DiffResult.HasChanges=false, got true")
+	}
+}
+
+// TestOperations_Diff_DetectsRealChange guards against the opposite failure
+// mode: Diff() must still detect an actual change when the section's
+// instruction (and therefore its rendered prose) changes.
+func TestOperations_Diff_DetectsRealChange(t *testing.T) {
+	tempDir := setupTestRepoWithDoc(t)
+
+	cfg, err := config.LoadDocsConfig(tempDir)
+	if err != nil {
+		t.Fatalf("LoadDocsConfig: %v", err)
+	}
+	doc := &cfg.Documents[0]
+	sec := &doc.Sections[0]
+
+	fs := grounding.AssembleFactSheet(doc, sec, nil, nil, "", tempDir)
+	if fs == nil {
+		t.Fatal("AssembleFactSheet returned nil")
+	}
+	orch := renderer.NewOrchestrator(renderer.OrchestratorOptions{NoLLM: true})
+	outcome, err := orch.RenderSection(context.Background(), fs, nil)
+	if err != nil {
+		t.Fatalf("RenderSection: %v", err)
+	}
+
+	targetFull := filepath.Join(tempDir, doc.TargetPath)
+	mdContent := fmt.Sprintf("# Test Documentation\n\n<!-- gmb:begin:overview -->\n%s\n<!-- gmb:end:overview -->\n", outcome.Content)
+	if err := os.WriteFile(targetFull, []byte(mdContent), 0644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	// Mutate the section's instruction — a real spec change that must cause
+	// the next render to differ from the seeded prior content.
+	doc.Sections[0].Instruction = "Explain module overview, focusing on concurrency safety"
+	if err := updateDocsYAML(tempDir, *doc); err != nil {
+		t.Fatalf("updateDocsYAML: %v", err)
+	}
+
+	diffRes, err := Diff(tempDir, RunOptions{})
+	if err != nil {
+		t.Fatalf("Diff returned error: %v", err)
+	}
+	found := false
+	for _, s := range diffRes.Sections {
+		if s.SectionID == "overview" {
+			found = true
+			if !s.HasChange {
+				t.Errorf("expected change detected after instruction edit, got none")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("overview section not present in diff result")
+	}
+	if !diffRes.HasChanges {
+		t.Errorf("expected DiffResult.HasChanges=true, got false")
 	}
 }
 

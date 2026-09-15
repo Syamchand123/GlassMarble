@@ -77,6 +77,12 @@ func BuildUserPrompt(fs *config.FactSheet) (string, error) {
 	if instruction == "" {
 		instruction = "Document the current state and recent changes accurately."
 	}
+	// PromptGuidance (e.g. the D2 Diátaxis quadrant contract) is LLM-only
+	// steering text, deliberately kept out of SectionInstruction so Track B
+	// never renders it to a reader — see PromptGuidance's doc comment.
+	if fs.PromptGuidance != "" {
+		instruction += "\n\n" + fs.PromptGuidance
+	}
 
 	prior := fs.PriorSectionMarkdown
 	if strings.TrimSpace(prior) == "" {

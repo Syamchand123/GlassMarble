@@ -636,13 +636,13 @@ func (o *Orchestrator) renderOneSection(
 	}
 	// D2: Diátaxis quadrant guidance. The archetype's quadrant shapes
 	// the prose contract (reference/how-to/tutorial/explanation) without
-	// touching user content — prompt payload only.
+	// touching user content — prompt payload only, via PromptGuidance
+	// (never SectionInstruction, which Track B renders verbatim to the
+	// reader — see PromptGuidance's doc comment for why that distinction
+	// matters).
 	if q := ArchetypeQuadrant(doc.Archetype); q != "" {
 		if qp := QuadrantPrompt(q); qp != "" {
-			if fs.SectionInstruction != "" {
-				fs.SectionInstruction += "\n\n"
-			}
-			fs.SectionInstruction += "Documentation quadrant (" + q + "): " + qp
+			fs.PromptGuidance = "Documentation quadrant (" + q + "): " + qp
 		}
 	}
 

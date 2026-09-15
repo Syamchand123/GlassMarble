@@ -92,9 +92,19 @@ func TestBloatRegressionGuard(t *testing.T) {
 	// Recalibrated at improvement-plan P0–P3 sign-off: resolve, context,
 	// langmatrix, eval, ledger, review, daemon, prose, references, exec,
 	// routing packages added (re-measured baseline 19631 nodes).
+	// Recalibrated at the doc_engine pre-production audit sign-off: a
+	// StateManager.Update lock-safe transaction API (storage/state.go), a
+	// daemon shutdown-cancellation fix (daemon.go), and a grounding
+	// signature/doc-comment/sentinel Go-source fallback (grounding/
+	// collector.go WithRepoRoot, plus cmd/doc.go's AKG-graph loading) added
+	// real feature code across two sessions, raising the healthy
+	// deduplicated baseline to 20,439 nodes / 42,180 edges — confirmed by
+	// stashing: the guard passes without those files, same methodology as
+	// every prior recalibration on this line. ~4.3% edge headroom (matching
+	// this file's ~3.5-15% convention) still trips on a genuine noisy pass.
 	const (
 		nodeBudget = 22600
-		edgeBudget = 42000
+		edgeBudget = 44000
 	)
 	if nodes < 1000 {
 		t.Errorf("sanity: expected the pipeline to produce a substantial graph, got %d nodes (pipeline may be broken)", nodes)
