@@ -150,7 +150,7 @@ func (r *DeterministicRenderer) renderReferenceTables(fs *config.FactSheet) stri
 	if len(fs.GroundTruth.CallFlow) > 0 {
 		sb.WriteString("### Call Flow\n\n")
 		for i, step := range fs.GroundTruth.CallFlow {
-			sb.WriteString(fmt.Sprintf("%d. `%s`\n", i+1, step))
+			sb.WriteString(fmt.Sprintf("%d. `%s`\n", i+1, stripPseudoSymbolPrefix(step)))
 		}
 		sb.WriteString("\n")
 	}
@@ -158,7 +158,7 @@ func (r *DeterministicRenderer) renderReferenceTables(fs *config.FactSheet) stri
 	if len(fs.GroundTruth.Callers) > 0 {
 		sb.WriteString("### Direct Callers\n\n")
 		for _, caller := range fs.GroundTruth.Callers {
-			sb.WriteString(fmt.Sprintf("- `%s`\n", caller))
+			sb.WriteString(fmt.Sprintf("- `%s`\n", stripPseudoSymbolPrefix(caller)))
 		}
 		sb.WriteString("\n")
 	}
@@ -392,6 +392,25 @@ func symbolShortName(fqn string) string {
 		return path.Base(fqn)
 	}
 	return fqn
+}
+
+// stripPseudoSymbolPrefix removes a "file:"/"module:" pseudo-symbol prefix
+// (reducing to the path's base name, e.g. "file:pkg/config/config.go" ->
+// "config.go") and otherwise returns ref unchanged. Used for Call Flow
+// steps and Direct Callers — unlike symbolShortName, it deliberately does
+// NOT collapse a "::"-chained ref (e.g. "pkg/api/handler.go::Handler::
+// CreateTaskHandler") down to its last segment: that receiver-type
+// qualification is exactly what makes one caller distinguishable from
+// another same-named method elsewhere, so it must survive here even
+// though the same chain would rightly get shortened inside prose.
+func stripPseudoSymbolPrefix(ref string) string {
+	if rest, ok := strings.CutPrefix(ref, "file:"); ok {
+		return path.Base(rest)
+	}
+	if rest, ok := strings.CutPrefix(ref, "module:"); ok {
+		return path.Base(rest)
+	}
+	return ref
 }
 
 func cleanTableString(s string) string {

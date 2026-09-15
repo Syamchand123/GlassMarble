@@ -372,6 +372,33 @@ func TestSymbolShortName_FileAndModulePrefixes(t *testing.T) {
 	}
 }
 
+// TestStripPseudoSymbolPrefix_KeepsCallerQualification guards against a
+// real bug found via live end-to-end testing: a "Direct Callers" bullet
+// list rendered a "file:" pseudo-symbol raw — "- `file:pkg/config/
+// config.go`" — because that render path never called symbolShortName at
+// all. The fix must NOT reuse symbolShortName directly, though: a real
+// "::"-chained caller like "pkg/api/handler.go::Handler::CreateTaskHandler"
+// needs to keep its receiver-type qualification (that's what tells one
+// caller apart from another same-named method elsewhere) — symbolShortName
+// would collapse it down to just "CreateTaskHandler", losing exactly the
+// context this list exists to show.
+func TestStripPseudoSymbolPrefix_KeepsCallerQualification(t *testing.T) {
+	cases := []struct {
+		ref  string
+		want string
+	}{
+		{"file:pkg/config/config.go", "config.go"},
+		{"module:cmd/server", "server"},
+		{"pkg/api/handler.go::Handler::CreateTaskHandler", "pkg/api/handler.go::Handler::CreateTaskHandler"},
+		{"pkg/store/store.go::New", "pkg/store/store.go::New"},
+	}
+	for _, c := range cases {
+		if got := stripPseudoSymbolPrefix(c.ref); got != c.want {
+			t.Errorf("stripPseudoSymbolPrefix(%q) = %q, want %q", c.ref, got, c.want)
+		}
+	}
+}
+
 // TestHumanizeCompoundIdentifiers_Backstop guards against a real bug found
 // via live end-to-end testing: despite BuildSystemPrompt rule 3 explicitly
 // forbidding it (with this exact string as the negative example), a live
