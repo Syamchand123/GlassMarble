@@ -22,6 +22,26 @@ type LLMActuatorConfig struct {
 	BackoffSchedule []time.Duration
 }
 
+// defaultBackoffSchedule is shared by DefaultLLMActuatorConfig and
+// NewLLMActuator's zero-value fallback.
+//
+// A live, sustained run against a real provider (NVIDIA NIM) surfaced
+// "Service temporarily overloaded" 503s recurring across MANY separate
+// section renders spread over several minutes — not an isolated blip a
+// couple of quick retries can ride out. The previous schedule's total
+// wait before giving up was 2.6s (100ms+500ms+2s over 3 attempts), which
+// a sustained overload window outlasts easily, so a section fails outright
+// (see doc_engine.RunResult.SectionsFailed) far more often than it should.
+// This is still bounded and not infinite — document generation can afford
+// to wait tens of seconds for one section in a way an interactive request
+// couldn't — but gives a real overload window a realistic chance to clear.
+var defaultBackoffSchedule = []time.Duration{
+	500 * time.Millisecond,
+	2 * time.Second,
+	5 * time.Second,
+	12 * time.Second,
+}
+
 // DefaultLLMActuatorConfig returns sensible production defaults for Track A.
 func DefaultLLMActuatorConfig(p provider.Provider, model string) LLMActuatorConfig {
 	return LLMActuatorConfig{
@@ -29,11 +49,7 @@ func DefaultLLMActuatorConfig(p provider.Provider, model string) LLMActuatorConf
 		Model:           model,
 		MaxOutputTokens: 300,
 		Temperature:     0.0, // Hard temperature 0.0 per architectural principle P1
-		BackoffSchedule: []time.Duration{
-			100 * time.Millisecond,
-			500 * time.Millisecond,
-			2000 * time.Millisecond,
-		},
+		BackoffSchedule: defaultBackoffSchedule,
 	}
 }
 
@@ -48,11 +64,7 @@ func NewLLMActuator(cfg LLMActuatorConfig) *LLMActuator {
 		cfg.MaxOutputTokens = 300
 	}
 	if len(cfg.BackoffSchedule) == 0 {
-		cfg.BackoffSchedule = []time.Duration{
-			100 * time.Millisecond,
-			500 * time.Millisecond,
-			2000 * time.Millisecond,
-		}
+		cfg.BackoffSchedule = defaultBackoffSchedule
 	}
 	return &LLMActuator{cfg: cfg}
 }
