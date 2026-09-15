@@ -343,3 +343,54 @@ func TestDeterministicRenderer_DiagramNotDuplicated(t *testing.T) {
 		t.Errorf("dependency diagram rendered %d time(s), want exactly 1:\n%s", got, out)
 	}
 }
+
+// TestSymbolShortName_FileAndModulePrefixes guards against a real bug found
+// via live end-to-end testing: the old implementation split on "." with no
+// regard for what the string actually was, so a "file:" pseudo-symbol whose
+// path happens to end in ".go" — the overwhelmingly common case for a Go
+// repo — collapsed to the nonsensical short name "go" instead of the
+// filename. This showed up verbatim in a real generated doc's "Recent
+// Symbol Changes" list as "- `go`: `config.go`".
+func TestSymbolShortName_FileAndModulePrefixes(t *testing.T) {
+	cases := []struct {
+		fqn  string
+		want string
+	}{
+		{"pkg/config/config.go::envInt::param:def", "param:def"},
+		{"internal/auth/jwt.go::ValidateToken", "ValidateToken"},
+		{"file:pkg/config/config.go", "config.go"},
+		{"module:cmd/server", "server"},
+		{"pkg/config/config.go", "config.go"},
+		{"config.go", "config.go"},
+		{"pkg.SubPkg.Type", "Type"},
+		{"Plain", "Plain"},
+	}
+	for _, c := range cases {
+		if got := symbolShortName(c.fqn); got != c.want {
+			t.Errorf("symbolShortName(%q) = %q, want %q", c.fqn, got, c.want)
+		}
+	}
+}
+
+// TestHumanizeCompoundIdentifiers_Backstop guards against a real bug found
+// via live end-to-end testing: despite BuildSystemPrompt rule 3 explicitly
+// forbidding it (with this exact string as the negative example), a live
+// model run still wrote "the remaining symbols (`file:pkg/config/
+// config.go`, ...)" in generated prose — raw compound machine syntax
+// leaking through prompt non-compliance. This deterministic backstop must
+// catch what the prompt rule alone did not, without disturbing sentences
+// that were already clean.
+func TestHumanizeCompoundIdentifiers_Backstop(t *testing.T) {
+	in := "The remaining symbols (`file:pkg/config/config.go`, `envInt`, its parameters `def` and `name`) are not environment-based. See `pkg/config/config.go::envInt::param:def` and `module:cmd/server` too."
+	want := "The remaining symbols (`config.go`, `envInt`, its parameters `def` and `name`) are not environment-based. See `param:def` and `server` too."
+	if got := humanizeCompoundIdentifiers(in); got != want {
+		t.Errorf("humanizeCompoundIdentifiers() =\n%q\nwant\n%q", got, want)
+	}
+
+	// A plain, legitimately-quoted file path or short name must pass through
+	// untouched — this backstop targets unambiguous machine-key shapes only.
+	clean := "You define `MAX_TASKS` in `pkg/config/config.go`, read via `envInt`."
+	if got := humanizeCompoundIdentifiers(clean); got != clean {
+		t.Errorf("humanizeCompoundIdentifiers() must not touch clean prose:\ngot  %q\nwant %q", got, clean)
+	}
+}

@@ -155,7 +155,14 @@ func applyDefaults(cfg *DocsConfig) {
 		cfg.Constraints.MaxDocUpdatesPerCommit = 10
 	}
 	if cfg.Constraints.MaxTokensPerRun == 0 {
-		cfg.Constraints.MaxTokensPerRun = 100000
+		// Every managed section now goes through Track A (mandatory LLM
+		// prose), not just the subset a v1 heuristic used to route there —
+		// real usage against a several-document repo routinely lands well
+		// past the old 100,000 default partway through a run, silently
+		// skipping whatever documents hadn't been reached yet. Still
+		// overridable per-repo via this same constraints.max_tokens_per_run
+		// key in docs.yaml.
+		cfg.Constraints.MaxTokensPerRun = 500000
 	}
 	if cfg.Constraints.MinFreshnessThreshold == 0 {
 		cfg.Constraints.MinFreshnessThreshold = 80

@@ -507,9 +507,16 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 	totalTokens := 0
 
 	// F6/F10 token budget: hard ceiling on total LLM tokens for one run.
+	// Raised from the original 100,000 default: every section now goes
+	// through Track A (mandatory LLM prose, not just a subset the old v1
+	// heuristic routed to it), so real usage against a several-document
+	// repo routinely lands well past the old ceiling partway through a
+	// run — the remaining documents were then silently skipped rather
+	// than actually finishing. Still overridable per-repo via docs.yaml's
+	// constraints.max_tokens_per_run.
 	maxTokens := cfg.Constraints.MaxTokensPerRun
 	if maxTokens <= 0 {
-		maxTokens = 100000
+		maxTokens = 500000
 	}
 
 	for i := range docs {

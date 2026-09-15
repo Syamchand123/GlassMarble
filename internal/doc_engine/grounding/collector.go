@@ -117,12 +117,26 @@ func (c *Collector) CollectSectionFacts(sec *config.SectionSpec, scope *config.S
 	}
 
 	seenSymbols := make(map[string]bool)
+	// dispatched guards against a section listing two spellings of the same
+	// directive, e.g. ground_with: [config_vars, env_getenv] — both resolve
+	// to canonical "config_vars" via groundWithAliases above, but most
+	// individual collectors (collectConfigVars, collectCallgraphFacts,
+	// collectArchEvents) only dedupe within a single call, not across
+	// repeated calls in the same CollectSectionFacts run. Without this,
+	// every fact they produce is silently duplicated in the payload
+	// whenever a docs.yaml section names an aliased pair together — exactly
+	// the "listed twice" duplication seen in real generated docs.
+	dispatched := make(map[string]bool)
 
 	for _, d := range directives {
 		canonical, skip := resolveGroundWith(d)
 		if skip {
 			continue
 		}
+		if dispatched[canonical] {
+			continue
+		}
+		dispatched[canonical] = true
 		switch canonical {
 		case "signatures":
 			c.collectSignatures(scope, false, seenSymbols, payload)
@@ -427,25 +441,304 @@ func (c *Collector) collectConcurrency(scope *config.ScopeRule, p *config.Ground
 }
 
 // 7: Config Vars (os.Getenv, flag, viper)
+//
+// The graph walk below only ever matches a Kind:"CALL" node whose own Name
+// literally is (or embeds) the env-read expression, e.g. "os.Getenv(...)" —
+// today's AKG ingestion pipeline does not actually produce CALL-kind nodes
+// at all (see WithRepoRoot's doc comment: only funcs, methods, structs,
+// interfaces, and fields are indexed), so in real runs this branch matches
+// nothing and every real config var comes from the source-scan fallback
+// below. It stays narrowly scoped to Kind:"CALL" rather than checking the
+// node's bare name or id (the previous behavior) because "config" is an
+// extremely common package/file name — checking the id let ANY symbol
+// living under a path like "pkg/config/..." false-positive as a config
+// var purely from that path substring, sweeping in the file itself, the
+// env-reading helper function, and even its formal parameter names as if
+// each were its own environment variable.
 func (c *Collector) collectConfigVars(scope *config.ScopeRule, p *config.GroundTruthPayload) {
 	seen := make(map[string]bool)
 	c.graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
-		if n == nil || !catalog.MatchesScope(scope, n.FileSpec.Path) {
+		if n == nil || n.Kind != "CALL" || !catalog.MatchesScope(scope, n.FileSpec.Path) {
 			return
 		}
 		name := n.Name
-		if isConfigVar(name) || isConfigVar(id) {
-			if !seen[name] {
-				seen[name] = true
-				p.ConfigVars = append(p.ConfigVars, config.ConfigVarFact{
-					Name: name,
-					Doc:  c.extractDoc(n),
-					File: n.FileSpec.Path,
-					Line: n.FileSpec.LineStart,
-				})
-			}
+		if isConfigVar(name) && !seen[name] {
+			seen[name] = true
+			p.ConfigVars = append(p.ConfigVars, config.ConfigVarFact{
+				Name: name,
+				Doc:  c.extractDoc(n),
+				File: n.FileSpec.Path,
+				Line: n.FileSpec.LineStart,
+			})
 		}
 	})
+	// Source-scan fallback (see WithRepoRoot): resolves the REAL env var
+	// name from string-literal call-site arguments — "SERVER_PORT" from
+	// `envInt("SERVER_PORT", 8080)` — which no graph walk over symbol
+	// names can ever recover, since that literal isn't a symbol at all.
+	if c.repoRoot != "" {
+		for _, cv := range scanConfigVarsFromSource(c.repoRoot, scope) {
+			if seen[cv.name] {
+				continue
+			}
+			seen[cv.name] = true
+			p.ConfigVars = append(p.ConfigVars, config.ConfigVarFact{
+				Name:    cv.name,
+				Source:  "env",
+				Default: cv.def,
+				Doc:     cv.doc,
+				File:    cv.file,
+				Line:    cv.line,
+			})
+		}
+	}
+}
+
+// sourceConfigVar is one environment variable read found by scanning Go
+// source directly, independent of the AKG.
+type sourceConfigVar struct {
+	name string
+	def  string
+	doc  string
+	file string // repo-relative, slash-separated
+	line int
+}
+
+// envWrapper describes a same-package helper function that reads an
+// environment variable through one of its own parameters, e.g.
+// `func envInt(name string, def int) int { ...; os.Getenv(name); ... }`.
+// nameParam is the flattened parameter index holding the env var name;
+// defParam is the OTHER parameter (best-effort default value), or -1 if
+// the function doesn't have exactly two parameters.
+type envWrapper struct {
+	nameParam int
+	defParam  int
+}
+
+// directEnvCalls maps a "os"/"env"-selector method name to true when a
+// call to it directly reads an environment variable by name (its first
+// argument is the variable name), covering both the stdlib os package and
+// the common single-letter/aliased import some repos use for it.
+var directEnvCalls = map[string]bool{
+	"Getenv": true, "LookupEnv": true,
+}
+
+// scanConfigVarsFromSource walks repoRoot for .go files matching scope,
+// parses each with go/parser, and resolves real environment variable names
+// from two call shapes: a direct `os.Getenv("NAME")`/`os.LookupEnv("NAME")`
+// call, or a call to a local wrapper function (detected in the same file)
+// whose body itself directly calls os.Getenv/LookupEnv on one of its own
+// parameters — the pattern `envInt("NAME", default)` used by config.go-style
+// helpers. Only string-literal name arguments are resolved; a call whose
+// name argument is itself a variable or expression is skipped, since there
+// is no way to know the actual env var name without running the program.
+func scanConfigVarsFromSource(repoRoot string, scope *config.ScopeRule) []sourceConfigVar {
+	var out []sourceConfigVar
+	_ = filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		rel, relErr := filepath.Rel(repoRoot, path)
+		if relErr != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if !catalog.MatchesScope(scope, rel) {
+			return nil
+		}
+		fset := token.NewFileSet()
+		file, parseErr := parser.ParseFile(fset, path, nil, parser.ParseComments)
+		if parseErr != nil || file == nil {
+			return nil
+		}
+
+		wrappers := findEnvWrappers(file)
+
+		// Top-level `var X = <call>` gets the var's own doc comment
+		// attached; every other call site (inside a function body, a
+		// struct literal field, etc.) still gets picked up below, just
+		// without a doc comment to attach.
+		handled := make(map[token.Pos]bool)
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.VAR {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				doc := vs.Doc
+				if doc == nil {
+					doc = gen.Doc
+				}
+				docText := ""
+				if doc != nil {
+					docText = strings.TrimSpace(doc.Text())
+				}
+				for i, val := range vs.Values {
+					call, ok := val.(*ast.CallExpr)
+					if !ok {
+						continue
+					}
+					name, def, ok := resolveEnvCall(call, wrappers)
+					if !ok {
+						continue
+					}
+					handled[call.Pos()] = true
+					line := fset.Position(call.Pos()).Line
+					if i < len(vs.Names) {
+						line = fset.Position(vs.Names[i].Pos()).Line
+					}
+					out = append(out, sourceConfigVar{
+						name: name, def: def, doc: docText, file: rel, line: line,
+					})
+				}
+			}
+		}
+
+		// Catch-all: any other env-read call site anywhere in the file
+		// (inside function bodies, struct literals, etc.), skipping ones
+		// already captured above.
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || handled[call.Pos()] {
+				return true
+			}
+			name, def, ok := resolveEnvCall(call, wrappers)
+			if !ok {
+				return true
+			}
+			out = append(out, sourceConfigVar{
+				name: name, def: def, file: rel,
+				line: fset.Position(call.Pos()).Line,
+			})
+			return true
+		})
+		return nil
+	})
+	return out
+}
+
+// findEnvWrappers inspects every top-level function declaration in file
+// for the "envInt"-style shape: a func whose body calls os.Getenv/LookupEnv
+// passing one of the func's own parameters as the name argument.
+func findEnvWrappers(file *ast.File) map[string]envWrapper {
+	wrappers := make(map[string]envWrapper)
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv != nil || fn.Body == nil || fn.Type == nil {
+			continue
+		}
+		params := flattenParams(fn.Type.Params)
+		if len(params) == 0 {
+			continue
+		}
+		paramIndex := make(map[string]int, len(params))
+		for i, p := range params {
+			if p != nil {
+				paramIndex[p.Name] = i
+			}
+		}
+		nameParam := -1
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			if nameParam != -1 {
+				return false
+			}
+			call, ok := n.(*ast.CallExpr)
+			if !ok || len(call.Args) == 0 {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || !directEnvCalls[sel.Sel.Name] {
+				return true
+			}
+			id, ok := call.Args[0].(*ast.Ident)
+			if !ok {
+				return true
+			}
+			if idx, found := paramIndex[id.Name]; found {
+				nameParam = idx
+			}
+			return true
+		})
+		if nameParam == -1 {
+			continue
+		}
+		defParam := -1
+		if len(params) == 2 {
+			defParam = 1 - nameParam
+		}
+		wrappers[fn.Name.Name] = envWrapper{nameParam: nameParam, defParam: defParam}
+	}
+	return wrappers
+}
+
+// flattenParams expands a field list's grouped names ("a, b string") into
+// one *ast.Ident per parameter, in declaration order. An unnamed parameter
+// contributes a nil entry so positional indexes still line up.
+func flattenParams(fl *ast.FieldList) []*ast.Ident {
+	if fl == nil {
+		return nil
+	}
+	var out []*ast.Ident
+	for _, f := range fl.List {
+		if len(f.Names) == 0 {
+			out = append(out, nil)
+			continue
+		}
+		for _, n := range f.Names {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// resolveEnvCall reports whether call is a direct os.Getenv/LookupEnv call
+// or a call to one of wrappers, and if so extracts the env var name (must
+// be a string literal — a computed name can't be resolved statically) and,
+// best-effort, its literal default value.
+func resolveEnvCall(call *ast.CallExpr, wrappers map[string]envWrapper) (name, def string, ok bool) {
+	nameIdx, defIdx := -1, -1
+	switch fn := call.Fun.(type) {
+	case *ast.SelectorExpr:
+		if !directEnvCalls[fn.Sel.Name] {
+			return "", "", false
+		}
+		nameIdx = 0
+	case *ast.Ident:
+		w, found := wrappers[fn.Name]
+		if !found {
+			return "", "", false
+		}
+		nameIdx, defIdx = w.nameParam, w.defParam
+	default:
+		return "", "", false
+	}
+	if nameIdx < 0 || nameIdx >= len(call.Args) {
+		return "", "", false
+	}
+	lit, ok := call.Args[nameIdx].(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		return "", "", false
+	}
+	varName, unquoteErr := strconv.Unquote(lit.Value)
+	if unquoteErr != nil || varName == "" {
+		return "", "", false
+	}
+	if defIdx >= 0 && defIdx < len(call.Args) {
+		if dLit, ok := call.Args[defIdx].(*ast.BasicLit); ok {
+			if dLit.Kind == token.STRING {
+				if unquoted, err := strconv.Unquote(dLit.Value); err == nil {
+					return varName, unquoted, true
+				}
+			} else {
+				return varName, dLit.Value, true
+			}
+		}
+	}
+	return varName, "", true
 }
 
 // 8: HTTP Handlers

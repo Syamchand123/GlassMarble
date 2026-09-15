@@ -88,7 +88,7 @@ documents:
 	assert.Equal(t, "github_flat", cfg.TargetPlatform)
 	assert.Equal(t, "docs", cfg.DocsDir)
 	assert.Equal(t, 10, cfg.Constraints.MaxDocUpdatesPerCommit)
-	assert.Equal(t, 100000, cfg.Constraints.MaxTokensPerRun)
+	assert.Equal(t, 500000, cfg.Constraints.MaxTokensPerRun)
 	assert.Equal(t, 80, cfg.Constraints.MinFreshnessThreshold)
 	assert.Equal(t, 60, cfg.Constraints.MinFreshnessFail)
 	assert.Equal(t, "active, second-person, present tense", cfg.Style.Voice)

@@ -1,17 +1,27 @@
 // Package renderer implements Stage 6 of the Documentation Intelligence Engine pipeline.
 //
 // Dual-track architecture:
-//   - Track A: LLM Prose Actuator (llm_actuator.go)
-//   - Track B: Deterministic Renderer (deterministic.go)
-//
-// deterministic.go produces complete, useful, and verified documentation
-// exclusively from AKG facts with zero LLM and zero network dependency.
+//   - Track A: LLM Prose Actuator (llm_actuator.go) — the default, mandatory
+//     path. Writes the actual explanation in plain English from the
+//     FactSheet's ground truth; the engine requires a working LLM provider
+//     for this and refuses to generate rather than silently substituting
+//     raw data for prose (see Orchestrator.RenderSection in engine.go).
+//   - Track B: Deterministic Renderer (deterministic.go) — grounded fact
+//     tables with zero LLM and zero network dependency. Two uses: (1) the
+//     explicit, user-requested `--no-llm` mode (RenderSection: the complete,
+//     standalone document some users deliberately want — offline, free,
+//     no prose); (2) appended below the LLM's prose in the default path
+//     (RenderReferenceAppendix), so every document pairs a real
+//     explanation with a grounded lookup table, never one instead of the
+//     other.
 package renderer
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/patcher"
@@ -25,36 +35,84 @@ func NewDeterministicRenderer() *DeterministicRenderer {
 	return &DeterministicRenderer{}
 }
 
-// RenderSection renders a complete markdown section body from the given FactSheet.
-// The output is tagged with <!-- gmb:mode:deterministic -->.
+// RenderSection renders a complete markdown section body from the given
+// FactSheet: diagrams + the reference tables, with the deterministic mode
+// tag and instruction blockquote. This is the explicit --no-llm path — the
+// complete, standalone document a user gets when they deliberately choose
+// no LLM, not a partial fallback.
 func (r *DeterministicRenderer) RenderSection(fs *config.FactSheet) (string, error) {
 	if fs == nil {
 		return "", fmt.Errorf("doc_engine/renderer: nil FactSheet")
 	}
 
 	var sb strings.Builder
-
-	// Mode tag
 	sb.WriteString(patcher.BuildModeTag("deterministic") + "\n\n")
-
-	// Section title / header if available
 	if fs.SectionInstruction != "" {
 		sb.WriteString(fmt.Sprintf("> %s\n\n", fs.SectionInstruction))
 	}
+	sb.WriteString(r.renderDiagramsBlock(fs))
+	sb.WriteString(r.renderReferenceTables(fs))
 
-	// 1. Living Diagrams (Mermaid / PlantUML)
-	//
-	// GroundTruth.DiagramMermaid is deliberately NOT rendered here: it is
-	// always a copy of Diagrams[0].Content (see facts.go's "section-level
-	// diagram pointer... injected verbatim by the LLM actuator" — a Track-A
-	// prompt convenience, not a second diagram). Rendering both meant every
-	// section with 1+ configured diagrams showed its first diagram twice.
+	res := strings.TrimRight(sb.String(), "\n") + "\n"
+	return res, nil
+}
+
+// referenceAppendixMarker separates the LLM's prose from the deterministic
+// lookup tables below it: a horizontal rule plus a bold (not heading-level)
+// label. Deliberately not a "### Reference" heading — the individual
+// tables already have their own ### headings (Configuration Variables,
+// Functions and Methods, ...), and for the common case of a section with
+// only ONE populated table, an extra wrapping heading directly above it
+// with nothing of its own in between reads as a redundant, oddly-empty
+// heading stacked on another heading. A rule+label separates prose from
+// data just as clearly without that.
+const referenceAppendixMarker = "---\n\n**Reference**\n\n"
+
+// RenderReferenceAppendix builds the grounded lookup appendix appended
+// below the LLM's prose in the default (mandatory-LLM) path: diagrams,
+// then every reference table after referenceAppendixMarker. No mode tag
+// or instruction blockquote — the prose above already carries those.
+// Returns "" if the FactSheet has nothing to show (no diagrams, no facts).
+func (r *DeterministicRenderer) RenderReferenceAppendix(fs *config.FactSheet) string {
+	if fs == nil {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString(r.renderDiagramsBlock(fs))
+	if ref := r.renderReferenceTables(fs); strings.TrimSpace(ref) != "" {
+		sb.WriteString(referenceAppendixMarker)
+		sb.WriteString(ref)
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+// renderDiagramsBlock renders the section's living diagrams (Mermaid /
+// PlantUML) as fenced code blocks.
+//
+// GroundTruth.DiagramMermaid is deliberately NOT rendered here: it is
+// always a copy of Diagrams[0].Content (see facts.go's "section-level
+// diagram pointer... injected verbatim by the LLM actuator" — a Track-A
+// prompt convenience, not a second diagram). Rendering both meant every
+// section with 1+ configured diagrams showed its first diagram twice.
+func (r *DeterministicRenderer) renderDiagramsBlock(fs *config.FactSheet) string {
+	var sb strings.Builder
 	for _, diagFact := range fs.GroundTruth.Diagrams {
 		if strings.TrimSpace(diagFact.Content) != "" {
 			diag := unwrapDiagramFences(diagFact.Content)
 			sb.WriteString("```mermaid\n" + diag + "\n```\n\n")
 		}
 	}
+	return sb.String()
+}
+
+// renderReferenceTables renders every grounded fact table/list — endpoints,
+// call flow, callers, functions/methods, types/interfaces, error catalog,
+// config variables, architectural milestones, and recent symbol changes —
+// with no heading, mode tag, or diagrams of its own. Shared by RenderSection
+// (the standalone --no-llm document) and RenderReferenceAppendix (the
+// lookup appendix under the LLM's prose).
+func (r *DeterministicRenderer) renderReferenceTables(fs *config.FactSheet) string {
+	var sb strings.Builder
 
 	// 1b. HTTP Endpoints (method + path + handler). This is what makes the
 	// "api" archetype's "Endpoints & Route Handlers" section — whose own
@@ -240,8 +298,7 @@ func (r *DeterministicRenderer) RenderSection(fs *config.FactSheet) (string, err
 		}
 	}
 
-	res := strings.TrimRight(sb.String(), "\n") + "\n"
-	return res, nil
+	return sb.String()
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -293,14 +350,46 @@ func normalizeKind(k string) string {
 	}
 }
 
+// symbolShortName reduces an AKG FQN to its human-readable short form.
+// Handles the id shapes this engine actually produces, checked in this
+// specific order because some shapes are ambiguous prefixes of others:
+//
+//  1. "path::Name" (an AKG member reference) — the segment after the LAST
+//     "::", e.g. "pkg/config/config.go::envInt::param:def" -> "param:def".
+//  2. "file:path" / "module:path" (file/module-level pseudo-symbols) — the
+//     path's base name, e.g. "file:pkg/config/config.go" -> "config.go".
+//  3. A dotted qualified name whose FINAL segment starts with an uppercase
+//     letter — the Go/Java convention for an exported type or member —
+//     e.g. "internal/auth.SessionManager" -> "SessionManager", even though
+//     that string also contains "/": checking this before the bare-path
+//     rule below matters, because path.Base on the full string would
+//     wrongly return "auth.SessionManager". A lowercase file extension
+//     never matches this (see case 4 for why that distinction is safe).
+//  4. A bare path (contains "/", none of the above matched — so any dotted
+//     suffix, like ".go", is a lowercase file extension, not an exported
+//     name) — the base name, e.g. "pkg/config/config.go" -> "config.go".
+//
+// Anything matching none of these — including a bare filename with no
+// directory and no exported-looking suffix, e.g. "config.go" — is
+// returned unchanged rather than chopped down to its extension.
 func symbolShortName(fqn string) string {
-	parts := strings.Split(fqn, "::")
-	if len(parts) > 1 {
-		return parts[len(parts)-1]
+	if idx := strings.LastIndex(fqn, "::"); idx >= 0 {
+		return fqn[idx+2:]
 	}
-	subparts := strings.Split(fqn, ".")
-	if len(subparts) > 1 {
-		return subparts[len(subparts)-1]
+	if rest, ok := strings.CutPrefix(fqn, "file:"); ok {
+		return path.Base(rest)
+	}
+	if rest, ok := strings.CutPrefix(fqn, "module:"); ok {
+		return path.Base(rest)
+	}
+	if subparts := strings.Split(fqn, "."); len(subparts) > 1 {
+		last := subparts[len(subparts)-1]
+		if r := []rune(last); len(r) > 0 && unicode.IsUpper(r[0]) {
+			return last
+		}
+	}
+	if strings.Contains(fqn, "/") {
+		return path.Base(fqn)
 	}
 	return fqn
 }

@@ -6,14 +6,35 @@ package renderer
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
 )
 
+// reservedStructuralHeadings are the section headings the renderer appends
+// automatically after the LLM's prose (see deterministic.go's
+// RenderReferenceAppendix / renderReferenceTables). The model must never
+// write these itself — see BuildSystemPrompt rule 3 — or the finished
+// section would show the same table or list twice.
+var reservedStructuralHeadings = []string{
+	"Endpoints", "Call Flow", "Direct Callers",
+	"Functions and Methods", "Types and Interfaces", "Error Catalog",
+	"Configuration Variables", "Architectural Milestones", "Recent Symbol Changes",
+}
+
 // BuildSystemPrompt constructs the immutable system prompt for the LLM actuator.
 // Rules are numbered programmatically so the sequence is always gap-free
-// (1-7 when maxWords==0, 1-8 otherwise).
+// (1-8 when maxWords==0, 1-9 otherwise).
+//
+// The model's job is the EXPLANATION only: clear, human-readable prose
+// describing what the code does, why, and how the pieces relate — the
+// reason this tool exists is to produce documentation a person can
+// actually read, not a re-serialization of the fact sheet as a table. A
+// grounded reference table and any diagram are appended automatically by
+// the deterministic renderer (see RenderReferenceAppendix) — never asked
+// of the model — so the two halves never duplicate or contradict each
+// other, and the model's entire output budget goes to the writing itself.
 func BuildSystemPrompt(style *config.StyleSpec, maxWords int) string {
 	voice := "active, second-person, present tense"
 	tone := ""
@@ -31,8 +52,8 @@ func BuildSystemPrompt(style *config.StyleSpec, maxWords int) string {
 		}
 	}
 
-	// Tone rides on the style rule (not its own number) so the 1-6/1-7
-	// numbering shape never shifts.
+	// Tone rides on the style rule (not its own number) so the numbering
+	// shape never shifts.
 	styleRule := fmt.Sprintf("Follow the style: %s.", voice)
 	if tone != "" {
 		styleRule = fmt.Sprintf("Follow the style: %s. Tone: %s.", voice, tone)
@@ -40,27 +61,41 @@ func BuildSystemPrompt(style *config.StyleSpec, maxWords int) string {
 
 	rules := []string{
 		"Every function, type, error, or identifier you mention in backticks MUST appear in the fact_sheet.ground_truth. Do not reference any code entity not listed there.",
-		"Do not rewrite or rephrase sentences from prior_section_markdown that are still factually accurate. Only add, modify, or remove sentences that directly reflect the changes in ground_truth.",
-		"Output ONLY the markdown for the specified section. No preamble, no \"Here is the updated section\", no meta-commentary.",
-		"Never narrate your reasoning, planning, or interpretation of this prompt. Do not write sentences about the task itself (e.g. \"We need to produce...\", \"The instruction says...\", \"Let's think about...\"). If you reason internally, keep it out of the output entirely — respond with the finished markdown ONLY, starting directly with its first heading, table, or sentence of real content.",
+		"The reverse is NOT true: ground_truth commonly carries symbols of only marginal relevance to this section — broader-scope context pulled in for completeness, not because they belong in this section's explanation. Write about what SECTION INSTRUCTION below actually asks for. Do not feel obligated to mention, enumerate, or explicitly rule out (\"X is not a config variable\", \"Y does not belong here either\") every symbol merely because it happens to appear in ground_truth.",
+		"When you name a code symbol, use its bare short name in backticks — `envInt`, `def`, `Port` — never the full qualified path or compound key from ground_truth (never write things like `pkg/config/config.go::envInt::param:def` or `file:pkg/config/config.go`). Those compound keys are internal identifiers for machine lookup, not English; if you need to describe a relationship between two symbols, say it in words, e.g. \"the `def` parameter of `envInt`\", not by quoting the compound key itself.",
+		"Write PROSE ONLY: real explanatory paragraphs in plain English describing what this section covers, why it works the way it does, and how the pieces named in ground_truth fit together. Do not write markdown tables, a bullet-dump list of every symbol, or fenced ```mermaid``` diagram blocks — the tool appends a complete reference table and any diagram automatically, right after your text. Writing them yourself duplicates them.",
+		fmt.Sprintf("Never write any of these heading lines yourself, in any form or wording — the tool adds them separately, always after your prose: %s.", strings.Join(quoteEach(reservedStructuralHeadings), ", ")),
+		"ground_truth's added/modified/removed symbol lists are cross-cutting \"what changed recently\" reference data, already rendered as their own \"Recent Symbol Changes\" list right after your text — same as the reserved headings above. Do not restate, list, or summarize them in your prose (e.g. do not write a sentence like \"Recently added symbols include...\") unless the section instruction below is specifically about tracking or auditing recent changes.",
+		"Do not rewrite or rephrase sentences from PRIOR PROSE that are still factually accurate. Only add, modify, or remove sentences that directly reflect the changes in ground_truth. Exception: this never excuses a violation of the other rules above — if a sentence in PRIOR PROSE quotes a compound key, narrates an irrelevant symbol, restates the recent-changes list, or otherwise breaks one of them, fix or remove that sentence even though the fact it's based on hasn't changed. \"Still factually accurate\" is not the same as \"already compliant.\"",
+		"Output ONLY the prose markdown for the specified section. No preamble, no \"Here is the updated section\", no meta-commentary.",
+		"Never narrate your reasoning, planning, or interpretation of this prompt. Do not write sentences about the task itself (e.g. \"We need to produce...\", \"The instruction says...\", \"Let's think about...\"). If you reason internally, keep it out of the output entirely — respond with the finished markdown ONLY, starting directly with its first sentence of real content.",
 		styleRule,
 		fmt.Sprintf("Avoid these words/phrases: %s.", jargon),
 	}
 	if maxWords > 0 {
 		rules = append(rules, fmt.Sprintf("Keep this section under %d words.", maxWords))
 	}
-	rules = append(rules, "Embed the diagram verbatim if fact_sheet.ground_truth.diagram_mermaid is non-empty.")
 
 	var numbered strings.Builder
 	for i, r := range rules {
 		fmt.Fprintf(&numbered, "%d. %s\n", i+1, r)
 	}
 
-	return fmt.Sprintf(`You are a technical documentation writer embedded in GlassMarble, an architecture intelligence tool.
-Your ONLY job is to convert the provided JSON fact sheet into accurate, concise markdown prose for the specified section.
+	return fmt.Sprintf(`You are a technical writer embedded in GlassMarble, an architecture intelligence tool. Real engineers read what you write to understand a codebase, so it must read like documentation a person wrote — not a re-formatted dump of data.
+Your ONLY job is to write the EXPLANATION for the specified section, in your own words, grounded strictly in the provided JSON fact sheet.
 
 HARD RULES — these are absolute and non-negotiable:
 %s`, strings.TrimRight(numbered.String(), "\n"))
+}
+
+// quoteEach wraps each string in double quotes, for a readable inline list
+// in a prompt (e.g. ["Reference", "Endpoints"] -> [`"Reference"`, `"Endpoints"`]).
+func quoteEach(ss []string) []string {
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = fmt.Sprintf("%q", s)
+	}
+	return out
 }
 
 // BuildUserPrompt constructs the user prompt containing the serialized FactSheet.
@@ -85,9 +120,16 @@ func BuildUserPrompt(fs *config.FactSheet) (string, error) {
 		instruction += "\n\n" + fs.PromptGuidance
 	}
 
-	prior := fs.PriorSectionMarkdown
+	// Only the PROSE half of the prior content goes to the model — never
+	// the reference appendix (deterministic.go's RenderReferenceAppendix),
+	// which the renderer regenerates fresh from the current fact sheet
+	// every time regardless of what the model writes. Showing the model
+	// its own old reference tables as "prior content to incrementally
+	// edit" would invite it to rewrite or duplicate them despite rule 3
+	// forbidding exactly that.
+	prior := stripReferenceAppendix(fs.PriorSectionMarkdown)
 	if strings.TrimSpace(prior) == "" {
-		prior = "(No prior section content. Generate initial section documentation.)"
+		prior = "(No prior prose. Write the section's explanation from scratch.)"
 	}
 
 	return fmt.Sprintf(`FACT SHEET:
@@ -96,11 +138,73 @@ func BuildUserPrompt(fs *config.FactSheet) (string, error) {
 SECTION INSTRUCTION:
 %s
 
-PRIOR SECTION CONTENT (update this, do not recreate from scratch):
+PRIOR PROSE (update this, do not recreate from scratch; a reference table and any diagram are appended separately and are not shown here):
 %s
 
-Output the updated section markdown now:`,
+Output the updated section's explanatory prose now — no tables, no diagrams, no reserved headings:`,
 		string(factBytes), instruction, prior), nil
+}
+
+// compoundIdentifierRe matches a backtick-quoted span that is unmistakably
+// an AKG compound machine key rather than a short, human-readable name:
+// it contains the "::" member separator, or carries a "file:"/"module:"
+// pseudo-symbol prefix. Deliberately narrow — it must never fire on an
+// ordinary short identifier, a plain file path someone legitimately
+// quotes (e.g. `` `pkg/config/config.go` ``, which reads fine as-is), or
+// prose punctuation.
+var compoundIdentifierRe = regexp.MustCompile("`(file:[^`\\s]+|module:[^`\\s]+|[^`\\s]*::[^`\\s]*)`")
+
+// humanizeCompoundIdentifiers is a deterministic backstop applied to the
+// model's raw prose before gating: BuildSystemPrompt rule 3 tells the
+// model to always use a symbol's bare short name rather than the raw
+// compound key ground_truth carries it under (e.g. write `envInt`, never
+// `pkg/config/config.go::envInt::param:def`) — but prompt compliance is
+// never guaranteed, and a live-tested run showed the model occasionally
+// still quoting the raw compound form despite the rule's explicit
+// negative example. This rewrites the CONTENT of any such backtick span
+// to symbolShortName's short form without touching the surrounding
+// sentence, so grammar stays intact either way — "the `file:pkg/config/
+// config.go` symbol" becomes "the `config.go` symbol", not a rewritten
+// sentence.
+func humanizeCompoundIdentifiers(text string) string {
+	return compoundIdentifierRe.ReplaceAllStringFunc(text, func(m string) string {
+		inner := m[1 : len(m)-1]
+		return "`" + symbolShortName(inner) + "`"
+	})
+}
+
+// stripReferenceAppendix removes a trailing reference-appendix block (see
+// deterministic.go's RenderReferenceAppendix / referenceAppendixMarker)
+// from previously-rendered section markdown, leaving just the prose the
+// model actually authored.
+func stripReferenceAppendix(markdown string) string {
+	prose, _ := splitProseAndAppendix(markdown)
+	return prose
+}
+
+// splitProseAndAppendix splits previously-rendered section markdown into
+// the model-authored prose and the deterministic reference appendix (see
+// deterministic.go's RenderReferenceAppendix), inclusive of its
+// referenceAppendixMarker separator. appendix is "" when there is no such
+// block. The two recombine as combineProseAndAppendix(prose, appendix).
+func splitProseAndAppendix(markdown string) (prose, appendix string) {
+	idx := strings.Index(markdown, referenceAppendixMarker)
+	if idx < 0 {
+		return markdown, ""
+	}
+	return strings.TrimRight(markdown[:idx], "\n"), markdown[idx:]
+}
+
+// combineProseAndAppendix joins prose and a reference appendix (as
+// returned by splitProseAndAppendix, or built fresh by
+// DeterministicRenderer.RenderReferenceAppendix) into final section
+// content, blank-line separated. appendix may be "".
+func combineProseAndAppendix(prose, appendix string) string {
+	content := strings.TrimRight(prose, "\n")
+	if strings.TrimSpace(appendix) != "" {
+		content += "\n\n" + strings.TrimRight(appendix, "\n")
+	}
+	return content + "\n"
 }
 
 // BuildRepairPrompt constructs a follow-up correction prompt when a quality gate fails.

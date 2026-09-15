@@ -145,6 +145,7 @@ func InstructionSatisfied(prose, instruction string) bool {
 // narrow allowlist (rather than skipping every heading) so an arbitrary,
 // possibly-hallucinated LLM-authored heading is still scored normally.
 var deterministicRendererHeadings = map[string]bool{
+	"Endpoints":                true,
 	"Call Flow":                true,
 	"Direct Callers":           true,
 	"Functions and Methods":    true,

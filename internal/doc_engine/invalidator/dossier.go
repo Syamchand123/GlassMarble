@@ -70,8 +70,17 @@ func BuildDossier(repoDir string, commitHash string, baseGraph, headGraph *akg.C
 				}
 				dossier.AddedSymbols = append(dossier.AddedSymbols, fact)
 
-				// Detect config variables and sentinels
-				if isConfigVar(fact.FQN) {
+				// Detect config variables and sentinels. isConfigVar checks
+				// the FQN for "config"/"getenv" substrings, which false-
+				// positives on EVERY symbol added under a package literally
+				// named "config" (an extremely common name) — the file
+				// itself, an unrelated helper function, even its formal
+				// parameters — since the substring comes from the package
+				// path, not from what the symbol actually is. Gating on
+				// Kind == "CALL" keeps the check meaningful: a real env-read
+				// expression node, not any node that merely lives near the
+				// word "config".
+				if node.Kind == "CALL" && isConfigVar(fact.FQN) {
 					dossier.AddedConfigVars = append(dossier.AddedConfigVars, config.ConfigVarFact{
 						Name: fact.FQN,
 						File: fact.File,
@@ -91,7 +100,7 @@ func BuildDossier(repoDir string, commitHash string, baseGraph, headGraph *akg.C
 			// Removed symbols
 			for _, node := range diff.NodesRemoved {
 				dossier.RemovedSymbols = append(dossier.RemovedSymbols, node.ID)
-				if isConfigVar(node.ID) {
+				if node.Kind == "CALL" && isConfigVar(node.ID) {
 					dossier.RemovedConfigVars = append(dossier.RemovedConfigVars, node.ID)
 				}
 			}

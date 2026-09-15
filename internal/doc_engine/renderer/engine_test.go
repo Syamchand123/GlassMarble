@@ -97,7 +97,15 @@ func TestNewOrchestrator_DefaultsWhenUnconfigured(t *testing.T) {
 	}
 }
 
-func TestOrchestrator_FallbackOnLLMFailure(t *testing.T) {
+// TestOrchestrator_LLMFailureReturnsErrorNoFallback guards the mandatory-LLM
+// contract: when Track A fails (after retries), RenderSection must return
+// an error and produce no content at all — never silently substitute the
+// deterministic renderer's raw fact tables as if they were the finished,
+// human-written documentation. That silent substitution was the original
+// design; it is deliberately gone. The explicit opts.NoLLM opt-out (a
+// separate, already-passing path — see TestOrchestrator_NoLLM) is the only
+// way to get the deterministic renderer's output now.
+func TestOrchestrator_LLMFailureReturnsErrorNoFallback(t *testing.T) {
 	mock := &mockProvider{
 		completeFunc: func(ctx context.Context, req provider.Request) (*provider.Response, error) {
 			return nil, errors.New("503 Service Unavailable")
@@ -125,18 +133,27 @@ func TestOrchestrator_FallbackOnLLMFailure(t *testing.T) {
 	}
 
 	outcome, err := orch.RenderSection(context.Background(), fs, nil)
-	if err != nil {
-		t.Fatalf("expected fallback to succeed, got error: %v", err)
+	if err == nil {
+		t.Fatalf("expected an error on LLM failure, got success with outcome: %+v", outcome)
 	}
+	if outcome.Content != "" {
+		t.Errorf("expected no content on failure, got: %q", outcome.Content)
+	}
+}
 
-	if outcome.RenderMode != "deterministic" {
-		t.Errorf("expected fallback to deterministic, got %q", outcome.RenderMode)
-	}
-	if !outcome.FallbackUsed {
-		t.Errorf("expected FallbackUsed=true")
-	}
-	if !strings.Contains(outcome.Content, "`Bar`") {
-		t.Errorf("fallback output missing symbol")
+// TestOrchestrator_NoProviderConfiguredReturnsError guards the other half
+// of the mandatory-LLM contract: with no actuator at all (no provider
+// resolved) and NoLLM not set, RenderSection must refuse rather than
+// silently rendering the deterministic tables — this is the engine-level
+// safety net behind cmd/doc.go's own upfront ensureLLMReady check, for any
+// caller that reaches the orchestrator directly.
+func TestOrchestrator_NoProviderConfiguredReturnsError(t *testing.T) {
+	orch := NewOrchestrator(OrchestratorOptions{NoLLM: false, Provider: nil})
+	fs := &config.FactSheet{DocID: "d", SectionID: "s"}
+
+	_, err := orch.RenderSection(context.Background(), fs, nil)
+	if err == nil {
+		t.Fatal("expected an error with no LLM provider configured and NoLLM unset")
 	}
 }
 
@@ -192,7 +209,12 @@ func TestOrchestrator_RepairRetryOnGateFailure(t *testing.T) {
 	}
 }
 
-func TestOrchestrator_Gate4HardFailFallback(t *testing.T) {
+// TestOrchestrator_Gate4HardFailReturnsError guards the mandatory-LLM
+// contract for the one hard-fail gate: a secret pattern in the model's
+// output must never retry (Gate 4 is deliberately not repairable — see
+// renderTrackA) and, under the current no-fallback design, must return an
+// error rather than silently substituting the deterministic tables.
+func TestOrchestrator_Gate4HardFailReturnsError(t *testing.T) {
 	mock := &mockProvider{
 		completeFunc: func(ctx context.Context, req provider.Request) (*provider.Response, error) {
 			// LLM output contains an AWS key (Gate 4 hard fail)
@@ -219,15 +241,11 @@ func TestOrchestrator_Gate4HardFailFallback(t *testing.T) {
 	}
 
 	outcome, err := orch.RenderSection(context.Background(), fs, nil)
-	if err != nil {
-		t.Fatalf("expected fallback to deterministic on Gate 4, got error: %v", err)
+	if err == nil {
+		t.Fatalf("expected an error on Gate 4 secret detection, got success with outcome: %+v", outcome)
 	}
-
-	if outcome.RenderMode != "deterministic" {
-		t.Errorf("expected fallback to deterministic mode, got %q", outcome.RenderMode)
-	}
-	if !outcome.FallbackUsed {
-		t.Errorf("expected FallbackUsed=true on Gate 4 failure")
+	if outcome.Content != "" {
+		t.Errorf("expected no content shipped on a secret-scan hard failure, got: %q", outcome.Content)
 	}
 }
 

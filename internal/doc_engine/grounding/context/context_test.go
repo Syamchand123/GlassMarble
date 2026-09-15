@@ -271,6 +271,54 @@ func TestSelectContextSymbolsCappedAndSorted(t *testing.T) {
 	}
 }
 
+// TestSelectContextExcludesZeroScoreDisconnectedFiles guards against a real
+// bug found via live end-to-end testing: an unrelated, disconnected file
+// (no edge to or from any seed) was still injected into the FactSheet as
+// "relevant context" purely because the token budget had room left over —
+// even though PageRank itself scores it exactly 0 (no personalization
+// weight, no inbound edge contribution). For a small, tightly-scoped
+// document this surfaced as a config-vars section's ground_truth listing
+// an entirely unrelated file's functions and parameters, which the LLM
+// then dutifully narrated in prose as "other symbols that aren't config
+// vars either" — reference noise nobody asked for.
+func TestSelectContextExcludesZeroScoreDisconnectedFiles(t *testing.T) {
+	g := buildDiamondGraph()
+	// An island file with no edge to or from anything in the diamond.
+	addTestNode(g, "island.go::Lonely", "island.go", 1)
+
+	got := SelectContext(g, []string{"seed.go::Alpha"}, 100000)
+	for _, f := range got.Files {
+		if f.Path == "island.go" {
+			t.Errorf("disconnected file with score 0 must be excluded, got it with score %v", f.Score)
+		}
+		if f.Score <= 0 {
+			t.Errorf("every included file must have a positive score, got %s = %v", f.Path, f.Score)
+		}
+	}
+	// The diamond's own four connected files must still all be present.
+	if len(got.Files) != 4 {
+		paths := make([]string, len(got.Files))
+		for i, f := range got.Files {
+			paths[i] = f.Path
+		}
+		t.Errorf("expected the 4 connected diamond files, got %v", paths)
+	}
+
+	// Unseeded (uniform ranking) mode must NOT drop the island file: every
+	// file gets the same positive personalization weight there, so this
+	// filter must never fire in that mode.
+	uniform := SelectContext(g, nil, 100000)
+	foundIsland := false
+	for _, f := range uniform.Files {
+		if f.Path == "island.go" {
+			foundIsland = true
+		}
+	}
+	if !foundIsland {
+		t.Error("uniform (no-seeds) ranking must still include every file, island.go missing")
+	}
+}
+
 // buildBenchGraph creates a synthetic 500-file graph for the benchmark.
 func buildBenchGraph() *akg.CodePropertyGraph {
 	g := akg.NewCodePropertyGraph("bench")

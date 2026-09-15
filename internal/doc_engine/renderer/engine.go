@@ -1,5 +1,8 @@
 // Package renderer — engine.go
-// Dual-track orchestrator (Track A LLM + Track B Deterministic Fallback).
+// Orchestrator: Track A (LLM prose, mandatory by default) with the
+// deterministic reference appendix folded in, or Track B alone (the
+// complete deterministic document) only under the explicit --no-llm
+// opt-out. See RenderSection's doc comment for the exact contract.
 // Implements Stage 6, coordinates Stage 7 (Quality Firewall) and Stage 8 (Atomic MVCC Write).
 package renderer
 
@@ -13,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"github.com/Syamchand123/GlassMarble/internal/ai_engine/provider"
@@ -182,7 +186,16 @@ type SectionRenderOutcome struct {
 	Warning      string
 }
 
-// RenderSection executes dual-track rendering with Quality Firewall gates and repair retries.
+// RenderSection executes rendering with Quality Firewall gates and repair
+// retries. The LLM is mandatory by default: real documentation is a real
+// explanation, and the only thing making that possible is Track A. There
+// is no automatic fallback to the deterministic renderer when Track A
+// fails or isn't configured — that used to mean a raw fact-table dump
+// could silently ship as if it were finished prose, which is exactly the
+// failure mode this design closes. The deterministic renderer's full
+// standalone output is reachable only via the explicit opts.NoLLM
+// (`gmb doc --no-llm`) opt-out, which the caller (cmd/doc.go) treats as a
+// deliberate, clearly-labeled choice, not a degrade path.
 func (o *Orchestrator) RenderSection(ctx context.Context, fs *config.FactSheet, graph *akg.CodePropertyGraph) (SectionRenderOutcome, error) {
 	if fs == nil {
 		return SectionRenderOutcome{}, fmt.Errorf("doc_engine/orchestrator: nil FactSheet")
@@ -190,68 +203,57 @@ func (o *Orchestrator) RenderSection(ctx context.Context, fs *config.FactSheet, 
 
 	symIndex := buildSymbolIndex(fs, graph)
 
-	// Determine if we should attempt Track A (LLM)
-	useLLM := o.actuator != nil && !o.opts.NoLLM && fs.RenderMode != "deterministic"
-
-	if useLLM {
-		outcome, err := o.renderTrackA(ctx, fs, symIndex)
+	if o.opts.NoLLM {
+		outcome, err := o.renderTrackB(fs, symIndex)
 		if err == nil {
-			o.countTrack("llm")
-			if outcome.RepairUsed {
-				o.countRepair()
-			}
-			return outcome, nil
+			o.countTrack("deterministic")
 		}
-		// Log warning and fall back to Track B
-		warn := fmt.Sprintf("Track A failed for section %q: %v — falling back to deterministic renderer", fs.SectionID, err)
-		if o.opts.Verbose {
-			fmt.Fprintln(o.opts.Out, "doc_engine: "+warn)
-		}
-
-		detOutcome, detErr := o.renderTrackB(fs, symIndex)
-		if detErr != nil {
-			return SectionRenderOutcome{}, detErr
-		}
-		detOutcome.FallbackUsed = true
-		detOutcome.Warning = warn
-		o.countTrack("deterministic")
-		o.countFallback()
-		if detOutcome.RepairUsed {
-			o.countRepair()
-		}
-		return detOutcome, nil
+		return outcome, err
 	}
 
-	// Track B directly
-	outcome, err := o.renderTrackB(fs, symIndex)
-	if err == nil {
-		o.countTrack("deterministic")
+	if o.actuator == nil {
+		return SectionRenderOutcome{}, fmt.Errorf("doc_engine/orchestrator: no LLM provider configured — documentation generation requires a working LLM (run `gmb ai configure`, or pass --no-llm to explicitly generate a grounding-only reference document instead)")
 	}
-	return outcome, err
+
+	outcome, err := o.renderTrackA(ctx, fs, symIndex)
+	if err != nil {
+		return SectionRenderOutcome{}, fmt.Errorf("LLM generation failed for section %q: %w", fs.SectionID, err)
+	}
+	o.countTrack("llm")
+	if outcome.RepairUsed {
+		o.countRepair()
+	}
+	return outcome, nil
 }
 
 // renderTrackA executes Track A with 1 repair retry on Gate 1/2/3 failure.
+// The LLM writes prose only (see prompts.go's system prompt); the gates
+// validate that prose alone (grounding, markdown/diagram syntax, secrets,
+// and — against the PRIOR PROSE only, via stripReferenceAppendix — whether
+// it's a cosmetic no-op worth discarding to avoid git churn). The
+// deterministic reference appendix is then rendered fresh from the
+// CURRENT fact sheet and appended unconditionally: it must reflect
+// whatever actually changed in the code even on a run where the prose
+// itself is an accurate, unchanged no-op, and combining it in only after
+// the gates run means it never needs re-validating (it is provably
+// grounded by construction, unlike anything the model wrote).
 func (o *Orchestrator) renderTrackA(ctx context.Context, fs *config.FactSheet, symIndex verifier.AKGSymbolIndex) (SectionRenderOutcome, error) {
 	resp, err := o.actuator.Render(ctx, fs)
 	if err != nil {
 		return SectionRenderOutcome{}, err
 	}
 
-	candidate := resp.Text
-	gateRes := verifier.RunGates(fs.PriorSectionMarkdown, candidate, symIndex)
+	priorProse := stripReferenceAppendix(fs.PriorSectionMarkdown)
+	candidate := humanizeCompoundIdentifiers(resp.Text)
+	gateRes := verifier.RunGates(priorProse, candidate, symIndex)
 
 	if gateRes.Pass {
-		content := candidate
-		if gateRes.SemanticNoOp && fs.PriorSectionMarkdown != "" {
+		prose := candidate
+		if gateRes.SemanticNoOp && priorProse != "" {
 			// Zero-git-churn: discard candidate if only cosmetic diff
-			content = fs.PriorSectionMarkdown
+			prose = priorProse
 		}
-		return SectionRenderOutcome{
-			Content:    content,
-			RenderMode: "llm",
-			TokensUsed: resp.TotalTokens,
-			DurationMs: resp.Duration.Milliseconds(),
-		}, nil
+		return o.finishTrackA(fs, prose, resp.TotalTokens, resp.Duration, false, symIndex)
 	}
 
 	// Gate failure inspection
@@ -266,24 +268,39 @@ func (o *Orchestrator) renderTrackA(ctx context.Context, fs *config.FactSheet, s
 		return SectionRenderOutcome{}, fmt.Errorf("repair attempt failed: %w", repairErr)
 	}
 
-	repairedCandidate := repairResp.Text
-	repairGateRes := verifier.RunGates(fs.PriorSectionMarkdown, repairedCandidate, symIndex)
+	repairedCandidate := humanizeCompoundIdentifiers(repairResp.Text)
+	repairGateRes := verifier.RunGates(priorProse, repairedCandidate, symIndex)
 
 	if repairGateRes.Pass {
-		content := repairedCandidate
-		if repairGateRes.SemanticNoOp && fs.PriorSectionMarkdown != "" {
-			content = fs.PriorSectionMarkdown
+		prose := repairedCandidate
+		if repairGateRes.SemanticNoOp && priorProse != "" {
+			prose = priorProse
 		}
-		return SectionRenderOutcome{
-			Content:    content,
-			RenderMode: "llm",
-			TokensUsed: resp.TotalTokens + repairResp.TotalTokens,
-			DurationMs: (resp.Duration + repairResp.Duration).Milliseconds(),
-			RepairUsed: true,
-		}, nil
+		return o.finishTrackA(fs, prose, resp.TotalTokens+repairResp.TotalTokens, resp.Duration+repairResp.Duration, true, symIndex)
 	}
 
 	return SectionRenderOutcome{}, fmt.Errorf("gate %d failed after repair: %w", repairGateRes.FailedGate, repairGateRes.Error)
+}
+
+// finishTrackA combines gate-validated prose with a freshly-rendered
+// reference appendix into the final section content, then runs one last
+// full-content gate pass (mainly Gate 4: the appendix is built from real
+// source doc-comments/signatures, which could in principle still contain
+// something secret-shaped) before shipping.
+func (o *Orchestrator) finishTrackA(fs *config.FactSheet, prose string, tokens int, dur time.Duration, repaired bool, symIndex verifier.AKGSymbolIndex) (SectionRenderOutcome, error) {
+	content := combineProseAndAppendix(prose, o.det.RenderReferenceAppendix(fs))
+
+	if finalGate := verifier.RunGates(fs.PriorSectionMarkdown, content, symIndex); !finalGate.Pass {
+		return SectionRenderOutcome{}, fmt.Errorf("gate %d failed on combined prose+reference content: %w", finalGate.FailedGate, finalGate.Error)
+	}
+
+	return SectionRenderOutcome{
+		Content:    content,
+		RenderMode: "llm",
+		TokensUsed: tokens,
+		DurationMs: dur.Milliseconds(),
+		RepairUsed: repaired,
+	}, nil
 }
 
 // renderTrackB executes deterministic generation directly.
@@ -323,22 +340,42 @@ func (o *Orchestrator) renderTrackB(fs *config.FactSheet, symIndex verifier.AKGS
 // recorded and the content ships unchanged — truncation would corrupt
 // markdown structure.
 func (o *Orchestrator) enforceMaxWords(ctx context.Context, fs *config.FactSheet, sec *config.SectionSpec, graph *akg.CodePropertyGraph, outcome SectionRenderOutcome, warnings *[]string) string {
-	if sec == nil || sec.MaxWords <= 0 || wordCount(outcome.Content) <= sec.MaxWords {
+	if sec == nil || sec.MaxWords <= 0 {
 		return outcome.Content
 	}
-	if o.actuator != nil && !outcome.RepairUsed && outcome.RenderMode == "llm" {
-		repairResp, repairErr := o.actuator.Repair(ctx, fs, outcome.Content,
-			fmt.Errorf("section is %d words, exceeding the MaxWords cap of %d: shorten it without losing any factual statements", wordCount(outcome.Content), sec.MaxWords))
+
+	if outcome.RenderMode != "llm" {
+		// Deterministic tables (the explicit --no-llm path) cannot be
+		// shortened without discarding grounded facts.
+		if wordCount(outcome.Content) > sec.MaxWords {
+			*warnings = append(*warnings, fmt.Sprintf("section %s exceeds MaxWords cap (%d words > %d max)", sec.ID, wordCount(outcome.Content), sec.MaxWords))
+		}
+		return outcome.Content
+	}
+
+	// The word budget is about the PROSE the model wrote, never the
+	// deterministic reference appendix folded in afterward: counting the
+	// appendix against it would unfairly shrink the model's writing
+	// budget on any well-documented package, and asking the model to
+	// "shorten" the combined text risked it rewriting or dropping tables
+	// it was never supposed to touch.
+	prose, appendix := splitProseAndAppendix(outcome.Content)
+	if wordCount(prose) <= sec.MaxWords {
+		return outcome.Content
+	}
+	if o.actuator != nil && !outcome.RepairUsed {
+		repairResp, repairErr := o.actuator.Repair(ctx, fs, prose,
+			fmt.Errorf("your prose is %d words, exceeding the MaxWords cap of %d: shorten it without losing any factual statement", wordCount(prose), sec.MaxWords))
 		if repairErr == nil {
-			repairGateRes := verifier.RunGates(fs.PriorSectionMarkdown, repairResp.Text, buildSymbolIndex(fs, graph))
+			repairGateRes := verifier.RunGates(stripReferenceAppendix(fs.PriorSectionMarkdown), repairResp.Text, buildSymbolIndex(fs, graph))
 			if repairGateRes.Pass && wordCount(repairResp.Text) <= sec.MaxWords {
 				*warnings = append(*warnings, fmt.Sprintf("section %s shortened to MaxWords cap (%d words)", sec.ID, sec.MaxWords))
 				o.countRepair()
-				return repairResp.Text
+				return combineProseAndAppendix(repairResp.Text, appendix)
 			}
 		}
 	}
-	*warnings = append(*warnings, fmt.Sprintf("section %s exceeds MaxWords cap (%d words > %d max)", sec.ID, wordCount(outcome.Content), sec.MaxWords))
+	*warnings = append(*warnings, fmt.Sprintf("section %s exceeds MaxWords cap (%d words > %d max)", sec.ID, wordCount(prose), sec.MaxWords))
 	return outcome.Content
 }
 

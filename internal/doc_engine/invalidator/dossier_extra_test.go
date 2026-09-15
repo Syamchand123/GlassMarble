@@ -209,6 +209,45 @@ func TestExtraDossierHeadOnlyTreatsBaseAsEmpty(t *testing.T) {
 	assert.Contains(t, dossier.ArchEvents, "COMPONENT_ADDED")
 }
 
+// TestExtraDossierConfigPackageDoesNotFalsePositiveAddedConfigVars guards
+// against a real bug found via live end-to-end testing: isConfigVar checks
+// the FQN for a "config"/"getenv" substring, which used to match on the
+// PACKAGE PATH alone — so a brand new file, function, or parameter added
+// under any "pkg/config/..." path (an extremely common package name) was
+// reported as a newly added environment variable, even though none of
+// them are one. Gating on Kind == "CALL" (the shape a real env-read
+// expression node would have) fixes this without touching isConfigVar's
+// own substring logic, which a genuine CALL-kind match still needs.
+func TestExtraDossierConfigPackageDoesNotFalsePositiveAddedConfigVars(t *testing.T) {
+	base := dossierTestGraph("base")
+	head := dossierTestGraph("head",
+		dossierTestNode("pkg/config/config.go::envInt", "pkg/config/config.go", "envInt", "func envInt(name string, def int) int"))
+
+	dossier, err := BuildDossier("", "", base, head)
+	require.NoError(t, err)
+	require.Len(t, dossier.AddedSymbols, 1)
+	assert.Empty(t, dossier.AddedConfigVars,
+		"a FUNCTION node under a package merely named \"config\" must not be reported as an added config var: %+v", dossier.AddedConfigVars)
+}
+
+// TestExtraDossierCallKindConfigVarStillDetected is the positive
+// counterpart to the guard above: a real Kind:"CALL" node whose FQN looks
+// like an env read must still be picked up. AddedConfigVars.Name here is
+// fact.FQN (the node's full id), not its short display name — matching
+// BuildDossier's actual field wiring above, distinct from the grounding
+// package's own collectConfigVars which keys off the node's short Name.
+func TestExtraDossierCallKindConfigVarStillDetected(t *testing.T) {
+	base := dossierTestGraph("base")
+	envCall := dossierTestNode("internal/auth/config.go::JWTSecretKey", "internal/auth/config.go", "JWTSecretKey", "")
+	envCall.Kind = "CALL"
+	head := dossierTestGraph("head", envCall)
+
+	dossier, err := BuildDossier("", "", base, head)
+	require.NoError(t, err)
+	require.Len(t, dossier.AddedConfigVars, 1)
+	assert.Equal(t, "internal/auth/config.go::JWTSecretKey", dossier.AddedConfigVars[0].Name)
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // SectionHash stability
 // ────────────────────────────────────────────────────────────────────────────

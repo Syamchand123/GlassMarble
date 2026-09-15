@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/Syamchand123/GlassMarble/internal/ai_engine"
+	"github.com/Syamchand123/GlassMarble/internal/ai_engine/aiconfig"
 	"github.com/Syamchand123/GlassMarble/internal/akg"
 	"github.com/Syamchand123/GlassMarble/internal/arch_timeline"
 	doc_engine "github.com/Syamchand123/GlassMarble/internal/doc_engine"
@@ -136,6 +138,77 @@ func warnNoAKGGraph(cmd *cobra.Command) {
 	docWarnf(cmd, "doc: warning: no AKG graph found (run 'gmb analyze' first for fully grounded documentation); continuing with reduced grounding\n")
 }
 
+// ensureLLMReady is the mandatory-LLM gate for interactive doc generation
+// (`gmb doc`, `gmb docserve`): a real explanation is the whole point of
+// this feature, and that requires an actual LLM call. Silently degrading
+// to a raw fact-table dump when nothing is configured — the previous
+// behavior — meant a user could end up with tables mislabeled as finished
+// documentation and no indication anything had gone differently than
+// expected. This checks readiness (config validity AND a live connectivity
+// ping, via the same ai_engine.Doctor diagnostic `gmb ai doctor` uses) up
+// front and fails loudly with concrete next steps before any document is
+// touched, rather than partway through a run.
+//
+// A no-op when opts.NoLLM is set: that flag is the explicit, deliberate
+// opt-out into the grounding-only reference mode, not something this gate
+// should second-guess. On success, opts.Provider/Model/MaxOutputTokens/
+// Temperature are populated directly from the resolved config so
+// doc_engine.Run's own internal auto-resolution (and the ping that comes
+// with it) is skipped — this is the one check, not two.
+func ensureLLMReady(cmd *cobra.Command, absDir string, opts *doc_engine.RunOptions) error {
+	if opts.NoLLM {
+		return nil
+	}
+
+	aiCfg, aiErr := aiconfig.LoadForDir(absDir, aiconfig.Config{})
+	var rep *ai_engine.DoctorReport
+	if aiErr == nil && aiCfg != nil {
+		rep = ai_engine.Doctor(cmd.Context(), aiCfg, absDir)
+	}
+
+	// Deliberately NOT rep.Problems (plural, aggregate): Doctor's report
+	// bundles an unrelated "AKG database not found" check into that same
+	// list for its own broader diagnostic purpose (`gmb ai doctor`), and a
+	// repo that has simply never run `gmb analyze` yet must still be able
+	// to generate documentation with a working LLM — this command already
+	// warns about that separately (warnNoAKGGraph) and degrades grounding
+	// gracefully rather than refusing to run. What actually matters here
+	// is only: is the provider configured correctly, and does it answer.
+	llmReady := aiErr == nil && aiCfg != nil && rep != nil && rep.ConfigValid && rep.PingStatus == "ok"
+	if !llmReady {
+		w := cmd.ErrOrStderr()
+		fmt.Fprintln(w, "doc: no working LLM provider — documentation generation requires one to write the actual explanation.")
+		fmt.Fprintln(w, "")
+		if aiCfg != nil && rep != nil {
+			fmt.Fprintln(w, views.RenderAIDoctor(rep, ai_engine.MaskAPIKey(aiCfg.APIKey)))
+			fmt.Fprintln(w, "")
+		}
+		fmt.Fprintln(w, "Fix this with one of:")
+		fmt.Fprintln(w, "  gmb ai configure          interactive provider setup")
+		fmt.Fprintln(w, "  gmb ai doctor             full connectivity diagnostic")
+		fmt.Fprintln(w, "")
+		fmt.Fprintln(w, "Or generate the grounding data alone, with no prose, by explicitly opting out:")
+		fmt.Fprintln(w, "  gmb doc --no-llm")
+		return fmt.Errorf("doc: LLM provider not ready")
+	}
+
+	eng, engErr := ai_engine.New(aiCfg, absDir)
+	if engErr != nil || eng == nil {
+		return fmt.Errorf("doc: LLM provider passed diagnostics but failed to initialize: %w", engErr)
+	}
+	opts.Provider = eng.Provider
+	if opts.Model == "" {
+		opts.Model = aiCfg.Model
+	}
+	if opts.MaxOutputTokens <= 0 {
+		opts.MaxOutputTokens = aiCfg.MaxOutputTokens
+	}
+	if opts.Temperature == nil {
+		opts.Temperature = aiconfig.EffectiveTemperature(aiCfg)
+	}
+	return nil
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // gmb doc — root command
 // ────────────────────────────────────────────────────────────────────────────
@@ -147,8 +220,12 @@ var docCmd = &cobra.Command{
 	Long: `The GlassMarble Documentation Intelligence Engine maintains living markdown
 documents that are grounded in the Architecture Knowledge Graph (AKG).
 
-95% of intelligence is deterministic (AKG, AST, commit reasoning).
-The LLM is used only for converting structured facts into readable prose (5%).
+Grounding is 100% deterministic (AKG, AST, commit reasoning) — but writing
+the documentation is the LLM's job: every section is a real explanation in
+plain English, backed by a grounded reference table underneath. Generation
+requires a working LLM provider (run 'gmb ai configure' if you haven't set
+one up); pass --no-llm to explicitly generate the grounding data alone as
+plain reference tables, with no prose, instead.
 
 Documents are section-targeted and delta-driven: only sections whose AKG
 subgraph changed since the last run are ever re-rendered. Everything else
@@ -227,6 +304,16 @@ func runDocUpdate(cmd *cobra.Command, args []string) error {
 	}
 	if base, ok := loadPersistedBaseGraph(absDir); ok {
 		opts.BaseGraph = base
+	}
+	// Only demand a working LLM when there is actually at least one
+	// managed document configured to generate — an empty/no-config repo
+	// has nothing for doc_engine.Run to do regardless, so requiring LLM
+	// setup just to be told that would be pure friction, not the mandate
+	// this check exists for.
+	if hasCfg, hasErr := docconfig.LoadDocsConfig(absDir); hasErr == nil && hasCfg != nil && len(hasCfg.Documents) > 0 {
+		if err := ensureLLMReady(cmd, absDir, &opts); err != nil {
+			return err
+		}
 	}
 
 	result := doc_engine.Run(absDir, opts)

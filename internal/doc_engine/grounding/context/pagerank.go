@@ -280,6 +280,21 @@ func SelectContext(graph *akg.CodePropertyGraph, seeds []string, budgetTokens in
 		return order[i] < order[j]
 	})
 	for _, f := range order {
+		// A file scoring exactly 0 has no discoverable path to any seed at
+		// all — no seed-file personalization weight and no inbound edge
+		// contribution from any other ranked file (see step 4's
+		// personalization vector and the PageRank recurrence above: with
+		// personal[j]==0 and zero inbound edges, next[j] is 0 on every
+		// iteration). That is a hard "provably unrelated" signal, not a
+		// low-confidence tail — including it just because the token budget
+		// still had room left injects arbitrary, unrelated files (and their
+		// full symbol lists) as "relevant context" for a document scoped
+		// nowhere near them. This never fires in the uniform (no
+		// seedFiles matched) fallback above, where every file's
+		// personalization weight is the same positive 1/n.
+		if scores[f] <= 0 {
+			continue
+		}
 		syms := fileNodes[f]
 		sort.Slice(syms, func(i, j int) bool { return syms[i].fqn < syms[j].fqn })
 		if len(syms) > maxSymbolsPerFile {

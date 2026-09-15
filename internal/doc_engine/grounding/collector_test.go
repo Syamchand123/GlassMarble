@@ -260,6 +260,12 @@ func TestCollector_AliasesResolve(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, payload)
 	assert.NotEmpty(t, payload.Symbols)
+	// "timeline", "timelines", and "commit_reasoning" are three spellings
+	// of the same canonical "arch_events" directive (see groundWithAliases)
+	// and collectArchEvents has no dedup of its own — each dispatch just
+	// appends another "Commit: ..." line — so listing all three together
+	// must invoke it exactly once, not three times.
+	require.Len(t, payload.ArchEvents, 1, "aliased directives must not re-dispatch the same collector: %+v", payload.ArchEvents)
 }
 
 func TestCollector_UnknownGroundWithErrors(t *testing.T) {
@@ -619,4 +625,81 @@ func TestExtractDoc_NoRepoRootIsNoOpFallback(t *testing.T) {
 	require.Len(t, payload.Symbols, 1)
 	assert.Equal(t, "", payload.Symbols[0].Doc, "no repoRoot means no source-scan fallback")
 	assert.Equal(t, "func Foo()", payload.Symbols[0].Signature, "content-based signature fallback needs no repoRoot")
+}
+
+// TestCollectConfigVars_ResolvesRealNamesFromWrapperCallSites guards
+// against a real bug found via live end-to-end testing: a package named
+// "config" (an extremely common name) made every symbol under it —
+// the file itself, its env-reading helper function, and even the helper's
+// formal parameter names — false-positive as a "configuration variable"
+// purely because the old check tested the node's id/path for the substring
+// "config", not what the symbol actually is. The real env var names
+// ("SERVER_PORT", "MAX_TASKS") are string literals at the helper's call
+// sites, invisible to any graph-node-name heuristic, and must come from
+// scanning the actual Go source.
+func TestCollectConfigVars_ResolvesRealNamesFromWrapperCallSites(t *testing.T) {
+	root := t.TempDir()
+	pkgDir := filepath.Join(root, "pkg", "config")
+	require.NoError(t, os.MkdirAll(pkgDir, 0755))
+	src := `package config
+
+import (
+	"os"
+	"strconv"
+)
+
+// Port is the TCP port the HTTP server listens on.
+var Port = envInt("SERVER_PORT", 8080)
+
+// MaxTasks caps the number of tasks the store accepts.
+var MaxTasks = envInt("MAX_TASKS", 1000)
+
+func envInt(name string, def int) int {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return def
+	}
+	return v
+}
+`
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "config.go"), []byte(src), 0644))
+
+	// An empty graph: the AKG never indexes package-level var declarations
+	// (see WithRepoRoot's doc comment), so real config vars can ONLY come
+	// from the source-scan fallback, never from a graph walk.
+	g := akg.NewCodePropertyGraph("commit-config-vars")
+	c := NewCollector(g).WithRepoRoot(root)
+	scope := &config.ScopeRule{Paths: []string{"pkg/config/**"}}
+	sec := &config.SectionSpec{ID: "vars", GroundWith: []string{"config_vars"}}
+
+	payload, err := c.CollectSectionFacts(sec, scope)
+	require.NoError(t, err)
+	require.Len(t, payload.ConfigVars, 2, "expected exactly SERVER_PORT and MAX_TASKS: %+v", payload.ConfigVars)
+
+	byName := make(map[string]config.ConfigVarFact)
+	for _, cv := range payload.ConfigVars {
+		byName[cv.Name] = cv
+	}
+
+	// The bug this guards against: these must NEVER appear as config vars.
+	for _, bogus := range []string{"config.go", "envInt", "def", "name"} {
+		_, present := byName[bogus]
+		assert.False(t, present, "%q is a Go identifier, not an environment variable, and must not appear", bogus)
+	}
+
+	port, ok := byName["SERVER_PORT"]
+	require.True(t, ok, "SERVER_PORT missing: %+v", payload.ConfigVars)
+	assert.Equal(t, "env", port.Source)
+	assert.Equal(t, "8080", port.Default)
+	assert.Equal(t, "Port is the TCP port the HTTP server listens on.", port.Doc)
+
+	maxTasks, ok := byName["MAX_TASKS"]
+	require.True(t, ok, "MAX_TASKS missing: %+v", payload.ConfigVars)
+	assert.Equal(t, "env", maxTasks.Source)
+	assert.Equal(t, "1000", maxTasks.Default)
+	assert.Equal(t, "MaxTasks caps the number of tasks the store accepts.", maxTasks.Doc)
 }

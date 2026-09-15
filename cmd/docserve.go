@@ -45,6 +45,20 @@ daemon: the next batch retries on fresh state.`,
 		}
 
 		out := cmd.ErrOrStderr()
+
+		// Checked once at startup, not per-batch: docserve's onChange
+		// callback is documented as non-fatal (log warnings, never abort
+		// the daemon), which is right for a transient failure mid-session
+		// but wrong for "never configured at all" — that would just warn
+		// on every single file change forever instead of ever producing
+		// real documentation. Resolved Provider/Model/etc. are reused for
+		// every batch below rather than re-checked, so a long-running
+		// daemon doesn't re-ping the provider on every debounce window.
+		llmOpts := doc_engine.RunOptions{}
+		if err := ensureLLMReady(cmd, absDir, &llmOpts); err != nil {
+			return err
+		}
+
 		fmt.Fprintf(out, "docserve: watching %s (debounce %dms, workers %d)\n", absDir, debounceMs, workers)
 		fmt.Fprintln(out, "Press Ctrl+C to stop.")
 
@@ -61,9 +75,13 @@ daemon: the next batch retries on fresh state.`,
 				fmt.Fprintf(out, "docserve: warning: git rev-parse HEAD failed (%v); continuing with empty commit\n", err)
 			}
 			res := doc_engine.Run(absDir, doc_engine.RunOptions{
-				CommitHash: commit,
-				Force:      false,
-				Out:        out,
+				CommitHash:      commit,
+				Force:           false,
+				Out:             out,
+				Provider:        llmOpts.Provider,
+				Model:           llmOpts.Model,
+				MaxOutputTokens: llmOpts.MaxOutputTokens,
+				Temperature:     llmOpts.Temperature,
 				// ctx here is daemon.Run's runCtx, which is derived from
 				// cmd.Context() below — cancelling that (e.g. SIGINT/SIGTERM
 				// during `gmb docserve`) now reaches an in-flight run's LLM
