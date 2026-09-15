@@ -176,6 +176,46 @@ func TestHeadingsAreClaimsAndFencesSkipped(t *testing.T) {
 	}
 }
 
+// TestDeterministicRendererHeadingsAndTablesDoNotFailFaithfulness guards
+// against a regression where a 100%-grounded, purely deterministic Track B
+// section scored near zero for having structure at all: fixed literal
+// headings ("### Direct Callers") and table header/separator rows share no
+// vocabulary with a FactSheet's ground_truth JSON (snake_case field names,
+// not this English phrasing), so every one of them was flagged as an
+// "unsupported claim" even though none of it is model-authored content that
+// could actually be unfaithful.
+func TestDeterministicRendererHeadingsAndTablesDoNotFailFaithfulness(t *testing.T) {
+	prose := "### Direct Callers\n\n" +
+		"- `pkg/worker.Pool`\n\n" +
+		"### Functions and Methods\n\n" +
+		"| Name | Signature | Description | File |\n" +
+		"| --- | --- | --- | --- |\n" +
+		"| `Run` | `func (p *Pool) Run(ctx context.Context) error` | Pool manages background workers. | pool.go |\n"
+
+	rep := ScoreSection(prose, testFactSheet())
+	if len(rep.Unsupported) != 0 {
+		t.Fatalf("expected no unsupported claims, got %v", rep.Unsupported)
+	}
+	if rep.Score != 1.0 {
+		t.Fatalf("Score = %v, want 1.0", rep.Score)
+	}
+}
+
+// TestArbitraryHeadingStillScoredNormally is the companion check: only the
+// known, fixed set of deterministic-renderer headings is exempted — an
+// LLM-authored (or otherwise arbitrary) heading unrelated to any ground
+// truth must still be scored and can still fail, matching
+// TestHeadingsAreClaimsAndFencesSkipped's existing pinned behavior.
+func TestArbitraryHeadingStillScoredNormally(t *testing.T) {
+	rep := ScoreSection("# Kubernetes Deployment Guide\n", testFactSheet())
+	if rep.TotalClaims != 1 {
+		t.Fatalf("TotalClaims = %d, want 1", rep.TotalClaims)
+	}
+	if rep.SupportedClaims != 0 {
+		t.Fatalf("expected the unrelated heading to be unsupported, got %d supported", rep.SupportedClaims)
+	}
+}
+
 func TestInstructionSatisfied(t *testing.T) {
 	prose := "The worker pool manages background workers for operators."
 	if !InstructionSatisfied(prose, "Describe the worker pool lifecycle for operators.") {

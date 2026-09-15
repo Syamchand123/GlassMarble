@@ -49,6 +49,24 @@ func TakeRankedMap(docPath, sectionID string) (files []string, ok bool) {
 	return files, true
 }
 
+// sectionWants reports whether sec's ground_with directives (after the same
+// alias resolution CollectSectionFacts applies) request the given canonical
+// directive. An empty GroundWith defaults to signatures+exported_symbols
+// (CollectSectionFacts' own default), matching what that section would
+// actually collect.
+func sectionWants(sec *config.SectionSpec, canonical string) bool {
+	directives := []string{"signatures", "exported_symbols"}
+	if sec != nil && len(sec.GroundWith) > 0 {
+		directives = sec.GroundWith
+	}
+	for _, d := range directives {
+		if got, skip := resolveGroundWith(d); !skip && got == canonical {
+			return true
+		}
+	}
+	return false
+}
+
 // AssembleFactSheet builds a complete, sanitized FactSheet for a single section.
 func AssembleFactSheet(
 	doc *config.DocSpec,
@@ -86,24 +104,48 @@ func AssembleFactSheet(
 				payload.RemovedSymbols = append(payload.RemovedSymbols, rem)
 			}
 		}
-		for _, cv := range dossier.AddedConfigVars {
-			if catalog.MatchesScope(&doc.Scope, cv.File) {
-				payload.ConfigVars = append(payload.ConfigVars, cv)
+		// ConfigVars/Sentinels/ModifiedSentinels feed the section's own
+		// PRIMARY content tables ("Configuration Variables", "Error
+		// Catalog") — unlike AddedSymbols/ModifiedSymbols/RemovedSymbols
+		// above, which only ever surface in the separately-labeled
+		// "Recent Symbol Changes" block (a deliberate, clearly-marked
+		// cross-cutting "what changed" note, fine to populate regardless
+		// of this section's own focus). Merging dossier config-var/
+		// sentinel deltas into these tables UNCONDITIONALLY — as this did
+		// before — meant a section whose own ground_with never asked for
+		// config_vars/sentinels at all (e.g. architecture's "overview",
+		// grounded only in arch_intelligence+dependencies) could still
+		// render a full Configuration Variables table sourced entirely
+		// from the dossier, indistinguishable from real section content.
+		// Worse, since the dossier's Added/Modified set varies per commit
+		// (whatever else happened to be touched), the exact same
+		// unchanged section could show a different table on every
+		// regeneration. Gating on whether the section actually requested
+		// that kind of grounding keeps these tables a pure function of
+		// the section's own scope and ground_with, not of incidental
+		// per-commit dossier contents.
+		if sectionWants(sec, "config_vars") {
+			for _, cv := range dossier.AddedConfigVars {
+				if catalog.MatchesScope(&doc.Scope, cv.File) {
+					payload.ConfigVars = append(payload.ConfigVars, cv)
+				}
+			}
+			for _, rv := range dossier.RemovedConfigVars {
+				payload.RemovedConfigVars = append(payload.RemovedConfigVars, rv)
 			}
 		}
-		for _, sf := range dossier.AddedSentinels {
-			if catalog.MatchesScope(&doc.Scope, sf.File) {
-				payload.Sentinels = append(payload.Sentinels, sf)
+		if sectionWants(sec, "sentinels") {
+			for _, sf := range dossier.AddedSentinels {
+				if catalog.MatchesScope(&doc.Scope, sf.File) {
+					payload.Sentinels = append(payload.Sentinels, sf)
+				}
 			}
-		}
-		for _, sd := range dossier.ModifiedSentinels {
-			file := fqnFilePart(sd.FQN)
-			if file == "" || catalog.MatchesScope(&doc.Scope, file) {
-				payload.ModifiedSentinels = append(payload.ModifiedSentinels, sd)
+			for _, sd := range dossier.ModifiedSentinels {
+				file := fqnFilePart(sd.FQN)
+				if file == "" || catalog.MatchesScope(&doc.Scope, file) {
+					payload.ModifiedSentinels = append(payload.ModifiedSentinels, sd)
+				}
 			}
-		}
-		for _, rv := range dossier.RemovedConfigVars {
-			payload.RemovedConfigVars = append(payload.RemovedConfigVars, rv)
 		}
 	}
 

@@ -56,6 +56,38 @@ func (r *DeterministicRenderer) RenderSection(fs *config.FactSheet) (string, err
 		}
 	}
 
+	// 1b. HTTP Endpoints (method + path + handler). This is what makes the
+	// "api" archetype's "Endpoints & Route Handlers" section — whose own
+	// instruction promises "route paths, HTTP methods, handler functions"
+	// — actually different from a generic function dump: without a real
+	// Method/Path table, a handler function only ever appeared in the same
+	// generic "Functions and Methods" table below as any other function.
+	if len(fs.GroundTruth.Endpoints) > 0 {
+		sb.WriteString("### Endpoints\n\n")
+		sb.WriteString("| Method | Path | Handler | Description | File |\n")
+		sb.WriteString("| --- | --- | --- | --- | --- |\n")
+		for _, ep := range fs.GroundTruth.Endpoints {
+			desc := cleanTableString(ep.Doc)
+			if desc == "" {
+				desc = "No doc comment provided."
+			}
+			// Handler is backtick-plain, never a link whose visible text is
+			// the same identifier — like every other table here (see
+			// Functions and Methods below), the clickable permalink goes in
+			// its own File column with the file#line as link TEXT instead.
+			// Doc almost always repeats the handler's own name as its first
+			// word ("CreateTaskHandler handles..."); a [CreateTaskHandler]
+			// link right next to that reads, after Gate 6 strips markdown
+			// link/code syntax down to plain words for prose checking, as
+			// the same bare word appearing twice in a row — a false
+			// "doubled word" failure on perfectly correct content.
+			sb.WriteString(fmt.Sprintf("| %s | `%s` | `%s` | %s | %s |\n",
+				ep.Method, cleanInlineString(ep.Path), cleanInlineString(ep.Handler), desc,
+				formatFileLink(ep.File, ep.Line, ep.Permalink)))
+		}
+		sb.WriteString("\n")
+	}
+
 	// 2. Call flow / callers
 	if len(fs.GroundTruth.CallFlow) > 0 {
 		sb.WriteString("### Call Flow\n\n")

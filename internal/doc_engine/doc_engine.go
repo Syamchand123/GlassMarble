@@ -79,6 +79,15 @@ type RunOptions struct {
 	// Model is the model name for Track A. If empty, falls back to AI config.
 	Model string
 
+	// MaxOutputTokens caps Track A's completion length. If <= 0, falls back
+	// to AI config (ai.yaml's max_output_tokens), then to
+	// DefaultLLMActuatorConfig's built-in default (300) if that's also unset.
+	MaxOutputTokens int
+
+	// Temperature sets Track A's sampling temperature. If nil, falls back
+	// to AI config, then to DefaultLLMActuatorConfig's built-in default (0.0).
+	Temperature *float64
+
 	// Force bypasses the fast-bail check and reprocesses all documents.
 	Force bool
 
@@ -455,17 +464,33 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 				if opts.Model == "" {
 					opts.Model = aiCfg.Model
 				}
+				// Without this, Track A always rendered with
+				// DefaultLLMActuatorConfig's hardcoded 300-token budget and
+				// 0.0 temperature, silently ignoring whatever the user
+				// configured in ai.yaml (commonly 8192+ tokens) — a budget
+				// that small is routinely exhausted by a reasoning model's
+				// own chain-of-thought before it ever reaches the final
+				// answer, so Track A shipped truncated reasoning transcripts
+				// as if they were the section's content.
+				if opts.MaxOutputTokens <= 0 {
+					opts.MaxOutputTokens = aiCfg.MaxOutputTokens
+				}
+				if opts.Temperature == nil {
+					opts.Temperature = aiconfig.EffectiveTemperature(aiCfg)
+				}
 			}
 		}
 	}
 
 	orch := renderer.NewOrchestrator(renderer.OrchestratorOptions{
-		NoLLM:       opts.NoLLM,
-		Model:       opts.Model,
-		Provider:    opts.Provider,
-		Verbose:     opts.Verbose,
-		Out:         out,
-		GlobalStyle: cfg.Style,
+		NoLLM:           opts.NoLLM,
+		Model:           opts.Model,
+		Provider:        opts.Provider,
+		Verbose:         opts.Verbose,
+		Out:             out,
+		GlobalStyle:     cfg.Style,
+		MaxOutputTokens: opts.MaxOutputTokens,
+		Temperature:     opts.Temperature,
 	})
 
 	// Index dirty sections by document ID
@@ -490,6 +515,20 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 	for i := range docs {
 		d := &docs[i]
 		secIDs := dirtyByDoc[d.ID]
+		// A document configured in docs.yaml whose target file was never
+		// scaffolded (deleted by hand, or a docs.yaml entry added without
+		// ever running `gmb doc init`) has nothing for the invalidator to
+		// diff against, so it never appears in dirtySections either — this
+		// document was silently skipped below with no warning at all
+		// (Force doesn't help either: ProcessDocument gets an empty
+		// secIDs and has nothing to touch), unlike `gmb doc check` (which
+		// reports "FAIL: file missing" clearly). A user watching only
+		// `gmb doc`'s own output had no way to tell "nothing changed"
+		// apart from "this document was never scaffolded."
+		if _, statErr := os.Stat(filepath.Join(repoRoot, d.TargetPath)); os.IsNotExist(statErr) {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("doc_engine: %s: target file does not exist — run `gmb doc init %s` (or restore the file) before it can be generated; skipping", d.TargetPath, d.TargetPath))
+		}
 		if opts.Force || len(secIDs) > 0 {
 			// Cancellation checkpoint: stop picking up NEW documents once the
 			// caller cancels (e.g. `gmb docserve` shutting down). An

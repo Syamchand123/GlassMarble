@@ -449,6 +449,149 @@ func Login(username, password string) (string, error) {
 	assert.Equal(t, "ErrInvalidToken is returned when a token fails validation.", payload.Sentinels[0].Doc)
 }
 
+// TestCollectHTTPHandlers_ExtractsRoutesFromSource guards against a
+// regression where the "api" archetype's "Endpoints & Route Handlers"
+// section never actually showed a route's HTTP method or path — the AKG
+// does not index call-argument literals, so http.HandleFunc("/tasks", ...)
+// 's path string is otherwise invisible, and a handler function only ever
+// appeared in the generic Functions and Methods table like any other
+// function. Covers both a net/http-style HandleFunc call (method unknown,
+// reported as ANY) and a gin/echo/chi-style chained method call (method
+// taken from the selector name).
+func TestCollectHTTPHandlers_ExtractsRoutesFromSource(t *testing.T) {
+	root := t.TempDir()
+	pkgDir := filepath.Join(root, "pkg", "api")
+	require.NoError(t, os.MkdirAll(pkgDir, 0755))
+	src := `package api
+
+import "net/http"
+
+// CreateTaskHandler handles POST /tasks and creates a new task.
+func CreateTaskHandler(w http.ResponseWriter, r *http.Request) {}
+
+// ListTasksHandler handles GET /tasks and lists tasks.
+func ListTasksHandler(w http.ResponseWriter, r *http.Request) {}
+
+func setupRoutes(router *Router) {
+	http.HandleFunc("/tasks", CreateTaskHandler)
+	router.GET("/tasks", ListTasksHandler)
+}
+`
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "handler.go"), []byte(src), 0644))
+
+	g := akg.NewCodePropertyGraph("commit-http-routes")
+	g.Nodes = g.Nodes.Set("pkg/api/handler.go::CreateTaskHandler", &link.ResolvedNode{
+		ID:   "pkg/api/handler.go::CreateTaskHandler",
+		Name: "CreateTaskHandler",
+		Kind: "FUNCTION",
+		FileSpec: link.LocationMeta{
+			Path:      "pkg/api/handler.go",
+			LineStart: 6,
+			LineEnd:   6,
+		},
+		Properties: map[string]string{"signature": "func CreateTaskHandler(w http.ResponseWriter, r *http.Request)"},
+	})
+	g.Nodes = g.Nodes.Set("pkg/api/handler.go::ListTasksHandler", &link.ResolvedNode{
+		ID:   "pkg/api/handler.go::ListTasksHandler",
+		Name: "ListTasksHandler",
+		Kind: "FUNCTION",
+		FileSpec: link.LocationMeta{
+			Path:      "pkg/api/handler.go",
+			LineStart: 9,
+			LineEnd:   9,
+		},
+		Properties: map[string]string{"signature": "func ListTasksHandler(w http.ResponseWriter, r *http.Request)"},
+	})
+
+	c := NewCollector(g).WithRepoRoot(root)
+	scope := &config.ScopeRule{Paths: []string{"pkg/api/**"}}
+	sec := &config.SectionSpec{ID: "endpoints", GroundWith: []string{"http_handlers"}}
+
+	payload, err := c.CollectSectionFacts(sec, scope)
+	require.NoError(t, err)
+	require.Len(t, payload.Endpoints, 2, "expected both routes: %+v", payload.Endpoints)
+
+	byHandler := make(map[string]config.EndpointFact)
+	for _, ep := range payload.Endpoints {
+		byHandler[ep.Handler] = ep
+	}
+
+	create, ok := byHandler["CreateTaskHandler"]
+	require.True(t, ok, "CreateTaskHandler route missing: %+v", payload.Endpoints)
+	assert.Equal(t, "ANY", create.Method, "net/http.HandleFunc has no method restriction")
+	assert.Equal(t, "/tasks", create.Path)
+	assert.Equal(t, "CreateTaskHandler handles POST /tasks and creates a new task.", create.Doc)
+	assert.Contains(t, create.Permalink, "pkg/api/handler.go")
+
+	list, ok := byHandler["ListTasksHandler"]
+	require.True(t, ok, "ListTasksHandler route missing: %+v", payload.Endpoints)
+	assert.Equal(t, "GET", list.Method, "chained .GET(...) call must report method GET")
+	assert.Equal(t, "/tasks", list.Path)
+}
+
+// TestCollectHTTPHandlers_RegistrationOutsideScopeStillResolves guards
+// against a regression in the fix above: route registrations are commonly
+// written in main.go or a router-setup file, separate from the handler
+// package itself (the doc's scope, e.g. "pkg/api/**") — scoping the source
+// scan to the document's own package found nothing at all for that
+// entirely normal layout. What must decide whether a route belongs to this
+// document is whether its HANDLER resolves to an in-scope symbol, not
+// where the registration call happens to be written.
+func TestCollectHTTPHandlers_RegistrationOutsideScopeStillResolves(t *testing.T) {
+	root := t.TempDir()
+	apiDir := filepath.Join(root, "pkg", "api")
+	require.NoError(t, os.MkdirAll(apiDir, 0755))
+	handlerSrc := `package api
+
+import "net/http"
+
+// CreateTaskHandler handles POST /tasks and creates a new task.
+func CreateTaskHandler(w http.ResponseWriter, r *http.Request) {}
+`
+	require.NoError(t, os.WriteFile(filepath.Join(apiDir, "handler.go"), []byte(handlerSrc), 0644))
+
+	cmdDir := filepath.Join(root, "cmd", "server")
+	require.NoError(t, os.MkdirAll(cmdDir, 0755))
+	mainSrc := `package main
+
+import (
+	"net/http"
+
+	"example.com/taskmgr/pkg/api"
+)
+
+func main() {
+	http.HandleFunc("/tasks", api.CreateTaskHandler)
+}
+`
+	require.NoError(t, os.WriteFile(filepath.Join(cmdDir, "main.go"), []byte(mainSrc), 0644))
+
+	g := akg.NewCodePropertyGraph("commit-cross-file-route")
+	g.Nodes = g.Nodes.Set("pkg/api/handler.go::CreateTaskHandler", &link.ResolvedNode{
+		ID:   "pkg/api/handler.go::CreateTaskHandler",
+		Name: "CreateTaskHandler",
+		Kind: "FUNCTION",
+		FileSpec: link.LocationMeta{
+			Path:      "pkg/api/handler.go",
+			LineStart: 5,
+			LineEnd:   5,
+		},
+		Properties: map[string]string{"signature": "func CreateTaskHandler(w http.ResponseWriter, r *http.Request)"},
+	})
+
+	c := NewCollector(g).WithRepoRoot(root)
+	scope := &config.ScopeRule{Paths: []string{"pkg/api/**"}} // deliberately excludes cmd/server
+	sec := &config.SectionSpec{ID: "endpoints", GroundWith: []string{"http_handlers"}}
+
+	payload, err := c.CollectSectionFacts(sec, scope)
+	require.NoError(t, err)
+	require.Len(t, payload.Endpoints, 1, "route must resolve even though its registration lives outside scope: %+v", payload.Endpoints)
+	assert.Equal(t, "CreateTaskHandler", payload.Endpoints[0].Handler)
+	assert.Equal(t, "/tasks", payload.Endpoints[0].Path)
+	assert.Contains(t, payload.Endpoints[0].Permalink, "pkg/api/handler.go",
+		"permalink must point at the in-scope handler, not the out-of-scope registration site")
+}
+
 // TestExtractDoc_NoRepoRootIsNoOpFallback guards the opt-in nature of the
 // Go-source fallback: a Collector with no WithRepoRoot call (every existing
 // caller before this feature, and every collector_test.go fixture above)

@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
+	"github.com/Syamchand123/GlassMarble/internal/arch_timeline"
 	doc_engine "github.com/Syamchand123/GlassMarble/internal/doc_engine"
 	docconfig "github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/grounding/langmatrix"
@@ -62,6 +63,70 @@ func loadPersistedAKGGraph(absDir string) (*akg.CodePropertyGraph, bool) {
 		return nil, false
 	}
 	return graph, true
+}
+
+// loadPersistedBaseGraph loads the ARCHITECTURE-SNAPSHOT immediately before
+// the most recent one (<absDir>/.glassmarble/snapshots/, written by every
+// `gmb analyze` run) and replays it back into a graph, for use as
+// RunOptions.BaseGraph on a standalone `gmb doc` invocation.
+//
+// Without this, only the git-hook-triggered pipeline (cmd/analyze.go's
+// runDocEngine, which captures the pre-commit graph directly before
+// ExecuteDeltaTransaction promotes it) ever had a real BaseGraph — every
+// STANDALONE `gmb doc` run (the officially-documented flow: `doc init`'s
+// own success message says "Run `gmb doc --doc %s`") still built its
+// dossier with BaseGraph nil, so invalidator.BuildDossier's
+// akg.DiffGraphs(nil, headGraph) treated every symbol currently in scope
+// as "added" — on every run, not just the first — flooding every
+// regenerated section's "Recent Symbol Changes" block regardless of what
+// actually changed.
+//
+// Snapshots are timestamp-ascending (arch_timeline.SnapshotStore's own
+// invariant), so entries[len-2] is "whatever came before the latest one" —
+// the same relationship cmd/analyze.go's pre-commit graph capture has to
+// the just-promoted graph. Returns (nil, false) when fewer than 2 snapshots
+// exist yet (a fresh or single-commit repo) or the store/replay fails;
+// callers should treat that exactly like a fresh repo (DiffGraphs(nil, ...)
+// is the correct genesis behavior, not an error).
+func loadPersistedBaseGraph(absDir string) (*akg.CodePropertyGraph, bool) {
+	storageDir := filepath.Join(absDir, ".glassmarble")
+	store, err := arch_timeline.NewSnapshotStore(filepath.Join(storageDir, "snapshots"))
+	if err != nil || store == nil {
+		return nil, false
+	}
+	entries := store.List()
+	if len(entries) < 2 {
+		return nil, false
+	}
+	prev := entries[len(entries)-2]
+	snap, err := store.GetBySnapshotID(prev.SnapshotID)
+	if err != nil || snap == nil {
+		return nil, false
+	}
+	graph, err := arch_timeline.Replay(snap)
+	if err != nil || graph == nil {
+		return nil, false
+	}
+	return graph, true
+}
+
+// splitCommaFlagValues splits every entry on commas and trims whitespace,
+// flattening e.g. ["a,b", "c"] into ["a", "b", "c"]. A StringArray flag
+// (--scope, --entry-points) is meant to be repeated for multiple values,
+// but a single comma-separated value is a common, reasonable thing to try
+// instead — this makes both forms work rather than silently misinterpreting
+// the comma-separated form as one literal value.
+func splitCommaFlagValues(vals []string) []string {
+	var out []string
+	for _, v := range vals {
+		for _, part := range strings.Split(v, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				out = append(out, part)
+			}
+		}
+	}
+	return out
 }
 
 // warnNoAKGGraph prints the standard "run gmb analyze first" advisory. Never
@@ -159,6 +224,9 @@ func runDocUpdate(cmd *cobra.Command, args []string) error {
 		opts.HeadGraph = graph
 	} else {
 		warnNoAKGGraph(cmd)
+	}
+	if base, ok := loadPersistedBaseGraph(absDir); ok {
+		opts.BaseGraph = base
 	}
 
 	result := doc_engine.Run(absDir, opts)
@@ -324,6 +392,17 @@ entry_points key for the document.`,
 		archetype, _ := cmd.Flags().GetString("archetype")
 		scope, _ := cmd.Flags().GetStringArray("scope")
 		entryPoints, _ := cmd.Flags().GetStringArray("entry-points")
+		// --scope/--entry-points are Cobra StringArray flags: repeating the
+		// flag is how they're meant to take multiple values
+		// (--scope a --scope b), but a natural single
+		// --scope "a,b" instead silently stores ONE literal glob
+		// containing a comma, which matches nothing — no error, no
+		// warning, just a document that never grounds anything. Comma
+		// characters have no meaning in a glob or an FQN, so splitting on
+		// them is safe and matches what a user typing that form clearly
+		// intends.
+		scope = splitCommaFlagValues(scope)
+		entryPoints = splitCommaFlagValues(entryPoints)
 		title, _ := cmd.Flags().GetString("title")
 		purpose, _ := cmd.Flags().GetString("purpose")
 		audience, _ := cmd.Flags().GetString("audience")
@@ -958,7 +1037,14 @@ Exit codes:
 		minScore, _ := cmd.Flags().GetFloat64("min-score")
 		asJSON, _ := cmd.Flags().GetBool("json")
 
-		result, err := doc_engine.EvalFaithfulness(absDir, sampleN)
+		var graph *akg.CodePropertyGraph
+		if g, ok := loadPersistedAKGGraph(absDir); ok {
+			graph = g
+		} else {
+			warnNoAKGGraph(cmd)
+		}
+
+		result, err := doc_engine.EvalFaithfulness(absDir, sampleN, graph)
 		if err != nil {
 			return err
 		}
@@ -1283,8 +1369,8 @@ func init() {
 
 	// ── gmb doc init flags ────────────────────────────────────────────────
 	docInitCmd.Flags().String("archetype", "", "Built-in document template: architecture|module|runbook|onboarding|migration|adr|api|security|database|config")
-	docInitCmd.Flags().StringArray("scope", nil, "Glob patterns for this document's scope (e.g. 'internal/auth/**')")
-	docInitCmd.Flags().StringArray("entry-points", nil, "FQNs seeding call-graph/sequence diagrams (e.g. 'internal/auth/service.go::Authenticate'); without at least one, this archetype's diagrams stay empty")
+	docInitCmd.Flags().StringArray("scope", nil, "Glob patterns for this document's scope (e.g. 'internal/auth/**'); repeat the flag or comma-separate for multiple")
+	docInitCmd.Flags().StringArray("entry-points", nil, "FQNs seeding call-graph/sequence diagrams (e.g. 'internal/auth/service.go::Authenticate'); without at least one, this archetype's diagrams stay empty; repeat the flag or comma-separate for multiple")
 	docInitCmd.Flags().String("title", "", "Document title")
 	docInitCmd.Flags().String("purpose", "", "One-sentence description of what the document is for")
 	docInitCmd.Flags().String("audience", "", "Intended reader (e.g. 'On-call SRE engineers')")

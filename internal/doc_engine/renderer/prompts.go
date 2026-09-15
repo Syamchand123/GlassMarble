@@ -13,7 +13,7 @@ import (
 
 // BuildSystemPrompt constructs the immutable system prompt for the LLM actuator.
 // Rules are numbered programmatically so the sequence is always gap-free
-// (1-6 when maxWords==0, 1-7 otherwise).
+// (1-7 when maxWords==0, 1-8 otherwise).
 func BuildSystemPrompt(style *config.StyleSpec, maxWords int) string {
 	voice := "active, second-person, present tense"
 	tone := ""
@@ -42,6 +42,7 @@ func BuildSystemPrompt(style *config.StyleSpec, maxWords int) string {
 		"Every function, type, error, or identifier you mention in backticks MUST appear in the fact_sheet.ground_truth. Do not reference any code entity not listed there.",
 		"Do not rewrite or rephrase sentences from prior_section_markdown that are still factually accurate. Only add, modify, or remove sentences that directly reflect the changes in ground_truth.",
 		"Output ONLY the markdown for the specified section. No preamble, no \"Here is the updated section\", no meta-commentary.",
+		"Never narrate your reasoning, planning, or interpretation of this prompt. Do not write sentences about the task itself (e.g. \"We need to produce...\", \"The instruction says...\", \"Let's think about...\"). If you reason internally, keep it out of the output entirely — respond with the finished markdown ONLY, starting directly with its first heading, table, or sentence of real content.",
 		styleRule,
 		fmt.Sprintf("Avoid these words/phrases: %s.", jargon),
 	}

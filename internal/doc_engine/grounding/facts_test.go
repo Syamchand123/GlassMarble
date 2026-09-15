@@ -129,6 +129,68 @@ func TestAssembleFactSheet_CallersUnionCapped(t *testing.T) {
 	}
 }
 
+// TestAssembleFactSheet_DossierConfigVarsAndSentinelsScopedToGroundWith
+// guards against a regression where dossier.AddedConfigVars/AddedSentinels/
+// ModifiedSentinels were merged into payload.ConfigVars/payload.Sentinels
+// unconditionally — regardless of whether the section's own ground_with
+// ever asked for that kind of grounding. factTestSection() here only
+// requests "signatures", so a dossier config-var/sentinel delta in scope
+// must NOT appear in either table: a "System Overview" section grounded in
+// arch_intelligence alone should never render a Configuration Variables
+// table sourced entirely from incidental per-commit dossier contents.
+func TestAssembleFactSheet_DossierConfigVarsAndSentinelsScopedToGroundWith(t *testing.T) {
+	graph := buildTestGraph()
+	dossier := &config.GlobalCommitDossier{
+		AddedConfigVars: []config.ConfigVarFact{
+			{Name: "internal/auth/config.go::JWTSecretKey", File: "internal/auth/config.go"},
+		},
+		AddedSentinels: []config.SentinelFact{
+			{FQN: "internal/auth/errors.go::ErrNewSentinel", File: "internal/auth/errors.go"},
+		},
+	}
+
+	sheet := AssembleFactSheet(factTestDoc(), factTestSection(), graph, dossier, "", "")
+	require.NotNil(t, sheet)
+	assert.Empty(t, sheet.GroundTruth.ConfigVars, "section did not request config_vars grounding")
+	assert.Empty(t, sheet.GroundTruth.Sentinels, "section did not request sentinels grounding")
+}
+
+// TestAssembleFactSheet_DossierConfigVarsAndSentinelsMergeWhenRequested is
+// the companion positive check: a section whose ground_with DOES include
+// config_vars/sentinels must still receive the dossier's in-scope deltas,
+// same as before this fix.
+func TestAssembleFactSheet_DossierConfigVarsAndSentinelsMergeWhenRequested(t *testing.T) {
+	graph := buildTestGraph()
+	dossier := &config.GlobalCommitDossier{
+		AddedConfigVars: []config.ConfigVarFact{
+			{Name: "internal/auth/config.go::JWTSecretKey", File: "internal/auth/config.go"},
+		},
+		AddedSentinels: []config.SentinelFact{
+			{FQN: "internal/auth/errors.go::ErrNewSentinel", File: "internal/auth/errors.go"},
+		},
+	}
+	sec := &config.SectionSpec{
+		ID:         "errors",
+		GroundWith: []string{"config_vars", "sentinels"},
+		Managed:    true,
+	}
+
+	sheet := AssembleFactSheet(factTestDoc(), sec, graph, dossier, "", "")
+	require.NotNil(t, sheet)
+	configVarNames := make([]string, len(sheet.GroundTruth.ConfigVars))
+	for i, cv := range sheet.GroundTruth.ConfigVars {
+		configVarNames[i] = cv.Name
+	}
+	assert.Contains(t, configVarNames, "internal/auth/config.go::JWTSecretKey",
+		"dossier-added config var must merge in when the section requests config_vars")
+	sentinelFQNs := make([]string, len(sheet.GroundTruth.Sentinels))
+	for i, sf := range sheet.GroundTruth.Sentinels {
+		sentinelFQNs[i] = sf.FQN
+	}
+	assert.Contains(t, sentinelFQNs, "internal/auth/errors.go::ErrNewSentinel",
+		"dossier-added sentinel must merge in when the section requests sentinels")
+}
+
 // TestAssembleFactSheet_CallersExcludeDossierOnlySymbols guards against a
 // regression where the Callers union was seeded from dossier.AddedSymbols/
 // ModifiedSymbols in addition to the section's own Symbols/AllSymbols. On a

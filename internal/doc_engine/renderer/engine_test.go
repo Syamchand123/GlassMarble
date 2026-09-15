@@ -46,6 +46,57 @@ func TestOrchestrator_NoLLM(t *testing.T) {
 	}
 }
 
+// TestNewOrchestrator_HonorsConfiguredMaxOutputTokensAndTemperature guards
+// against a regression where DefaultLLMActuatorConfig's hardcoded budget
+// (300 output tokens, temperature 0.0) was always used regardless of what
+// OrchestratorOptions carried — silently discarding whatever the user
+// configured in their AI provider's ai.yaml (commonly 8192+ tokens). A
+// budget that small is routinely exhausted by a reasoning model's own
+// chain-of-thought before it ever reaches a final answer, producing
+// responses truncated mid-thought.
+func TestNewOrchestrator_HonorsConfiguredMaxOutputTokensAndTemperature(t *testing.T) {
+	mock := &mockProvider{}
+	temp := 0.7
+	orch := NewOrchestrator(OrchestratorOptions{
+		Provider:        mock,
+		MaxOutputTokens: 8192,
+		Temperature:     &temp,
+	})
+
+	fs := &config.FactSheet{DocID: "d", SectionID: "s"}
+	if _, err := orch.RenderSection(context.Background(), fs, nil); err != nil {
+		t.Fatalf("RenderSection failed: %v", err)
+	}
+
+	if mock.lastRequest.MaxOutputTokens != 8192 {
+		t.Errorf("expected MaxOutputTokens 8192, got %d", mock.lastRequest.MaxOutputTokens)
+	}
+	if mock.lastRequest.Temperature == nil || *mock.lastRequest.Temperature != 0.7 {
+		t.Errorf("expected temperature 0.7, got %v", mock.lastRequest.Temperature)
+	}
+}
+
+// TestNewOrchestrator_DefaultsWhenUnconfigured confirms omitting
+// MaxOutputTokens/Temperature in OrchestratorOptions still falls back to
+// DefaultLLMActuatorConfig's built-in defaults, not zero values.
+func TestNewOrchestrator_DefaultsWhenUnconfigured(t *testing.T) {
+	mock := &mockProvider{}
+	orch := NewOrchestrator(OrchestratorOptions{Provider: mock})
+
+	fs := &config.FactSheet{DocID: "d", SectionID: "s"}
+	if _, err := orch.RenderSection(context.Background(), fs, nil); err != nil {
+		t.Fatalf("RenderSection failed: %v", err)
+	}
+
+	defaults := DefaultLLMActuatorConfig(mock, "")
+	if mock.lastRequest.MaxOutputTokens != defaults.MaxOutputTokens {
+		t.Errorf("expected default MaxOutputTokens %d, got %d", defaults.MaxOutputTokens, mock.lastRequest.MaxOutputTokens)
+	}
+	if mock.lastRequest.Temperature == nil || *mock.lastRequest.Temperature != defaults.Temperature {
+		t.Errorf("expected default temperature %v, got %v", defaults.Temperature, mock.lastRequest.Temperature)
+	}
+}
+
 func TestOrchestrator_FallbackOnLLMFailure(t *testing.T) {
 	mock := &mockProvider{
 		completeFunc: func(ctx context.Context, req provider.Request) (*provider.Response, error) {

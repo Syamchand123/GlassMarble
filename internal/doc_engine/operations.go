@@ -327,15 +327,32 @@ type EvalResult struct {
 }
 
 // EvalFaithfulness scores every non-empty managed section body against a
-// freshly assembled FactSheet (deterministic judge — no network, no AKG
-// required). sampleN caps evaluated sections (<=0 = all), in deterministic
-// doc/section order. Empty bodies are skipped, not scored. After computing
-// the result it appends a ledger record {Kind:"eval", EvalScore: GlobalScore,
+// freshly assembled FactSheet (deterministic judge — no network required).
+// sampleN caps evaluated sections (<=0 = all), in deterministic doc/section
+// order. Empty bodies are skipped, not scored. After computing the result
+// it appends a ledger record {Kind:"eval", EvalScore: GlobalScore,
 // EvalSamples: Samples} for D1 trend tracking; the append is best-effort
 // (observability must never fail an eval) and Commit is "" by design — eval
 // scores working-tree bodies without git context, and a HEAD lookup would
 // add git failure modes to an offline deterministic path.
-func EvalFaithfulness(repoRoot string, sampleN int) (EvalResult, error) {
+//
+// graph is the persisted AKG head graph, or nil when the repo has never
+// been analyzed. Without it, AssembleFactSheet's Collector short-circuits
+// to an empty GroundTruthPayload (Collector.CollectSectionFacts returns
+// immediately when its graph is nil) — so every real content-derived
+// symbol, signature, and config var in the section body being scored has
+// NOTHING to be checked against, and virtually every claim reads as
+// "unsupported" regardless of how faithfully grounded the prose actually
+// is. This is why a 100%-correct, deterministically-rendered document
+// (whose text is copied verbatim from AKG facts) could score near zero:
+// the judge was comparing real content against a deliberately empty
+// ground truth, not against the graph the content was actually built
+// from. Passing the real graph makes the score meaningful for any repo
+// that has been analyzed; nil preserves the original graceful "no AKG
+// yet" degradation for a fresh repo (facts.go still emits doc-level
+// purpose/audience/instruction, so scoring doesn't crash — it is just as
+// uninformative as before for that one edge case).
+func EvalFaithfulness(repoRoot string, sampleN int, graph *akg.CodePropertyGraph) (EvalResult, error) {
 	cfg, err := docconfig.LoadDocsConfig(repoRoot)
 	if err != nil {
 		return EvalResult{}, fmt.Errorf("doc eval: %w", err)
@@ -369,11 +386,22 @@ func EvalFaithfulness(repoRoot string, sampleN int) (EvalResult, error) {
 				continue
 			}
 			secCopy := sec
-			fs := grounding.AssembleFactSheet(&doc, &secCopy, nil, nil, priorBody, repoRoot)
+			fs := grounding.AssembleFactSheet(&doc, &secCopy, graph, nil, priorBody, repoRoot)
 			if fs == nil {
 				continue
 			}
-			rep := eval.ScoreSection(priorBody, fs)
+			// Same reasoning as Diff()'s stripRecentSymbolChanges: this
+			// FactSheet is built with a nil dossier (eval has no commit
+			// context), so it can never carry Added/Modified/Removed
+			// symbols — but the real on-disk body being scored may still
+			// have a "### Recent Symbol Changes" block baked in from an
+			// earlier commit-triggered generation that DID have one. Every
+			// entry in that block (plus its own "Recent Symbol Changes"/
+			// "**Added:**" labels) would otherwise score as an unsupported
+			// claim purely because of that unrelated mismatch, not because
+			// the section's real content is unfaithful.
+			scoredBody := stripRecentSymbolChanges(priorBody)
+			rep := eval.ScoreSection(scoredBody, fs)
 			sum += rep.Score
 			de.Sections++
 			evaluated++

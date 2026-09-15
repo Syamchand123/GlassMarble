@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -448,6 +449,17 @@ func (c *Collector) collectConfigVars(scope *config.ScopeRule, p *config.GroundT
 }
 
 // 8: HTTP Handlers
+//
+// Tags matching functions as Kind:"http_handler" (unchanged), and — when
+// WithRepoRoot was called — additionally scans .go source for the actual
+// route registrations (method + path) via scanHTTPRoutesFromSource,
+// populating p.Endpoints. The AKG does not index call-argument literals
+// (the string passed to http.HandleFunc("/tasks", ...)), so without this,
+// a handler's HTTP method and path — the one thing that makes an "api"
+// archetype document different from a generic function reference — are
+// structurally invisible: the handler still only ever shows up in the
+// generic Functions and Methods table, indistinguishable from any other
+// function.
 func (c *Collector) collectHTTPHandlers(scope *config.ScopeRule, p *config.GroundTruthPayload) {
 	c.graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
 		if n == nil || !catalog.MatchesScope(scope, n.FileSpec.Path) {
@@ -466,6 +478,150 @@ func (c *Collector) collectHTTPHandlers(scope *config.ScopeRule, p *config.Groun
 			})
 		}
 	})
+
+	if c.repoRoot == "" {
+		return
+	}
+	// Index in-scope node short names -> node, to enrich a route's bare
+	// handler identifier ("CreateTaskHandler") with its real FQN/doc/line,
+	// and to decide which routes belong to this document at all.
+	byName := make(map[string]*link.ResolvedNode)
+	c.graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
+		if n == nil || !catalog.MatchesScope(scope, n.FileSpec.Path) {
+			return
+		}
+		byName[n.Name] = n
+	})
+	// Route registrations are scanned across the WHOLE repo, not just
+	// `scope` — a route's registration call (http.HandleFunc(...),
+	// router.GET(...)) very commonly lives in main.go or a router-setup
+	// file, separate from the handler package itself, so scoping the scan
+	// to the doc's own package (e.g. "pkg/api/**") would find nothing at
+	// all for that entirely normal layout. What decides whether a route
+	// belongs to THIS document is whether its HANDLER resolves to an
+	// in-scope symbol (byName, above) — a route whose handler cannot be
+	// resolved in scope is dropped rather than kept with a weak
+	// registration-site-only permalink, since it isn't this document's
+	// endpoint to document at all.
+	for _, r := range scanHTTPRoutesFromSource(c.repoRoot) {
+		n, ok := byName[r.handler]
+		if !ok {
+			continue
+		}
+		p.Endpoints = append(p.Endpoints, config.EndpointFact{
+			Method:    r.method,
+			Path:      r.path,
+			Handler:   r.handler,
+			File:      n.FileSpec.Path,
+			Line:      n.FileSpec.LineStart,
+			Permalink: FormatPermalink(n.FileSpec.Path, n.FileSpec.LineStart, n.FileSpec.LineEnd),
+			Doc:       c.extractDoc(n),
+		})
+	}
+	sort.Slice(p.Endpoints, func(i, j int) bool {
+		if p.Endpoints[i].Path != p.Endpoints[j].Path {
+			return p.Endpoints[i].Path < p.Endpoints[j].Path
+		}
+		return p.Endpoints[i].Method < p.Endpoints[j].Method
+	})
+}
+
+// sourceRoute is one HTTP route registration found by scanning Go source.
+type sourceRoute struct {
+	method, path, handler, file string
+	line                        int
+}
+
+// routeMethodSelectors maps a chained selector call name (router.GET(...),
+// router.Post(...), case-insensitive) to its HTTP method.
+var routeMethodSelectors = map[string]string{
+	"get": "GET", "post": "POST", "put": "PUT", "delete": "DELETE",
+	"patch": "PATCH", "options": "OPTIONS", "head": "HEAD",
+}
+
+// scanHTTPRoutesFromSource walks the WHOLE repo's .go source (not
+// scope-filtered — see collectHTTPHandlers' call site for why) looking for
+// two route registration shapes: net/http- and gorilla/mux-style
+// "x.HandleFunc(path, handler)"/"x.Handle(path, handler)" (method unknown,
+// reported as "ANY"), and gin/echo/chi-style chained method calls
+// "router.GET(path, handler)" (method taken from the selector name). Only
+// registrations whose path is a plain string literal and whose handler is
+// a plain identifier or selector (not an inline closure, which has no FQN
+// to bind to) are reported.
+func scanHTTPRoutesFromSource(repoRoot string) []sourceRoute {
+	var out []sourceRoute
+	_ = filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		rel, relErr := filepath.Rel(repoRoot, path)
+		if relErr != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		fset := token.NewFileSet()
+		node, parseErr := parser.ParseFile(fset, path, nil, 0)
+		if parseErr != nil || node == nil {
+			return nil
+		}
+		ast.Inspect(node, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || len(call.Args) < 2 {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			method := ""
+			switch strings.ToLower(sel.Sel.Name) {
+			case "handlefunc", "handle":
+				method = "ANY"
+			default:
+				method = routeMethodSelectors[strings.ToLower(sel.Sel.Name)]
+			}
+			if method == "" {
+				return true
+			}
+			lit, ok := call.Args[0].(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return true
+			}
+			routePath, unquoteErr := strconv.Unquote(lit.Value)
+			if unquoteErr != nil {
+				return true
+			}
+			handler := routeHandlerName(call.Args[1])
+			if handler == "" {
+				return true
+			}
+			out = append(out, sourceRoute{
+				method:  method,
+				path:    routePath,
+				handler: handler,
+				file:    rel,
+				line:    fset.Position(call.Pos()).Line,
+			})
+			return true
+		})
+		return nil
+	})
+	return out
+}
+
+// routeHandlerName extracts a bindable short name from a route registration's
+// handler argument: a bare identifier ("handler") or a method value
+// selector ("h.CreateTaskHandler" -> "CreateTaskHandler"). Anything else
+// (an inline closure, a call expression) has no FQN to bind to and yields "".
+func routeHandlerName(e ast.Expr) string {
+	switch v := e.(type) {
+	case *ast.Ident:
+		return v.Name
+	case *ast.SelectorExpr:
+		return v.Sel.Name
+	default:
+		return ""
+	}
 }
 
 // 9: Callgraph Facts — outbound callees plus inbound callers.

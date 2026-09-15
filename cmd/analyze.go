@@ -434,6 +434,12 @@ func runAnalysis(cmd *cobra.Command, opts runAnalysisOptions) error {
 
 	// Initialize AKG before Linking so we have a persistent GraphDB for incremental lookups
 	storageDir := filepath.Join(absDir, ".glassmarble")
+	// Best-effort, non-fatal: protects internal engine state (AKG
+	// snapshots, telemetry, the review queue, learned conventions) plus
+	// every generated doc's *.gmb.bak backup from being committed by a
+	// user who runs `gmb analyze` directly without ever running `gmb init`
+	// first — see ensureGlassmarbleGitignored's own doc comment.
+	_, _ = ensureGlassmarbleGitignored(absDir)
 	tm, err := newAKGManager(storageDir, cmd)
 	if err != nil {
 		return fmt.Errorf("failed to initialize AKG transaction manager: %w", err)

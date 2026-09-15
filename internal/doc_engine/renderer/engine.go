@@ -37,6 +37,18 @@ type OrchestratorOptions struct {
 	// GlobalStyle is the DocsConfig.Style fallback merged under the
 	// per-document style: per-doc Voice/JargonBlacklist win when non-empty.
 	GlobalStyle config.StyleSpec
+	// MaxOutputTokens overrides DefaultLLMActuatorConfig's hardcoded budget
+	// (300) with the user's configured ai.yaml max_output_tokens when set
+	// (>0). Without this, Track A always used 300 output tokens regardless
+	// of what the user configured (ai.yaml commonly sets 8192+) — a budget
+	// that small is often exhausted by a reasoning model's own chain-of-
+	// thought before it ever emits the final answer, producing a response
+	// truncated mid-thought that then gets shipped as if it were the
+	// section's content (see LLMActuatorConfig.MaxOutputTokens).
+	MaxOutputTokens int
+	// Temperature overrides DefaultLLMActuatorConfig's hardcoded 0.0 with
+	// the user's configured ai.yaml temperature when set.
+	Temperature *float64
 }
 
 // Orchestrator coordinates dual-track rendering, quality gates, and MVCC writes.
@@ -142,7 +154,14 @@ func NewOrchestrator(opts OrchestratorOptions) *Orchestrator {
 	var actuator *LLMActuator
 
 	if opts.Provider != nil && !opts.NoLLM {
-		actuator = NewLLMActuator(DefaultLLMActuatorConfig(opts.Provider, opts.Model))
+		actCfg := DefaultLLMActuatorConfig(opts.Provider, opts.Model)
+		if opts.MaxOutputTokens > 0 {
+			actCfg.MaxOutputTokens = opts.MaxOutputTokens
+		}
+		if opts.Temperature != nil {
+			actCfg.Temperature = *opts.Temperature
+		}
+		actuator = NewLLMActuator(actCfg)
 	}
 
 	return &Orchestrator{

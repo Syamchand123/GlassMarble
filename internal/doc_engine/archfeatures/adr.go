@@ -607,11 +607,19 @@ func rewriteFrontmatterStatus(content, status string) string {
 	return strings.Join(lines, "\n")
 }
 
-// MarkSuperseded flips the old ADR's frontmatter `status:` to "superseded"
-// and appends a `> Superseded by [<newFile>](<newFile>)` note when not
-// already present (idempotent reruns are byte-identical). History is never
-// otherwise rewritten, per the ADR immutability rule. oldFile is resolved
-// under repoRoot unless absolute; a missing target is an error.
+// MarkSuperseded flips the old ADR's frontmatter `status:` to "superseded",
+// annotates the body's own "## Status" line so a reader scanning just the
+// body (not the YAML frontmatter) sees it too, and appends a
+// `> Superseded by [<newFile>](<newFile>)` note when not already present
+// (idempotent reruns are byte-identical). The ORIGINAL status sentence
+// ("Accepted (auto-generated...)") is never rewritten — per the ADR
+// immutability rule, it is a true historical fact (the decision WAS
+// accepted) — only annotated with the fact that it is now also superseded,
+// which used to be visible ONLY in the frontmatter and a footnote at the
+// very bottom of the file, so a body-only read of "## Status\n\nAccepted"
+// directly contradicted the frontmatter with no indication otherwise until
+// scrolling all the way down. oldFile is resolved under repoRoot unless
+// absolute; a missing target is an error.
 func MarkSuperseded(repoRoot, oldFile, newFile string) error {
 	oldPath := oldFile
 	if !filepath.IsAbs(oldPath) {
@@ -623,6 +631,7 @@ func MarkSuperseded(repoRoot, oldFile, newFile string) error {
 	}
 	content := string(data)
 	updated := rewriteFrontmatterStatus(content, "superseded")
+	updated = annotateStatusSectionSuperseded(updated)
 	note := fmt.Sprintf("> Superseded by [%s](%s)", newFile, newFile)
 	if !strings.Contains(updated, note) {
 		if !strings.HasSuffix(updated, "\n") {
@@ -634,6 +643,49 @@ func MarkSuperseded(repoRoot, oldFile, newFile string) error {
 		return fmt.Errorf("archfeatures: writing superseded ADR %q: %w", oldFile, err)
 	}
 	return nil
+}
+
+// statusSupersededSuffix is appended to the body's "## Status" line's own
+// sentence (never replacing it — see MarkSuperseded's immutability note).
+const statusSupersededSuffix = " — **Superseded**, see below."
+
+// annotateStatusSectionSuperseded finds the Markdown "## Status" heading
+// and appends statusSupersededSuffix to its next non-empty line, if not
+// already present. A missing "## Status" heading (unexpected ADR shape)
+// leaves content untouched.
+func annotateStatusSectionSuperseded(content string) string {
+	if strings.Contains(content, statusSupersededSuffix) {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	headingIdx := -1
+	for i, ln := range lines {
+		if strings.TrimSpace(trimEndCR(ln)) == "## Status" {
+			headingIdx = i
+			break
+		}
+	}
+	if headingIdx < 0 {
+		return content
+	}
+	for i := headingIdx + 1; i < len(lines); i++ {
+		cr := ""
+		line := lines[i]
+		if strings.HasSuffix(line, "\r") {
+			cr = "\r"
+			line = strings.TrimSuffix(line, "\r")
+		}
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			// Ran into the next heading with no status sentence in between.
+			break
+		}
+		lines[i] = line + statusSupersededSuffix + cr
+		break
+	}
+	return strings.Join(lines, "\n")
 }
 
 // adrKnownStatuses is the closed ADR status vocabulary.

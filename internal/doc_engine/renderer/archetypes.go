@@ -47,15 +47,26 @@ func GetArchetype(name string) (config.DocSpec, bool) {
 					ID:          "overview",
 					Title:       "System Overview",
 					Instruction: "Describe the high-level system architecture, entry points, and component topology.",
-					GroundWith:  []string{"arch_intelligence", "components"},
-					Managed:     true,
+					// Deliberately NOT "components" (→ signatures, a full
+					// dump of every symbol in scope): an architecture doc's
+					// scope is normally the whole repo, and "components"
+					// alone is what makes this section distinct from
+					// Core Subsystems below (see that section's comment).
+					// "dependencies" gives a topology-level fact (which
+					// packages this one depends on) that fits "high-level
+					// ... topology" without duplicating the full breakdown.
+					GroundWith: []string{"arch_intelligence", "dependencies"},
+					Managed:    true,
 				},
 				{
 					ID:          "components",
 					Title:       "Core Subsystems",
 					Instruction: "Detail the primary subsystems, their responsibilities, and directory mappings.",
-					GroundWith:  []string{"components", "arch_intelligence"},
-					Managed:     true,
+					// The one section meant to enumerate every subsystem in
+					// full — "components" (→ signatures) is the right,
+					// intentionally exhaustive choice here specifically.
+					GroundWith: []string{"components", "arch_intelligence"},
+					Managed:    true,
 				},
 				{
 					ID:          "data-flow",
@@ -68,8 +79,15 @@ func GetArchetype(name string) (config.DocSpec, bool) {
 					ID:          "storage",
 					Title:       "Storage & Persistence Model",
 					Instruction: "Explain the database/storage contract, atomic writes, and state consistency guarantees.",
-					GroundWith:  []string{"signatures", "callgraph", "comments"},
-					Managed:     true,
+					// Was "signatures" (same full-scope symbol dump as Core
+					// Subsystems above, making the two sections byte-
+					// identical for any repo). "Atomic writes and state
+					// consistency guarantees" is a concurrency-safety
+					// concern first — concurrency_primitives surfaces the
+					// mutexes/atomics actually responsible for that, which
+					// is what this section is meant to explain.
+					GroundWith: []string{"concurrency_primitives", "callgraph"},
+					Managed:    true,
 				},
 				{
 					ID:          "security-boundary",

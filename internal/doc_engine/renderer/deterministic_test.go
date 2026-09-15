@@ -126,6 +126,87 @@ func TestDeterministicRenderer_Basic(t *testing.T) {
 	}
 }
 
+// TestDeterministicRenderer_EndpointsTable guards against a regression
+// where a section's HTTP endpoints (method, path, handler) had nowhere to
+// render at all — GroundTruthPayload had no Endpoints field, so a route's
+// method and path were structurally invisible and the handler only ever
+// appeared in the generic Functions and Methods table.
+func TestDeterministicRenderer_EndpointsTable(t *testing.T) {
+	r := NewDeterministicRenderer()
+	fs := &config.FactSheet{
+		DocID:     "docs/api.md",
+		SectionID: "endpoints",
+		GroundTruth: config.GroundTruthPayload{
+			Endpoints: []config.EndpointFact{
+				{
+					Method:    "GET",
+					Path:      "/tasks",
+					Handler:   "ListTasksHandler",
+					Doc:       "ListTasksHandler lists all tasks.",
+					Permalink: "pkg/api/handler.go#L10",
+				},
+			},
+		},
+	}
+
+	out, err := r.RenderSection(fs)
+	if err != nil {
+		t.Fatalf("RenderSection failed: %v", err)
+	}
+	if !strings.Contains(out, "### Endpoints") {
+		t.Fatalf("missing Endpoints heading:\n%s", out)
+	}
+	if !strings.Contains(out, "GET") || !strings.Contains(out, "`/tasks`") {
+		t.Errorf("missing method/path in rendered table:\n%s", out)
+	}
+	if !strings.Contains(out, "ListTasksHandler lists all tasks.") {
+		t.Errorf("missing handler description:\n%s", out)
+	}
+}
+
+// TestDeterministicRenderer_EndpointsTable_NoDoubledWordFalsePositive
+// guards against a regression confirmed against the real Gate 6 prose
+// checker: the Endpoints table's Handler column used to be a markdown link
+// whose visible text was the handler's own name — [CreateTaskHandler](url)
+// — immediately followed by a Description that (correctly) opens with
+// that same name ("CreateTaskHandler handles POST /tasks..."). Gate 6
+// strips markdown link/code syntax down to plain words before prose
+// checking, so the two occurrences collapsed into what reads as the same
+// bare word twice in a row, failing verifier.CheckProse's doubled-word
+// rule on perfectly correct, non-doubled content.
+func TestDeterministicRenderer_EndpointsTable_NoDoubledWordFalsePositive(t *testing.T) {
+	r := NewDeterministicRenderer()
+	fs := &config.FactSheet{
+		DocID:     "docs/api.md",
+		SectionID: "endpoints",
+		GroundTruth: config.GroundTruthPayload{
+			Endpoints: []config.EndpointFact{
+				{
+					Method:    "ANY",
+					Path:      "/tasks",
+					Handler:   "CreateTaskHandler",
+					Doc:       "CreateTaskHandler handles POST /tasks and creates a new task.",
+					File:      "pkg/api/handler.go",
+					Line:      21,
+					Permalink: "pkg/api/handler.go#L21-L36",
+				},
+			},
+		},
+	}
+
+	out, err := r.RenderSection(fs)
+	if err != nil {
+		t.Fatalf("RenderSection failed: %v", err)
+	}
+
+	report := verifier.CheckProse(out, config.StyleSpec{}, false)
+	for _, v := range report.Violations {
+		if v.Rule == "doubled-word" {
+			t.Errorf("false doubled-word violation on correct content: %+v\nrendered:\n%s", v, out)
+		}
+	}
+}
+
 func TestDeterministicRenderer_All10Archetypes(t *testing.T) {
 	r := NewDeterministicRenderer()
 

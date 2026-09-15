@@ -277,6 +277,79 @@ func TestAnalyzeCommandFullScan(t *testing.T) {
 	}
 }
 
+// TestInitCommandGitignoresGlassmarble confirms `gmb init` still adds the
+// .glassmarble .gitignore entry after ensureGlassmarbleGitignored was
+// extracted out of it for reuse by `gmb analyze`.
+func TestInitCommandGitignoresGlassmarble(t *testing.T) {
+	tempDir := t.TempDir()
+	if _, err := runGmbCommand(t, "init", "--dir", tempDir); err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(tempDir, ".gitignore"))
+	if err != nil {
+		t.Fatalf(".gitignore not created by `gmb init`: %v", err)
+	}
+	if !strings.Contains(string(data), ".glassmarble") {
+		t.Errorf(".gitignore missing .glassmarble entry:\n%s", string(data))
+	}
+}
+
+// TestAnalyzeCommandGitignoresGlassmarble guards against a regression
+// where only `gmb init` protected the .glassmarble directory (internal
+// engine state — AKG snapshots, telemetry, the review queue, learned
+// conventions — plus every generated doc's *.gmb.bak backup) from being
+// committed. A user running `gmb analyze` directly, without ever running
+// `gmb init` first, got no .gitignore entry at all.
+func TestAnalyzeCommandGitignoresGlassmarble(t *testing.T) {
+	tempDir := t.TempDir()
+	main := filepath.Join(tempDir, "main.go")
+	if err := os.WriteFile(main, []byte("package main\n\nfunc main() { println(\"hi\") }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := runGmbCommand(t, "analyze", "--dir", tempDir, "--full"); err != nil {
+		t.Fatalf("analyze failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tempDir, ".gitignore"))
+	if err != nil {
+		t.Fatalf(".gitignore not created by `gmb analyze`: %v", err)
+	}
+	if !strings.Contains(string(data), ".glassmarble") {
+		t.Errorf(".gitignore missing .glassmarble entry:\n%s", string(data))
+	}
+}
+
+// TestAnalyzeCommandGitignoreAlreadyPresent confirms an existing .gitignore
+// (with or without an existing .glassmarble entry) is respected rather than
+// clobbered.
+func TestAnalyzeCommandGitignoreAlreadyPresent(t *testing.T) {
+	tempDir := t.TempDir()
+	main := filepath.Join(tempDir, "main.go")
+	if err := os.WriteFile(main, []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tempDir, ".gitignore"), []byte("node_modules\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := runGmbCommand(t, "analyze", "--dir", tempDir, "--full"); err != nil {
+		t.Fatalf("analyze failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tempDir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("reading .gitignore: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "node_modules") {
+		t.Errorf("pre-existing .gitignore entry lost:\n%s", content)
+	}
+	if !strings.Contains(content, ".glassmarble") {
+		t.Errorf(".glassmarble entry not appended:\n%s", content)
+	}
+}
+
 // TestAnalyzeCommandEmptyDir runs the pipeline over an empty directory.
 func TestAnalyzeCommandEmptyDir(t *testing.T) {
 	tempDir := t.TempDir()

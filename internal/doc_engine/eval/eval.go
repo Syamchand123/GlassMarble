@@ -133,18 +133,65 @@ func InstructionSatisfied(prose, instruction string) bool {
 // Claim decomposition
 // ---------------------------------------------------------------------------
 
+// deterministicRendererHeadings are the fixed literal section headings
+// deterministic.go emits verbatim in every Track B render (see the
+// sb.WriteString("### ...") call sites there). Unlike an LLM-authored
+// heading, these can never be hallucinated — they are Go string literals
+// chosen by the renderer, not model output — but they also essentially
+// never share a content word with a FactSheet's ground_truth JSON (whose
+// keys are snake_case field names like "config_vars", not this English
+// phrasing), so scoring them as claims failed every 100%-faithful
+// deterministic section for having structure at all. Kept as an explicit,
+// narrow allowlist (rather than skipping every heading) so an arbitrary,
+// possibly-hallucinated LLM-authored heading is still scored normally.
+var deterministicRendererHeadings = map[string]bool{
+	"Call Flow":                true,
+	"Direct Callers":           true,
+	"Functions and Methods":    true,
+	"Types and Interfaces":     true,
+	"Error Catalog":            true,
+	"Configuration Variables":  true,
+	"Architectural Milestones": true,
+	"Recent Symbol Changes":    true,
+}
+
 // splitClaims normalizes prose (CRLF -> LF), strips fenced code blocks, HTML
-// comments, and URLs, keeps headings as claim candidates, then splits into
-// sentences on . ! ? boundaries (plus line breaks). Each non-empty fragment
-// containing alphanumeric content is one claim.
+// comments, and URLs, drops known deterministic-renderer headings and
+// table-header/separator lines (structural labels, not factual assertions
+// — see the notes above and below), then splits into sentences on . ! ?
+// boundaries (plus line breaks). Each non-empty fragment containing
+// alphanumeric content is one claim.
+//
+// Table header rows ("| Name | Signature | Description | File |") and
+// their separator rows ("| --- | --- | --- | --- |") are always dropped:
+// there is no LLM-authored equivalent to worry about hallucinating — every
+// Track A/B table in this engine uses the same fixed column layout per
+// table type, emitted by the renderer, never invented per-row.
 func splitClaims(prose string) []string {
 	text := strings.ReplaceAll(prose, "\r\n", "\n")
 	text = strings.ReplaceAll(text, "\r", "\n")
 	text = stripFencedCode(text)
 	text = stripHTMLComments(text)
 	text = stripLinksAndURLs(text)
-	lines := strings.Split(text, "\n")
-	for i, ln := range lines {
+	rawLines := strings.Split(text, "\n")
+	drop := make([]bool, len(rawLines))
+	for i, ln := range rawLines {
+		t := strings.TrimSpace(ln)
+		if strings.HasPrefix(t, "#") && deterministicRendererHeadings[strings.TrimSpace(strings.TrimLeft(t, "#"))] {
+			drop[i] = true
+		}
+		if isTableSeparatorRow(ln) {
+			drop[i] = true
+			if i > 0 {
+				drop[i-1] = true // the header row this separator belongs to
+			}
+		}
+	}
+	lines := make([]string, len(rawLines))
+	for i, ln := range rawLines {
+		if drop[i] {
+			continue
+		}
 		lines[i] = stripLineMarkup(strings.TrimSpace(ln))
 	}
 	var claims []string
@@ -158,6 +205,24 @@ func splitClaims(prose string) []string {
 		}
 	}
 	return claims
+}
+
+// isTableSeparatorRow reports whether ln is a Markdown table separator row:
+// once every "|", "-", ":", and whitespace character is removed, nothing is
+// left (and at least one "-" was present, so a blank line doesn't count).
+// Handles any column count, e.g. "| --- | :--- | ---: |".
+func isTableSeparatorRow(ln string) bool {
+	if !strings.Contains(ln, "-") {
+		return false
+	}
+	stripped := strings.Map(func(r rune) rune {
+		switch r {
+		case '|', '-', ':', ' ', '\t':
+			return -1
+		}
+		return r
+	}, ln)
+	return stripped == ""
 }
 
 // splitSentences splits on runs of . ! ? that terminate a sentence: the run

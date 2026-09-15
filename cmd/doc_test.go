@@ -130,6 +130,42 @@ func TestDocInitCLI(t *testing.T) {
 	}
 }
 
+// TestDocInitCLI_CommaSeparatedScopeAndEntryPoints guards against a
+// regression where --scope/--entry-points (Cobra StringArray flags, meant
+// to be repeated for multiple values) silently stored a single comma-
+// separated value as ONE literal glob/FQN containing a comma — which
+// matches nothing, with no error or warning, so the resulting document
+// would never ground any content. A natural single
+// --scope "a/**,b/**" is a reasonable thing to type instead of repeating
+// the flag, so it must split into separate values too.
+func TestDocInitCLI_CommaSeparatedScopeAndEntryPoints(t *testing.T) {
+	tempDir := t.TempDir()
+	out, err := runGmbCommand(t, "doc", "init", "docs/architecture.md",
+		"--dir", tempDir,
+		"--scope", "pkg/**,cmd/**",
+		"--archetype", "architecture",
+		"--title", "Architecture",
+		"--entry-points", "pkg/a.go::Foo,pkg/b.go::Bar",
+	)
+	if err != nil {
+		t.Fatalf("doc init failed: %v\n%s", err, out)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tempDir, ".glassmarble", "docs.yaml"))
+	if err != nil {
+		t.Fatalf("reading docs.yaml: %v", err)
+	}
+	content := string(data)
+	for _, want := range []string{"pkg/**", "cmd/**", "pkg/a.go::Foo", "pkg/b.go::Bar"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("docs.yaml missing split value %q:\n%s", want, content)
+		}
+	}
+	if strings.Contains(content, "pkg/**,cmd/**") || strings.Contains(content, "pkg/a.go::Foo,pkg/b.go::Bar") {
+		t.Errorf("docs.yaml still has an unsplit comma-joined value:\n%s", content)
+	}
+}
+
 func TestDocExportJSON(t *testing.T) {
 	tempDir := t.TempDir()
 	// First init a doc so export has content

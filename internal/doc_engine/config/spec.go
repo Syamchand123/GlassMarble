@@ -382,6 +382,30 @@ type GroundTruthPayload struct {
 
 	// Diagrams lists all rendered living diagrams for this document.
 	Diagrams []DiagramFact `json:"diagrams,omitempty"`
+
+	// Endpoints lists HTTP route registrations (method, path, handler) in
+	// scope, populated by the "http_handlers" ground_with directive from a
+	// Go source scan (the AKG does not index call-argument literals, so a
+	// route's path string is otherwise invisible). This is what makes the
+	// "api" archetype's "Endpoints & Route Handlers" section — whose own
+	// instruction promises "route paths, HTTP methods, handler functions"
+	// — actually different from a generic function/type dump: without it,
+	// a handler function tagged Kind:"http_handler" still only ever
+	// appeared in the same generic Functions and Methods table as any
+	// other function, with no method or path shown anywhere.
+	Endpoints []EndpointFact `json:"endpoints,omitempty"`
+}
+
+// EndpointFact is one HTTP route registration discovered in source: e.g.
+// http.HandleFunc("/tasks", h.CreateTaskHandler) or router.GET("/tasks", h.List).
+type EndpointFact struct {
+	Method    string `json:"method"`
+	Path      string `json:"path"`
+	Handler   string `json:"handler"`
+	Doc       string `json:"doc,omitempty"`
+	File      string `json:"file,omitempty"`
+	Line      int    `json:"line,omitempty"`
+	Permalink string `json:"permalink,omitempty"`
 }
 
 // DiagramFact captures a rendered living diagram (Mermaid block) for a document.

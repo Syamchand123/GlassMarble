@@ -367,6 +367,59 @@ func TestExtraRunCommentOnlyBail(t *testing.T) {
 	}
 }
 
+// TestExtraRunWarnsOnMissingTargetFile guards against a regression where a
+// document configured in docs.yaml whose target markdown file was never
+// scaffolded (deleted by hand, or a docs.yaml entry hand-written without
+// ever running `gmb doc init`) was silently skipped by Run() with no
+// warning at all — `gmb doc check` reports "FAIL: file missing" clearly,
+// but `gmb doc` itself gave no indication the document was never touched.
+func TestExtraRunWarnsOnMissingTargetFile(t *testing.T) {
+	t.Setenv("GMB_DOC_STATE", "json")
+	dir := t.TempDir()
+	// A real, working doc alongside the ghost one, so the run has a
+	// genuine dossier change somewhere and doesn't fast-bail at the
+	// top-level "no code changes in dossier" check before ever reaching
+	// the per-document loop — matching a real `gmb doc --write` run
+	// (no --force) against a repo with at least one real code change.
+	extraDocRepo(t, dir)
+	ghost := docconfig.DocSpec{
+		ID:         "ghost",
+		TargetPath: "docs/ghost.md",
+		Title:      "Ghost",
+		Scope:      docconfig.ScopeRule{Paths: []string{"internal/ghost/**"}},
+		Sections: []docconfig.SectionSpec{
+			{ID: "overview", Title: "Overview", Instruction: "Explain the ghost module", Managed: true},
+		},
+	}
+	if err := updateDocsYAML(dir, ghost); err != nil {
+		t.Fatalf("updateDocsYAML: %v", err)
+	}
+	// Deliberately never create docs/ghost.md.
+
+	var out bytes.Buffer
+	res := Run(dir, RunOptions{
+		CommitHash: "ghost-hash", NoLLM: true, ForceWrite: true,
+		HeadGraph: extraDemoGraph("ghost-hash", true),
+		Out:       &out,
+	})
+	if res.Err != nil {
+		t.Fatalf("Run returned critical error: %v", res.Err)
+	}
+	found := false
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "docs/ghost.md") && strings.Contains(w, "does not exist") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected a missing-target-file warning for docs/ghost.md, got warnings: %v", res.Warnings)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "docs/ghost.md")); !os.IsNotExist(err) {
+		t.Errorf("Run() must not create the missing target file itself when it was never dirty (that's doc init's job)")
+	}
+}
+
 func TestExtraRunComputeOnlyNoWriteNoSave(t *testing.T) {
 	t.Setenv("GMB_DOC_STATE", "json")
 	dir := t.TempDir() // non-git → unknown branch → compute-only under main-only

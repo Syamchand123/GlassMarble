@@ -306,6 +306,26 @@ func TestMarkSuperseded(t *testing.T) {
 		t.Errorf("history must be preserved:\n%s", content)
 	}
 
+	// The body's own "## Status" line must also flag the supersession —
+	// otherwise a reader scanning just the rendered body (not the YAML
+	// frontmatter) sees "## Status\n\nAccepted..." with no indication the
+	// decision is superseded until scrolling all the way to the trailing
+	// footnote, directly contradicting `status: superseded` above it.
+	if !strings.Contains(content, "## Status") {
+		t.Fatalf("ADR missing a Status heading at all:\n%s", content)
+	}
+	statusIdx := strings.Index(content, "## Status")
+	statusSection := content[statusIdx:]
+	if nextHeading := strings.Index(statusSection[1:], "\n## "); nextHeading >= 0 {
+		statusSection = statusSection[:nextHeading+1]
+	}
+	if !strings.Contains(statusSection, "Superseded") {
+		t.Errorf("body Status section does not flag supersession:\n%s", statusSection)
+	}
+	if !strings.Contains(statusSection, "Accepted") {
+		t.Errorf("original Accepted history must not be rewritten:\n%s", statusSection)
+	}
+
 	// Idempotent rerun: byte-identical.
 	before := content
 	if err := MarkSuperseded(tempDir, rel, "docs/adr/0002-new-decision.md"); err != nil {

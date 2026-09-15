@@ -19,6 +19,42 @@ type initReceiptJSON struct {
 	GitignoreUpdated bool   `json:"gitignore_updated"`
 }
 
+// ensureGlassmarbleGitignored adds a ".glassmarble" line to abs/.gitignore
+// (creating the file if absent) unless one is already present. Returns
+// whether it made a change.
+//
+// Originally only `gmb init` did this. `gmb analyze` creates the very same
+// .glassmarble directory on its own — internal engine state (AKG
+// snapshots, telemetry, the review queue, learned conventions) plus every
+// generated doc's *.gmb.bak backup — but a user who runs `gmb analyze`
+// directly (arguably the more obvious "first command" name for "analyze my
+// code," with `gmb init` reading as an optional, skippable scaffold step)
+// got no gitignore protection at all and would commit all of that straight
+// into their repo. Called from both commands now so either one protects it.
+func ensureGlassmarbleGitignored(abs string) (bool, error) {
+	gitignorePath := filepath.Join(abs, ".gitignore")
+	entry := ".glassmarble\n"
+	if data, err := os.ReadFile(gitignorePath); err == nil {
+		content := string(data)
+		if strings.Contains(content, ".glassmarble") {
+			return false, nil
+		}
+		if !strings.HasSuffix(content, "\n") && len(content) > 0 {
+			entry = "\n.glassmarble\n"
+		}
+		if err := os.WriteFile(gitignorePath, []byte(content+entry), 0644); err != nil {
+			return false, fmt.Errorf("failed to update .gitignore: %w", err)
+		}
+		return true, nil
+	} else if os.IsNotExist(err) {
+		if err := os.WriteFile(gitignorePath, []byte(entry), 0644); err != nil {
+			return false, fmt.Errorf("failed to create .gitignore: %w", err)
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
 var initCmd = &cobra.Command{
 	Use:     "init",
 	GroupID: GroupUtility.ID,
@@ -72,25 +108,9 @@ var initCmd = &cobra.Command{
 			}
 		}
 
-		gitignorePath := filepath.Join(abs, ".gitignore")
-		entry := ".glassmarble\n"
-		gitignoreUpdated := false
-		if data, err := os.ReadFile(gitignorePath); err == nil {
-			content := string(data)
-			if !strings.Contains(content, ".glassmarble") {
-				if !strings.HasSuffix(content, "\n") && len(content) > 0 {
-					entry = "\n.glassmarble\n"
-				}
-				if err := os.WriteFile(gitignorePath, []byte(content+entry), 0644); err != nil {
-					return fmt.Errorf("failed to update .gitignore: %w", err)
-				}
-				gitignoreUpdated = true
-			}
-		} else if os.IsNotExist(err) {
-			if err := os.WriteFile(gitignorePath, []byte(entry), 0644); err != nil {
-				return fmt.Errorf("failed to create .gitignore: %w", err)
-			}
-			gitignoreUpdated = true
+		gitignoreUpdated, err := ensureGlassmarbleGitignored(abs)
+		if err != nil {
+			return err
 		}
 
 		if asJSON {

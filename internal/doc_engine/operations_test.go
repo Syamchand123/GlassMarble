@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Syamchand123/GlassMarble/internal/akg"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/archfeatures"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/grounding"
@@ -275,7 +277,7 @@ func TestOperations_SRE(t *testing.T) {
 func TestOperations_EvalFaithfulnessLedgerAndRelevance(t *testing.T) {
 	tempDir := setupTestRepoWithDoc(t)
 
-	result, err := EvalFaithfulness(tempDir, 0)
+	result, err := EvalFaithfulness(tempDir, 0, nil)
 	if err != nil {
 		t.Fatalf("EvalFaithfulness failed: %v", err)
 	}
@@ -319,6 +321,61 @@ func TestOperations_EvalFaithfulnessLedgerAndRelevance(t *testing.T) {
 	}
 }
 
+// TestOperations_EvalFaithfulness_UsesRealGraphWhenProvided guards against
+// the regression where EvalFaithfulness always called AssembleFactSheet
+// with a nil graph, so Collector.CollectSectionFacts short-circuited to an
+// empty GroundTruthPayload — a 100%-correct section scored as almost
+// entirely unfaithful because the "ground truth" it was compared against
+// was empty, not because anything in the section was actually wrong. With
+// a real graph carrying the referenced symbol in scope, the same prose
+// must score as supported.
+func TestOperations_EvalFaithfulness_UsesRealGraphWhenProvided(t *testing.T) {
+	tempDir := setupTestRepoWithDoc(t)
+
+	targetFull := filepath.Join(tempDir, "docs", "testdoc.md")
+	mdContent := "# Test Documentation\n\n<!-- gmb:begin:overview -->\n" +
+		"The `Foo` function handles the module's core behavior.\n" +
+		"<!-- gmb:end:overview -->\n"
+	if err := os.WriteFile(targetFull, []byte(mdContent), 0644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	fqn := "internal/testdoc/pkg.go::Foo"
+	graph := akg.NewCodePropertyGraph("eval-test")
+	graph.Nodes = graph.Nodes.Set(fqn, &link.ResolvedNode{
+		ID:   fqn,
+		Name: "Foo",
+		Kind: "FUNCTION",
+		FileSpec: link.LocationMeta{
+			Path:      "internal/testdoc/pkg.go",
+			LineStart: 10,
+			LineEnd:   12,
+		},
+		Properties: map[string]string{
+			"signature":   "func Foo() error",
+			"doc_comment": "Foo handles the module's core behavior.",
+		},
+	})
+
+	without, err := EvalFaithfulness(tempDir, 0, nil)
+	if err != nil {
+		t.Fatalf("EvalFaithfulness(nil graph) failed: %v", err)
+	}
+	with, err := EvalFaithfulness(tempDir, 0, graph)
+	if err != nil {
+		t.Fatalf("EvalFaithfulness(real graph) failed: %v", err)
+	}
+
+	if without.GlobalScore >= with.GlobalScore {
+		t.Errorf("expected score with a real graph (%v) to exceed score with nil graph (%v)",
+			with.GlobalScore, without.GlobalScore)
+	}
+	if with.GlobalScore != 1.0 {
+		t.Errorf("expected fully-grounded prose to score 1.0 with the real graph, got %v (unsupported: %v)",
+			with.GlobalScore, with.Docs[0].Unsupported)
+	}
+}
+
 func TestOperations_EvalArchetypeScores(t *testing.T) {
 	tempDir := setupTestRepoWithDoc(t)
 
@@ -342,7 +399,7 @@ func TestOperations_EvalArchetypeScores(t *testing.T) {
 	_ = os.MkdirAll(filepath.Dir(targetFull), 0755)
 	_ = os.WriteFile(targetFull, []byte("# Runbook\n\n<!-- gmb:begin:steps -->\nRestart steps\n<!-- gmb:end:steps -->\n"), 0644)
 
-	result, err := EvalFaithfulness(tempDir, 0)
+	result, err := EvalFaithfulness(tempDir, 0, nil)
 	if err != nil {
 		t.Fatalf("EvalFaithfulness failed: %v", err)
 	}

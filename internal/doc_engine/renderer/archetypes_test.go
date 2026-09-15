@@ -4,7 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Syamchand123/GlassMarble/internal/akg"
+	"github.com/Syamchand123/GlassMarble/internal/code_analysis_engine/link"
 	"github.com/Syamchand123/GlassMarble/internal/doc_engine/config"
+	"github.com/Syamchand123/GlassMarble/internal/doc_engine/grounding"
 )
 
 func TestArchetypes_All10Present(t *testing.T) {
@@ -60,6 +63,79 @@ func TestArchetypes_All10Present(t *testing.T) {
 				t.Errorf("archetype %q section %q has empty GroundWith", name, s.ID)
 			}
 		}
+	}
+}
+
+// TestArchitectureArchetype_SectionsAreNotDuplicated guards against a
+// regression where "System Overview" and "Core Subsystems" shared the
+// exact same ground_with directives ([arch_intelligence, components] vs
+// [components, arch_intelligence]) — "components" aliases to "signatures",
+// which dumps every symbol matching the doc's scope, so for any repo (an
+// architecture doc's scope is normally the whole thing) both sections
+// rendered byte-identical: the same diagrams, the same full function/type
+// table, the same config-var dump. "Storage & Persistence Model" also
+// included "signatures" directly, making it a near-duplicate of Core
+// Subsystems too. Only Core Subsystems is meant to be the exhaustive one.
+func TestArchitectureArchetype_SectionsAreNotDuplicated(t *testing.T) {
+	graph := akg.NewCodePropertyGraph("arch-test")
+	nodes := []struct {
+		id, name, kind, file, sig string
+	}{
+		{"pkg/store/store.go::Store", "Store", "STRUCT", "pkg/store/store.go", "type Store struct { mu sync.RWMutex }"},
+		{"pkg/store/store.go::New", "New", "FUNCTION", "pkg/store/store.go", "func New() *Store"},
+		{"pkg/store/store.go::Get", "Get", "FUNCTION", "pkg/store/store.go", "func (s *Store) Get(id string) (*Task, error)"},
+		{"pkg/api/handler.go::Handler", "Handler", "STRUCT", "pkg/api/handler.go", "type Handler struct{}"},
+		{"pkg/api/handler.go::CreateTaskHandler", "CreateTaskHandler", "FUNCTION", "pkg/api/handler.go", "func (h *Handler) CreateTaskHandler(w http.ResponseWriter, r *http.Request)"},
+	}
+	for _, n := range nodes {
+		graph.Nodes = graph.Nodes.Set(n.id, &link.ResolvedNode{
+			ID:       n.id,
+			Name:     n.name,
+			Kind:     n.kind,
+			FileSpec: link.LocationMeta{Path: n.file, LineStart: 1, LineEnd: 1},
+			Properties: map[string]string{
+				"signature": n.sig,
+			},
+		})
+	}
+
+	spec, ok := GetArchetype("architecture")
+	if !ok {
+		t.Fatal("architecture archetype not found")
+	}
+	doc := &config.DocSpec{
+		ID:         "architecture",
+		TargetPath: "docs/architecture.md",
+		Scope:      config.ScopeRule{Paths: []string{"pkg/**"}},
+		Sections:   spec.Sections,
+	}
+
+	det := NewDeterministicRenderer()
+	rendered := make(map[string]string)
+	for _, sec := range doc.Sections {
+		secCopy := sec
+		fs := grounding.AssembleFactSheet(doc, &secCopy, graph, nil, "", "")
+		if fs == nil {
+			t.Fatalf("nil FactSheet for section %q", sec.ID)
+		}
+		out, err := det.RenderSection(fs)
+		if err != nil {
+			t.Fatalf("RenderSection(%q) failed: %v", sec.ID, err)
+		}
+		rendered[sec.ID] = out
+	}
+
+	if rendered["overview"] == rendered["components"] {
+		t.Errorf("overview and components rendered identically:\n%s", rendered["overview"])
+	}
+	if rendered["storage"] == rendered["components"] {
+		t.Errorf("storage and components rendered identically:\n%s", rendered["storage"])
+	}
+	if !strings.Contains(rendered["components"], "### Functions and Methods") {
+		t.Errorf("components (the intentionally exhaustive section) missing its function table:\n%s", rendered["components"])
+	}
+	if strings.Contains(rendered["overview"], "### Functions and Methods") {
+		t.Errorf("overview should not dump the full function table (that's components' job):\n%s", rendered["overview"])
 	}
 }
 

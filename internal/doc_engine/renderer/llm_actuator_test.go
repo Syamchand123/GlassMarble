@@ -3,6 +3,7 @@ package renderer
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,6 +134,90 @@ func TestLLMActuator_FailureExhausted(t *testing.T) {
 	}
 	if mock.callCount != 3 {
 		t.Errorf("expected 3 calls, got %d", mock.callCount)
+	}
+}
+
+// TestLLMActuator_StripsExplicitThinkTags guards against a regression where
+// a reasoning model's <think>...</think> block (inlined directly into the
+// message content — no provider struct anywhere separates a distinct
+// "reasoning_content" field) shipped verbatim as part of the section body.
+func TestLLMActuator_StripsExplicitThinkTags(t *testing.T) {
+	mock := &mockProvider{
+		completeFunc: func(ctx context.Context, req provider.Request) (*provider.Response, error) {
+			return &provider.Response{
+				Text: "<think>Let me work through what to write here.</think>\n\n## Overview\n\nThe store guards state with a mutex.",
+			}, nil
+		},
+	}
+	cfg := DefaultLLMActuatorConfig(mock, "reasoning-model")
+	cfg.BackoffSchedule = []time.Duration{1 * time.Millisecond}
+	act := NewLLMActuator(cfg)
+
+	res, err := act.Render(context.Background(), &config.FactSheet{DocID: "d", SectionID: "s"})
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+	if strings.Contains(res.Text, "<think>") || strings.Contains(res.Text, "Let me work through") {
+		t.Errorf("think block leaked into rendered text: %q", res.Text)
+	}
+	if !strings.Contains(res.Text, "## Overview") {
+		t.Errorf("expected real content to survive stripping, got: %q", res.Text)
+	}
+}
+
+// TestLLMActuator_NarratedReasoningLeakFallsBackAfterRetries guards against
+// the confirmed real-world failure: a reasoning model (no <think> tags,
+// just narrated planning prose) returning "We need to produce markdown for
+// the section... The rule: we must not reference..." — cut off mid-word —
+// as the entire response, with no separate reasoning field to strip. Every
+// retry attempt leaking the same way must exhaust the backoff schedule and
+// return an error (so the caller's existing fallback-to-deterministic path
+// engages), not ship the transcript as if it were the section's content.
+func TestLLMActuator_NarratedReasoningLeakFallsBackAfterRetries(t *testing.T) {
+	mock := &mockProvider{
+		completeFunc: func(ctx context.Context, req provider.Request) (*provider.Response, error) {
+			return &provider.Response{
+				Text: "We need to produce markdown for the section \"required-optional\" under doc_id \"config\". " +
+					"The rule: we must not reference any code entity not listed in ground_truth. " +
+					"Thus we can produce a markdown section like: ## Required and Optional Configuration Variables - `config.go` (file) – optional (no required value",
+			}, nil
+		},
+	}
+	cfg := DefaultLLMActuatorConfig(mock, "reasoning-model")
+	cfg.BackoffSchedule = []time.Duration{1 * time.Millisecond, 1 * time.Millisecond, 1 * time.Millisecond}
+	act := NewLLMActuator(cfg)
+
+	_, err := act.Render(context.Background(), &config.FactSheet{DocID: "d", SectionID: "s"})
+	if err == nil {
+		t.Fatalf("expected an error so the caller falls back to the deterministic renderer, got success")
+	}
+	if mock.callCount != 3 {
+		t.Errorf("expected all 3 attempts to be tried (each leaking), got %d calls", mock.callCount)
+	}
+}
+
+// TestLLMActuator_OrdinaryProseIsNotFlaggedAsLeak is the false-positive
+// guard for the heuristic above: real documentation prose — including
+// prose that legitimately uses "we"/"you" in second person, per the
+// system prompt's own style rule — must render normally.
+func TestLLMActuator_OrdinaryProseIsNotFlaggedAsLeak(t *testing.T) {
+	mock := &mockProvider{
+		completeFunc: func(ctx context.Context, req provider.Request) (*provider.Response, error) {
+			return &provider.Response{
+				Text: "## Configuration\n\nYou configure the store's port with `SERVER_PORT`. The default is 8080 when unset.",
+			}, nil
+		},
+	}
+	cfg := DefaultLLMActuatorConfig(mock, "gpt-4o")
+	cfg.BackoffSchedule = []time.Duration{1 * time.Millisecond}
+	act := NewLLMActuator(cfg)
+
+	res, err := act.Render(context.Background(), &config.FactSheet{DocID: "d", SectionID: "s"})
+	if err != nil {
+		t.Fatalf("ordinary prose must not be treated as a reasoning leak: %v", err)
+	}
+	if !strings.Contains(res.Text, "SERVER_PORT") {
+		t.Errorf("unexpected text: %q", res.Text)
 	}
 }
 
