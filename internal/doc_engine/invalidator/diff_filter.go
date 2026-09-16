@@ -174,9 +174,22 @@ func (inv *Invalidator) FindDirtySections(
 			continue
 		}
 
-		// Handle cascade rules for aggregate-level documents
+		// Handle cascade rules for aggregate-level documents. Both gates
+		// below are skipped entirely for a section that has never been
+		// rendered before (see sectionEverRendered): they exist to stop a
+		// private leaf-module change from burning tokens re-rendering the
+		// whole architecture doc on every commit, which presupposes the
+		// document already has real content to leave alone. Applied
+		// unconditionally, a brand-new architecture.md (or README.md)
+		// section — freshly scaffolded, currently empty — would never
+		// naturally populate at all: it just sits blank until someone
+		// notices and passes --force, since nothing about its own commit
+		// need ever contain a "critical" architectural event. Found via
+		// live testing: this was the reason the architecture archetype
+		// only ever rendered under --force.
 		level := catalog.ClassifyDocLevel(doc)
-		if level == catalog.DocLevelAggregate && dossier != nil {
+		everRendered := sectionEverRendered(state, doc.TargetPath, cand.SectionID)
+		if level == catalog.DocLevelAggregate && dossier != nil && everRendered {
 			if !catalog.ShouldCascadeToAggregate(dossier.ArchEvents, dossier.CommitIntent) {
 				// Skip aggregate update if no critical architectural events occurred
 				continue
@@ -186,7 +199,7 @@ func (inv *Invalidator) FindDirtySections(
 		// DocLevelRoot gate (mirrors the aggregate check): root docs
 		// (README.md, docs/index.md) invalidate ONLY on public-surface
 		// changes. Leaf behavior is unchanged.
-		if level == catalog.DocLevelRoot && dossier != nil {
+		if level == catalog.DocLevelRoot && dossier != nil && everRendered {
 			if !isPublicSurfaceChange(dossier) {
 				continue
 			}
@@ -244,6 +257,35 @@ var structuralRootEvents = map[string]bool{
 	"CYCLE_RESOLVED":         true,
 	"LAYER_VIOLATION":        true,
 	"PUBLIC_SURFACE_CHANGED": true,
+}
+
+// sectionEverRendered reports whether targetPath/sectionID has a persisted
+// SectionState in state — i.e. whether it has ever been successfully
+// rendered before, as opposed to sitting as an empty scaffolded zone
+// waiting for its first real content.
+//
+// A nil state defaults to true (assume already rendered, apply the
+// cascade gates normally) rather than false: StateManager.Load() never
+// actually returns a nil state in production — a missing docs_state.json
+// comes back as a valid, non-nil empty state — so nil only ever shows up
+// from a caller (existing tests, mainly) that means "no persistence layer
+// in play for this check," not "this is a fresh, unrendered document."
+// The real "never rendered" signal is a valid, non-nil state with no
+// entry for this document/section, which still correctly returns false
+// below.
+func sectionEverRendered(state *storage.DocEngineState, targetPath, sectionID string) bool {
+	if state == nil {
+		return true
+	}
+	if state.Documents == nil {
+		return false
+	}
+	ds, ok := state.Documents[targetPath]
+	if !ok || ds == nil || ds.Sections == nil {
+		return false
+	}
+	_, ok = ds.Sections[sectionID]
+	return ok
 }
 
 // isPublicSurfaceChange reports whether the dossier carries a public-surface
