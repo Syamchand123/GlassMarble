@@ -425,6 +425,100 @@ func (o *Orchestrator) ProcessDocument(
 	sm *storage.StateManager,
 	commitHash string,
 ) (docUpdated bool, tokensUsed int, warnings []string, failedSections int, err error) {
+	return o.processDocument(ctx, repoRoot, doc, dirtySectionIDs, graph, dossier, sm, commitHash, nil)
+}
+
+// ProcessDocumentWithBudget is ProcessDocument plus a shared token budget:
+// found via live testing against a real, large repository (internal/
+// doc_engine itself, ~22k AKG nodes) — a single document scoped broadly
+// enough spent 759,704 tokens in one run despite docs.yaml's own
+// constraints.max_tokens_per_run: 50000, because doc_engine.Run's budget
+// check (totalTokens >= maxTokens) only ever runs BETWEEN documents in
+// its own outer loop — there is no such checkpoint between the SECTIONS
+// of a single document, which is exactly where ProcessDocument spends
+// tokens. A repo with one broadly-scoped document (or just one document
+// selected via --doc/--tag) never hits the between-documents check at
+// all. budget is shared across every section of this document (see
+// sectionBudget) and, when the caller threads the SAME budget across
+// multiple ProcessDocument calls in one Run(), across documents too —
+// see doc_engine.go's caller for how tokensUsedSoFar seeds it.
+func (o *Orchestrator) ProcessDocumentWithBudget(
+	ctx context.Context,
+	repoRoot string,
+	doc *config.DocSpec,
+	dirtySectionIDs []string,
+	graph *akg.CodePropertyGraph,
+	dossier *config.GlobalCommitDossier,
+	sm *storage.StateManager,
+	commitHash string,
+	budget *SectionBudget,
+) (docUpdated bool, tokensUsed int, warnings []string, failedSections int, err error) {
+	return o.processDocument(ctx, repoRoot, doc, dirtySectionIDs, graph, dossier, sm, commitHash, budget)
+}
+
+// sectionBudget is a shared, concurrency-safe token ceiling checked before
+// each section's LLM render is dispatched (see renderOneSection's caller
+// in processDocument) — both across the sections of one document and,
+// when the same instance is threaded through multiple ProcessDocumentWith
+// Budget calls, across the documents of one Run(). tryReserve is checked
+// BEFORE spending anything, so it bounds the worst-case overshoot to
+// roughly one round of in-flight concurrent sections past the limit,
+// rather than the unbounded overshoot a check-only-between-documents (or
+// check-only-between-sections-serially, which parallel rendering
+// sidesteps entirely) scheme allows.
+type SectionBudget struct {
+	mu        sync.Mutex
+	remaining int
+}
+
+// newSectionBudget returns nil (no enforcement) when maxTokens <= 0 — the
+// caller's own "unbounded" signal — so every call site can pass the
+// result straight through without a separate nil-vs-disabled branch.
+func NewSectionBudget(maxTokens, alreadyUsed int) *SectionBudget {
+	if maxTokens <= 0 {
+		return nil
+	}
+	return &SectionBudget{remaining: maxTokens - alreadyUsed}
+}
+
+// tryReserve reports whether there is still budget to attempt a render. A
+// nil budget always allows (enforcement disabled).
+func (b *SectionBudget) tryReserve() bool {
+	if b == nil {
+		return true
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.remaining > 0
+}
+
+// spend records tokens actually used against the shared budget. A no-op
+// on a nil budget.
+func (b *SectionBudget) spend(tokens int) {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.remaining -= tokens
+}
+
+// processDocument is ProcessDocument's real implementation, taking an
+// optional shared token budget (nil disables enforcement — every existing
+// caller of the exported ProcessDocument above, tests included, keeps
+// working unbounded exactly as before). See sectionBudget's doc comment
+// for why this exists.
+func (o *Orchestrator) processDocument(
+	ctx context.Context,
+	repoRoot string,
+	doc *config.DocSpec,
+	dirtySectionIDs []string,
+	graph *akg.CodePropertyGraph,
+	dossier *config.GlobalCommitDossier,
+	sm *storage.StateManager,
+	commitHash string,
+	budget *SectionBudget,
+) (docUpdated bool, tokensUsed int, warnings []string, failedSections int, err error) {
 	if doc == nil {
 		return false, 0, nil, 0, fmt.Errorf("doc_engine/orchestrator: nil DocSpec")
 	}
@@ -502,6 +596,19 @@ func (o *Orchestrator) ProcessDocument(
 	// fatal — a failed section records a warning and is skipped in the
 	// merge phase. State-manager calls remain phase-2-only (serial).
 	results := make([]sectionResult, len(jobs))
+	renderJob := func(i int) sectionResult {
+		if !budget.tryReserve() {
+			return sectionResult{
+				job:     jobs[i],
+				skipped: true,
+				secWarnings: []string{fmt.Sprintf("skipped rendering section %s/%s: token budget exhausted for this run",
+					doc.ID, jobs[i].sec.ID)},
+			}
+		}
+		res := o.renderOneSection(ctx, repoRoot, doc, jobs[i], graph, dossier, commitHash, vocab)
+		budget.spend(res.secTokens)
+		return res
+	}
 	if parallelSections() && len(jobs) > 1 {
 		sem := make(chan struct{}, maxSectionWorkers(len(jobs)))
 		var wg sync.WaitGroup
@@ -511,13 +618,13 @@ func (o *Orchestrator) ProcessDocument(
 				defer wg.Done()
 				sem <- struct{}{}
 				defer func() { <-sem }()
-				results[i] = o.renderOneSection(ctx, repoRoot, doc, jobs[i], graph, dossier, commitHash, vocab)
+				results[i] = renderJob(i)
 			}(i)
 		}
 		wg.Wait()
 	} else {
 		for i := range jobs {
-			results[i] = o.renderOneSection(ctx, repoRoot, doc, jobs[i], graph, dossier, commitHash, vocab)
+			results[i] = renderJob(i)
 		}
 	}
 

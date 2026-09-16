@@ -538,6 +538,17 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 	if maxTokens <= 0 {
 		maxTokens = 500000
 	}
+	// Shared across every document's ProcessDocumentWithBudget call this
+	// run — found via live testing against a real, large repository: a
+	// single BROADLY-scoped document spent far more than
+	// constraints.max_tokens_per_run in one run, because the totalTokens
+	// >= maxTokens check just below only ever runs BETWEEN documents in
+	// this loop, never between the SECTIONS of one document, which is
+	// exactly where ProcessDocument actually spends tokens. A run
+	// touching only one document (the common case: `gmb doc --doc X`, or
+	// simply a repo with one document configured) never reaches this
+	// between-documents check at all, so it was unbounded in practice.
+	budget := renderer.NewSectionBudget(maxTokens, 0)
 
 	for i := range docs {
 		d := &docs[i]
@@ -573,7 +584,7 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 					fmt.Sprintf("token budget exhausted (%d/%d tokens used): skipping remaining document(s)", totalTokens, maxTokens))
 				break
 			}
-			changed, tokens, docWarns, failedSections, pErr := orch.ProcessDocument(
+			changed, tokens, docWarns, failedSections, pErr := orch.ProcessDocumentWithBudget(
 				ctx,
 				repoRoot,
 				d,
@@ -582,6 +593,7 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 				dossier,
 				sm,
 				opts.CommitHash,
+				budget,
 			)
 			docFailed := failedSections > 0
 			if pErr != nil {

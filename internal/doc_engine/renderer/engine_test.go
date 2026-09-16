@@ -378,3 +378,76 @@ func TestOrchestrator_ProcessDocument_ReportsFailedSections(t *testing.T) {
 		t.Errorf("failedSections = %d, want 2 (both sections' LLM calls fail): warnings=%v", failedSections, warnings)
 	}
 }
+
+// TestOrchestrator_ProcessDocumentWithBudget_StopsWithinOneDocument guards
+// against a real cost-control gap found via live testing against a real,
+// large repository (internal/doc_engine itself, ~22k AKG nodes): a single
+// broadly-scoped document spent 759,704 tokens in one run despite
+// docs.yaml's own constraints.max_tokens_per_run: 50000, because
+// doc_engine.Run's own budget check only ever ran BETWEEN documents in
+// its outer loop — never between the SECTIONS of one document, which is
+// exactly where ProcessDocument spends tokens. A run touching only one
+// document (very common: `gmb doc --doc X`, or simply a repo with one
+// document configured) never reached that check at all. This forces
+// serial rendering (GMB_DOC_PARALLEL=0) so the budget trips
+// deterministically partway through a 4-section document, then asserts
+// not every section's LLM call actually happened.
+func TestOrchestrator_ProcessDocumentWithBudget_StopsWithinOneDocument(t *testing.T) {
+	t.Setenv("GMB_DOC_PARALLEL", "0")
+	tempDir := t.TempDir()
+	storageDir := filepath.Join(tempDir, ".glassmarble")
+	_ = os.MkdirAll(storageDir, 0755)
+	sm := storage.NewStateManager(storageDir)
+
+	doc := &config.DocSpec{
+		ID:         "big",
+		TargetPath: "docs/big.md",
+		Mode:       config.ModeManagedSections,
+		Sections: []config.SectionSpec{
+			{ID: "s1", Title: "S1", Instruction: "One.", Managed: true},
+			{ID: "s2", Title: "S2", Instruction: "Two.", Managed: true},
+			{ID: "s3", Title: "S3", Instruction: "Three.", Managed: true},
+			{ID: "s4", Title: "S4", Instruction: "Four.", Managed: true},
+		},
+	}
+
+	mock := &mockProvider{} // each call costs 150 tokens (see mockProvider.Complete's default)
+	orch := NewOrchestrator(OrchestratorOptions{Provider: mock, Model: "gpt-4o"})
+
+	// Budget for roughly 1-2 sections' worth of tokens, well under what all
+	// 4 would cost (600 tokens at 150/section).
+	budget := NewSectionBudget(200, 0)
+
+	_, tokensUsed, _, failedSections, err := orch.ProcessDocumentWithBudget(
+		context.Background(), tempDir, doc, []string{"s1", "s2", "s3", "s4"}, nil, nil, sm, "c1", budget,
+	)
+	if err != nil {
+		t.Fatalf("ProcessDocumentWithBudget should stay non-fatal, got: %v", err)
+	}
+	if mock.callCount >= 4 {
+		t.Errorf("expected the budget to stop rendering before all 4 sections' LLM calls happened, got %d calls", mock.callCount)
+	}
+	if failedSections == 0 {
+		t.Error("expected at least one section skipped for budget exhaustion, got failedSections=0")
+	}
+	if tokensUsed >= 600 {
+		t.Errorf("tokensUsed = %d, expected well under the unbudgeted 600 (4 sections x 150)", tokensUsed)
+	}
+}
+
+// TestNewSectionBudget_NilDisablesEnforcement guards the "0 or negative
+// means unbounded" contract every existing (pre-budget) call site relies
+// on implicitly via ProcessDocument's nil budget.
+func TestNewSectionBudget_NilDisablesEnforcement(t *testing.T) {
+	if b := NewSectionBudget(0, 0); b != nil {
+		t.Errorf("NewSectionBudget(0, ...) = %+v, want nil (unbounded)", b)
+	}
+	if b := NewSectionBudget(-1, 0); b != nil {
+		t.Errorf("NewSectionBudget(-1, ...) = %+v, want nil (unbounded)", b)
+	}
+	var nilBudget *SectionBudget
+	if !nilBudget.tryReserve() {
+		t.Error("a nil *SectionBudget must always allow (enforcement disabled)")
+	}
+	nilBudget.spend(1000) // must not panic
+}
