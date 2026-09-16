@@ -3,6 +3,7 @@ package grounding
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Syamchand123/GlassMarble/internal/akg"
@@ -702,4 +703,77 @@ func envInt(name string, def int) int {
 	assert.Equal(t, "env", maxTasks.Source)
 	assert.Equal(t, "1000", maxTasks.Default)
 	assert.Equal(t, "MaxTasks caps the number of tasks the store accepts.", maxTasks.Doc)
+}
+
+// TestCollectConcurrency_DetectsMutexStructField guards against a real bug
+// found via re-verifying the original audit's Finding E: a mutex declared
+// as a struct field — by far the most common Go concurrency pattern,
+// `mu sync.RWMutex` inside a struct body — was invisible to
+// collectConcurrency. Root cause: the AKG's own FIELD-kind nodes
+// (member_linker.go's ensureMemberNode) carry only a bare Name ("mu") and
+// FileSpec, never the field's declared TYPE, so nothing in the graph ever
+// says "mu is a sync.RWMutex" — "mu" itself doesn't contain "mutex". Only
+// a field literally named "mutex" (not the idiomatic "mu") would ever
+// have matched the old name/signature substring check. Real detection can
+// only come from reading the source directly.
+func TestCollectConcurrency_DetectsMutexStructField(t *testing.T) {
+	root := t.TempDir()
+	pkgDir := filepath.Join(root, "pkg", "store")
+	require.NoError(t, os.MkdirAll(pkgDir, 0755))
+	src := `package store
+
+import "sync"
+
+type Store struct {
+	mu    sync.RWMutex
+	tasks map[string]*Task
+	done  chan struct{}
+	wg    sync.WaitGroup
+}
+
+type Task struct {
+	ID string
+}
+`
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "store.go"), []byte(src), 0644))
+
+	// An empty graph: the AKG's FIELD nodes never carry a type at all (see
+	// collectConcurrency's doc comment), so real detection can ONLY come
+	// from the source-scan fallback, never from a graph walk.
+	g := akg.NewCodePropertyGraph("commit-concurrency-fields")
+	c := NewCollector(g).WithRepoRoot(root)
+	scope := &config.ScopeRule{Paths: []string{"pkg/store/**"}}
+	sec := &config.SectionSpec{ID: "concurrency", GroundWith: []string{"concurrency_primitives"}}
+
+	payload, err := c.CollectSectionFacts(sec, scope)
+	require.NoError(t, err)
+
+	var concurrencyFields []config.SymbolFact
+	for _, s := range payload.Symbols {
+		if s.Kind == "concurrency" {
+			concurrencyFields = append(concurrencyFields, s)
+		}
+	}
+	require.Len(t, concurrencyFields, 3, "expected mu, done, and wg: %+v", concurrencyFields)
+
+	byName := make(map[string]config.SymbolFact)
+	for _, f := range concurrencyFields {
+		byName[f.Signature[:strings.IndexByte(f.Signature, ' ')]] = f
+	}
+
+	mu, ok := byName["mu"]
+	require.True(t, ok, "mu field not detected: %+v", concurrencyFields)
+	assert.Contains(t, mu.Signature, "sync.RWMutex")
+	assert.Contains(t, mu.Doc, "Store")
+
+	_, ok = byName["done"]
+	assert.True(t, ok, "done (chan struct{}) field not detected: %+v", concurrencyFields)
+
+	_, ok = byName["wg"]
+	assert.True(t, ok, "wg (sync.WaitGroup) field not detected: %+v", concurrencyFields)
+
+	// "tasks" is a plain map field, not a concurrency primitive, and must
+	// never appear.
+	_, ok = byName["tasks"]
+	assert.False(t, ok, "tasks is not a concurrency primitive and must not appear")
 }

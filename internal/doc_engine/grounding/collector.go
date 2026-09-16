@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/parser"
+	"go/printer"
 	"go/token"
 	"io/fs"
 	"path/filepath"
@@ -418,7 +419,29 @@ func returnsBuiltinError(returnType string) bool {
 }
 
 // 6: Concurrency Primitives (Mutex, RWMutex, channels, goroutines)
+//
+// The graph walk below only ever matches when a node's OWN NAME or its
+// (brace-truncated — see extractSignature/signatureFromContent) signature
+// literally contains "mutex"/"waitgroup"/etc. — which catches a
+// synchronization primitive named as its own top-level symbol (a package
+// var, a named channel type), but structurally CANNOT catch the far more
+// common Go pattern of a mutex as a struct field:
+//
+//	type Store struct {
+//	    mu    sync.RWMutex  // <-- invisible to the checks below
+//	    tasks map[string]*Task
+//	}
+//
+// The AKG's own FIELD-kind nodes (member_linker.go's ensureMemberNode)
+// carry only a bare Name ("mu") and FileSpec — never the field's declared
+// TYPE — so there is no way to tell "mu" apart from any other field by
+// graph data alone; "mu" itself doesn't contain "mutex". Fixing that at
+// the AKG ingestion layer would touch a much more foundational,
+// widely-shared subsystem than this collector; the source-scan fallback
+// below (same pattern as collectSentinels/collectConfigVars) resolves it
+// without touching that shared code at all.
 func (c *Collector) collectConcurrency(scope *config.ScopeRule, p *config.GroundTruthPayload) {
+	seenNames := make(map[string]bool)
 	c.graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
 		if n == nil || !catalog.MatchesScope(scope, n.FileSpec.Path) {
 			return
@@ -427,6 +450,7 @@ func (c *Collector) collectConcurrency(scope *config.ScopeRule, p *config.Ground
 		name := n.Name
 		lower := strings.ToLower(sig + " " + name)
 		if strings.Contains(lower, "mutex") || strings.Contains(lower, "rwmutex") || strings.Contains(lower, "chan ") || strings.Contains(lower, "waitgroup") {
+			seenNames[name] = true
 			p.Symbols = append(p.Symbols, config.SymbolFact{
 				FQN:       id,
 				Kind:      "concurrency",
@@ -438,6 +462,117 @@ func (c *Collector) collectConcurrency(scope *config.ScopeRule, p *config.Ground
 			})
 		}
 	})
+	if c.repoRoot != "" {
+		for _, f := range scanConcurrencyFieldsFromSource(c.repoRoot, scope) {
+			if seenNames[f.name] {
+				continue
+			}
+			seenNames[f.name] = true
+			p.Symbols = append(p.Symbols, config.SymbolFact{
+				FQN:       f.file + "::" + f.owner + "::" + f.name,
+				Kind:      "concurrency",
+				File:      f.file,
+				Line:      f.line,
+				Permalink: FormatPermalink(f.file, f.line, f.line),
+				Signature: f.name + " " + f.typeText,
+				Doc:       fmt.Sprintf("Concurrency primitive: %s field of %s.", f.name, f.owner),
+			})
+		}
+	}
+}
+
+// concurrencyField is one struct field found by scanning Go source whose
+// declared type is a synchronization primitive.
+type concurrencyField struct {
+	name     string // field name, e.g. "mu"
+	typeText string // field type as written, e.g. "sync.RWMutex"
+	owner    string // enclosing struct type name, e.g. "Store"
+	file     string // repo-relative, slash-separated
+	line     int
+}
+
+// isConcurrencyTypeText reports whether a field's type — as plain source
+// text, e.g. "sync.Mutex", "sync.RWMutex", "sync.WaitGroup", "chan int",
+// "<-chan struct{}" — names a synchronization primitive.
+func isConcurrencyTypeText(t string) bool {
+	lower := strings.ToLower(t)
+	return strings.Contains(lower, "sync.mutex") || strings.Contains(lower, "sync.rwmutex") ||
+		strings.Contains(lower, "sync.waitgroup") ||
+		strings.Contains(lower, "chan ") || strings.Contains(lower, "chan<-") || strings.Contains(lower, "<-chan")
+}
+
+// scanConcurrencyFieldsFromSource walks repoRoot for .go files matching
+// scope and parses each with go/parser for struct type declarations,
+// reporting every field whose declared type is a synchronization
+// primitive (see isConcurrencyTypeText). This is the only way to recover
+// a field's TYPE at all: the AKG's own FIELD nodes never carry one (see
+// collectConcurrency's doc comment).
+func scanConcurrencyFieldsFromSource(repoRoot string, scope *config.ScopeRule) []concurrencyField {
+	var out []concurrencyField
+	_ = filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		rel, relErr := filepath.Rel(repoRoot, path)
+		if relErr != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if !catalog.MatchesScope(scope, rel) {
+			return nil
+		}
+		fset := token.NewFileSet()
+		file, parseErr := parser.ParseFile(fset, path, nil, 0)
+		if parseErr != nil || file == nil {
+			return nil
+		}
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				ts, ok := spec.(*ast.TypeSpec)
+				if !ok {
+					continue
+				}
+				st, ok := ts.Type.(*ast.StructType)
+				if !ok || st.Fields == nil {
+					continue
+				}
+				for _, field := range st.Fields.List {
+					typeText := exprToString(field.Type)
+					if !isConcurrencyTypeText(typeText) {
+						continue
+					}
+					for _, fname := range field.Names {
+						out = append(out, concurrencyField{
+							name:     fname.Name,
+							typeText: typeText,
+							owner:    ts.Name.Name,
+							file:     rel,
+							line:     fset.Position(fname.Pos()).Line,
+						})
+					}
+				}
+			}
+		}
+		return nil
+	})
+	return out
+}
+
+// exprToString renders an ast.Expr (a field's type) back to Go source
+// text, e.g. the *ast.SelectorExpr for "sync.Mutex" becomes "sync.Mutex".
+// Falls back to "" for a shape isConcurrencyTypeText would never match
+// anyway (a struct/interface/func literal type), so unsupported shapes
+// simply never register as a concurrency primitive rather than panicking.
+func exprToString(e ast.Expr) string {
+	var buf strings.Builder
+	if err := printer.Fprint(&buf, token.NewFileSet(), e); err != nil {
+		return ""
+	}
+	return buf.String()
 }
 
 // 7: Config Vars (os.Getenv, flag, viper)
