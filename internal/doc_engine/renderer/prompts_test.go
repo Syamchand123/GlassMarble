@@ -31,28 +31,27 @@ func TestBuildSystemPrompt(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_SequentialNumbering(t *testing.T) {
-	// Rules must be gap-free in both modes: 1-12 with a word cap, 1-11 without
-	// (bumped again when the not-everything-grounded-needs-mentioning,
-	// short-name-only, and no-delta-narration rules were added —
-	// grounding, don't-over-include, short-names-only, write-prose-only,
-	// don't-duplicate-reserved-headings, don't-narrate-symbol-deltas,
-	// incremental-edit, output-only, anti-reasoning-leak, style, jargon,
-	// [maxwords]).
+	// Rules must be gap-free in both modes: 1-13 with a word cap, 1-12 without
+	// (bumped again when the no-fabrication-beyond-backticks rule was added —
+	// grounding, no-fabrication-beyond-backticks, don't-over-include,
+	// short-names-only, write-prose-only, don't-duplicate-reserved-headings,
+	// don't-narrate-symbol-deltas, incremental-edit, output-only,
+	// anti-reasoning-leak, style, jargon, [maxwords]).
 	withCap := BuildSystemPrompt(nil, 250)
-	for _, n := range []string{"1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.", "10.", "11.", "12."} {
+	for _, n := range []string{"1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.", "10.", "11.", "12.", "13."} {
 		if !strings.Contains(withCap, "\n"+n+" ") {
 			t.Errorf("expected rule %s in capped prompt:\n%s", n, withCap)
 		}
 	}
 
 	withoutCap := BuildSystemPrompt(nil, 0)
-	for _, n := range []string{"1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.", "10.", "11."} {
+	for _, n := range []string{"1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.", "10.", "11.", "12."} {
 		if !strings.Contains(withoutCap, "\n"+n+" ") {
 			t.Errorf("expected rule %s in uncapped prompt:\n%s", n, withoutCap)
 		}
 	}
-	if strings.Contains(withoutCap, "\n12. ") {
-		t.Errorf("uncapped prompt must not contain a rule 12 (numbering gap regression):\n%s", withoutCap)
+	if strings.Contains(withoutCap, "\n13. ") {
+		t.Errorf("uncapped prompt must not contain a rule 13 (numbering gap regression):\n%s", withoutCap)
 	}
 	if strings.Contains(withoutCap, "Keep this section under") {
 		t.Errorf("uncapped prompt must not contain a word-cap rule")
