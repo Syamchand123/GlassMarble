@@ -196,6 +196,15 @@ func splitProseAndAppendix(markdown string) (prose, appendix string) {
 	return strings.TrimRight(markdown[:idx], "\n"), markdown[idx:]
 }
 
+// SplitProseAndAppendix is the exported form of splitProseAndAppendix, for
+// callers outside this package that need to compare just the grounded
+// reference-appendix half of a section against a freshly-rendered one
+// (e.g. operations.go's Diff, which previews changes without an LLM call
+// and so can only ever meaningfully compare the deterministic half).
+func SplitProseAndAppendix(markdown string) (prose, appendix string) {
+	return splitProseAndAppendix(markdown)
+}
+
 // combineProseAndAppendix joins prose and a reference appendix (as
 // returned by splitProseAndAppendix, or built fresh by
 // DeterministicRenderer.RenderReferenceAppendix) into final section

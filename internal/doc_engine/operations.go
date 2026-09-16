@@ -98,9 +98,36 @@ func Diff(repoRoot string, opts RunOptions) (DiffResult, error) {
 				continue
 			}
 
-			outcome, rErr := orch.RenderSection(ctx, fs, opts.HeadGraph)
-			if rErr != nil {
-				continue
+			// Re-verified original audit Finding C: since the default render
+			// path (renderer/engine.go's mandatory-LLM overhaul) now folds
+			// real LLM prose above the deterministic reference appendix,
+			// comparing a real on-disk section (prose + appendix) against a
+			// candidate rendered with NoLLM (appendix only, no prose at
+			// all — see orch's construction above, which is deliberate:
+			// Diff previews without spending an LLM call) meant hasChange
+			// was true for essentially every populated LLM-authored
+			// section, always, regardless of whether the underlying facts
+			// had actually changed. The only comparison Diff can make
+			// without an LLM call is whether the GROUNDED data changed, so
+			// a hybrid (prose + appendix) prior section is compared on its
+			// appendix half only. A section generated under --no-llm has
+			// no such split (no referenceAppendixMarker in it at all) and
+			// is still compared as a full standalone document, exactly as
+			// before.
+			var newContent string
+			var priorForCompare string
+			isHybridSection := !strings.Contains(priorBody, "<!-- gmb:mode:deterministic -->")
+			if isHybridSection {
+				det := renderer.NewDeterministicRenderer()
+				newContent = det.RenderReferenceAppendix(fs)
+				_, priorForCompare = renderer.SplitProseAndAppendix(priorBody)
+			} else {
+				outcome, rErr := orch.RenderSection(ctx, fs, opts.HeadGraph)
+				if rErr != nil {
+					continue
+				}
+				newContent = outcome.Content
+				priorForCompare = priorBody
 			}
 
 			// Diff() has no commit/dossier context (opts.CommitHash and a
@@ -117,17 +144,37 @@ func Diff(repoRoot string, opts RunOptions) (DiffResult, error) {
 			// would report a change every time, forever, on any section
 			// that has ever shown a symbol delta — so both sides are
 			// compared with that block stripped.
-			hasChange := strings.TrimSpace(stripRecentSymbolChanges(priorBody)) != strings.TrimSpace(stripRecentSymbolChanges(outcome.Content))
+			// A section with no managed zone at all yet (never rendered) is
+			// never "up to date," full stop — even when this section's
+			// grounded data happens to be empty (RenderReferenceAppendix
+			// legitimately returns "" when there's nothing to show), a real
+			// render still produces non-empty LLM prose, so "nothing here
+			// yet" can never legitimately compare equal to a fresh render.
+			// Comparing two empty appendix strings would otherwise silently
+			// agree they match and report a freshly scaffolded section as
+			// already current.
+			hasChange := zone == nil ||
+				strings.TrimSpace(stripRecentSymbolChanges(priorForCompare)) != strings.TrimSpace(stripRecentSymbolChanges(newContent))
 			diffPreview := ""
+			scopeNote := ""
+			if isHybridSection {
+				// Diff never calls the LLM, so it cannot predict whether the
+				// prose itself would be rewritten — only whether the
+				// grounded data backing it changed. Said explicitly so a
+				// "no change" here isn't mistaken for "the prose is
+				// definitely current" and a "changed" isn't mistaken for
+				// a full section rewrite.
+				scopeNote = " (grounded data only — prose is not compared without an LLM call)"
+			}
 			if hasChange {
-				diffPreview = fmt.Sprintf("@@ section: %s @@\n- %s\n+ %s",
-					sec.ID,
-					truncateLine(priorBody, 60),
-					truncateLine(outcome.Content, 60),
+				diffPreview = fmt.Sprintf("@@ section: %s @@%s\n- %s\n+ %s",
+					sec.ID, scopeNote,
+					truncateLine(priorForCompare, 60),
+					truncateLine(newContent, 60),
 				)
 				result.HasChanges = true
 			} else {
-				diffPreview = fmt.Sprintf("section %s is up-to-date", sec.ID)
+				diffPreview = fmt.Sprintf("section %s is up-to-date%s", sec.ID, scopeNote)
 			}
 
 			result.Sections = append(result.Sections, SectionDiff{
@@ -136,7 +183,7 @@ func Diff(repoRoot string, opts RunOptions) (DiffResult, error) {
 				SectionID:   sec.ID,
 				HasChange:   hasChange,
 				OldContent:  priorBody,
-				NewContent:  outcome.Content,
+				NewContent:  newContent,
 				DiffPreview: diffPreview,
 			})
 		}
