@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS documents(
 	last_updated_commit TEXT NOT NULL DEFAULT '',
 	last_updated_at TEXT NOT NULL DEFAULT '',
 	freshness_score INTEGER NOT NULL DEFAULT 0,
-	commits_behind INTEGER NOT NULL DEFAULT 0
+	commits_behind INTEGER NOT NULL DEFAULT 0,
+	has_failed_sections INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS sections(
 	target TEXT NOT NULL,
@@ -185,6 +186,19 @@ func (sm *StateManager) openSQLiteOnce() (*sql.DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("doc_engine: creating sqlite schema: %w", err)
 	}
+	// has_failed_sections was added to the documents table after this
+	// schema shipped: CREATE TABLE IF NOT EXISTS above is a no-op against
+	// an existing database file that predates the column, so an explicit
+	// ALTER is the only way an already-deployed docs_state.db picks it up.
+	// SQLite has no "ADD COLUMN IF NOT EXISTS", so the idiom is to attempt
+	// it unconditionally and ignore the "duplicate column" error on every
+	// open after the first.
+	if _, err := db.Exec(`ALTER TABLE documents ADD COLUMN has_failed_sections INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column") {
+			_ = db.Close()
+			return nil, fmt.Errorf("doc_engine: migrating sqlite schema (has_failed_sections): %w", err)
+		}
+	}
 	return db, nil
 }
 
@@ -279,14 +293,14 @@ func (sm *StateManager) loadFromSQLite() (*DocEngineState, error) {
 	state.LastCommit = lastCommit
 	state.GeneratedAt = parseSQLiteTime(generatedAt)
 
-	docRows, err := db.Query(`SELECT target, file_hash, last_updated_commit, last_updated_at, freshness_score, commits_behind FROM documents;`)
+	docRows, err := db.Query(`SELECT target, file_hash, last_updated_commit, last_updated_at, freshness_score, commits_behind, has_failed_sections FROM documents;`)
 	if err != nil {
 		return nil, fmt.Errorf("doc_engine: reading sqlite documents: %w", err)
 	}
 	for docRows.Next() {
 		var target, fileHash, commit, updatedAt string
-		var freshness, behind int
-		if err := docRows.Scan(&target, &fileHash, &commit, &updatedAt, &freshness, &behind); err != nil {
+		var freshness, behind, hasFailedSections int
+		if err := docRows.Scan(&target, &fileHash, &commit, &updatedAt, &freshness, &behind, &hasFailedSections); err != nil {
 			_ = docRows.Close()
 			return nil, fmt.Errorf("doc_engine: scanning sqlite documents: %w", err)
 		}
@@ -296,6 +310,7 @@ func (sm *StateManager) loadFromSQLite() (*DocEngineState, error) {
 			LastUpdatedAt:     parseSQLiteTime(updatedAt),
 			FreshnessScore:    freshness,
 			CommitsBehind:     behind,
+			HasFailedSections: hasFailedSections != 0,
 			Sections:          make(map[string]*SectionState),
 		}
 	}
@@ -414,8 +429,12 @@ func writeStateToSQLite(db *sql.DB, state *DocEngineState) error {
 		if ds == nil {
 			continue
 		}
-		if _, err := tx.Exec(`INSERT INTO documents(target, file_hash, last_updated_commit, last_updated_at, freshness_score, commits_behind) VALUES(?, ?, ?, ?, ?, ?);`,
-			target, ds.FileHash, ds.LastUpdatedCommit, formatSQLiteTime(ds.LastUpdatedAt), ds.FreshnessScore, ds.CommitsBehind); err != nil {
+		hasFailedSections := 0
+		if ds.HasFailedSections {
+			hasFailedSections = 1
+		}
+		if _, err := tx.Exec(`INSERT INTO documents(target, file_hash, last_updated_commit, last_updated_at, freshness_score, commits_behind, has_failed_sections) VALUES(?, ?, ?, ?, ?, ?, ?);`,
+			target, ds.FileHash, ds.LastUpdatedCommit, formatSQLiteTime(ds.LastUpdatedAt), ds.FreshnessScore, ds.CommitsBehind, hasFailedSections); err != nil {
 			return fmt.Errorf("doc_engine: writing sqlite document %q: %w", target, err)
 		}
 		for sectionID, ss := range ds.Sections {

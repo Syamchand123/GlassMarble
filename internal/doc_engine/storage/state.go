@@ -56,6 +56,21 @@ type DocumentState struct {
 	// (master-plan Appendix B). Updated by Run() and reported live by Check().
 	CommitsBehind int `json:"commits_behind,omitempty"`
 
+	// HasFailedSections is true when this document's most recent processing
+	// attempt left at least one dirty section unrendered (an LLM error, an
+	// unrecoverable quality-gate rejection, a provider outage — see
+	// RunResult.SectionsFailed). LastUpdatedCommit only ever advances when
+	// SOME section in the document renders successfully (WriteSectionHash),
+	// so a 4-section document where 3 sections fail and 1 succeeds still
+	// gets LastUpdatedCommit bumped to HEAD — the freshness score then
+	// reports the whole document as fully in sync purely because zero
+	// commits have landed since, even though most of it never actually
+	// caught up with the code change that triggered the run in the first
+	// place. This flag lets the freshness computation catch that instead
+	// of trusting LastUpdatedCommit blindly. Cleared automatically the next
+	// time this document processes with zero failures.
+	HasFailedSections bool `json:"has_failed_sections,omitempty"`
+
 	// Sections maps SectionSpec.ID to per-section state.
 	Sections map[string]*SectionState `json:"sections"`
 }

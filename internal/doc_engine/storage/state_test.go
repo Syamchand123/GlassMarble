@@ -250,6 +250,7 @@ func TestStateManager_SQLiteRoundTrip(t *testing.T) {
 				LastUpdatedAt:     fixedDoc,
 				FreshnessScore:    87,
 				CommitsBehind:     2,
+				HasFailedSections: true,
 				Sections: map[string]*SectionState{
 					"interface": {
 						ASTSubgraphHash:  "sha256:cafebabe",
@@ -287,6 +288,12 @@ func TestStateManager_SQLiteRoundTrip(t *testing.T) {
 	assert.Equal(t, "sha256:deadbeef", doc.FileHash)
 	assert.Equal(t, 87, doc.FreshnessScore)
 	assert.Equal(t, 2, doc.CommitsBehind)
+	// Guards a real bug found via live testing: HasFailedSections was added
+	// to DocumentState but never wired into the SQLite schema/read/write
+	// path (only the JSON backend picked it up), so every write silently
+	// dropped it and every read defaulted to false under the SQLite
+	// backend — the DEFAULT backend for new StateManagers.
+	assert.True(t, doc.HasFailedSections)
 	assert.True(t, fixedDoc.Equal(doc.LastUpdatedAt))
 	require.Contains(t, doc.Sections, "interface")
 	sec := doc.Sections["interface"]
@@ -361,6 +368,64 @@ func TestStateManager_SQLiteUsedWhenDBExists(t *testing.T) {
 	loaded, err := sm2.Load()
 	require.NoError(t, err)
 	assert.Equal(t, "db1", loaded.LastCommit)
+}
+
+// TestStateManager_SQLiteAddsHasFailedSectionsColumn guards against a real
+// bug found via live testing: has_failed_sections was added to the
+// documents table's schema after the SQLite backend had already shipped.
+// CREATE TABLE IF NOT EXISTS is a no-op against a pre-existing database
+// file, so an already-deployed docs_state.db needs its own ALTER TABLE
+// migration to pick up the new column at all — opening it must not
+// error, and both reading the pre-existing rows (default false, since the
+// column didn't exist yet when they were written) and writing a new value
+// afterward must work.
+func TestStateManager_SQLiteAddsHasFailedSectionsColumn(t *testing.T) {
+	t.Setenv("GMB_DOC_STATE", "sqlite")
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "docs_state.db")
+
+	// Simulate a database created before has_failed_sections existed: the
+	// same schema, minus that one column.
+	db, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+CREATE TABLE IF NOT EXISTS documents(
+	target TEXT PRIMARY KEY,
+	file_hash TEXT NOT NULL DEFAULT '',
+	last_updated_commit TEXT NOT NULL DEFAULT '',
+	last_updated_at TEXT NOT NULL DEFAULT '',
+	freshness_score INTEGER NOT NULL DEFAULT 0,
+	commits_behind INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS sections(
+	target TEXT NOT NULL, section_id TEXT NOT NULL,
+	ast_hash TEXT NOT NULL DEFAULT '', render_mode TEXT NOT NULL DEFAULT '',
+	provider TEXT NOT NULL DEFAULT '', token_cost INTEGER NOT NULL DEFAULT 0,
+	render_ms INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '',
+	last_rendered_body TEXT NOT NULL DEFAULT '',
+	PRIMARY KEY(target, section_id)
+);
+CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '');
+INSERT INTO documents(target, file_hash, last_updated_commit, last_updated_at, freshness_score, commits_behind)
+	VALUES('docs/old.md', 'sha256:old', 'oldcommit', '2026-01-01T00:00:00Z', 97, 0);
+`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	sm := NewStateManager(dir)
+	require.True(t, sm.UsingSQLite())
+
+	loaded, err := sm.Load()
+	require.NoError(t, err, "opening a pre-existing database missing the new column must not error")
+	require.Contains(t, loaded.Documents, "docs/old.md")
+	assert.Equal(t, 97, loaded.Documents["docs/old.md"].FreshnessScore)
+	assert.False(t, loaded.Documents["docs/old.md"].HasFailedSections, "a row written before the column existed defaults to false")
+
+	loaded.Documents["docs/old.md"].HasFailedSections = true
+	require.NoError(t, sm.Save(loaded))
+	reloaded, err := sm.Load()
+	require.NoError(t, err)
+	assert.True(t, reloaded.Documents["docs/old.md"].HasFailedSections)
 }
 
 func TestExportStateJSON(t *testing.T) {

@@ -595,6 +595,60 @@ func TestExtraRun_SectionsFailedTracksLLMFailures(t *testing.T) {
 // Freshness recompute paths
 // ────────────────────────────────────────────────────────────────────────────
 
+// TestExtraCheck_CapsFreshnessWhenSectionsFailed guards against a real
+// bug found via live testing (original audit Finding B): a document
+// whose sections mostly failed to render could still report itself as
+// nearly 100% fresh. Root cause: LastUpdatedCommit advances the instant
+// ANY section in a document renders successfully (WriteSectionHash),
+// even while other sections in that SAME document are still failing —
+// so a document that's mostly broken shows 0 commits behind and a
+// near-100 freshness score purely from git recency, with no signal at
+// all that most of its content never actually caught up. This is the
+// exact path `gmb doc check`'s CI gate and `gmb doc status`'s dashboard
+// call — a document reporting near-100% "FRESH" while broken is worse
+// than reporting nothing, since nobody investigates a document the tool
+// itself says is fine.
+func TestExtraCheck_CapsFreshnessWhenSectionsFailed(t *testing.T) {
+	dir := t.TempDir() // non-git → useLiveFreshness is false, stored score path
+	target := filepath.Join(dir, "docs/broken.md")
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("# Broken\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	doc := docconfig.DocSpec{
+		ID:         "broken",
+		TargetPath: "docs/broken.md",
+		Scope:      docconfig.ScopeRule{Paths: []string{"internal/broken/**"}},
+	}
+	if err := updateDocsYAML(dir, doc); err != nil {
+		t.Fatalf("updateDocsYAML: %v", err)
+	}
+
+	sm := storage.NewStateManager(docconfig.StorageDirPath(dir))
+	if err := sm.Update(func(s *storage.DocEngineState) error {
+		ds := storage.GetOrCreateDocState(s, "docs/broken.md")
+		ds.FreshnessScore = 97
+		ds.HasFailedSections = true
+		return nil
+	}); err != nil {
+		t.Fatalf("seeding state: %v", err)
+	}
+
+	res, err := Check(dir, CheckOptions{Out: io.Discard})
+	if err != nil {
+		t.Fatalf("Check failed: %v", err)
+	}
+	if len(res.Documents) != 1 {
+		t.Fatalf("expected 1 document result, got %d", len(res.Documents))
+	}
+	got := res.Documents[0].Freshness
+	if got > maxFreshnessScoreWithFailedSections {
+		t.Errorf("Freshness = %d, want capped at %d for a document with HasFailedSections", got, maxFreshnessScoreWithFailedSections)
+	}
+}
+
 func TestExtraFreshnessGitFailureYieldsZero(t *testing.T) {
 	doc := docconfig.DocSpec{
 		ID:         "fresh",

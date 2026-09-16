@@ -517,6 +517,14 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 	}
 	docsUpdatedCount := 0
 	totalTokens := 0
+	// docFailedThisRun tracks, per document, whether ANY of its processed
+	// sections failed this run — see DocumentState.HasFailedSections for
+	// why a per-document LastUpdatedCommit can't be trusted alone to catch
+	// this. Only documents actually processed below get an entry; a
+	// document with an entry present (regardless of true/false) had its
+	// failure state re-evaluated this run and should overwrite whatever
+	// was persisted from a previous run.
+	docFailedThisRun := make(map[string]bool)
 
 	// F6/F10 token budget: hard ceiling on total LLM tokens for one run.
 	// Raised from the original 100,000 default: every section now goes
@@ -575,6 +583,7 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 				sm,
 				opts.CommitHash,
 			)
+			docFailed := failedSections > 0
 			if pErr != nil {
 				// A whole-document failure (e.g. the write itself failed)
 				// means every one of its dirty sections is effectively
@@ -586,10 +595,12 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 					failed = 1
 				}
 				result.SectionsFailed += failed
+				docFailed = true
 				if opts.Verbose {
 					result.Warnings = append(result.Warnings, fmt.Sprintf("doc %s error: %v", d.ID, pErr))
 				}
 			}
+			docFailedThisRun[d.TargetPath] = docFailed
 			result.SectionsFailed += failedSections
 			result.Warnings = append(result.Warnings, docWarns...)
 			totalTokens += tokens
@@ -633,8 +644,9 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 		freshState = state
 	}
 	type freshnessResult struct {
-		targetPath     string
+		targetPath    string
 		score, behind int
+		hasFailed     bool
 	}
 	freshResults := make([]freshnessResult, 0, len(docs))
 	for i := range docs {
@@ -645,8 +657,29 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 			runArchEvents = dossier.ArchEvents
 		}
 		freshScore, behind := ComputeFreshnessScoreWithArchEvents(repoRoot, docs[i], ds.LastUpdatedCommit, runArchEvents)
+
+		// A document with an unresolved failed section is never "fresh"
+		// regardless of what git-recency alone says (see
+		// DocumentState.HasFailedSections): LastUpdatedCommit advances the
+		// moment ANY section in the document renders successfully, even
+		// while others in that same document are still failing, so a
+		// document that's mostly broken can otherwise show 0 commits
+		// behind and a near-100 score. hasFailed prefers this run's own
+		// evaluation; a document not processed this run (not dirty, so
+		// docFailedThisRun has no entry for it) carries forward whatever
+		// was persisted from its last processed run instead of silently
+		// clearing an unresolved failure just because nothing touched it
+		// this time.
+		hasFailed, evaluatedThisRun := docFailedThisRun[docs[i].TargetPath]
+		if !evaluatedThisRun {
+			hasFailed = ds.HasFailedSections
+		}
+		if hasFailed && freshScore > maxFreshnessScoreWithFailedSections {
+			freshScore = maxFreshnessScoreWithFailedSections
+		}
+
 		freshSum += freshScore
-		freshResults = append(freshResults, freshnessResult{docs[i].TargetPath, freshScore, behind})
+		freshResults = append(freshResults, freshnessResult{docs[i].TargetPath, freshScore, behind, hasFailed})
 	}
 
 	// Phase 2 (locked): apply the computed scores, plus the commit-hash
@@ -672,6 +705,7 @@ func Run(repoRoot string, opts RunOptions) RunResult {
 			ds := storage.GetOrCreateDocState(fresh, r.targetPath)
 			ds.FreshnessScore = r.score
 			ds.CommitsBehind = r.behind
+			ds.HasFailedSections = r.hasFailed
 		}
 		if opts.CommitHash != "" && opts.DocID == "" && opts.Tag == "" {
 			fresh.LastCommit = opts.CommitHash
@@ -819,8 +853,10 @@ func Check(repoRoot string, opts CheckOptions) (CheckResult, error) {
 			// (never saved here). Fall back to the stored score when git
 			// is unavailable (e.g. temp dirs in tests).
 			var lastSync string
+			var hasFailedSections bool
 			if ds, ok := state.Documents[doc.TargetPath]; ok && ds != nil {
 				lastSync = ds.LastUpdatedCommit
+				hasFailedSections = ds.HasFailedSections
 				if !ds.LastUpdatedAt.IsZero() {
 					docResult.LastUpdated = ds.LastUpdatedAt.Format("2006-01-02T15:04:05Z")
 				}
@@ -837,6 +873,16 @@ func Check(repoRoot string, opts CheckOptions) (CheckResult, error) {
 				// No state entry means never generated → freshness unknown.
 				docResult.Freshness = 0
 				docResult.Status = "stale"
+			}
+			// See maxFreshnessScoreWithFailedSections: a document with an
+			// unresolved failed section (persisted from its last Run()) is
+			// never fully "fresh" regardless of what either the live or
+			// stored git-recency score alone reports — this is the exact
+			// path `gmb doc check`'s CI gate and `gmb doc status`'s
+			// dashboard both call, so a document that's mostly broken must
+			// not sail through here reporting itself as caught up.
+			if hasFailedSections && docResult.Freshness > maxFreshnessScoreWithFailedSections {
+				docResult.Freshness = maxFreshnessScoreWithFailedSections
 			}
 
 			threshold := cfg.Constraints.MinFreshnessThreshold
@@ -1163,6 +1209,19 @@ func displayBranch(branch string) string {
 // ────────────────────────────────────────────────────────────────────────────
 // P8 freshness (master-plan Appendix B)
 // ────────────────────────────────────────────────────────────────────────────
+
+// maxFreshnessScoreWithFailedSections caps the reported freshness score for
+// a document carrying an unresolved failed section (DocumentState.
+// HasFailedSections) — see Run()'s freshness computation loop for the full
+// story. Not 0: a document can still be MOSTLY fresh with one straggling
+// section a flaky provider hasn't managed to render yet, and a hard-zero
+// would make every such document look identically, maximally stale,
+// discarding the (still meaningful) git-recency signal for its other,
+// successfully-rendered sections. 50 is a clear, unambiguous "this is not
+// actually caught up" signal without pretending to know the exact right
+// number for a per-document score that's fundamentally an approximation
+// of a per-section reality.
+const maxFreshnessScoreWithFailedSections = 50
 
 // ComputeFreshnessScoreWithArchEvents scores how in-sync a document is with
 // HEAD (0-100) and counts the in-scope commits since lastSyncCommit,
