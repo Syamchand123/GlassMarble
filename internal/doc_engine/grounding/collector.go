@@ -188,8 +188,21 @@ func (c *Collector) CollectSectionFacts(sec *config.SectionSpec, scope *config.S
 	return payload, nil
 }
 
+// maxSymbolsPerDirective caps how many symbols one collectSignatures call
+// contributes to a section's FactSheet — found via live testing against a
+// real, large repository: a "module" document scoped broadly enough
+// matched hundreds of symbols, and dumping every one's full
+// signature+doc+permalink into the LLM prompt drove a single section's
+// cost past 150,000 tokens with no ceiling at all. Truncated
+// deterministically (sorted by FQN) rather than "whatever order
+// Nodes.Iterate happens to visit them in," so the same repo state always
+// yields the same truncated set instead of an arbitrary one that can
+// shift between runs.
+const maxSymbolsPerDirective = 80
+
 // 1 & 2: Signatures and Exported Symbols
 func (c *Collector) collectSignatures(scope *config.ScopeRule, exportedOnly bool, seen map[string]bool, p *config.GroundTruthPayload) {
+	start := len(p.Symbols)
 	c.graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
 		if n == nil || isTestFile(n.FileSpec.Path) || !catalog.MatchesScope(scope, n.FileSpec.Path) {
 			return
@@ -212,6 +225,21 @@ func (c *Collector) collectSignatures(scope *config.ScopeRule, exportedOnly bool
 			Doc:       c.extractDoc(n),
 		})
 	})
+	p.Symbols = capNewFacts(p.Symbols, start, maxSymbolsPerDirective, func(s config.SymbolFact) string { return s.FQN })
+}
+
+// capNewFacts bounds the facts a single collector call just appended
+// (all[startIdx:]) to at most max, sorted by key first so truncation is
+// deterministic across runs rather than dependent on map/graph iteration
+// order. Facts before startIdx (from earlier calls in the same
+// CollectSectionFacts run) are left untouched.
+func capNewFacts[T any](all []T, startIdx, max int, key func(T) string) []T {
+	newOnes := all[startIdx:]
+	if len(newOnes) <= max {
+		return all
+	}
+	sort.Slice(newOnes, func(i, j int) bool { return key(newOnes[i]) < key(newOnes[j]) })
+	return append(all[:startIdx:startIdx], newOnes[:max]...)
 }
 
 // 3: Doc Comments

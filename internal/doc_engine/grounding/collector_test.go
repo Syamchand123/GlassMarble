@@ -1,6 +1,7 @@
 package grounding
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -265,6 +266,38 @@ func TestCollectSignatures_ExcludesTestFiles(t *testing.T) {
 	}
 	assert.Contains(t, fqns, "pkg/real.go::RealFunc", "a real exported function must still appear: %+v", fqns)
 	assert.NotContains(t, fqns, "pkg/real_test.go::TestRealFunc", "a _test.go function must not appear as part of the public interface: %+v", fqns)
+}
+
+// TestCollectSignatures_CapsSymbolCount guards against a real cost
+// runaway found via live testing against a real, large repository: a
+// "module" document scoped broadly enough matched hundreds of symbols,
+// and dumping every one's full signature+doc+permalink into the LLM
+// prompt drove a single section's cost past 150,000 tokens with no
+// ceiling at all. The cap must be deterministic (sorted by FQN) rather
+// than dependent on graph-iteration order, so the same repo state always
+// yields the same truncated set.
+func TestCollectSignatures_CapsSymbolCount(t *testing.T) {
+	g := akg.NewCodePropertyGraph("cap-test")
+	for i := 0; i < maxSymbolsPerDirective+20; i++ {
+		id := fmt.Sprintf("pkg/big.go::Func%03d", i)
+		g.Nodes = g.Nodes.Set(id, &link.ResolvedNode{
+			ID: id, Name: fmt.Sprintf("Func%03d", i), Kind: "FUNCTION",
+			FileSpec: link.LocationMeta{Path: "pkg/big.go", LineStart: i + 1},
+		})
+	}
+
+	c := NewCollector(g)
+	scope := &config.ScopeRule{Paths: []string{"pkg/**"}}
+	sec := &config.SectionSpec{ID: "iface", GroundWith: []string{"exported_symbols"}}
+
+	payload, err := c.CollectSectionFacts(sec, scope)
+	require.NoError(t, err)
+	require.Len(t, payload.Symbols, maxSymbolsPerDirective, "expected the collector to cap at maxSymbolsPerDirective")
+
+	// Deterministic: the kept set is always the alphabetically-first N,
+	// not whatever the graph happened to visit first.
+	assert.Equal(t, "pkg/big.go::Func000", payload.Symbols[0].FQN)
+	assert.Equal(t, fmt.Sprintf("pkg/big.go::Func%03d", maxSymbolsPerDirective-1), payload.Symbols[len(payload.Symbols)-1].FQN)
 }
 
 func TestCollector_DescopedDBSchemasIgnored(t *testing.T) {
