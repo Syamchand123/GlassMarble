@@ -55,8 +55,19 @@ func BuildDossier(repoDir string, commitHash string, baseGraph, headGraph *akg.C
 	if headGraph != nil {
 		diff := akg.DiffGraphs(baseGraph, headGraph)
 		if diff != nil {
-			// Added symbols
+			// Added symbols. A _test.go symbol is real data but never
+			// part of the package's public interface (Go's own compiler
+			// excludes test files from normal builds) — without this, a
+			// "Recent Symbol Changes" block listed test helper functions
+			// (TestCrashChildWriteTmpAndDie, ...) as if they were
+			// meaningful API changes, found via live testing against a
+			// real, large repository. Same exclusion as grounding/
+			// collector.go's isTestFile, duplicated locally rather than
+			// exported across packages for one one-line check.
 			for _, node := range diff.NodesAdded {
+				if isTestFile(node.File) {
+					continue
+				}
 				fact := config.SymbolFact{
 					FQN:  node.ID,
 					Kind: node.Kind,
@@ -99,6 +110,9 @@ func BuildDossier(repoDir string, commitHash string, baseGraph, headGraph *akg.C
 
 			// Removed symbols
 			for _, node := range diff.NodesRemoved {
+				if isTestFile(node.File) {
+					continue
+				}
 				dossier.RemovedSymbols = append(dossier.RemovedSymbols, node.ID)
 				if node.Kind == "CALL" && isConfigVar(node.ID) {
 					dossier.RemovedConfigVars = append(dossier.RemovedConfigVars, node.ID)
@@ -110,6 +124,9 @@ func BuildDossier(repoDir string, commitHash string, baseGraph, headGraph *akg.C
 				headGraph.Nodes.Iterate(func(id string, headNode *link.ResolvedNode) {
 					baseNode, ok := baseGraph.Nodes.Get(id)
 					if !ok || baseNode == nil || headNode == nil {
+						return
+					}
+					if isTestFile(headNode.FileSpec.Path) {
 						return
 					}
 
@@ -213,6 +230,15 @@ func isConfigVar(fqn string) bool {
 // recognized here too, not just the "::"-delimited form — otherwise such a
 // sentinel silently misses Stage-3 priority-1 classification (AddedSentinels/
 // ModifiedSentinels) and falls back to a lower dirty-section priority.
+// isTestFile reports whether path is a Go test file — see
+// grounding/collector.go's isTestFile (same one-line check, duplicated
+// here rather than exported across packages) for why a _test.go symbol
+// must never surface as if it were part of the package's real interface
+// or a meaningful "recent change."
+func isTestFile(path string) bool {
+	return strings.HasSuffix(path, "_test.go")
+}
+
 func isSentinelError(fqn string) bool {
 	name := fqn
 	if idx := strings.LastIndex(name, "::"); idx >= 0 {

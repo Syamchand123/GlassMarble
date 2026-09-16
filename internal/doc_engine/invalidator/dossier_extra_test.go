@@ -38,6 +38,33 @@ func TestExtraDossierComponentAdded(t *testing.T) {
 	assert.Equal(t, "internal/b/g.go::Handle", dossier.AddedSymbols[0].FQN)
 }
 
+// TestExtraDossierExcludesTestFileSymbols guards against a real bug found
+// via live testing against a real, large repository: a "Recent Symbol
+// Changes" block listed test helper functions (TestCrashChildWriteTmp
+// AndDie, ...) as if they were meaningful recent changes to the
+// package's real interface. A _test.go file is never part of the
+// importable package (Go's own compiler excludes it from normal
+// builds), so AddedSymbols/RemovedSymbols/ModifiedSymbols must never
+// include one.
+func TestExtraDossierExcludesTestFileSymbols(t *testing.T) {
+	realFunc := "internal/a/f.go::Serve"
+	testFunc := "internal/a/f_test.go::TestServe"
+	base := dossierTestGraph("base")
+	head := dossierTestGraph("head",
+		dossierTestNode(realFunc, "internal/a/f.go", "Serve", "func Serve()"),
+		dossierTestNode(testFunc, "internal/a/f_test.go", "TestServe", "func TestServe(t *testing.T)"),
+	)
+
+	dossier, err := BuildDossier("", "", base, head)
+	require.NoError(t, err)
+	var addedFQNs []string
+	for _, s := range dossier.AddedSymbols {
+		addedFQNs = append(addedFQNs, s.FQN)
+	}
+	assert.Contains(t, addedFQNs, realFunc, "a real added symbol must still appear: %+v", addedFQNs)
+	assert.NotContains(t, addedFQNs, testFunc, "a _test.go symbol must not appear as an added symbol: %+v", addedFQNs)
+}
+
 func TestExtraDossierComponentRemoved(t *testing.T) {
 	serve := dossierTestNode("internal/a/f.go::Serve", "internal/a/f.go", "Serve", "func Serve()")
 	gone := dossierTestNode("internal/b/g.go::Handle", "internal/b/g.go", "Handle", "func Handle()")
