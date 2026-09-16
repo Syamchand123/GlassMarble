@@ -195,6 +195,7 @@ flowchart TD
 | [AKG Format](docs/akg_format.md) | GraphJSON v3, storage contract |
 | [Configuration](docs/configuration.md) | `config.yaml` / `ai.yaml`, env vars, `intelligence/` `fusion/` `learning/` `aging` |
 | [Architecture Intelligence](docs/architecture_intelligence.md) | Events, claims, corrections, PR-01..PR-07 |
+| [Documentation Engine](docs/doc_engine.md) | `gmb doc` — living, LLM-written docs grounded in your AKG; archetypes, freshness, `--no-llm` |
 | [AI Architect](docs/ai.md) | Providers, 32 tools, streaming, sessions, guardrails |
 | [MCP Server Protocol](docs/mcp.md) | Model Context Protocol server (`gmb mcp`), Stdio/HTTP/SSE, 30+ tools |
 | [Supported Languages](docs/supported_languages.txt) | 17 languages + extensions |
