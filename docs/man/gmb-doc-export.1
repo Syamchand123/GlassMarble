@@ -2,27 +2,42 @@
 .TH "GMB" "1" "Sep 2026" "GlassMarble 1.1.0" "GlassMarble Manual"
 
 .SH NAME
-gmb-compare - Diff two AKG snapshots and report the architectural changes
+gmb-doc-export - Export managed docs as a RAG-ready chunked knowledge base
 
 
 .SH SYNOPSIS
-\fBgmb compare [base_graph.json] [head_graph.json] [flags]\fP
+\fBgmb doc export [flags]\fP
 
 
 .SH DESCRIPTION
-Compares two GraphJSON snapshots (e.g. main-branch export vs PR branch)
-and prints the structural delta: added/removed nodes, added/removed edges, and
-modified files. When run with no file arguments, diffs the committed AKG (git HEAD)
-against the current working tree.
+Generates pre-chunked, AKG-tagged knowledge chunks under .glassmarble/rag/.
+
+.PP
+Each chunk is tagged with exact AST symbol IDs, file paths, and line numbers.
+Compatible with LlamaIndex, LangChain, and direct embedding APIs.
+
+.PP
+Formats:
+  rag     Section-level chunks with full AKG metadata (default)
+  jsonl   One JSON object per chunk in JSONL format
+  state   Raw docs_state.json dump (engine state, for interchange tooling)
 
 
 .SH OPTIONS
+\fB--format\fP="rag"
+	Export format: rag|jsonl|state
+
+.PP
 \fB-h\fP, \fB--help\fP[=false]
-	help for compare
+	help for export
 
 .PP
 \fB--json\fP[=false]
 	Emit machine-readable JSON output
+
+.PP
+\fB--out\fP=".glassmarble/rag"
+	Output directory
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
@@ -56,19 +71,15 @@ against the current working tree.
 
 .SH EXAMPLE
 .EX
-  # Compare committed graph against uncommitted working tree
-  gmb compare
-
-  # Compare two exported graph JSON files
-  gmb compare base.json head.json
-
-  # Output architectural comparison as JSON
-  gmb compare --json
+  gmb doc export --format rag
+  gmb doc export --format jsonl --out .glassmarble/rag/
+  gmb doc export --format state
+  gmb doc export --format state --out .glassmarble/state.json
 .EE
 
 
 .SH SEE ALSO
-\fBgmb(1)\fP
+\fBgmb-doc(1)\fP
 
 
 .SH HISTORY

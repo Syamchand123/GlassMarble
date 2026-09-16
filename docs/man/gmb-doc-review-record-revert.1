@@ -2,27 +2,35 @@
 .TH "GMB" "1" "Sep 2026" "GlassMarble 1.1.0" "GlassMarble Manual"
 
 .SH NAME
-gmb-compare - Diff two AKG snapshots and report the architectural changes
+gmb-doc-review-record-revert - Record a human revert of machine text as an observed review item
 
 
 .SH SYNOPSIS
-\fBgmb compare [base_graph.json] [head_graph.json] [flags]\fP
+\fBgmb doc review record-revert [flags]\fP
 
 
 .SH DESCRIPTION
-Compares two GraphJSON snapshots (e.g. main-branch export vs PR branch)
-and prints the structural delta: added/removed nodes, added/removed edges, and
-modified files. When run with no file arguments, diffs the committed AKG (git HEAD)
-against the current working tree.
+Logs a human revert of machine-generated text as a terminal
+informational observation (Kind "revert", Status "observed"). The doc and
+section flags are optional; the reason is required and feeds prompt/style
+tuning via 'gmb doc review --tuning'.
 
 
 .SH OPTIONS
-\fB-h\fP, \fB--help\fP[=false]
-	help for compare
+\fB--doc\fP=""
+	Reverted document path (optional)
 
 .PP
-\fB--json\fP[=false]
-	Emit machine-readable JSON output
+\fB-h\fP, \fB--help\fP[=false]
+	help for record-revert
+
+.PP
+\fB--reason\fP=""
+	Why the text was reverted (required)
+
+.PP
+\fB--section\fP=""
+	Reverted section ID (optional)
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
@@ -56,19 +64,12 @@ against the current working tree.
 
 .SH EXAMPLE
 .EX
-  # Compare committed graph against uncommitted working tree
-  gmb compare
-
-  # Compare two exported graph JSON files
-  gmb compare base.json head.json
-
-  # Output architectural comparison as JSON
-  gmb compare --json
+  gmb doc review record-revert --doc docs/auth.md --section intro --reason "human rewrote the table"
 .EE
 
 
 .SH SEE ALSO
-\fBgmb(1)\fP
+\fBgmb-doc-review(1)\fP
 
 
 .SH HISTORY

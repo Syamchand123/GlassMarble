@@ -2,27 +2,26 @@
 .TH "GMB" "1" "Sep 2026" "GlassMarble 1.1.0" "GlassMarble Manual"
 
 .SH NAME
-gmb-compare - Diff two AKG snapshots and report the architectural changes
+gmb-doc-view - Open a managed document in the terminal TUI reader
 
 
 .SH SYNOPSIS
-\fBgmb compare [base_graph.json] [head_graph.json] [flags]\fP
+\fBgmb doc view [target.md] [flags]\fP
 
 
 .SH DESCRIPTION
-Compares two GraphJSON snapshots (e.g. main-branch export vs PR branch)
-and prints the structural delta: added/removed nodes, added/removed edges, and
-modified files. When run with no file arguments, diffs the committed AKG (git HEAD)
-against the current working tree.
+Opens the specified document in an interactive terminal reader powered
+by Bubble Tea. Supports fuzzy section search and symbol-to-source navigation
+(Enter on a symbol link opens $EDITOR at the exact file:line).
 
 
 .SH OPTIONS
-\fB-h\fP, \fB--help\fP[=false]
-	help for compare
+\fB--doc\fP=""
+	Document ID to open
 
 .PP
-\fB--json\fP[=false]
-	Emit machine-readable JSON output
+\fB-h\fP, \fB--help\fP[=false]
+	help for view
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
@@ -56,19 +55,13 @@ against the current working tree.
 
 .SH EXAMPLE
 .EX
-  # Compare committed graph against uncommitted working tree
-  gmb compare
-
-  # Compare two exported graph JSON files
-  gmb compare base.json head.json
-
-  # Output architectural comparison as JSON
-  gmb compare --json
+  gmb doc view docs/auth.md
+  gmb doc view --doc auth
 .EE
 
 
 .SH SEE ALSO
-\fBgmb(1)\fP
+\fBgmb-doc(1)\fP
 
 
 .SH HISTORY

@@ -2,27 +2,39 @@
 .TH "GMB" "1" "Sep 2026" "GlassMarble 1.1.0" "GlassMarble Manual"
 
 .SH NAME
-gmb-compare - Diff two AKG snapshots and report the architectural changes
+gmb-doc-eval - Score managed sections for faithfulness against fresh FactSheets
 
 
 .SH SYNOPSIS
-\fBgmb compare [base_graph.json] [head_graph.json] [flags]\fP
+\fBgmb doc eval [flags]\fP
 
 
 .SH DESCRIPTION
-Compares two GraphJSON snapshots (e.g. main-branch export vs PR branch)
-and prints the structural delta: added/removed nodes, added/removed edges, and
-modified files. When run with no file arguments, diffs the committed AKG (git HEAD)
-against the current working tree.
+Scores every non-empty managed section against a freshly assembled
+FactSheet using the deterministic faithfulness scorer (no network, no AKG
+required). Score = supported claims / total claims (RAGAS formula).
+
+.PP
+Exit codes:
+  0  Global score at or above --min-score
+  1  Global score below --min-score
 
 
 .SH OPTIONS
 \fB-h\fP, \fB--help\fP[=false]
-	help for compare
+	help for eval
 
 .PP
 \fB--json\fP[=false]
 	Emit machine-readable JSON output
+
+.PP
+\fB--min-score\fP=0.75
+	Minimum global faithfulness (exit 1 below)
+
+.PP
+\fB--sample\fP=0
+	Maximum sections to score (0 = all)
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
@@ -56,19 +68,13 @@ against the current working tree.
 
 .SH EXAMPLE
 .EX
-  # Compare committed graph against uncommitted working tree
-  gmb compare
-
-  # Compare two exported graph JSON files
-  gmb compare base.json head.json
-
-  # Output architectural comparison as JSON
-  gmb compare --json
+  gmb doc eval
+  gmb doc eval --sample 20 --min-score 0.9 --json
 .EE
 
 
 .SH SEE ALSO
-\fBgmb(1)\fP
+\fBgmb-doc(1)\fP
 
 
 .SH HISTORY
