@@ -191,7 +191,7 @@ func (c *Collector) CollectSectionFacts(sec *config.SectionSpec, scope *config.S
 // 1 & 2: Signatures and Exported Symbols
 func (c *Collector) collectSignatures(scope *config.ScopeRule, exportedOnly bool, seen map[string]bool, p *config.GroundTruthPayload) {
 	c.graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
-		if n == nil || !catalog.MatchesScope(scope, n.FileSpec.Path) {
+		if n == nil || isTestFile(n.FileSpec.Path) || !catalog.MatchesScope(scope, n.FileSpec.Path) {
 			return
 		}
 		if exportedOnly && !isExportedSymbol(n.Name) {
@@ -217,7 +217,7 @@ func (c *Collector) collectSignatures(scope *config.ScopeRule, exportedOnly bool
 // 3: Doc Comments
 func (c *Collector) collectDocComments(scope *config.ScopeRule, p *config.GroundTruthPayload) {
 	c.graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
-		if n == nil || !catalog.MatchesScope(scope, n.FileSpec.Path) {
+		if n == nil || isTestFile(n.FileSpec.Path) || !catalog.MatchesScope(scope, n.FileSpec.Path) {
 			return
 		}
 		doc := c.extractDoc(n)
@@ -251,7 +251,7 @@ func (c *Collector) collectSentinels(scope *config.ScopeRule, p *config.GroundTr
 	seen := make(map[string]bool)      // by node id — preserves prior dedup behavior
 	seenNames := make(map[string]bool) // by symbol name — for the source-scan fallback below
 	c.graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
-		if n == nil || !catalog.MatchesScope(scope, n.FileSpec.Path) {
+		if n == nil || isTestFile(n.FileSpec.Path) || !catalog.MatchesScope(scope, n.FileSpec.Path) {
 			return
 		}
 		name := n.Name
@@ -361,7 +361,7 @@ func scanSentinelsFromSource(repoRoot string, scope *config.ScopeRule) []sourceS
 // 5: Error Returns
 func (c *Collector) collectErrorReturns(scope *config.ScopeRule, p *config.GroundTruthPayload) {
 	c.graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
-		if n == nil || !catalog.MatchesScope(scope, n.FileSpec.Path) {
+		if n == nil || isTestFile(n.FileSpec.Path) || !catalog.MatchesScope(scope, n.FileSpec.Path) {
 			return
 		}
 		// Only actual functions/methods return anything. Without this, a
@@ -443,7 +443,7 @@ func returnsBuiltinError(returnType string) bool {
 func (c *Collector) collectConcurrency(scope *config.ScopeRule, p *config.GroundTruthPayload) {
 	seenNames := make(map[string]bool)
 	c.graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
-		if n == nil || !catalog.MatchesScope(scope, n.FileSpec.Path) {
+		if n == nil || isTestFile(n.FileSpec.Path) || !catalog.MatchesScope(scope, n.FileSpec.Path) {
 			return
 		}
 		sig := extractSignature(n)
@@ -890,7 +890,7 @@ func resolveEnvCall(call *ast.CallExpr, wrappers map[string]envWrapper) (name, d
 // function.
 func (c *Collector) collectHTTPHandlers(scope *config.ScopeRule, p *config.GroundTruthPayload) {
 	c.graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
-		if n == nil || !catalog.MatchesScope(scope, n.FileSpec.Path) {
+		if n == nil || isTestFile(n.FileSpec.Path) || !catalog.MatchesScope(scope, n.FileSpec.Path) {
 			return
 		}
 		sig := extractSignature(n)
@@ -915,7 +915,7 @@ func (c *Collector) collectHTTPHandlers(scope *config.ScopeRule, p *config.Groun
 	// and to decide which routes belong to this document at all.
 	byName := make(map[string]*link.ResolvedNode)
 	c.graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
-		if n == nil || !catalog.MatchesScope(scope, n.FileSpec.Path) {
+		if n == nil || isTestFile(n.FileSpec.Path) || !catalog.MatchesScope(scope, n.FileSpec.Path) {
 			return
 		}
 		byName[n.Name] = n
@@ -1071,6 +1071,21 @@ func (c *Collector) collectCallgraphFacts(scope *config.ScopeRule, p *config.Gro
 		if fqn == "" || seen[fqn] {
 			return
 		}
+		// A caller/callee edge whose source or target is a _test.go
+		// function (TestFoo calling the real code under test) is real
+		// data, but not part of the package's public interface — showing
+		// it in "Direct Callers" reads as if the package were only ever
+		// used from its own tests. Prefer the resolved node's real file
+		// path; fall back to the FQN's own leading "path::Name" segment
+		// when the node isn't in the graph (an edge to/from an external
+		// or unresolved symbol).
+		if node, ok := c.graph.Nodes.Get(fqn); ok && node != nil {
+			if isTestFile(node.FileSpec.Path) {
+				return
+			}
+		} else if path, _, found := strings.Cut(fqn, "::"); found && isTestFile(path) {
+			return
+		}
 		seen[fqn] = true
 		fact := config.SymbolFact{
 			FQN:       fqn,
@@ -1166,7 +1181,7 @@ func (c *Collector) collectDependencies(scope *config.ScopeRule, p *config.Groun
 	}
 	seenDeps := make(map[string]bool)
 	c.graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
-		if n == nil || !catalog.MatchesScope(scope, n.FileSpec.Path) {
+		if n == nil || isTestFile(n.FileSpec.Path) || !catalog.MatchesScope(scope, n.FileSpec.Path) {
 			return
 		}
 		for _, e := range c.graph.GetOutboundEdges(id) {
@@ -1189,7 +1204,7 @@ func (c *Collector) collectEgressCalls(scope *config.ScopeRule, p *config.Ground
 	}
 	seen := make(map[string]bool)
 	c.graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
-		if n == nil || !catalog.MatchesScope(scope, n.FileSpec.Path) {
+		if n == nil || isTestFile(n.FileSpec.Path) || !catalog.MatchesScope(scope, n.FileSpec.Path) {
 			return
 		}
 		for _, e := range c.graph.GetOutboundEdges(id) {
@@ -1215,7 +1230,7 @@ func (c *Collector) collectEgressCalls(scope *config.ScopeRule, p *config.Ground
 // (crypto/*, sha256, aes, tls, bcrypt, hmac, jwt, rsa/ecdsa).
 func (c *Collector) collectCryptoPrimitives(scope *config.ScopeRule, p *config.GroundTruthPayload) {
 	c.graph.Nodes.Iterate(func(id string, n *link.ResolvedNode) {
-		if n == nil || !catalog.MatchesScope(scope, n.FileSpec.Path) {
+		if n == nil || isTestFile(n.FileSpec.Path) || !catalog.MatchesScope(scope, n.FileSpec.Path) {
 			return
 		}
 		haystack := strings.ToLower(id + " " + n.Name + " " + extractSignature(n) + " " + n.FileSpec.Path)
@@ -1234,6 +1249,23 @@ func (c *Collector) collectCryptoPrimitives(scope *config.ScopeRule, p *config.G
 			}
 		}
 	})
+}
+
+// isTestFile reports whether path is a Go test file. Found via live
+// testing against a real, large repository: a "module reference" doc's
+// "Exported Interface & Types" table and "Direct Callers" list were
+// polluted with test helper functions (TestCrashChildWriteTmpAndDie,
+// TestFlockForFile_BlocksUntilRelease, ...) as if they were part of the
+// package's public API. Root cause: the AKG indexes _test.go files like
+// any other source file, and isExportedSymbol only checks capitalization
+// — a Go test function is capitalized by convention (TestXxx) so it
+// passes that check every time, even though Go's own compiler never
+// treats a _test.go file as part of the importable package surface.
+// catalog.MatchesScope has no opinion on this either (a scope glob like
+// "pkg/**" matches test files the same as any other .go file), so every
+// graph-walk collector needs its own explicit exclusion.
+func isTestFile(path string) bool {
+	return strings.HasSuffix(path, "_test.go")
 }
 
 func isSentinelError(name string) bool {

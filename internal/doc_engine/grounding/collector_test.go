@@ -234,6 +234,39 @@ func TestCollector_AllDirectives(t *testing.T) {
 	assert.True(t, hasCallee)
 }
 
+// TestCollectSignatures_ExcludesTestFiles guards the other half of the
+// same real bug (see TestCollectCallgraphFacts_ExcludesTestFileCallers):
+// a "module reference" doc's "Exported Interface & Types" table listed
+// _test.go functions (TestCrashChildWriteTmpAndDie, ...) as if they were
+// part of the package's public API — isExportedSymbol only checks
+// capitalization, and a Go test function is capitalized by convention
+// (TestXxx), so it passed that check every time despite never being part
+// of the importable package surface.
+func TestCollectSignatures_ExcludesTestFiles(t *testing.T) {
+	g := akg.NewCodePropertyGraph("test-file-exclusion")
+	g.Nodes = g.Nodes.Set("pkg/real.go::RealFunc", &link.ResolvedNode{
+		ID: "pkg/real.go::RealFunc", Name: "RealFunc", Kind: "FUNCTION",
+		FileSpec: link.LocationMeta{Path: "pkg/real.go", LineStart: 1},
+	})
+	g.Nodes = g.Nodes.Set("pkg/real_test.go::TestRealFunc", &link.ResolvedNode{
+		ID: "pkg/real_test.go::TestRealFunc", Name: "TestRealFunc", Kind: "FUNCTION",
+		FileSpec: link.LocationMeta{Path: "pkg/real_test.go", LineStart: 1},
+	})
+
+	c := NewCollector(g)
+	scope := &config.ScopeRule{Paths: []string{"pkg/**"}}
+	sec := &config.SectionSpec{ID: "iface", GroundWith: []string{"exported_symbols"}}
+
+	payload, err := c.CollectSectionFacts(sec, scope)
+	require.NoError(t, err)
+	var fqns []string
+	for _, s := range payload.Symbols {
+		fqns = append(fqns, s.FQN)
+	}
+	assert.Contains(t, fqns, "pkg/real.go::RealFunc", "a real exported function must still appear: %+v", fqns)
+	assert.NotContains(t, fqns, "pkg/real_test.go::TestRealFunc", "a _test.go function must not appear as part of the public interface: %+v", fqns)
+}
+
 func TestCollector_DescopedDBSchemasIgnored(t *testing.T) {
 	// P22 (db_schemas) is descoped: requesting it must not fail and must
 	// produce no schema facts.
@@ -347,6 +380,42 @@ func TestCollectCallgraphFacts_InboundCallers(t *testing.T) {
 	assert.Equal(t, "caller", kindByFQN[callerOfEP], "inbound caller of entry point must be present")
 	assert.Equal(t, "caller", kindByFQN[callerOfCallee], "one-hop inbound caller via callee must be present")
 	assert.NotContains(t, kindByFQN, "e.go::Dep", "non-CALLS inbound edges must be ignored")
+}
+
+// TestCollectCallgraphFacts_ExcludesTestFileCallers guards against a real
+// bug found via live testing against a real, large repository: "Direct
+// Callers" listed test helper functions (TestFlockForFile_BlocksUntil
+// Release, TestExtraCheck_CapsFreshnessWhenSectionsFailed, ...) as if
+// they were part of the package's public API surface. A _test.go file is
+// never part of the importable package (Go's own compiler excludes it
+// from normal builds), so a "who calls this" reference table should
+// never present test-only callers as real usage.
+func TestCollectCallgraphFacts_ExcludesTestFileCallers(t *testing.T) {
+	g := akg.NewCodePropertyGraph("test-caller-exclusion")
+	ep := "a.go::Main"
+	realCaller := "b.go::RealCaller"
+	testCaller := "a_test.go::TestMain"
+	g.Nodes = g.Nodes.Set(ep, &link.ResolvedNode{ID: ep, Name: "Main", Kind: "FUNCTION",
+		FileSpec: link.LocationMeta{Path: "a.go", LineStart: 1}})
+	g.Nodes = g.Nodes.Set(realCaller, &link.ResolvedNode{ID: realCaller, Name: "RealCaller", Kind: "FUNCTION",
+		FileSpec: link.LocationMeta{Path: "b.go", LineStart: 1}})
+	g.Nodes = g.Nodes.Set(testCaller, &link.ResolvedNode{ID: testCaller, Name: "TestMain", Kind: "FUNCTION",
+		FileSpec: link.LocationMeta{Path: "a_test.go", LineStart: 1}})
+	addEdgeBoth(g, realCaller, ep, link.EdgeCalls)
+	addEdgeBoth(g, testCaller, ep, link.EdgeCalls)
+
+	c := NewCollector(g)
+	scope := &config.ScopeRule{Paths: []string{"**"}, EntryPoints: []string{ep}}
+	sec := &config.SectionSpec{ID: "cg", GroundWith: []string{"callgraph"}}
+
+	payload, err := c.CollectSectionFacts(sec, scope)
+	require.NoError(t, err)
+	var fqns []string
+	for _, s := range payload.Symbols {
+		fqns = append(fqns, s.FQN)
+	}
+	assert.Contains(t, fqns, realCaller, "a real, non-test caller must still appear: %+v", fqns)
+	assert.NotContains(t, fqns, testCaller, "a _test.go caller must not appear in Direct Callers: %+v", fqns)
 }
 
 // TestCollector_RealisticAKGNode_SignatureAndDocFallback guards against a
