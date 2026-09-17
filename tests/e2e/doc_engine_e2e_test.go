@@ -538,6 +538,11 @@ func TestDocEngineMockLLMGate3Repair(t *testing.T) {
 	defer mock.Close()
 	url := mock.Start()
 	mock.Script(
+		// gmb doc's mandatory-LLM gate (ensureLLMReady) runs a live
+		// connectivity ping through ai_engine.Doctor before any document
+		// is touched — it hits the same /chat/completions endpoint as the
+		// real render calls, so it consumes the first scripted response.
+		harness.MockResponse{Text: "OK"},
 		harness.MockResponse{Text: "Use `HallucinatedSymbolZZZ` to greet everyone."},
 		harness.MockResponse{Text: "Use the shop helpers to greet visitors in the storefront."},
 	)
@@ -548,8 +553,8 @@ func TestDocEngineMockLLMGate3Repair(t *testing.T) {
 	body := sb.ReadFile("docs/guide.md")
 	mustContain(t, body, "storefront")
 	mustNotContain(t, body, "HallucinatedSymbolZZZ")
-	if got := mock.Count(); got != 2 {
-		t.Errorf("gate 3 repair: want exactly 2 LLM calls (initial + repair), got %d", got)
+	if got := mock.Count(); got != 3 {
+		t.Errorf("gate 3 repair: want exactly 3 LLM calls (connectivity ping + initial + repair), got %d", got)
 	}
 	ledgerOut := gmb(t, sb, "doc", "ledger", "--json")
 	parsed := parseJSONObject(t, ledgerOut)
@@ -566,19 +571,32 @@ func TestDocEngineMockLLMSecretHardFail(t *testing.T) {
 	mock := harness.NewMockLLM(t)
 	defer mock.Close()
 	url := mock.Start()
-	mock.Script(harness.MockResponse{Text: "Set api_key: hunter2supersecretvalue to enable greetings."})
+	mock.Script(
+		// See TestDocEngineMockLLMGate3Repair: the mandatory-LLM
+		// connectivity ping consumes the first scripted response.
+		harness.MockResponse{Text: "OK"},
+		harness.MockResponse{Text: "Set api_key: hunter2supersecretvalue to enable greetings."},
+	)
 	sb.SeedAIConfig(url)
 
-	out := gmb(t, sb, "doc", "--commit", head, "--write", "--force", "--verbose")
+	// A gate-4 hard failure aborts the section outright (no content, no
+	// deterministic fallback — see renderTrackA) and, since cmd/doc.go
+	// exits non-zero on any SectionsFailed, this run itself fails.
+	out, err := gmbErr(t, sb, "doc", "--commit", head, "--write", "--force", "--verbose")
+	if err == nil {
+		t.Fatalf("gate 4 hard fail: want non-zero exit for a failed section\n--- output ---\n%s", out)
+	}
 	mustContain(t, out, "gate 4")
-	mustNotContain(t, sb.ReadFile("docs/guide.md"), "hunter2supersecretvalue")
-	if got := mock.Count(); got != 1 {
-		t.Errorf("gate 4 hard fail: want exactly 1 LLM call (no repair retry), got %d", got)
+	if sb.Exists("docs/guide.md") {
+		mustNotContain(t, sb.ReadFile("docs/guide.md"), "hunter2supersecretvalue")
+	}
+	if got := mock.Count(); got != 2 {
+		t.Errorf("gate 4 hard fail: want exactly 2 LLM calls (connectivity ping + initial, no repair retry), got %d", got)
 	}
 	ledgerOut := gmb(t, sb, "doc", "ledger", "--json")
 	parsed := parseJSONObject(t, ledgerOut)
-	if fb, _ := parsed["total_fallbacks"].(float64); fb < 1 {
-		t.Errorf("ledger missing gate-4 fallback record: %v", parsed)
+	if w, _ := parsed["total_docs_updated"].(float64); w != 0 {
+		t.Errorf("ledger shows a doc update despite the only section hard-failing gate 4: %v", parsed)
 	}
 }
 

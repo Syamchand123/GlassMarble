@@ -901,6 +901,7 @@ func (o *Orchestrator) renderOneSection(
 				return res
 			}
 			detOutcome.FallbackUsed = true
+			o.countFallback()
 			detOutcome.Warning = fmt.Sprintf("strict prose failed on LLM output; deterministic fallback used (%v)", proseErr)
 			outcome = detOutcome
 			res.secTokens += outcome.TokensUsed

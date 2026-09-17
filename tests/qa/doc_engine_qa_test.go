@@ -344,18 +344,18 @@ func TestDocEngineQAZeroChurn(t *testing.T) {
 	}
 }
 
-// TestDocEngineQAPromptSnapshot pins the Track A system prompt: 7
-// sequentially numbered rules with a word cap (6 without), so prompt drift
+// TestDocEngineQAPromptSnapshot pins the Track A system prompt: 13
+// sequentially numbered rules with a word cap (12 without), so prompt drift
 // (dropped rules, numbering gaps) is caught here, not in production.
 func TestDocEngineQAPromptSnapshot(t *testing.T) {
 	capped := renderer.BuildSystemPrompt(nil, 250)
-	for _, n := range []string{"\n1. ", "\n2. ", "\n3. ", "\n4. ", "\n5. ", "\n6. ", "\n7. "} {
+	for _, n := range []string{"\n1. ", "\n2. ", "\n3. ", "\n4. ", "\n5. ", "\n6. ", "\n7. ", "\n8. ", "\n9. ", "\n10. ", "\n11. ", "\n12. ", "\n13. "} {
 		if !strings.Contains(capped, n) {
 			t.Errorf("capped system prompt missing rule %q:\n%s", strings.TrimSpace(n), capped)
 		}
 	}
-	if strings.Contains(capped, "\n8. ") {
-		t.Errorf("capped system prompt must have exactly 7 rules:\n%s", capped)
+	if strings.Contains(capped, "\n14. ") {
+		t.Errorf("capped system prompt must have exactly 13 rules:\n%s", capped)
 	}
 	for _, want := range []string{"HARD RULES", "ground_truth", "Output ONLY", "Keep this section under 250 words."} {
 		if !strings.Contains(capped, want) {
@@ -364,13 +364,13 @@ func TestDocEngineQAPromptSnapshot(t *testing.T) {
 	}
 
 	uncapped := renderer.BuildSystemPrompt(nil, 0)
-	for _, n := range []string{"\n1. ", "\n2. ", "\n3. ", "\n4. ", "\n5. ", "\n6. "} {
+	for _, n := range []string{"\n1. ", "\n2. ", "\n3. ", "\n4. ", "\n5. ", "\n6. ", "\n7. ", "\n8. ", "\n9. ", "\n10. ", "\n11. ", "\n12. "} {
 		if !strings.Contains(uncapped, n) {
 			t.Errorf("uncapped system prompt missing rule %q:\n%s", strings.TrimSpace(n), uncapped)
 		}
 	}
-	if strings.Contains(uncapped, "\n7. ") {
-		t.Errorf("uncapped system prompt must have exactly 6 rules (no gap 5→7):\n%s", uncapped)
+	if strings.Contains(uncapped, "\n13. ") {
+		t.Errorf("uncapped system prompt must have exactly 12 rules (no gap 12→13):\n%s", uncapped)
 	}
 }
 
