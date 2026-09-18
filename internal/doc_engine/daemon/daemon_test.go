@@ -38,7 +38,10 @@ func TestCoalescing(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {
-		_ = Run(ctx, Config{RepoRoot: dir, DebounceMs: 200, Workers: 2}, func(ctx context.Context, changed []string) {
+		// 2s (the production default) leaves headroom for all 5 writes to
+		// land inside one window even on a loaded runner; 200ms was short
+		// enough that a scheduler stall split the burst into 2 flushes.
+		_ = Run(ctx, Config{RepoRoot: dir, DebounceMs: 2000, Workers: 2}, func(ctx context.Context, changed []string) {
 			calls.Add(1)
 			mu.Lock()
 			batches = append(batches, changed)
@@ -51,9 +54,9 @@ func TestCoalescing(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		writeFile(t, filepath.Join(dir, "f.go"), "package f\n// v\n")
 	}
-	waitFor(t, 5*time.Second, func() bool { return calls.Load() >= 1 }, "first batch")
+	waitFor(t, 10*time.Second, func() bool { return calls.Load() >= 1 }, "first batch")
 	// Wait past the window to prove no second call arrives for the burst.
-	time.Sleep(600 * time.Millisecond)
+	time.Sleep(2500 * time.Millisecond)
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("expected 1 coalesced call for 5 rapid writes, got %d (%v)", got, batches)
 	}

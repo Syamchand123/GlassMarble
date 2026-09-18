@@ -789,8 +789,10 @@ documents:
 		// Start docserve as a REAL background process (not in-process).
 		// --no-llm keeps the daemon offline and deterministic (CI has no
 		// live provider, and the mandatory-LLM gate would otherwise refuse
-		// to start the watcher at all).
-		proc := exec.Command(bin, "docserve", "--no-llm", "--debounce-ms", "500")
+		// to start the watcher at all). The 3s debounce is deliberately
+		// longer than a loaded runner's `git commit`, so the first flush
+		// lands after the commit and resolves HEAD to daemonHead.
+		proc := exec.Command(bin, "docserve", "--no-llm", "--debounce-ms", "3000")
 		proc.Dir = sb.Root
 		var stdout, stderr syncBuffer
 		proc.Stdout, proc.Stderr = &stdout, &stderr
@@ -833,6 +835,16 @@ documents:
 		// rather than asserting a flush race.
 		coordPollUntil(t, 10*time.Second, "docserve batch summary", func() bool {
 			return strings.Contains(combined(), "batch of")
+		})
+
+		// A loaded runner can take longer than the debounce window to finish
+		// `git commit`, so the FIRST debounced batch may fire with the
+		// PRE-commit HEAD and satisfy the polls above. The doc engine
+		// advances LastCommit on every run (even a no-op render), so wait
+		// until the persisted state actually records daemonHead — that is
+		// the post-commit batch — before killing the daemon.
+		coordPollUntil(t, 20*time.Second, "daemon state at daemonHead", func() bool {
+			return funcStateCommit(t, sb) == daemonHead
 		})
 
 		// Kill the daemon and verify no corruption: state loads and points
