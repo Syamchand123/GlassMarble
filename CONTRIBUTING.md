@@ -103,8 +103,8 @@ removed to keep one authoritative release path.
    ```
 4. The release workflow runs the full test suite in preflight, builds native
    `linux/{amd64,arm64}`, `darwin/{amd64,arm64}`, and
-   `windows/{amd64,arm64}` archives, signs `checksums.txt` with Cosign
-   (`.sig` + `.pem`), generates Syft SBOMs, attests build provenance, and
-   publishes a GitHub Release whose notes are the tag's CHANGELOG section.
+   `windows/amd64` archives (Windows ARM64 supported via Windows 11 emulation),
+   signs `checksums.txt` with Cosign (`.sig` + `.pem`), generates Syft SBOMs, attests
+   build provenance, and publishes a GitHub Release whose notes are the tag's CHANGELOG section.
    Pushing a tag without a matching `## [vX.Y.Z]` CHANGELOG entry fails the
    `meta` step loudly.

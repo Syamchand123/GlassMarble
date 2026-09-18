@@ -149,10 +149,13 @@ and updates the local GlassMarble binary for your operating system and architect
 
 		// Locate target archive and checksums
 		archiveExt := "tar.gz"
+		lookupArch := archName
 		if osName == "windows" {
 			archiveExt = "zip"
+			// Windows on ARM runs the universal windows/amd64 package via Windows 11 Prism emulation.
+			lookupArch = "amd64"
 		}
-		expectedArchivePrefix := fmt.Sprintf("gmb_%s_%s_%s", cleanLatest, osName, archName)
+		expectedArchivePrefix := fmt.Sprintf("gmb_%s_%s_%s", cleanLatest, osName, lookupArch)
 
 		var archiveURL, checksumsURL string
 		for _, asset := range release.Assets {

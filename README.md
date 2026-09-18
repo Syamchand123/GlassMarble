@@ -104,7 +104,7 @@ irm https://raw.githubusercontent.com/Syamchand123/GlassMarble/main/install.ps1 
 go install github.com/Syamchand123/GlassMarble@latest
 ```
 
-Prebuilt binaries for macOS (arm64/amd64), Linux (amd64/arm64), and Windows (amd64/arm64) are on the [releases page](https://github.com/Syamchand123/GlassMarble/releases), signed with Sigstore Cosign and shipped with an SBOM. `gmb` and `glassmarble` are the same binary. Full platform matrix and release verification: [Getting Started](docs/getting-started.md).
+Prebuilt binaries for macOS (arm64/amd64), Linux (amd64/arm64), and Windows (amd64) are on the [releases page](https://github.com/Syamchand123/GlassMarble/releases), signed with Sigstore Cosign and shipped with an SBOM (Windows on ARM runs the universal amd64 binary natively via Windows 11 emulation). `gmb` and `glassmarble` are the same binary. Full platform matrix and release verification: [Getting Started](docs/getting-started.md).
 
 ## Quickstart
 

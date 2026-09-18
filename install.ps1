@@ -8,14 +8,10 @@ $BinaryName = "gmb.exe"
 $AliasName = "glassmarble.exe"
 
 # Architecture detection
+# GlassMarble distributes a universal 64-bit Windows binary (amd64) that runs
+# natively on Intel/AMD and seamlessly on Windows on ARM via built-in Windows 11 emulation.
 $Arch = "amd64"
-if ([System.Environment]::Is64BitOperatingSystem) {
-    if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64) {
-        $Arch = "arm64"
-    } else {
-        $Arch = "amd64"
-    }
-} else {
+if (-not [System.Environment]::Is64BitOperatingSystem) {
     Write-Error "Error: 32-bit Windows is not supported. Please build from source."
     exit 1
 }
@@ -45,6 +41,9 @@ New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
 
 try {
+    if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64) {
+        Write-Host "==> Detected 64-bit Windows ARM (running universal x64 binary via Windows 11 emulation)..." -ForegroundColor Cyan
+    }
     Write-Host "==> Downloading GlassMarble $Version (windows/$Arch)..." -ForegroundColor Cyan
     $ZipPath = Join-Path $TempDir $ArchiveName
     Invoke-WebRequest -Uri $DownloadUrl -OutFile $ZipPath -UseBasicParsing
