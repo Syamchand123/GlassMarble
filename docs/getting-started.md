@@ -57,10 +57,11 @@ make build   # → ./gmb  (CGO static)
 | **macOS 12+** | amd64 (Intel) | `gmb_*_darwin_amd64.tar.gz` | `curl \| sh` |
 | **Linux** | amd64 (x86_64) | `gmb_*_linux_amd64.tar.gz` | `curl \| sh` |
 | **Linux** | arm64 (aarch64) | `gmb_*_linux_arm64.tar.gz` | `curl \| sh` |
-| **Windows 10/11** | amd64 (x64) | `gmb_*_windows_amd64.zip` | `irm \| iex` |
-| **Windows 11** | arm64 | `gmb_*_windows_arm64.zip` | `irm \| iex` |
+| **Windows 10/11** | amd64 / arm64* | `gmb_*_windows_amd64.zip` | `irm \| iex` |
 
 Both binaries `gmb` and `glassmarble` are shipped (alias).
+
+*\* Windows on ARM (Snapdragon / Surface Pro) seamlessly runs the universal 64-bit binary via Windows 11's built-in Prism emulation.*
 
 ---
 

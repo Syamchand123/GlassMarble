@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - The repository's release pipeline is the native GitHub Actions matrix in `.github/workflows/release.yml`; the GoReleaser configuration and its Makefile targets have been removed because GoReleaser cannot cross-compile the tree-sitter cgo bindings from a single runner. `docs/man/` is the single canonical man-page tree (CI-gated by `go run ./cmd/man -check`).
-- Release artifacts now include native `linux/arm64` and `windows/arm64` builds alongside `linux/amd64`, `darwin/amd64`, `darwin/arm64`, and `windows/amd64`.
+- Release artifacts now include native `linux/arm64` alongside `linux/amd64`, `darwin/amd64`, `darwin/arm64`, and `windows/amd64` (universal Windows binary supporting both x64 and ARM64 via Windows 11 emulation).
 
 ---
 

@@ -1,7 +1,7 @@
 name: Release GlassMarble
 
 # Updated for v1.2.0:
-#  - Native linux/arm64 and windows/arm64 builds added to the matrix.
+#  - Native linux/arm64 build added to the matrix (Windows uses universal amd64).
 #  - Preflight now runs the FULL `go test ./...` suite before publishing.
 #  - Release must be triggered by a version tag (no v1.0.0 fallback).
 #  - Cosign emits checksums.txt.pem alongside checksums.txt.sig.
@@ -97,12 +97,6 @@ jobs:
           - runner: windows-latest
             os: windows
             arch: amd64
-            bin: gmb.exe
-            alias: glassmarble.exe
-            archive_format: zip
-          - runner: windows-11-arm
-            os: windows
-            arch: arm64
             bin: gmb.exe
             alias: glassmarble.exe
             archive_format: zip
