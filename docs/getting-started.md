@@ -19,7 +19,7 @@ gmb version
 
 ```bash
 INSTALL_DIR=$HOME/bin sh <(curl -fsSL .../install.sh)   # custom dir
-VERSION=v1.0.0 sh <(curl -fsSL .../install.sh)           # pin version
+VERSION=v1.2.0 sh <(curl -fsSL .../install.sh)           # pin version
 ```
 
 ### Windows (PowerShell 5.1+)
@@ -35,7 +35,7 @@ gmb version
 
 ```bash
 go install github.com/Syamchand123/GlassMarble@latest
-# or pin: go install github.com/Syamchand123/GlassMarble@v1.0.0
+# or pin: go install github.com/Syamchand123/GlassMarble@v1.2.0
 ```
 
 ### Build from source
@@ -55,7 +55,7 @@ make build   # → ./gmb  (CGO static)
 |---|---|---|---|
 | **macOS 12+** | arm64 (M1–M4) | `gmb_*_darwin_arm64.tar.gz` | `curl \| sh` |
 | **macOS 12+** | amd64 (Intel) | `gmb_*_darwin_amd64.tar.gz` | `curl \| sh` |
-| **Linux glibc/musl** | amd64 (x86_64) | `gmb_*_linux_amd64.tar.gz` | `curl \| sh` |
+| **Linux** | amd64 (x86_64) | `gmb_*_linux_amd64.tar.gz` | `curl \| sh` |
 | **Linux** | arm64 (aarch64) | `gmb_*_linux_arm64.tar.gz` | `curl \| sh` |
 | **Windows 10/11** | amd64 (x64) | `gmb_*_windows_amd64.zip` | `irm \| iex` |
 | **Windows 11** | arm64 | `gmb_*_windows_arm64.zip` | `irm \| iex` |
@@ -69,7 +69,7 @@ Both binaries `gmb` and `glassmarble` are shipped (alias).
 Installers verify `SHA256` via `checksums.txt` automatically. For supply-chain hardening, also verify the Sigstore Cosign signature:
 
 ```bash
-VERSION=v1.0.0
+VERSION=v1.2.0
 ARCH=linux_amd64   # or darwin_arm64, windows_amd64 …
 curl -fsSLO "https://github.com/Syamchand123/GlassMarble/releases/download/${VERSION}/gmb_${VERSION#v}_${ARCH}.tar.gz"
 curl -fsSLO "https://github.com/Syamchand123/GlassMarble/releases/download/${VERSION}/checksums.txt"

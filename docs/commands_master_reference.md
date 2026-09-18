@@ -43,6 +43,8 @@
    - [why](#826-gmb-why)
    - [dev](#827-gmb-dev)
    - [mcp](#828-gmb-mcp)
+   - [doc](#829-gmb-doc-and-subcommands)
+   - [docserve](#830-gmb-docserve)
 9. [Analysis Pipeline Execution Flow](#9-analysis-pipeline-execution-flow)
 10. [Use Cases & Command Workflows](#10-use-cases--command-workflows)
 11. [Best Practices](#11-best-practices)
@@ -55,7 +57,7 @@
 
 GlassMarble builds and maintains a self-evolving **Architecture Knowledge Graph (AKG)** of a software repository. The CLI (`gmb`) ingests source code with tree-sitter grammars, normalizes it into a graph of symbols and dependencies, and persists the result as a portable **GraphJSON** document (`akg.json`) under `.glassmarble/`.
 
-The CLI is organized around five capability areas:
+The CLI is organized around six capability areas:
 
 | Area | Commands |
 |---|---|
@@ -63,6 +65,7 @@ The CLI is organized around five capability areas:
 | **Query** (read the graph) | `status`, `tree`, `dependency`, `hotspot`, `inspect`, `diff`, `doctor`, `patterns`, `stats`, `timeline` |
 | **Govern** (enforce architecture) | `drift`, `compare`, `snapshot` |
 | **Visualize & Reason** | `visualize`, `ai`, `why` |
+| **Document** (living, grounded docs) | `doc`, `docserve` |
 | **Utility** | `housekeeping`, `completion`, `version`, `dev` |
 
 Supported languages (ingest registry): Go, C, C++, C#, Python, Java, JavaScript, TypeScript, HTML, CSS, JSON, Ruby, PHP, Rust (14 with native tree-sitter grammars) plus Kotlin, Swift, and Scala (declaration-only). See `docs/supported_languages.txt`.
@@ -118,6 +121,8 @@ gmb
 ├── memory                        Query the developer memory (what changed, and why)
 ├── why [question]                Grounded architecture Q&A via the AI engine
 ├── completion <shell>            Generate shell completion scripts
+├── doc <subcommand>              Living documentation engine (init/generate/check/status/...)
+├── docserve                      Watch mode: regenerate living docs on file change
 ├── version                       Print version
 ├── dev                           Developer utilities (rebase-goldens)
 └── ai [question]                 Ask the AI Architect about the codebase
@@ -1411,6 +1416,65 @@ from the current pipeline output. Used after intentional renderer changes.
 - Dual URI schemes for resources: `gmb://` and `glassmarble://` (`status`, `intelligence`, `timeline`, `memory`, `conventions`, etc.).
 - Architectural prompt templates (`explain_architecture`, `analyze_impact`, `ci_gate_check`, `onboard_developer`).
 - Protocol version negotiation supporting latest MCP specifications (2024-11-05 to 2025-11-25) with `structuredContent` and text fallbacks.
+
+---
+
+### 8.29 `gmb doc` (and subcommands)
+
+**Purpose:** Generate and maintain living Markdown documentation grounded in the Architecture Knowledge Graph. The engine supplies the facts (exported symbols, signatures, doc comments, call graphs, config variables, sentinel errors, HTTP routes) and an LLM writes the prose; a deterministic reference table is appended under every managed section. Managed sections are delimited by `<!-- gmb:begin:<id> -->` / `<!-- gmb:end:<id> -->` markers declared in `.glassmarble/docs.yaml`; everything outside the markers is human territory.
+
+The default path **requires a working LLM provider** and fails loudly with next steps (`gmb ai configure`, `gmb ai doctor`) rather than silently degrading. Pass `--no-llm` for the explicit, fully offline deterministic-tables mode.
+
+**Syntax:** `gmb doc [flags]`
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--commit` | string | `""` | Commit hash to process (default: HEAD) |
+| `--doc` | string | `""` | Only process the document with this ID |
+| `--tag` | string | `""` | Only process documents with this tag |
+| `--force` | bool | `false` | Bypass fast-bail and reprocess all documents |
+| `--no-llm` | bool | `false` | Deterministic renderer only (offline mode) |
+| `--write` | bool | `false` | Force writes on non-main branches (overrides `--branch-policy`, except draft/wip) |
+| `--branch-policy` | string | `main-only` | When to write: `main-only`, `any`, `tag-only` |
+| `--bg` | bool | `false` | Run in background (non-blocking post-commit mode) |
+| `--json` | bool | `false` | Emit machine-readable JSON output |
+
+**Subcommands:**
+
+| Subcommand | Purpose |
+|---|---|
+| `doc init <target.md>` | Scaffold a new managed document + `docs.yaml` entry. Flags: `--archetype`, `--scope`, `--entry-points`, `--title`, `--purpose`, `--audience`, `--id` |
+| `doc check` | CI freshness gate (non-zero on drift). Flags: `--doc`, `--tag`, `--json`, `--verify-snippets`, `--fix`, `--check-external` |
+| `doc diff` | Preview what would change without writing |
+| `doc status` | Per-document freshness dashboard |
+| `doc export` | Export the grounded fact base (`--format rag\|jsonl\|state`, `--out`) |
+| `doc view` | Open a document (`--doc`) |
+| `doc release <ref1..ref2>` | Generate a migration guide between two git refs (`--out`) |
+| `doc eval` | Score rendered sections (`--sample`, `--json`) |
+| `doc ledger` | Token/cost rollup with alert thresholds (`--last`, `--alerts`, `--max-tokens`, `--max-fallbacks`, `--json`) |
+| `doc review` | Human review queue (`approve`/`reject`, `--stats`, `--tuning`, `--apply`) |
+| `doc langmatrix` | Language coverage matrix (`--json`) |
+
+The 10 built-in archetypes are `architecture`, `module`, `runbook`, `onboarding`, `migration`, `adr`, `api`, `security`, `database`, and `config`. Full guide: [doc_engine.md](doc_engine.md).
+
+---
+
+### 8.30 `gmb docserve`
+
+**Purpose:** Run the documentation engine as a long-lived daemon. It loads the engine once, watches the repository recursively via fsnotify, coalesces bursts through a debounce window, and runs one update per batch. Batch failures are warnings by contract — the next batch retries on fresh state.
+
+**Syntax:** `gmb docserve [flags]`
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--dir` | string | `.` | Target repository directory |
+| `--debounce-ms` | int | `2000` | Debounce window in milliseconds for coalescing file events |
+| `--workers` | int | `2` | Number of batch-consumer workers (`onChange` never runs concurrently) |
+| `--no-llm` | bool | `false` | Deterministic renderer only (offline mode); skips the LLM readiness gate |
 
 ---
 

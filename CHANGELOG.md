@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v1.2.0] - 2026-09-18
+
+### Added — Documentation Intelligence Engine (`gmb doc`)
+- **Living documentation grounded in the AKG.** `gmb doc` maintains Markdown documents whose managed sections (`<!-- gmb:begin:<id> --> … <!-- gmb:end:<id> -->`) are generated from the Architecture Knowledge Graph and written in plain English by an LLM. The engine supplies the facts — exported symbols, signatures, doc comments, call graphs, config variables, sentinel errors, HTTP routes — and a deterministic reference table is appended under every section so the prose and the data cannot drift apart. Everything outside the markers is human territory and is never touched.
+- **Delta-driven and section-targeted.** Only sections whose AKG subgraph changed since the last run are re-rendered; an unchanged section costs zero LLM calls and produces zero git diff. Documents are declared in `.glassmarble/docs.yaml` with per-document scope, sections, grounding directives, and constraints.
+- **`gmb doc init` with 10 built-in archetypes** — `architecture`, `module`, `runbook`, `onboarding`, `migration`, `adr`, `api`, `security`, `database`, `config` — each scaffolding sensible sections and grounding directives.
+- **Explicit offline mode.** `gmb doc --no-llm` renders the complete grounded reference document (tables + diagrams) with no prose, no network, and zero tokens. The default path requires a working LLM provider and fails loudly with concrete next steps (`gmb ai configure`, `gmb ai doctor`) instead of silently degrading.
+- **`gmb docserve` daemon** — loads the engine once and watches the repository via fsnotify, coalescing file bursts through a debounce window and running one update per batch. Non-fatal by contract: a failed batch warns and the next batch retries on fresh state. Supports `--no-llm` for fully offline operation.
+- **Full `gmb doc` command family**: `check` (CI freshness gate with exit codes), `diff` (preview without writing), `status` (per-document freshness dashboard), `export` (`rag` / `jsonl` / `state`), `view`, `release` (migration guide between two refs), `eval`, `ledger` (token/cost rollups with alert thresholds), `review` (human review queue with approve/reject, stats, and tuning suggestions), `langmatrix`, and `docserve`.
+- **Multi-document coordination and cascade gates.** One commit touching several scopes updates every affected document in a single run; aggregate/root documents are gated on architectural signals (cascade thresholds) rather than re-rendered on every change; sibling scopes stay byte-identical on out-of-scope commits.
+- **ADR lifecycle.** Architectural events generate ADR drafts with an index, a `timeline.json`, and a review-queue entry; a related follow-up supersedes the prior ADR with status flip and backlinks.
+- **Self-healing permalinks** — `file.go#Lnn` links are recomputed from the working-tree AST with no LLM calls, so line drift is repaired deterministically.
+- **Enterprise verifier gates.** A multi-gate firewall (prose quality, reference integrity, secret/PII scrubbing, snippet verification, diagram validity) runs before any section is written; a mostly-broken document is no longer reported as fresh.
+- **Storage backends.** SQLite state (with automatic one-time migration from the legacy JSON backend and preservation of the JSON source) plus advisory cross-process flock sidecars under `.glassmarble/locks/`.
+- **Nightly quality workflow** (`doc-nightly.yml`): fuzz targets (section merger, sanitizer, snippet extractor, markdown parser), mutation/behavior gates, benchmark smoke, and per-section perf-budget ceilings.
+- **Documentation.** New end-user guide `docs/doc_engine.md`, and man pages for the full `gmb doc*` / `gmb docserve` command tree.
+
+### Fixed
+- **Permalinks were one line early.** The AKG stored tree-sitter's 0-based row while permalinks, the verifier, and gopls resolutions are 1-based; the off-by-one was masked on machines with `gopls` and exposed everywhere else. Line numbers are now converted to 1-based at the parser boundary, so symbols on the first line also get a valid anchor.
+- **Catalog target lookup ignored path separators.** `GetByTarget` normalized paths with `filepath.Clean`, which leaves backslashes untouched on non-Windows hosts; separators are now normalized portably.
+- **Atomic-write backups confused RAG chunk stability checks**, and a stale `.gmb.bak` could be counted as a chunk.
+- **`docserve` could not run offline.** It now accepts `--no-llm` and skips the mandatory-LLM readiness gate, matching `gmb doc`.
+
+### Changed
+- The repository's release pipeline is the native GitHub Actions matrix in `.github/workflows/release.yml`; the GoReleaser configuration and its Makefile targets have been removed because GoReleaser cannot cross-compile the tree-sitter cgo bindings from a single runner. `docs/man/` is the single canonical man-page tree (CI-gated by `go run ./cmd/man -check`).
+- Release artifacts now include native `linux/arm64` and `windows/arm64` builds alongside `linux/amd64`, `darwin/amd64`, `darwin/arm64`, and `windows/amd64`.
+
+---
+
 ## [v1.1.0] - 2026-09-04
 
 ### Fixed — correctness & data integrity

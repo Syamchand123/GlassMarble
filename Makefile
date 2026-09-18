@@ -6,7 +6,7 @@ BINARY_NAME := gmb
 ALIAS_NAME  := glassmarble
 MODULE      := github.com/Syamchand123/GlassMarble
 
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "v1.0.0-dev")
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "v1.2.0-dev")
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
 DATE    := $(shell date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
 
@@ -18,7 +18,7 @@ LDFLAGS := -s -w \
 
 GO ?= go
 
-.PHONY: all build cross snapshot release install test vet lint clean completions man help
+.PHONY: all build install test vet lint clean completions man help
 
 all: build
 
@@ -30,21 +30,23 @@ build:
 install:
 	$(GO) install -trimpath -ldflags "$(LDFLAGS)" .
 
-## cross: Build snapshot binaries across all platforms via GoReleaser
-cross:
-	goreleaser build --snapshot --clean
+## cross: Build for the host platform (releases use the native CI matrix)
+# Releases are cut by .github/workflows/release.yml; the tree-sitter cgo
+# bindings cannot be cross-compiled from a single runner.
+cross: build
 
-## snapshot: Produce full release distribution archives locally without publishing
-snapshot:
-	goreleaser release --snapshot --clean
+## snapshot: Alias for a host build (see cross)
+snapshot: build
 
-## release: Publish a tagged release via GoReleaser (guarded by git tag check)
+## release: Guarded no-op that points at the GitHub Actions release workflow
 release:
+	@echo "Releases are published by .github/workflows/release.yml."
+	@echo "Tag the commit and push the tag:"
+	@echo "  git tag -a v1.2.0 -m 'Release v1.2.0' && git push origin v1.2.0"
 	@if [ -z "$$(git tag -l --points-at HEAD)" ]; then \
-		echo "Error: HEAD must be tagged (e.g. v1.0.0) to cut a release."; \
+		echo "Error: HEAD is not tagged — nothing to release."; \
 		exit 1; \
 	fi
-	goreleaser release --clean
 
 ## test: Run unit, integration and regression test suites
 test:
@@ -63,15 +65,14 @@ completions:
 	@mkdir -p completions
 	$(GO) run ./cmd/completions -o completions
 
-## man: Generate man pages for gmb and subcommands
+## man: Regenerate the canonical man pages in docs/man (CI-gated)
 man:
-	@mkdir -p man/man1
-	$(GO) run ./cmd/man -o man/man1/ || true
+	$(GO) run ./cmd/man -o docs/man
 
 
-## clean: Remove build artifacts and dist/ directory
+## clean: Remove local build artifacts (tracked completions/ and docs/man are kept)
 clean:
-	rm -rf $(BINARY_NAME) $(BINARY_NAME).exe $(ALIAS_NAME) $(ALIAS_NAME).exe dist/ completions/ man/
+	rm -rf $(BINARY_NAME) $(BINARY_NAME).exe $(ALIAS_NAME) $(ALIAS_NAME).exe dist/
 
 ## help: Display this help message
 help:

@@ -2,7 +2,9 @@ name: GlassMarble Docs Intelligence Check
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, dev, "release/*"]
+  push:
+    branches: ["feature/*"]
   workflow_dispatch:
     inputs:
       auto_update:
@@ -28,7 +30,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version-file: go.mod
           cache: true
 
       - name: Build GlassMarble CLI
@@ -118,11 +120,20 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version-file: go.mod
           cache: true
 
       - name: Build GlassMarble CLI
         run: go build -o bin/gmb .
+
+      - name: Require LLM secret for auto-update
+        env:
+          GM_API_KEY: ${{ secrets.GLASSMARBLE_API_KEY }}
+        run: |
+          if [ -z "$GM_API_KEY" ]; then
+            echo "::error::The GLASSMARBLE_API_KEY repository secret is required for doc auto-update (gmb doc --write). Configure it under Settings > Secrets and variables > Actions, or use the read-only drift check instead."
+            exit 1
+          fi
 
       - name: Sync living documentation
         run: ./bin/gmb doc --write

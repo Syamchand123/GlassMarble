@@ -25,13 +25,14 @@ flowchart TB
 
 | Doc | What it holds |
 |---|---|
-| [CLI Overview](cli.md) | 29 commands in 6 groups, flags, exit codes (master → [commands_master_reference.md](commands_master_reference.md)) |
+| [CLI Overview](cli.md) | Commands in 7 groups, flags, exit codes (master → [commands_master_reference.md](commands_master_reference.md)) |
 | [Diagrams](diagrams.md) | 31 types across UML/C4/Specialized/Analysis + gallery + scope/link-level |
 | [Visualization Engine & Web UI](visualization_engine.md) | Interactive Web UI (`gmb ui`), 31 notations, layout engines, large graph handling |
 | [AKG Format](akg_format.md) | GraphJSON v3 schema, storage contract (<100MB), scaling |
 | [Configuration](configuration.md) | `config.yaml` / `ai.yaml`, env vars, `intelligence/` `fusion/` `learning/` `aging`/`drift` |
 | [Architecture Intelligence](architecture_intelligence.md) | Events, claims, corrections, patterns PR-01..07, snapshots |
 | [AI Architect](ai.md) | Providers, 32 tools, streaming, sessions, guardrails |
+| [Documentation Engine](doc_engine.md) | `gmb doc` / `gmb docserve` — AKG-grounded, LLM-written living docs, 10 archetypes, review queue, RAG export |
 | [MCP Server Protocol](mcp.md) | Model Context Protocol server (`gmb mcp`), Stdio/HTTP/SSE, tools, resources, prompts |
 | [Supported Languages](supported_languages.txt) | 17 languages, extensions, decl-only notes |
 | [Relationship Types](relationship_types.md) | Predicate taxonomy (STRUCTURAL/BEHAVIORAL/DYNAMIC/SECURITY) |

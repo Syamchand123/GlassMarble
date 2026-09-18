@@ -43,7 +43,12 @@ mkdir -p "${DEST_DIR}"
 
 # Fetch latest version tag if not specified
 if [ -z "${VERSION}" ]; then
-    VERSION="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || echo "v1.0.0")"
+    VERSION="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || true)"
+    if [ -z "${VERSION}" ]; then
+        echo "Error: could not resolve the latest GlassMarble release from the GitHub API." >&2
+        echo "Pin a version explicitly instead, e.g.:  VERSION=v1.2.0 sh install.sh" >&2
+        exit 1
+    fi
 fi
 CLEAN_VER="${VERSION#v}"
 

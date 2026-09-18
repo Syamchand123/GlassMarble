@@ -36,7 +36,7 @@ make vet
 | `make test` | `go test -v -count=1 ./...` | Executes the complete test suite including AKG determinism tests. |
 | `make vet` | `go vet ./...` | Runs Go static analysis across all packages. |
 | `make completions` | `go run ./cmd/completions -o completions` | Pre-generates shell completions for Bash, Zsh, Fish, and PowerShell. |
-| `make man` | `go run ./cmd/man -o man/man1` | Regenerates the 32 UNIX roff manual pages in `man/man1/`. |
+| `make man` | `go run ./cmd/man -o docs/man` | Regenerates the 51 UNIX roff manual pages in `docs/man/` (CI-gated by `go run ./cmd/man -check`). |
 | `make clean` | `rm -rf gmb dist/ ...` | Removes all local build artifacts. |
 
 ---
@@ -50,7 +50,7 @@ internal/
 ├── akg/                       # AKG GraphJSON database, MVCC transaction manager, lockfile
 ├── app/                       # Application bootstrapping and DI container
 ├── code_analysis_engine/      # 4-stage ingestion and semantic linking pipeline
-│   ├── ingest/                # Native Tree-sitter parsers for 14 languages
+│   ├── ingest/                # Native Tree-sitter parsers for 17 languages
 │   ├── normalize/             # Generic AST (GAST) normalization & I/O primitives
 │   ├── aggregate/             # Package clustering and visibility resolution
 │   └── link/                  # Semantic call-graph and interface linking
@@ -78,20 +78,33 @@ GlassMarble enforces strict determinism and golden fixture parity:
    ```
 
 2. **Golden Diagram Tests**:
-   Diagram outputs are verified against checked-in golden fixtures. If you intentionally improve a layout or diagram generator, rebase the goldens:
+   Diagram outputs are verified against checked-in golden fixtures. If you intentionally improve a layout or diagram generator, rebase the goldens via the opt-in generator (regular `go test ./...` runs never mutate fixtures):
    ```bash
-   go run . dev rebase-goldens
+   GMB_REBASE_GOLDENS=1 go test ./internal/visualization_engine/render -run TestGenerateGoldenFixtures -count=1
    ```
 
 ---
 
 ## 🏷️ Release Process
 
-Releases are fully automated via GitHub Actions and GoReleaser:
-1. Ensure the `refactor/packaging` or `main` branch passes all CI checks across Linux, macOS, and Windows.
-2. Create and push a semantic version tag:
+Releases are published by `.github/workflows/release.yml` — a native GitHub
+Actions build matrix, not GoReleaser (the tree-sitter cgo bindings cannot be
+cross-compiled from a single runner). GoReleaser and its Makefile targets were
+removed to keep one authoritative release path.
+
+1. Ensure the branch passes all CI checks across Linux, macOS, and Windows.
+2. Update `CHANGELOG.md` with the release's `## [vX.Y.Z]` section and bump
+   `internal/product/version.go` (the default reported by `go install`, which
+   applies no ldflags).
+3. Create and push a semantic version tag:
    ```bash
-   git tag -a v1.0.0 -m "Release v1.0.0"
-   git push origin v1.0.0
+   git tag -a v1.2.0 -m "Release v1.2.0"
+   git push origin v1.2.0
    ```
-3. GitHub Actions builds the multi-platform binary archives, signs them with Cosign, generates SBOMs, and publishes the release.
+4. The release workflow runs the full test suite in preflight, builds native
+   `linux/{amd64,arm64}`, `darwin/{amd64,arm64}`, and
+   `windows/{amd64,arm64}` archives, signs `checksums.txt` with Cosign
+   (`.sig` + `.pem`), generates Syft SBOMs, attests build provenance, and
+   publishes a GitHub Release whose notes are the tag's CHANGELOG section.
+   Pushing a tag without a matching `## [vX.Y.Z]` CHANGELOG entry fails the
+   `meta` step loudly.

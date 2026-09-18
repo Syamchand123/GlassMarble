@@ -5,9 +5,10 @@ package product
 //
 //	go build -ldflags "-X github.com/Syamchand123/GlassMarble/internal/product.Version=v1.0.0"
 //
-// The Makefile and GoReleaser inject this automatically; the fallback "1.1.0"
-// is intentionally a non-v-prefixed dev marker.
-var Version = "1.1.0"
+// The Makefile and the release workflow inject this automatically; the
+// fallback "1.2.0" is intentionally a non-v-prefixed dev marker (it is what
+// `go install ...@latest` reports, since that path applies no ldflags).
+var Version = "1.2.0"
 
 // Commit is the short git SHA injected at build time:
 //

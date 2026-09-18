@@ -63,7 +63,7 @@ The graph itself is a single file, `.glassmarble/akg.json`: deterministic, sorte
 
 **Dependency and drift analysis.** Cycles, layering violations, coupling, and hotspots computed from the graph, with a `drift` gate you can run in CI.
 
-**Grounded AI.** Ask questions about the codebase in plain English; answers come from the graph, not a guess, via any of 10 supported providers (OpenAI, Anthropic, Gemini, Ollama, and others — bring your own key).
+**Grounded AI.** Ask questions about the codebase in plain English; answers come from the graph, not a guess, via any of 11 providers (OpenAI, Anthropic, Gemini, Ollama, and others — bring your own key).
 
 <p align="center">
   <img src="./assets/screenshots/ai-query.png" width="820" alt="gmb ai answering a question about a codebase">
@@ -104,7 +104,7 @@ irm https://raw.githubusercontent.com/Syamchand123/GlassMarble/main/install.ps1 
 go install github.com/Syamchand123/GlassMarble@latest
 ```
 
-Prebuilt binaries for macOS (arm64/amd64), Linux (amd64/arm64, glibc and musl), and Windows (amd64/arm64) are on the [releases page](https://github.com/Syamchand123/GlassMarble/releases), signed with Sigstore Cosign and shipped with an SBOM. `gmb` and `glassmarble` are the same binary. Full platform matrix and release verification: [Getting Started](docs/getting-started.md).
+Prebuilt binaries for macOS (arm64/amd64), Linux (amd64/arm64), and Windows (amd64/arm64) are on the [releases page](https://github.com/Syamchand123/GlassMarble/releases), signed with Sigstore Cosign and shipped with an SBOM. `gmb` and `glassmarble` are the same binary. Full platform matrix and release verification: [Getting Started](docs/getting-started.md).
 
 ## Quickstart
 

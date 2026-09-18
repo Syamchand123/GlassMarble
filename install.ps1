@@ -26,7 +26,8 @@ if (-not $env:VERSION) {
         $LatestRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -UseBasicParsing
         $Version = $LatestRelease.tag_name
     } catch {
-        $Version = "v1.0.0"
+        Write-Error "Error: could not resolve the latest GlassMarble release from the GitHub API ($($_.Exception.Message)). Pin a version explicitly instead, e.g.: `$env:VERSION='v1.2.0'; irm ... | iex"
+        exit 1
     }
 } else {
     $Version = $env:VERSION

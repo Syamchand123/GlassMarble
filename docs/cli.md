@@ -29,7 +29,10 @@ flowchart LR
     ai[gmb ai] --> memory[gmb memory]
     memory --> why[gmb why]
   end
-  Analyze --> Inspect --> Govern --> Viz --> AI
+  subgraph Docs[Documentation Engine]
+    doc[gmb doc] --> docserve[gmb docserve]
+  end
+  Analyze --> Inspect --> Govern --> Viz --> AI --> Docs
 ```
 
 ---
@@ -85,7 +88,7 @@ esac
 
 ---
 
-## 29 commands in 6 groups
+## Commands in 7 groups
 
 ### 1. Analyze & Index
 
@@ -135,11 +138,26 @@ Flags: `--format`, `--scope`, `--entry` (required for `sequence`), `--depth 7`, 
 |---|---|
 | `gmb ai "<q>" [--save] [--tools]` | One-shot grounded Q&A (32 tools) |
 | `gmb ai chat [--new] [--session]` | REPL with persistent sessions |
-| `gmb ai configure` | BYOK wizard (10 providers, 0600 perms) |
+| `gmb ai configure` | BYOK wizard (11 providers, 0600 perms) |
 | `gmb ai doctor / models / sessions` | Config, connectivity, session list |
 | `gmb memory [--ask] [--component] [--correct] [--json]` | Developer memory + corrections overlay |
 | `gmb why "<q>"` | Fast grounded reasoning |
 | `gmb mcp [--transport] [--host] [--port] [--tool-timeout] [--print-config]` | Model Context Protocol server exposing AKG tools, resources & prompts to AI agents |
+
+### 7. Documentation Engine
+
+| Command | One-liner |
+|---|---|
+| `gmb doc [--doc ID] [--force] [--no-llm] [--json]` | Generate/update managed sections of living docs (LLM-written, AKG-grounded; `--no-llm` = deterministic tables) |
+| `gmb doc init <target.md> [--archetype] [--scope]` | Scaffold a new managed document + `docs.yaml` entry (10 archetypes) |
+| `gmb doc check [--json] [--verify-snippets]` | CI freshness gate — non-zero on drift |
+| `gmb doc diff [--json]` | Preview changes without writing |
+| `gmb doc status [--json]` | Per-document freshness dashboard |
+| `gmb doc export [--format rag\|jsonl\|state]` | Export the grounded fact base |
+| `gmb doc view / release / eval / ledger / review / langmatrix` | View, migration guide, scoring, token ledger, review queue, language matrix |
+| `gmb docserve [--no-llm] [--debounce-ms] [--workers]` | Watch mode: regenerate on file save |
+
+> Full guide: [doc_engine.md](doc_engine.md).
 
 ### 6. Utility
 
