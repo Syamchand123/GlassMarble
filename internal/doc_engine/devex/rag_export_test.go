@@ -317,7 +317,9 @@ func TestExportKnowledgeBaseCodeChunks(t *testing.T) {
 		ids := map[string]string{}
 		entries, _ := os.ReadDir(filepath.Join(tempDir, ".glassmarble", "rag"))
 		for _, e := range entries {
-			if !strings.HasPrefix(e.Name(), "code_") {
+			// Ignore the atomic-writer's *.gmb.bak sidecars (and any other
+			// non-chunk file): only actual code_*.json chunks are compared.
+			if !strings.HasPrefix(e.Name(), "code_") || !strings.HasSuffix(e.Name(), ".json") {
 				continue
 			}
 			b, _ := os.ReadFile(filepath.Join(tempDir, ".glassmarble", "rag", e.Name()))

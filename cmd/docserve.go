@@ -38,6 +38,7 @@ daemon: the next batch retries on fresh state.`,
 		targetDir := resolveDir(cmd)
 		debounceMs, _ := cmd.Flags().GetInt("debounce-ms")
 		workers, _ := cmd.Flags().GetInt("workers")
+		noLLM, _ := cmd.Flags().GetBool("no-llm")
 
 		absDir, err := filepath.Abs(targetDir)
 		if err != nil {
@@ -54,7 +55,7 @@ daemon: the next batch retries on fresh state.`,
 		// real documentation. Resolved Provider/Model/etc. are reused for
 		// every batch below rather than re-checked, so a long-running
 		// daemon doesn't re-ping the provider on every debounce window.
-		llmOpts := doc_engine.RunOptions{}
+		llmOpts := doc_engine.RunOptions{NoLLM: noLLM}
 		if err := ensureLLMReady(cmd, absDir, &llmOpts); err != nil {
 			return err
 		}
@@ -77,6 +78,7 @@ daemon: the next batch retries on fresh state.`,
 			res := doc_engine.Run(absDir, doc_engine.RunOptions{
 				CommitHash:      commit,
 				Force:           false,
+				NoLLM:           llmOpts.NoLLM,
 				Out:             out,
 				Provider:        llmOpts.Provider,
 				Model:           llmOpts.Model,
@@ -108,5 +110,6 @@ func init() {
 	DocServeCmd.Flags().String("dir", ".", "Target repository directory")
 	DocServeCmd.Flags().Int("debounce-ms", 2000, "Debounce window in milliseconds for coalescing file events")
 	DocServeCmd.Flags().Int("workers", 2, "Number of batch-consumer workers (onChange never runs concurrently)")
+	DocServeCmd.Flags().Bool("no-llm", false, "Use deterministic renderer only (offline mode); skips the LLM readiness gate")
 	rootCmd.AddCommand(DocServeCmd)
 }

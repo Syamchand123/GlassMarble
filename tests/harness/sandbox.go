@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // Sandbox is an isolated repository workspace for one test.
@@ -35,11 +36,34 @@ type Sandbox struct {
 // NewSandbox creates an empty repository directory for a test.
 func NewSandbox(t *testing.T) *Sandbox {
 	t.Helper()
-	root := filepath.Join(t.TempDir(), "repo")
+	base, err := os.MkdirTemp("", "gmb-sandbox-*")
+	if err != nil {
+		t.Fatalf("harness: create sandbox base: %v", err)
+	}
+	t.Cleanup(func() { cleanupSandbox(t, base) })
+	root := filepath.Join(base, "repo")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatalf("harness: create sandbox root: %v", err)
 	}
 	return &Sandbox{T: t, Root: root, GmDir: filepath.Join(root, ".glassmarble")}
+}
+
+// cleanupSandbox removes the sandbox, retrying briefly. A background writer
+// (e.g. a detached git maintenance/gc process from a large fixture commit)
+// can recreate entries between os.RemoveAll's directory scan and its final
+// rmdir, which surfaces as ENOTEMPTY on Linux and fails the test cleanup.
+// Retrying lets the writer finish; it is a no-op when the first pass wins.
+func cleanupSandbox(t *testing.T, base string) {
+	t.Helper()
+	for i := 0; i < 40; i++ {
+		if err := os.RemoveAll(base); err == nil {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if err := os.RemoveAll(base); err != nil {
+		t.Errorf("harness: cleaning sandbox %s: %v", base, err)
+	}
 }
 
 // Path joins a relative path against the sandbox root.

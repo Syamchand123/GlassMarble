@@ -189,5 +189,8 @@ func GlobMatch(pattern, targetPath string) bool {
 }
 
 func normalizePath(p string) string {
-	return filepath.ToSlash(filepath.Clean(p))
+	// Normalize Windows-style separators to forward slashes regardless of the
+	// host OS, then clean. Using path.Clean (not filepath.Clean) keeps the
+	// result slash-based and portable across platforms.
+	return path.Clean(strings.ReplaceAll(p, "\\", "/"))
 }

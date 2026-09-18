@@ -338,12 +338,15 @@ func TestDocEngineChaosSigkillMidRun(t *testing.T) {
 		t.Logf("attempt %d: baseline %s, converged-rerun %s", attempt, baseline, rerunT)
 
 		victimStart := time.Now()
-		// Kill lands mid-run: past startup transients (300ms gate) and no
-		// later than half the measured rerun (clamped). Lock observation is
-		// a bonus trigger; the deadline is the reliable mechanism.
+		// Kill lands mid-run. The deadline scales to the measured rerun so
+		// even a fast machine (the whole forced rerun can be well under
+		// 200ms) still gets a kill while the victim is alive. Lock
+		// observation is a bonus trigger; the deadline is the reliable
+		// mechanism. No fixed "startup" gate: on fast runners such a gate
+		// would exceed the entire run and no kill would ever land.
 		dl := rerunT / 2
-		if dl < 500*time.Millisecond {
-			dl = 500 * time.Millisecond
+		if dl < 20*time.Millisecond {
+			dl = 20 * time.Millisecond
 		}
 		if dl > 3*time.Second {
 			dl = 3 * time.Second
@@ -352,9 +355,6 @@ func TestDocEngineChaosSigkillMidRun(t *testing.T) {
 		killed, out2 = chaosKillRun(t, bin, sb.Root, nil,
 			[]string{"--commit", head, "--write", "--force", "--no-llm"},
 			func() bool {
-				if time.Since(victimStart) < 300*time.Millisecond {
-					return false
-				}
 				if chaosLocksObserved(sb) {
 					condHit = true
 					return true
@@ -420,10 +420,12 @@ func TestDocEngineChaosKillDuringStateSave(t *testing.T) {
 		sb, head = chaosSeedRepo(t, 250)
 		victimStart := time.Now()
 		// Fallback deadline near the tail of the measured baseline keeps the
-		// kill late even if no write is ever observed.
+		// kill late even if no write is ever observed. It must stay BELOW
+		// the run time (a fixed 800ms floor exceeded the whole run on fast
+		// runners, so no kill ever landed).
 		deadline := baseline * 9 / 10
-		if deadline < 800*time.Millisecond {
-			deadline = 800 * time.Millisecond
+		if deadline < 20*time.Millisecond {
+			deadline = 20 * time.Millisecond
 		}
 		if deadline > 10*time.Second {
 			deadline = 10 * time.Second
@@ -431,9 +433,6 @@ func TestDocEngineChaosKillDuringStateSave(t *testing.T) {
 		killed, _ = chaosKillRun(t, bin, sb.Root, nil,
 			[]string{"--commit", head, "--write", "--force", "--no-llm"},
 			func() bool {
-				if time.Since(victimStart) < 300*time.Millisecond {
-					return false
-				}
 				if chaosGuideWrittenAfter(sb, victimStart) || chaosStateWrittenAfter(sb, victimStart) {
 					firedOnWrite = true
 					return true
@@ -489,15 +488,12 @@ func TestDocEngineChaosKillDuringMigration(t *testing.T) {
 		sb, head = chaosSeedRepo(t, 150)
 		// Legacy v1-era JSON state: the first SQLite open must migrate it.
 		sb.WriteFile(".glassmarble/docs_state.json", `{"schema_version":1,"last_commit":"0000000000000000000000000000000000000000","documents":{}}`)
-		victimStart := time.Now()
 		killed, _ = chaosKillRun(t, bin, sb.Root, nil,
 			[]string{"--commit", head, "--write", "--force", "--no-llm"},
 			func() bool {
-				if time.Since(victimStart) < 200*time.Millisecond {
-					return false
-				}
 				// Migration happens on first state open, i.e. early: any
-				// state-file activity is enough to fire.
+				// state-file activity is enough to fire. No fixed startup
+				// gate — on fast runners it would outlast the whole run.
 				if _, err := os.Stat(sb.Path(".glassmarble", "docs_state.db")); err == nil {
 					return true
 				}
@@ -551,7 +547,13 @@ func TestDocEngineChaosCorruptAKG(t *testing.T) {
 		t.Logf("analyze tolerated the corrupt AKG (fallback path)")
 		return
 	}
+	// In-process runs execute cobra directly (not Fang), so a returned
+	// error's message is not rendered into the captured output — inspect
+	// the error value alongside it.
 	joined := strings.ToLower(analyzeOut)
+	if err != nil {
+		joined += " " + strings.ToLower(err.Error())
+	}
 	if !strings.Contains(joined, "akg.json") && !strings.Contains(joined, "parse") &&
 		!strings.Contains(joined, "invalid character") && !strings.Contains(joined, "corrupt") &&
 		!strings.Contains(joined, "restore") {
@@ -665,12 +667,12 @@ func TestDocEngineChaosPowerLossLoop(t *testing.T) {
 		t.Fatalf("calibration rerun failed: %v\n%s", rerr, rOut)
 	}
 	earlyDL := rerunT / 2
-	if earlyDL < 400*time.Millisecond {
-		earlyDL = 400 * time.Millisecond
+	if earlyDL < 20*time.Millisecond {
+		earlyDL = 20 * time.Millisecond
 	}
 	lateDL := rerunT * 9 / 10
-	if lateDL < 500*time.Millisecond {
-		lateDL = 500 * time.Millisecond
+	if lateDL < 20*time.Millisecond {
+		lateDL = 20 * time.Millisecond
 	}
 	t.Logf("calibrated rerun: %s (early deadline %s, late deadline %s)", rerunT, earlyDL, lateDL)
 
@@ -692,9 +694,6 @@ func TestDocEngineChaosPowerLossLoop(t *testing.T) {
 		if i%2 == 0 {
 			dl = earlyDL
 			fire = func() bool {
-				if time.Since(victimStart) < 200*time.Millisecond {
-					return false
-				}
 				if chaosLocksObserved(sb) {
 					condHit = true
 					return true
@@ -704,9 +703,6 @@ func TestDocEngineChaosPowerLossLoop(t *testing.T) {
 		} else {
 			dl = lateDL
 			fire = func() bool {
-				if time.Since(victimStart) < 200*time.Millisecond {
-					return false
-				}
 				if chaosStateWrittenAfter(sb, victimStart) {
 					condHit = true
 					return true

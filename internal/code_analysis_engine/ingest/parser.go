@@ -251,8 +251,11 @@ func makeToken(node *sitter.Node, source []byte, kind TokenKind, parentIdx int, 
 		DocComment: extractDocComment(node, source),
 		ParentIdx:  parentIdx,
 		Depth:      depth,
-		StartLine:  uint32(startPt.Row),
-		EndLine:    uint32(endPt.Row),
+		// tree-sitter positions are 0-based rows; the rest of the product
+		// (permalinks, verifier line-range checks, gopls resolutions) uses
+		// 1-based line numbers, so convert here at the single source.
+		StartLine:  uint32(startPt.Row) + 1,
+		EndLine:    uint32(endPt.Row) + 1,
 		StartByte:  uint32(start),
 		EndByte:    uint32(end),
 		HasError:   node.HasError(),

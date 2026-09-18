@@ -787,7 +787,10 @@ documents:
 		docRunWrite(t, sb, head)
 
 		// Start docserve as a REAL background process (not in-process).
-		proc := exec.Command(bin, "docserve", "--debounce-ms", "500")
+		// --no-llm keeps the daemon offline and deterministic (CI has no
+		// live provider, and the mandatory-LLM gate would otherwise refuse
+		// to start the watcher at all).
+		proc := exec.Command(bin, "docserve", "--no-llm", "--debounce-ms", "500")
 		proc.Dir = sb.Root
 		var stdout, stderr syncBuffer
 		proc.Stdout, proc.Stderr = &stdout, &stderr

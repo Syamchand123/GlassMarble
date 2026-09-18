@@ -15,6 +15,14 @@ func (s *Sandbox) GitInit() {
 	s.MustGit("init", "-q", "-b", "main")
 	s.GitConfig("user.email", "test@glassmarble.local")
 	s.GitConfig("user.name", "GlassMarble Test")
+	// Large fixture commits (2k-10k files) raise loose-object counts past
+	// git's gc.auto threshold; git then spawns a DETACHED `gc --auto` that
+	// keeps writing into .git after the commit returns, racing the test's
+	// temp-dir RemoveAll and producing "directory not empty" cleanup
+	// failures on Linux. Disable background maintenance for sandboxes.
+	s.GitConfig("gc.auto", "0")
+	s.GitConfig("gc.autoDetach", "false")
+	s.GitConfig("maintenance.auto", "false")
 	s.GitCommit("initial commit")
 }
 
